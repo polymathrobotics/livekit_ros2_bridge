@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>livekit_ros2_bridge</name>
+  <version>0.0.1</version>
+  <description>Generic bridge for connecting ROS2 pub/sub into LiveKit.</description>
+  <maintainer email="engineering@polymathrobotics.com">Polymath Robotics</maintainer>
+  <license>Apache License 2.0</license>
+  <author email="engineering@polymathrobotics.com">Polymath Robotics</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-pydantic</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
