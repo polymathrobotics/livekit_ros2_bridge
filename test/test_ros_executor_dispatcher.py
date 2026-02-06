@@ -17,6 +17,7 @@ from collections.abc import Callable
 
 import pytest
 
+from livekit_ros2_bridge.ros2 import executor_dispatcher as executor_dispatcher_module
 from livekit_ros2_bridge.ros2.executor_dispatcher import RosExecutorDispatcher
 
 
@@ -62,18 +63,23 @@ def test_submit_and_drain_runs_work() -> None:
     assert future.result() == "ok"
 
 
-def test_submit_noresult_logs_failures(capfd: pytest.CaptureFixture[str]) -> None:
+def test_submit_noresult_logs_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     node = DummyNode()
     dispatcher = RosExecutorDispatcher(node, callback_group=object())
+    error_calls: list[tuple[str, object]] = []
 
     def _boom() -> None:
         raise RuntimeError("boom")
 
+    def _record_error(message: str, *args: object, **kwargs: object) -> None:
+        error_calls.append((message, kwargs.get("exc_info")))
+
+    monkeypatch.setattr(executor_dispatcher_module.logger, "error", _record_error)
+
     dispatcher.submit_noresult(_boom)
     dispatcher._drain()
 
-    _, err = capfd.readouterr()
-    assert "ROS dispatcher task failed" in err
+    assert error_calls == [("ROS dispatcher task failed", True)]
 
 
 def test_shutdown_marks_pending_and_future_submissions_as_failed() -> None:
