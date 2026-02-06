@@ -8,3 +8,8 @@ htmlcov/
 
 # IDEs
 .vscode
+
+# Colcon build artifacts
+build/
+install/
+log/
