@@ -11,31 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+from __future__ import annotations
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
+import re
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
-)
+def normalize_ros_topic(ros_topic: str | None) -> str:
+    topic = (ros_topic or "").strip()
+    if not topic:
+        return ""
+    topic = re.sub(r"/+", "/", topic)
+    if not topic.startswith("/"):
+        topic = f"/{topic}"
+    if topic.endswith("/") and topic != "/":
+        topic = topic.rstrip("/")
+    return topic
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
 
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
-
-ament_package()
+__all__ = ["normalize_ros_topic"]

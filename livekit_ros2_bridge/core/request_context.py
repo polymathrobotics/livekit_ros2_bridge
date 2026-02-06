@@ -11,31 +11,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+from __future__ import annotations
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
+from dataclasses import dataclass
+from enum import Enum
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
-)
+class RequestSource(str, Enum):
+    LIVEKIT_RPC = "livekit_rpc"
+    LIVEKIT_DATA = "livekit_data"
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
 
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
+@dataclass(frozen=True)
+class RequestContext:
+    """Request/participant metadata propagated through bridge operations."""
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
+    requester_id: str | None
+    source: RequestSource
 
-ament_package()
+
+__all__ = [
+    "RequestContext",
+    "RequestSource",
+]
