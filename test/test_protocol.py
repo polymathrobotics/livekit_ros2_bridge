@@ -28,6 +28,11 @@ def test_call_service_request_requires_dict() -> None:
         LivekitRpcCallServiceRequest(service="example", request=cast(Any, "not-a-dict"))
 
 
+def test_call_service_request_rejects_empty_type_when_provided() -> None:
+    with pytest.raises(ValidationError):
+        LivekitRpcCallServiceRequest(service="example", request={}, type=" ")
+
+
 def test_subscribe_request_requires_topic() -> None:
     with pytest.raises(ValidationError):
         LivekitRpcSubscribeRequest(topic="", preferred_interval_ms=0)

@@ -14,9 +14,9 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 DATA_TOPIC = "ros.topic.messages"
 PUBLISH_TOPIC = "ros.topic.publish"
@@ -97,9 +97,15 @@ class LivekitRpcCallServiceRequest(LivekitRpcRequestBase):
     """Payload for the `ros.service.call` RPC executed by `RosServiceCaller`."""
 
     service: str = Field(min_length=1)
-    type: str | None = Field(default=None, min_length=1)
+    type: Optional[str] = None
     request: dict[str, Any]
-    timeout_ms: int | None = None
+    timeout_ms: Optional[int] = None
+
+    @validator("type")
+    def _validate_type(cls, value: Optional[str]) -> Optional[str]:
+        if value == "":
+            raise ValueError("type must be non-empty when provided")
+        return value
 
 
 class LivekitRpcSubscriptionStatus(BaseModel):
