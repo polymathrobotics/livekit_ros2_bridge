@@ -14,12 +14,41 @@
 #
 
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from test.support.livekit_stubs import install_livekit_stubs
 
 
+def _generate_parameters_module() -> None:
+    # Generate the untracked params module before collection so imports in node.py succeed.
+    root = Path(__file__).resolve().parents[1]
+    output_path = root / "livekit_ros2_bridge" / "parameters.py"
+    yaml_path = root / "livekit_ros2_bridge" / "parameters.yaml"
+    command = [
+        sys.executable,
+        "-m",
+        "generate_parameter_library_py.generate_python_module",
+        str(output_path),
+        str(yaml_path),
+        "livekit_ros2_bridge.core.validators",
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        raise RuntimeError(
+            "Failed to generate livekit_ros2_bridge/parameters.py for pytest collection.\n"
+            f"Command: {' '.join(command)}\n"
+            f"stdout: {stdout}\n"
+            f"stderr: {stderr}"
+        )
+
+
+_generate_parameters_module()
 install_livekit_stubs(include_api=True)
 
 
