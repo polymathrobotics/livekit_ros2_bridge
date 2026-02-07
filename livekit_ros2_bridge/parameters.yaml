@@ -1,0 +1,147 @@
+livekit_bridge:
+  livekit:
+    url:
+      type: string
+      default_value: ""
+      description: "LiveKit server URL."
+      validation:
+        not_empty<>: []
+        "custom_validators::no_surrounding_whitespace": null
+    room:
+      type: string
+      default_value: ""
+      description: "LiveKit room name."
+      validation:
+        not_empty<>: []
+        "custom_validators::no_surrounding_whitespace": null
+    identity:
+      type: string
+      default_value: ""
+      description: "Participant identity override."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+    token:
+      type: string
+      default_value: ""
+      description: "Static LiveKit token."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+    api_key:
+      type: string
+      default_value: ""
+      description: "LiveKit API key."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+    api_secret:
+      type: string
+      default_value: ""
+      description: "LiveKit API secret."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+    token_ttl_seconds:
+      type: int
+      default_value: 3600
+      description: "TTL for generated API key tokens in seconds."
+      validation:
+        gt_eq<>: [0]
+    reconnect:
+      initial_backoff_ms:
+        type: int
+        default_value: 500
+        description: "Initial reconnect backoff in milliseconds."
+        validation:
+          gt_eq<>: [0]
+      max_backoff_ms:
+        type: int
+        default_value: 10000
+        description: "Maximum reconnect backoff in milliseconds."
+        validation:
+          gt_eq<>: [0]
+  access:
+    factory:
+      type: string
+      default_value: ""
+      description: "Python symbol path for a custom access policy factory."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+    static:
+      publish:
+        allow:
+          type: string_array
+          default_value: [""]
+          description: "Allowlist patterns for publish targets."
+          validation:
+            "custom_validators::no_blank_entries": null
+        deny:
+          type: string_array
+          default_value: [""]
+          description: "Denylist patterns for publish targets."
+      subscribe:
+        allow:
+          type: string_array
+          default_value: [""]
+          description: "Allowlist patterns for subscribe targets."
+          validation:
+            "custom_validators::no_blank_entries": null
+        deny:
+          type: string_array
+          default_value: [""]
+          description: "Denylist patterns for subscribe targets."
+        type_deny:
+          type: string_array
+          default_value:
+            - sensor_msgs/msg/Image
+            - sensor_msgs/msg/CompressedImage
+            - sensor_msgs/msg/PointCloud2
+          description: "Blocked ROS message types for subscriptions."
+      service:
+        allow:
+          type: string_array
+          default_value: [""]
+          description: "Allowlist patterns for service targets."
+          validation:
+            "custom_validators::no_blank_entries": null
+        deny:
+          type: string_array
+          default_value: [""]
+          description: "Denylist patterns for service targets."
+  telemetry:
+    factory:
+      type: string
+      default_value: ""
+      description: "Python symbol path for a custom telemetry factory."
+      validation:
+        "custom_validators::no_surrounding_whitespace": null
+  subscribe:
+    max_total_subscriptions:
+      type: int
+      default_value: 128
+      description: "Maximum active subscriptions across all participants."
+      validation:
+        gt_eq<>: [0]
+    max_subscriptions_per_participant:
+      type: int
+      default_value: 32
+      description: "Maximum active subscriptions per participant."
+      validation:
+        gt_eq<>: [0]
+  publish:
+    max_topics:
+      type: int
+      default_value: 50
+      description: "Maximum active ROS publishers created by bridge ingress."
+      validation:
+        gt_eq<>: [0]
+  service:
+    timeout_ms:
+      type: int
+      default_value: 2000
+      description: "Default RPC service timeout in milliseconds."
+      validation:
+        gt_eq<>: [0]
+    max_inflight_per_participant:
+      type: int
+      default_value: 4
+      description: "Maximum concurrent service calls per participant."
+      validation:
+        gt_eq<>: [0]

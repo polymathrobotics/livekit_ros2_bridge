@@ -19,6 +19,12 @@ project(livekit_ros2_bridge)
 # Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
+find_package(generate_parameter_library REQUIRED)
+
+generate_parameter_module(parameters
+  livekit_ros2_bridge/parameters.yaml
+  livekit_ros2_bridge.core.validators
+)
 
 # Install Python modules and entry points
 ament_python_install_package(${PROJECT_NAME}

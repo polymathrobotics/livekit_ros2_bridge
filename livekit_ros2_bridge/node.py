@@ -14,12 +14,11 @@
 from __future__ import annotations
 
 import socket
-from typing import Any, cast
+from typing import Any, Iterable, cast
 
-from rclpy.exceptions import ParameterUninitializedException
 from rclpy.node import Node
-from rclpy.parameter import Parameter
 
+from livekit_ros2_bridge.parameters import livekit_bridge
 from livekit_ros2_bridge.core.access import AccessPolicy
 from livekit_ros2_bridge.core.access_static import StaticAccessPolicy
 from livekit_ros2_bridge.core.extensions import load_symbol
@@ -39,23 +38,10 @@ from livekit_ros2_bridge.runtime import (
     RuntimeConfig,
 )
 
-_STRING_ARRAY_PARAMETER_NAMES: tuple[str, ...] = (
-    "access.static.subscribe.allow",
-    "access.static.subscribe.deny",
-    "access.static.publish.allow",
-    "access.static.publish.deny",
-    "access.static.service.allow",
-    "access.static.service.deny",
-)
-
-_DEFAULT_SUBSCRIBE_TYPE_DENYLIST: tuple[str, ...] = (
-    "sensor_msgs/msg/Image",
-    "sensor_msgs/msg/CompressedImage",
-    "sensor_msgs/msg/PointCloud2",
-)
-
 _REQUIRED_ACCESS_POLICY_METHODS: tuple[str, ...] = ("authorize",)
 _REQUIRED_TELEMETRY_METHODS: tuple[str, ...] = ("emit",)
+_ACCESS_FACTORY_PARAMETER = "access.factory"
+_TELEMETRY_FACTORY_PARAMETER = "telemetry.factory"
 
 
 class LivekitBridgeNode(Node):
@@ -64,8 +50,8 @@ class LivekitBridgeNode(Node):
     def __init__(self) -> None:
         super().__init__("livekit_bridge")
         self._runtime: Runtime | None = None
-
-        self._declare_bridge_parameters()
+        param_listener = livekit_bridge.ParamListener(self)
+        self._params: livekit_bridge.Params = param_listener.get_params()
 
         connect_config, token_source = self._load_livekit_config()
         access_config = self._load_access_config()
@@ -89,114 +75,8 @@ class LivekitBridgeNode(Node):
         if runtime is not None:
             runtime.shutdown()
 
-    def _declare_bridge_parameters(self) -> None:
-        self._declare_scalar_parameters(
-            (
-                ("livekit.url", ""),
-                ("livekit.room", ""),
-                ("livekit.identity", ""),
-                ("livekit.token", ""),
-                ("livekit.api_key", ""),
-                ("livekit.api_secret", ""),
-                ("livekit.token_ttl_seconds", 3600),
-                ("livekit.reconnect.initial_backoff_ms", 500),
-                ("livekit.reconnect.max_backoff_ms", 10000),
-            )
-        )
-        self._declare_scalar_parameters(
-            (
-                ("access.factory", ""),
-                ("telemetry.factory", ""),
-            )
-        )
-
-        # NOTE: rclpy infers `[]` as BYTE_ARRAY. To support overrides like
-        # `access.static.subscribe.allow: ["*"]`, declare empty string arrays by type.
-        self.declare_parameters(
-            "",
-            [
-                (name, Parameter.Type.STRING_ARRAY)
-                for name in _STRING_ARRAY_PARAMETER_NAMES
-            ],
-        )
-        self.declare_parameter(
-            "access.static.subscribe.type_deny", list(_DEFAULT_SUBSCRIBE_TYPE_DENYLIST)
-        )
-
-        self._declare_scalar_parameters(
-            (
-                ("subscribe.max_total_subscriptions", 128),
-                ("subscribe.max_subscriptions_per_participant", 32),
-                ("publish.max_topics", 50),
-                ("service.timeout_ms", 2000),
-                ("service.max_inflight_per_participant", 4),
-            )
-        )
-
-    def _declare_scalar_parameters(
-        self, definitions: tuple[tuple[str, str | int | bool], ...]
-    ) -> None:
-        for name, default in definitions:
-            self.declare_parameter(name, default)
-
-    def _get_param_value(self, name: str) -> Any | None:
-        try:
-            return self.get_parameter(name).value
-        except ParameterUninitializedException:
-            return None
-
-    def _get_param_str(self, name: str) -> str | None:
-        value = self._get_param_value(name)
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        self.get_logger().warning(
-            f"Parameter '{name}' should be a string; got {type(value).__name__}"
-        )
-        return None
-
-    def _get_param_int(self, name: str, default: int) -> int:
-        value = self._get_param_value(name)
-        if value is None:
-            return default
-        if isinstance(value, int):
-            return value if value >= 0 else default
-        if isinstance(value, str):
-            try:
-                parsed = int(value.strip())
-                return parsed if parsed >= 0 else default
-            except ValueError:
-                self.get_logger().warning(
-                    f"Parameter '{name}' should be an int; got '{value}'"
-                )
-                return default
-        self.get_logger().warning(
-            f"Parameter '{name}' should be an int; got {type(value).__name__}"
-        )
-        return default
-
-    def _get_param_str_list(self, name: str) -> list[str]:
-        value = self._get_param_value(name)
-        if value is None:
-            return []
-        if isinstance(value, list):
-            items: list[str] = []
-            for entry in value:
-                token = str(entry).strip()
-                if token:
-                    items.append(token)
-            return items
-        if isinstance(value, str):
-            return [token.strip() for token in value.split(",") if token.strip()]
-        self.get_logger().warning(
-            f"Parameter '{name}' should be a list of strings; got {type(value).__name__}"
-        )
-        return []
-
     def _build_access_policy(self, config: AccessPolicyConfig) -> AccessPolicy:
-        factory_path = self._get_param_str("access.factory")
+        factory_path = self._params.access.factory
         if factory_path:
             return self._load_access_factory(factory_path, config)
 
@@ -213,36 +93,30 @@ class LivekitBridgeNode(Node):
         return access_policy
 
     def _build_telemetry(self, config: RuntimeConfig) -> Telemetry:
-        factory_path = self._get_param_str("telemetry.factory")
+        factory_path = self._params.telemetry.factory
         if not factory_path:
             return NullTelemetry()
         return self._load_telemetry_factory(factory_path, config)
 
     def _load_livekit_config(self) -> tuple[LivekitConnectConfig, TokenSource]:
-        url = self._get_param_str("livekit.url")
-        room = self._get_param_str("livekit.room")
-        identity = self._get_param_str("livekit.identity")
-        token = self._get_param_str("livekit.token")
-        api_key = self._get_param_str("livekit.api_key")
-        api_secret = self._get_param_str("livekit.api_secret")
-        ttl_seconds = self._get_param_int("livekit.token_ttl_seconds", 3600)
-
-        if not url:
+        params = self._params
+        if not params.livekit.url:
             raise ValueError("livekit.url is required")
-        if not room:
+        if not params.livekit.room:
             raise ValueError("livekit.room is required")
 
+        identity = params.livekit.identity
         if not identity:
             identity = f"{self.get_name()}-{socket.gethostname()}"
 
-        if token:
-            token_source: TokenSource = StaticTokenSource(token=token)
+        if params.livekit.token:
+            token_source: TokenSource = StaticTokenSource(token=params.livekit.token)
             token_source_name = "static token"
-        elif api_key and api_secret:
+        elif params.livekit.api_key and params.livekit.api_secret:
             token_source = ApiKeyTokenSource(
-                api_key=api_key,
-                api_secret=api_secret,
-                ttl_seconds=ttl_seconds,
+                api_key=params.livekit.api_key,
+                api_secret=params.livekit.api_secret,
+                ttl_seconds=params.livekit.token_ttl_seconds,
             )
             token_source_name = "api key/secret"
         else:
@@ -251,53 +125,58 @@ class LivekitBridgeNode(Node):
             )
 
         self.get_logger().info(
-            f"LiveKit config loaded: url={url} room={room} identity={identity} "
-            f"token_source={token_source_name} ttl_seconds={ttl_seconds}"
+            f"LiveKit config loaded: url={params.livekit.url} "
+            f"room={params.livekit.room} identity={identity} "
+            f"token_source={token_source_name} "
+            f"ttl_seconds={params.livekit.token_ttl_seconds}"
         )
 
-        return LivekitConnectConfig(url=url, room=room, identity=identity), token_source
+        return (
+            LivekitConnectConfig(
+                url=params.livekit.url,
+                room=params.livekit.room,
+                identity=identity,
+            ),
+            token_source,
+        )
 
     def _load_access_config(self) -> AccessPolicyConfig:
+        access = self._params.access.static
         return AccessPolicyConfig(
-            publish_allow=self._get_param_str_list("access.static.publish.allow"),
-            publish_deny=self._get_param_str_list("access.static.publish.deny"),
-            subscribe_allow=self._get_param_str_list("access.static.subscribe.allow"),
-            subscribe_deny=self._get_param_str_list("access.static.subscribe.deny"),
-            subscribe_type_deny=self._get_param_str_list(
-                "access.static.subscribe.type_deny"
+            publish_allow=self._normalize_access_list_param(access.publish.allow),
+            publish_deny=self._normalize_access_list_param(access.publish.deny),
+            subscribe_allow=self._normalize_access_list_param(access.subscribe.allow),
+            subscribe_deny=self._normalize_access_list_param(access.subscribe.deny),
+            subscribe_type_deny=self._normalize_access_list_param(
+                access.subscribe.type_deny
             ),
-            service_allow=self._get_param_str_list("access.static.service.allow"),
-            service_deny=self._get_param_str_list("access.static.service.deny"),
+            service_allow=self._normalize_access_list_param(access.service.allow),
+            service_deny=self._normalize_access_list_param(access.service.deny),
         )
 
+    @staticmethod
+    def _normalize_access_list_param(values: Iterable[str]) -> tuple[str, ...]:
+        # rclpy/generated params treat [] string-array values as uninitialized (NOT_SET),
+        # which fails parameter loading before custom validators run, so configs use [""].
+        # Normalize that sentinel back to an empty list for policy wiring/extensions.
+        return tuple(value.strip() for value in values if value.strip())
+
     def _load_runtime_config(self) -> RuntimeConfig:
+        params = self._params
         return RuntimeConfig(
             subscriber=SubscriberConfig(
-                max_total_subscriptions=self._get_param_int(
-                    "subscribe.max_total_subscriptions",
-                    128,
-                ),
-                max_subscriptions_per_participant=self._get_param_int(
-                    "subscribe.max_subscriptions_per_participant",
-                    32,
-                ),
+                max_total_subscriptions=params.subscribe.max_total_subscriptions,
+                max_subscriptions_per_participant=params.subscribe.max_subscriptions_per_participant,
             ),
             publisher=PublisherConfig(
-                max_topics=self._get_param_int("publish.max_topics", 50),
+                max_topics=params.publish.max_topics,
             ),
             service=ServiceConfig(
-                default_timeout_ms=self._get_param_int("service.timeout_ms", 2000),
-                max_inflight_per_participant=self._get_param_int(
-                    "service.max_inflight_per_participant",
-                    4,
-                ),
+                default_timeout_ms=params.service.timeout_ms,
+                max_inflight_per_participant=params.service.max_inflight_per_participant,
             ),
-            initial_backoff_ms=self._get_param_int(
-                "livekit.reconnect.initial_backoff_ms", 500
-            ),
-            max_backoff_ms=self._get_param_int(
-                "livekit.reconnect.max_backoff_ms", 10000
-            ),
+            initial_backoff_ms=params.livekit.reconnect.initial_backoff_ms,
+            max_backoff_ms=params.livekit.reconnect.max_backoff_ms,
         )
 
     def _ensure_static_access_policy_configured(
@@ -342,10 +221,10 @@ class LivekitBridgeNode(Node):
     def _load_access_factory(
         self, factory_path: str, config: AccessPolicyConfig
     ) -> AccessPolicy:
-        factory = self._load_callable_factory("access.factory", factory_path)
+        factory = self._load_callable_factory(_ACCESS_FACTORY_PARAMETER, factory_path)
         created = self._create_factory_instance(factory, config)
         self._validate_factory_result(
-            parameter_name="access.factory",
+            parameter_name=_ACCESS_FACTORY_PARAMETER,
             expected_type_name="AccessPolicy",
             created=created,
             required_methods=_REQUIRED_ACCESS_POLICY_METHODS,
@@ -356,10 +235,12 @@ class LivekitBridgeNode(Node):
     def _load_telemetry_factory(
         self, factory_path: str, config: RuntimeConfig
     ) -> Telemetry:
-        factory = self._load_callable_factory("telemetry.factory", factory_path)
+        factory = self._load_callable_factory(
+            _TELEMETRY_FACTORY_PARAMETER, factory_path
+        )
         created = self._create_factory_instance(factory, config)
         self._validate_factory_result(
-            parameter_name="telemetry.factory",
+            parameter_name=_TELEMETRY_FACTORY_PARAMETER,
             expected_type_name="Telemetry",
             created=created,
             required_methods=_REQUIRED_TELEMETRY_METHODS,
@@ -388,8 +269,8 @@ def run_node() -> int:
     except Exception as exc:
         if node is None:
             _log_startup_failure(exc)
-            return 1
-        node.get_logger().error(f"LiveKit bridge failed: {exc}")
+        else:
+            node.get_logger().error(f"LiveKit bridge failed: {exc}")
         return 1
     finally:
         if node is not None:
