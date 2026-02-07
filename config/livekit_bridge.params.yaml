@@ -1,0 +1,32 @@
+# Required-startup params template for the livekit_ros2_bridge node.
+#
+# Run with:
+#   ros2 run livekit_ros2_bridge livekit_bridge --ros-args --params-file /path/to/livekit_bridge.params.yaml
+#
+# Required to start:
+# - livekit.url
+# - livekit.room
+# - livekit.token OR (livekit.api_key + livekit.api_secret)
+# - At least one allowlist entry across publish/subscribe/service
+#
+# For advanced parameter tuning, see livekit_ros2_bridge/parameters.yaml.
+
+livekit_bridge:
+  ros__parameters:
+    # Required connection params.
+    livekit.url: ""  # e.g. "wss://your-livekit.example"
+    livekit.room: ""  # e.g. "robot-room"
+
+    # Required auth: choose one mode.
+    livekit.token: ""
+    livekit.api_key: ""
+    livekit.api_secret: ""
+
+    # Required access policy: set at least one allowlist or startup fails.
+    # Use [""] to mean "no entries configured yet".
+    access.static.subscribe.allow: [""]  # e.g. ["/user/*"]
+    access.static.publish.allow: [""]  # e.g. ["/user/cmd_vel"]
+    access.static.service.allow: [""]  # e.g. ["/example/service"]
+
+    # Development shortcut: allow all subscriptions (do not use in production)
+    # access.static.subscribe.allow: ["*"]

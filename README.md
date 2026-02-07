@@ -43,56 +43,54 @@ Install the LiveKit Python SDK in the same environment where the node will run:
 python3 -m pip install livekit==1.0.23 livekit-api==1.1.0 livekit-protocol==1.1.2
 ```
 
-### 3) Set LiveKit connection and auth
+### 3) Create a params file
 
 ```bash
-export LIVEKIT_URL=...
-export LIVEKIT_ROOM=...
-
-# Set either:
-export LIVEKIT_TOKEN=...
-
-# Or:
-# export LIVEKIT_API_KEY=...
-# export LIVEKIT_API_SECRET=...
+cp "$(ros2 pkg prefix --share livekit_ros2_bridge)/config/livekit_bridge.params.yaml" \
+  /path/to/livekit_bridge.params.yaml
 ```
 
-### 4) Create an overlay params file
-
-Copy the packaged template:
-
-```bash
-cp $(ros2 pkg prefix --share livekit_ros2_bridge)/config/livekit_bridge.overlay.yaml \
-  /path/to/your_livekit_bridge.overlay.yaml
-```
-
-Edit `/path/to/your_livekit_bridge.overlay.yaml` and start with this:
-
-This bridge is **default-deny**. If all allowlists are empty, startup is rejected.
-That is on purpose, so nothing is exposed unless you allow it.
+Edit `/path/to/livekit_bridge.params.yaml` and set at least:
 
 ```yaml
 livekit_bridge:
   ros__parameters:
-    access.static.publish.allow: ["/example/foo"]
-    access.static.subscribe.allow: ["/example/*"]
-    access.static.service.allow: ["/example/service/a", "/example/service/b"]
+    livekit.url: "wss://your-livekit.example"
+    livekit.room: "robot-room"
+    access.static.subscribe.allow: ["/user/*"]
 ```
 
-Quick notes:
+You also need auth:
 
-- The launch file loads `params_file` first and `overlay_params_file` second (overrides)
-- YAML substitutions are enabled, so `$(env ...)` works in params files
-- The packaged `config/livekit_bridge.yaml` is a template; keep runtime-specific changes in your overlay file
+- `livekit.token`, or
+- `livekit.api_key` + `livekit.api_secret`
 
-### 5) Launch
+### 4) Run
+
+If you open a new terminal, run `source /opt/ros/<your-distro>/setup.bash` and `source ~/ros2_ws/install/setup.bash` first.
 
 ```bash
-ros2 launch livekit_ros2_bridge livekit_bridge.launch.yaml \
-  overlay_params_file:=/path/to/your_livekit_bridge.overlay.yaml
+export LIVEKIT_API_KEY=your-livekit-api-key
+export LIVEKIT_API_SECRET=your-livekit-api-secret
+
+ros2 run livekit_ros2_bridge livekit_bridge --ros-args \
+  --params-file /path/to/livekit_bridge.params.yaml \
+  -p livekit.api_key:="$LIVEKIT_API_KEY" \
+  -p livekit.api_secret:="$LIVEKIT_API_SECRET"
 ```
 
-Troubleshooting guide: [docs/troubleshooting.md](docs/troubleshooting.md)
+If no allowlist is set, startup will fail in default-deny mode.
+
+## Configuration
+
+Required on startup:
+
+- `livekit.url`
+- `livekit.room`
+- `livekit.token` or (`livekit.api_key` + `livekit.api_secret`)
+- At least one allowlist entry across publish/subscribe/service
+
+For advanced parameters, see `livekit_ros2_bridge/parameters.yaml`.
 
 ## Development
 

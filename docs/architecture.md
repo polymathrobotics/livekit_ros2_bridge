@@ -53,7 +53,7 @@ Treat the bridge as a remote control surface for a robot. The default stance is 
 
 Anyone with a valid room token can attempt protocol operations, so room-level trust and token lifetime still matter. Bridge policy is the final local gate before ROS APIs are touched.
 
-For policy details, read [configuration.md](configuration.md).
+By default, this uses the static policy: allowlist entries for publish, subscribe, or service calls permit access; otherwise requests stay blocked, and deny rules always win. A deployment can replace this with `access.factory`; in that case, the custom policy is responsible for enforcing secure defaults (including default-deny when required). See [`livekit_ros2_bridge/parameters.yaml`](../livekit_ros2_bridge/parameters.yaml) and [extensions.md](extensions.md).
 
 ## What is planned to change
 
