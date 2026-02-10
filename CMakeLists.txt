@@ -31,10 +31,6 @@ ament_python_install_package(${PROJECT_NAME}
   SCRIPTS_DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-
 install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )

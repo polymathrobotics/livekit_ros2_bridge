@@ -10,14 +10,14 @@ Likely causes:
 
 Checks:
 
-- Validate overlay YAML has at least one non-empty allowlist entry
-- Confirm required env vars are exported in the shell launching ROS
+- Validate your params file has at least one non-empty allowlist entry
+- Confirm required env vars are exported in the shell running `ros2 run` (if using env-driven `-p` args)
 - Confirm params are keyed under `livekit_bridge.ros__parameters`
 
 Fix:
 
 - Set at least one of `access.static.publish.allow`, `access.static.subscribe.allow`, or `access.static.service.allow`
-- Set connection and auth parameters in YAML or via `$(env ...)` inputs
+- Set connection and auth parameters in YAML or via `-p` arguments
 
 ## Symptom: no ROS -> LiveKit data on `ros.topic.messages`
 
@@ -31,7 +31,7 @@ Likely causes:
 Checks:
 
 - Verify successful `ros.topic.subscribe` response from the client
-- Verify topic/type access config in your overlay
+- Verify topic/type access config in your params file
 - Verify the participant identity is still connected
 
 Fix:
@@ -85,5 +85,4 @@ Fix:
 
 Related docs:
 
-- [configuration.md](configuration.md)
 - [protocol.md](protocol.md)

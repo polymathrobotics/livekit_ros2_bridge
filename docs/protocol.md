@@ -32,7 +32,7 @@ Notes:
 
 - `type` must be a fully-qualified ROS interface type string.
 - `msg` must match the fields for `type`. Unknown fields are ignored.
-- Policy is enforced before any ROS publishers are created ([configuration.md](configuration.md)).
+- Policy is enforced before any ROS publishers are created.
 
 ### Stream ROS messages out: `ros.topic.messages`
 
@@ -138,7 +138,7 @@ Notes:
 
 - `type` is optional; if omitted, the bridge resolves the service type from the ROS graph.
 - `timeout_ms` falls back to the configured default if omitted or non-positive.
-- Policy is enforced before calling the service ([configuration.md](configuration.md)).
+- Policy is enforced before calling the service.
 
 ## Errors
 
