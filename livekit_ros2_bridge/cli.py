@@ -11,17 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+import sys
 
-import argparse
+import rclpy
+
+from livekit_ros2_bridge.node import run_node
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LiveKit ROS2 Bridge CLI")
-    parser.add_argument("--version", action="version", version="%(prog)s 0.0.1")
-    _args = parser.parse_args()
-
-    print("LiveKit ROS2 Bridge")
+    rclpy.init(args=sys.argv)
+    exit_code = run_node()
+    rclpy.shutdown()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

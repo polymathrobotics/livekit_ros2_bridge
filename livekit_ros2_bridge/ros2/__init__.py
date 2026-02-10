@@ -11,31 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+"""ROS 2-facing implementation for the LiveKit bridge."""
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
-
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
-
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
-)
-
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
-
-ament_package()
+__all__: list[str] = []

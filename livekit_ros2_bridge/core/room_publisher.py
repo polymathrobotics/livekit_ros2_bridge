@@ -11,31 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+from __future__ import annotations
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
+from typing import Any, Mapping, Protocol
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
-)
+class RoomPublisher(Protocol):
+    """Abstract publisher used to send ROS bridge payloads to a LiveKit room."""
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
+    def publish_data(
+        self,
+        topic: str,
+        payload: Mapping[str, Any],
+        reliable: bool = True,
+        *,
+        destination_identities: list[str] | None = None,
+    ) -> None: ...
 
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
+    def can_publish_data(self) -> bool: ...
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
 
-ament_package()
+__all__ = ["RoomPublisher"]

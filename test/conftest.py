@@ -17,6 +17,11 @@ import logging
 
 import pytest
 
+from test.support.livekit_stubs import install_livekit_stubs
+
+
+install_livekit_stubs(include_api=True)
+
 
 @pytest.fixture(autouse=True)
 def configure_logging():

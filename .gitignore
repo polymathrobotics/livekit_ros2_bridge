@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# IDEs
+.vscode
+
+# Colcon build artifacts
+build/
+install/
+log/

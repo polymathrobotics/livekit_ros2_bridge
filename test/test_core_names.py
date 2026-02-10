@@ -11,31 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+import pytest
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
+from livekit_ros2_bridge.core.names import normalize_ros_topic
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, ""),
+        ("", ""),
+        ("   ", ""),
+        ("foo", "/foo"),
+        ("/foo", "/foo"),
+        ("/foo/", "/foo"),
+        ("//foo//bar//", "/foo/bar"),
+        ("/", "/"),
+    ],
 )
-
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
-
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
-
-ament_package()
+def test_normalize_ros_topic(raw: str | None, expected: str) -> None:
+    assert normalize_ros_topic(raw) == expected

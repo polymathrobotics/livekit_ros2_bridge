@@ -11,31 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
+from __future__ import annotations
 
-cmake_minimum_required(VERSION 3.14)
-project(livekit_ros2_bridge)
+from concurrent.futures import Future
+from typing import Callable, Protocol, TypeVar
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
+T = TypeVar("T")
 
-# Install Python modules and entry points
-ament_python_install_package(${PROJECT_NAME}
-  SCRIPTS_DESTINATION lib/${PROJECT_NAME}
-)
 
-install(DIRECTORY launch
-  DESTINATION share/${PROJECT_NAME}
-)
+class WorkDispatcher(Protocol):
+    """Submit synchronous callables onto another execution context.
 
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
+    This keeps the LiveKit router decoupled from the concrete ROS executor
+    implementation that executes the submitted work.
+    """
 
-if(BUILD_TESTING)
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
-endif()
+    def submit(self, fn: Callable[[], T]) -> Future[T]: ...
+    def submit_noresult(self, fn: Callable[[], None]) -> None: ...
 
-ament_package()
+
+__all__ = ["WorkDispatcher"]
