@@ -54,6 +54,22 @@ repos:
       - id: ruff-format
       - id: ruff
         args: [--fix]
+  - repo: local
+    hooks:
+      - id: generate-livekit-params
+        name: generate-livekit-params
+        # Generate the parameters module before mypy runs.
+        # This keeps typing checks working without committing generated code.
+        entry: >-
+          python -m generate_parameter_library_py.generate_python_module
+          livekit_ros2_bridge/parameters.py
+          livekit_ros2_bridge/parameters.yaml
+          livekit_ros2_bridge.core.validators
+        language: python
+        additional_dependencies:
+          - git+https://github.com/PickNikRobotics/generate_parameter_library.git@0.6.0#subdirectory=generate_parameter_library_py
+        pass_filenames: false
+        always_run: true
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.18.2
     hooks:

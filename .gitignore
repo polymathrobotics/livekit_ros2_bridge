@@ -13,3 +13,6 @@ htmlcov/
 build/
 install/
 log/
+
+# Generated parameter module (created by pre-commit)
+livekit_ros2_bridge/parameters.py
