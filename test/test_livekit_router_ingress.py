@@ -18,8 +18,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from livekit_ros2_bridge.ros2.ros_logging import RosLogger
-from test.support.logger_harness import DummyLogger
 from test.support.router_harness import FailingDispatcher, make_router
 from livekit_ros2_bridge.core.access import AccessDecision
 from livekit_ros2_bridge.core.protocol import PUBLISH_TOPIC
@@ -80,36 +78,6 @@ def test_handle_data_packet_propagates_requester_id_from_metadata() -> None:
     assert isinstance(ctx, RequestContext)
     assert ctx.requester_id == "participant-123"
     assert ctx.source == RequestSource.LIVEKIT_DATA
-
-
-def test_handle_data_packet_logs_participant_sid_fallback() -> None:
-    backend = DummyLogger("livekit_bridge.livekit.router")
-    publisher = MagicMock()
-    publisher.handle_publish_payload = MagicMock(return_value=AccessDecision(ok=True))
-    router = make_router(publisher=publisher, logger=RosLogger(backend))
-
-    data = MagicMock()
-    data.topic = PUBLISH_TOPIC
-    data.participant_identity = None
-    data.participant = None
-    data.participant_sid = "sid-123"
-    data.data = json.dumps(
-        {
-            "topic": "/foo",
-            "type": "std_msgs/msg/String",
-            "msg": {"data": "hello"},
-        }
-    )
-
-    router.handle_data_packet(data)
-
-    publisher.handle_publish_payload.assert_called_once()
-    assert len(backend.records) == 1
-    assert backend.records[0].level == "warning"
-    assert backend.records[0].message == (
-        "LiveKit data packet missing participant_identity; using participant_sid=sid-123"
-    )
-    assert backend.records[0].kwargs == {"throttle_duration_sec": 30.0}
 
 
 def test_handle_data_packet_emits_ingress_publish_telemetry_success() -> None:

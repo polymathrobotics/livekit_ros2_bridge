@@ -258,23 +258,10 @@ class LivekitRouter:
         if data is None:
             return
 
-        participant_identity = getattr(data, "participant_identity", None)
-        participant = getattr(data, "participant", None)
-        participant_sid = getattr(data, "participant_sid", None)
         ctx = RequestContext(
             requester_id=get_participant_id_from_packet(data),
             source=RequestSource.LIVEKIT_DATA,
         )
-        if (
-            participant_identity in (None, "")
-            and participant is None
-            and participant_sid
-            and ctx.requester_id is not None
-        ):
-            self._participant_fallback_logger.warning(
-                "LiveKit data packet missing participant_identity; using participant_sid=%s",
-                participant_sid,
-            )
         topic = normalize_livekit_topic(getattr(data, "topic", None))
 
         if topic != PUBLISH_TOPIC:
