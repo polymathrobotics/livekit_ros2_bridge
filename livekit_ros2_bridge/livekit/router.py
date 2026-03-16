@@ -15,7 +15,6 @@ import asyncio
 from concurrent.futures import Future
 import functools
 import json
-import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol, TypeVar, cast
@@ -24,8 +23,10 @@ from livekit import rtc
 from pydantic import ValidationError
 
 from livekit_ros2_bridge.core.access import AccessDecision
-from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
+from livekit_ros2_bridge.core.dispatcher import WorkDispatcher
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.names import normalize_ros_topic
+from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
 from livekit_ros2_bridge.core.protocol import (
     PUBLISH_TOPIC,
     RPC_SERVICE_CALL,
@@ -61,13 +62,10 @@ from livekit_ros2_bridge.livekit.utils import (
     get_participant_id_from_packet,
     normalize_livekit_topic,
 )
-from livekit_ros2_bridge.core.dispatcher import WorkDispatcher
 from livekit_ros2_bridge.ros2.service_caller import (
     ServiceCallResult,
     ServiceCallError,
 )
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 RequestT = TypeVar("RequestT")
@@ -92,7 +90,7 @@ _RPC_ERROR_RULES: tuple[tuple[tuple[type[Exception], ...], int], ...] = (
 )
 
 
-def rpc_error_handler(method: str, translate: Callable[[Exception], rtc.RpcError]):
+def rpc_error_handler(method: str, action: str):
     def decorator(func: Callable[..., Awaitable[str]]):
         @functools.wraps(func)
         async def wrapper(self: "LivekitRouter", data: rtc.RpcInvocationData) -> str:
@@ -117,7 +115,7 @@ def rpc_error_handler(method: str, translate: Callable[[Exception], rtc.RpcError
                 _record(ok=False, code=getattr(exc, "code", None))
                 raise
             except Exception as exc:
-                translated = translate(exc)
+                translated = self._translate_rpc_error(action, exc)
                 _record(ok=False, code=getattr(translated, "code", None))
                 raise translated from exc
             else:
@@ -127,20 +125,6 @@ def rpc_error_handler(method: str, translate: Callable[[Exception], rtc.RpcError
         return wrapper
 
     return decorator
-
-
-def _translate_rpc_error(action: str) -> Callable[[Exception], rtc.RpcError]:
-    def translate(exc: Exception) -> rtc.RpcError:
-        for exc_types, code in _RPC_ERROR_RULES:
-            if isinstance(exc, exc_types):
-                return rtc.RpcError(code, str(exc))
-
-        logger.error("RPC %s failed: %s", action, exc, exc_info=True)
-        return rtc.RpcError(
-            RPC_ERROR_INTERNAL, f"Internal error handling {action} request"
-        )
-
-    return translate
 
 
 class _Publisher(Protocol):
@@ -194,6 +178,7 @@ class LivekitRouter:
         dispatch_timeout_s: float = 5.0,
         service_default_timeout_ms: int = 2000,
         service_timeout_overhead_s: float = 0.5,
+        logger: Logger,
     ) -> None:
         self._subscriber = subscriber
         self._publisher = ros_publisher
@@ -204,6 +189,8 @@ class LivekitRouter:
         self._service_default_timeout_ms = max(int(service_default_timeout_ms), 0)
         self._service_timeout_overhead_s = max(float(service_timeout_overhead_s), 0.0)
         self._rpc_registered_for: int | None = None
+        self._logger = logger
+        self._participant_fallback_logger = logger.throttled(30.0)
 
     def shutdown(self) -> None:
         self._subscriber.shutdown()
@@ -211,11 +198,21 @@ class LivekitRouter:
 
     _RpcHandler = Callable[[rtc.RpcInvocationData], Awaitable[str]]
 
+    def _translate_rpc_error(self, action: str, exc: Exception) -> rtc.RpcError:
+        for exc_types, code in _RPC_ERROR_RULES:
+            if isinstance(exc, exc_types):
+                return rtc.RpcError(code, str(exc))
+
+        self._logger.error("RPC %s failed: %s", action, exc, exc_info=True)
+        return rtc.RpcError(
+            RPC_ERROR_INTERNAL, f"Internal error handling {action} request"
+        )
+
     def register_rpc_methods(
         self, local_participant: rtc.LocalParticipant | None
     ) -> None:
         if local_participant is None:
-            logger.warning(
+            self._logger.warning(
                 "Cannot register RPC methods: local participant unavailable."
             )
             return
@@ -261,10 +258,23 @@ class LivekitRouter:
         if data is None:
             return
 
+        participant_identity = getattr(data, "participant_identity", None)
+        participant = getattr(data, "participant", None)
+        participant_sid = getattr(data, "participant_sid", None)
         ctx = RequestContext(
             requester_id=get_participant_id_from_packet(data),
             source=RequestSource.LIVEKIT_DATA,
         )
+        if (
+            participant_identity in (None, "")
+            and participant is None
+            and participant_sid
+            and ctx.requester_id is not None
+        ):
+            self._participant_fallback_logger.warning(
+                "LiveKit data packet missing participant_identity; using participant_sid=%s",
+                participant_sid,
+            )
         topic = normalize_livekit_topic(getattr(data, "topic", None))
 
         if topic != PUBLISH_TOPIC:
@@ -297,7 +307,7 @@ class LivekitRouter:
             decoded = decode_payload_text(data.data)
             payload_raw = json.loads(decoded)
         except Exception as exc:
-            logger.error(
+            self._logger.warning(
                 "Failed decoding LiveKit data packet for topic=%s: %s",
                 topic,
                 exc,
@@ -314,7 +324,7 @@ class LivekitRouter:
         if isinstance(payload_raw, dict):
             return cast(dict[str, Any], payload_raw)
 
-        logger.warning(
+        self._logger.warning(
             "Ignoring non-dict data payload of type %s",
             type(payload_raw),
         )
@@ -337,7 +347,7 @@ class LivekitRouter:
         try:
             decision = done.result()
         except Exception as exc:
-            logger.error(
+            self._logger.error(
                 "Failed handling LiveKit publish payload for topic=%s: %s",
                 topic,
                 exc,
@@ -491,7 +501,7 @@ class LivekitRouter:
             cancelled_reason="LiveKit RPC cancelled.",
         )
 
-    @rpc_error_handler(RPC_TOPIC_SUBSCRIBE, _translate_rpc_error("subscribe"))
+    @rpc_error_handler(RPC_TOPIC_SUBSCRIBE, "subscribe")
     async def _handle_rpc_subscribe(self, data: rtc.RpcInvocationData) -> str:
         return await self._handle_subscription_rpc(
             data,
@@ -500,7 +510,7 @@ class LivekitRouter:
             handle_request=self._subscriber.subscribe_request,
         )
 
-    @rpc_error_handler(RPC_TOPIC_UNSUBSCRIBE, _translate_rpc_error("unsubscribe"))
+    @rpc_error_handler(RPC_TOPIC_UNSUBSCRIBE, "unsubscribe")
     async def _handle_rpc_unsubscribe(self, data: rtc.RpcInvocationData) -> str:
         return await self._handle_subscription_rpc(
             data,
@@ -509,7 +519,7 @@ class LivekitRouter:
             handle_request=self._subscriber.unsubscribe_request,
         )
 
-    @rpc_error_handler(RPC_SERVICE_CALL, _translate_rpc_error("service.call"))
+    @rpc_error_handler(RPC_SERVICE_CALL, "service.call")
     async def _handle_rpc_call_service(self, data: rtc.RpcInvocationData) -> str:
         service_caller = self._service_caller
         if service_caller is None:
@@ -575,7 +585,7 @@ class LivekitRouter:
                 ),
             )
         except Exception:
-            logger.debug("Telemetry.emit failed for rpc", exc_info=True)
+            self._logger.debug("Telemetry.emit failed for rpc", exc_info=True)
 
     def _record_ingress_publish(
         self,
@@ -598,7 +608,10 @@ class LivekitRouter:
                 ),
             )
         except Exception:
-            logger.debug("Telemetry.emit failed for ingress_publish", exc_info=True)
+            self._logger.debug(
+                "Telemetry.emit failed for ingress_publish",
+                exc_info=True,
+            )
 
 
 __all__ = [

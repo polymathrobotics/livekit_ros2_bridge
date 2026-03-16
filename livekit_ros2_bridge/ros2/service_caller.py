@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol, cast
@@ -31,6 +30,7 @@ from livekit_ros2_bridge.core.access import (
     AccessResource,
     AccessDecision,
 )
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.request_context import RequestContext
 from livekit_ros2_bridge.core.names import normalize_ros_topic
 from livekit_ros2_bridge.core.protocol import LivekitRpcCallServiceRequest
@@ -40,8 +40,6 @@ from livekit_ros2_bridge.core.telemetry import (
     AccessDenyTelemetryEvent,
     Telemetry,
 )
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_MS = 2000
 DEFAULT_MAX_INFLIGHT_PER_PARTICIPANT = 4
@@ -104,6 +102,7 @@ class RosServiceCaller:
         access_policy: AccessPolicy,
         telemetry: Telemetry | None = None,
         callback_group: CallbackGroup | None = None,
+        logger: Logger,
     ) -> None:
         self._node = node
         self._callback_group = callback_group
@@ -114,6 +113,7 @@ class RosServiceCaller:
 
         self._access_policy = access_policy
         self._telemetry = telemetry or NullTelemetry()
+        self._logger = logger
 
         self._default_timeout_ms = max(int(config.default_timeout_ms), 0)
         self._max_inflight_per_participant = max(
@@ -175,6 +175,7 @@ class RosServiceCaller:
                 request_msg=request_msg,
                 deadline_s=deadline_s,
                 remove_pending=self._remove_pending_call,
+                logger=self._logger,
             )
             self._pending[call_id] = call
             call.start()
@@ -226,7 +227,10 @@ class RosServiceCaller:
                 ),
             )
         except Exception:
-            logger.debug("Telemetry.emit failed for access denial", exc_info=True)
+            self._logger.debug(
+                "Telemetry.emit failed for access denial",
+                exc_info=True,
+            )
 
     def _resolve_service_type(self, service: str, service_type: str | None) -> str:
         if service_type is not None:
@@ -247,7 +251,11 @@ class RosServiceCaller:
         try:
             services = self._node.get_service_names_and_types()
         except Exception as exc:
-            logger.error("Failed to resolve ROS service types: %s", exc, exc_info=True)
+            self._logger.error(
+                "Failed to resolve ROS service types: %s",
+                exc,
+                exc_info=True,
+            )
             return []
 
         for name, service_types in services:
@@ -319,6 +327,7 @@ class _PendingCall:
         request_msg: Any,
         deadline_s: float,
         remove_pending: Callable[[str], None],
+        logger: Logger,
     ) -> None:
         self._call_id = call_id
         self._node = node
@@ -332,6 +341,7 @@ class _PendingCall:
         self._request_msg = request_msg
         self._deadline_s = deadline_s
         self._remove_pending = remove_pending
+        self._logger = logger
 
         self._ready_timer: Timer | None = None
         self._timeout_timer: Timer | None = None
@@ -362,7 +372,7 @@ class _PendingCall:
         try:
             self._on_complete(outcome)
         except Exception:
-            logger.error("Service on_complete handler failed", exc_info=True)
+            self._logger.error("Service on_complete handler failed", exc_info=True)
 
     def _clear_timer(self, attr: str) -> None:
         timer = cast(Timer | None, getattr(self, attr))
@@ -372,7 +382,7 @@ class _PendingCall:
         try:
             self._node.destroy_timer(timer)
         except Exception:
-            logger.debug("Failed destroying ROS timer", exc_info=True)
+            self._logger.debug("Failed destroying ROS timer", exc_info=True)
 
     def _on_ready_timer(self) -> None:
         if self._completed:

@@ -20,6 +20,8 @@ from typing import Any
 import pytest
 
 from livekit_ros2_bridge.livekit.room_publisher import LivekitRoomPublisher
+from livekit_ros2_bridge.ros2.ros_logging import RosLogger
+from test.support.logger_harness import DummyLogger
 
 
 class DummyLocalParticipant:
@@ -62,6 +64,7 @@ async def test_publish_data_sends_payload_when_room_connected() -> None:
     publisher = LivekitRoomPublisher(
         room_provider=lambda: room,
         loop_provider=lambda: asyncio.get_running_loop(),
+        logger=RosLogger(DummyLogger("livekit_bridge.livekit.room_publisher")),
     )
 
     publisher.publish_data(
@@ -81,14 +84,20 @@ async def test_publish_data_sends_payload_when_room_connected() -> None:
 
 def test_publish_data_is_noop_when_disconnected() -> None:
     room = DummyRoom(connected=False, remote_participants={})
+    backend = DummyLogger("livekit_bridge.livekit.room_publisher")
     publisher = LivekitRoomPublisher(
         room_provider=lambda: room,
         loop_provider=lambda: None,
+        logger=RosLogger(backend),
     )
 
     publisher.publish_data("ros.topic.messages", {"msg": {"data": "hello"}})
 
     assert room.local_participant.calls == []
+    assert len(backend.records) == 1
+    assert backend.records[0].level == "debug"
+    assert backend.records[0].message == "Cannot publish data: not connected to a room."
+    assert backend.records[0].kwargs == {"throttle_duration_sec": 30.0}
 
 
 def test_publish_data_handles_unserializable_payload() -> None:
@@ -96,12 +105,33 @@ def test_publish_data_handles_unserializable_payload() -> None:
     publisher = LivekitRoomPublisher(
         room_provider=lambda: room,
         loop_provider=lambda: None,
+        logger=RosLogger(DummyLogger("livekit_bridge.livekit.room_publisher")),
     )
 
     # Object() is not JSON serializable.
     publisher.publish_data("ros.topic.messages", {"msg": object()})
 
     assert room.local_participant.calls == []
+
+
+def test_publish_data_logs_missing_loop_with_throttle() -> None:
+    room = DummyRoom(connected=True, remote_participants={"p1": object()})
+    backend = DummyLogger("livekit_bridge.livekit.room_publisher")
+    publisher = LivekitRoomPublisher(
+        room_provider=lambda: room,
+        loop_provider=lambda: None,
+        logger=RosLogger(backend),
+    )
+
+    publisher.publish_data("ros.topic.messages", {"msg": {"data": "hello"}})
+
+    assert room.local_participant.calls == []
+    assert len(backend.records) == 1
+    assert backend.records[0].level == "warning"
+    assert backend.records[0].message == (
+        "Cannot publish data: no running event loop available."
+    )
+    assert backend.records[0].kwargs == {"throttle_duration_sec": 30.0}
 
 
 def test_can_publish_data_checks_connection_and_remote_participants() -> None:
@@ -115,6 +145,7 @@ def test_can_publish_data_checks_connection_and_remote_participants() -> None:
         LivekitRoomPublisher(
             room_provider=lambda: disconnected,
             loop_provider=lambda: None,
+            logger=RosLogger(DummyLogger("livekit_bridge.livekit.room_publisher")),
         ).can_publish_data()
         is False
     )
@@ -122,6 +153,7 @@ def test_can_publish_data_checks_connection_and_remote_participants() -> None:
         LivekitRoomPublisher(
             room_provider=lambda: connected_empty,
             loop_provider=lambda: None,
+            logger=RosLogger(DummyLogger("livekit_bridge.livekit.room_publisher")),
         ).can_publish_data()
         is False
     )
@@ -129,6 +161,7 @@ def test_can_publish_data_checks_connection_and_remote_participants() -> None:
         LivekitRoomPublisher(
             room_provider=lambda: connected_with_remote,
             loop_provider=lambda: None,
+            logger=RosLogger(DummyLogger("livekit_bridge.livekit.room_publisher")),
         ).can_publish_data()
         is True
     )

@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from test.support.logger_harness import DummyLogger
 from livekit_ros2_bridge.core.access_static import StaticAccessPolicy
 from livekit_ros2_bridge.core.telemetry import NullTelemetry
 from livekit_ros2_bridge.livekit.session import LivekitConnectConfig, StaticTokenSource
@@ -25,23 +26,9 @@ from livekit_ros2_bridge.ros2.subscription_registry import SubscriberConfig
 from livekit_ros2_bridge.runtime import Runtime, RuntimeConfig
 
 
-class DummyLogger:
-    def __init__(self) -> None:
-        self.messages: list[str] = []
-
-    def warning(self, message: str) -> None:
-        self.messages.append(message)
-
-    def info(self, message: str) -> None:
-        self.messages.append(message)
-
-    def error(self, message: str) -> None:
-        self.messages.append(message)
-
-
 class DummyNode:
     def __init__(self) -> None:
-        self.logger = DummyLogger()
+        self.logger = DummyLogger("livekit_bridge")
 
     def get_logger(self) -> DummyLogger:
         return self.logger
@@ -124,7 +111,13 @@ def _make_runtime(monkeypatch: Any) -> tuple[Runtime, RuntimeObjects]:
         "livekit_ros2_bridge.runtime.MutuallyExclusiveCallbackGroup", object
     )
 
-    def _dispatcher(node: Any, *, callback_group: Any) -> DummyDispatcher:
+    def _dispatcher(
+        node: Any,
+        *,
+        callback_group: Any,
+        logger: Any,
+    ) -> DummyDispatcher:
+        del logger
         instance = DummyDispatcher(node, callback_group=callback_group)
         holder["dispatcher"] = instance
         return instance

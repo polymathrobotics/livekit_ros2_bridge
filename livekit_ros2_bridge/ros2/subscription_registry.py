@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Callable
 
@@ -37,6 +36,7 @@ from livekit_ros2_bridge.core.protocol import (
     LivekitRpcSubscriptionStatus,
     LivekitRpcUnsubscribeRequest,
 )
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.room_publisher import RoomPublisher
 from livekit_ros2_bridge.core.telemetry import (
     NullTelemetry,
@@ -44,8 +44,6 @@ from livekit_ros2_bridge.core.telemetry import (
     Telemetry,
 )
 from livekit_ros2_bridge.ros2.topic_subscription import RosTopicSubscription
-
-logger = logging.getLogger(__name__)
 
 
 def _default_subscription_qos() -> QoSProfile:
@@ -79,12 +77,14 @@ class RosSubscriptionRegistry:
         access_policy: AccessPolicy,
         telemetry: Telemetry | None = None,
         callback_group: CallbackGroup | None = None,
+        logger: Logger,
     ) -> None:
         self._node = node
         self._room_publisher = room_publisher
         self._access_policy = access_policy
         self._telemetry = telemetry or NullTelemetry()
         self._callback_group = callback_group
+        self._logger = logger
 
         self._subscriptions_by_topic: dict[str, RosTopicSubscription] = {}
         self._max_total_subscriptions = max(int(config.max_total_subscriptions), 0)
@@ -112,7 +112,7 @@ class RosSubscriptionRegistry:
                 )
             subscription.add_requester(requester_id, preferred_interval_ms)
             status = self._status_for(subscription)
-            logger.info(
+            self._logger.info(
                 "Updated LiveKit ROS subscription: ros_topic=%s requester_id=%s preferred_interval_ms=%s "
                 "applied_interval_ms=%s requester_count=%s",
                 topic,
@@ -123,6 +123,13 @@ class RosSubscriptionRegistry:
             )
             return subscription.info, status
 
+        self._logger.info(
+            "Starting LiveKit ROS subscription for new topic: ros_topic=%s requester_id=%s "
+            "preferred_interval_ms=%s",
+            topic,
+            requester_id,
+            preferred_interval_ms,
+        )
         self._enforce_limits(requester_id, creating_new_subscription=True)
         subscription = self._create_subscription(
             ctx=ctx,
@@ -132,7 +139,7 @@ class RosSubscriptionRegistry:
         )
         self._subscriptions_by_topic[topic] = subscription
         status = self._status_for(subscription)
-        logger.info(
+        self._logger.info(
             "Created LiveKit ROS subscription: ros_topic=%s requester_id=%s preferred_interval_ms=%s "
             "applied_interval_ms=%s requester_count=%s",
             topic,
@@ -171,7 +178,7 @@ class RosSubscriptionRegistry:
             else 0,
             requester_count=remaining_count,
         )
-        logger.info(
+        self._logger.info(
             "LiveKit ROS unsubscribe: ros_topic=%s requester_id=%s requester_count=%s "
             "applied_interval_ms=%s destroyed=%s",
             topic,
@@ -185,7 +192,7 @@ class RosSubscriptionRegistry:
     def remove_participant(self, requester_id: str) -> None:
         if not requester_id:
             return
-        logger.info(
+        self._logger.info(
             "Removing LiveKit ROS subscriptions for requester_id=%s",
             requester_id,
         )
@@ -194,7 +201,7 @@ class RosSubscriptionRegistry:
         )
 
     def clear_livekit_requesters(self) -> None:
-        logger.info("Clearing LiveKit ROS subscriptions for all requesters.")
+        self._logger.info("Clearing LiveKit ROS subscriptions for all requesters.")
         self._drop_requesters(lambda _requester_id: True)
 
     def shutdown(self) -> None:
@@ -204,7 +211,7 @@ class RosSubscriptionRegistry:
             try:
                 self._destroy_subscription(subscription)
             except Exception as exc:
-                logger.error(
+                self._logger.error(
                     "Failed to destroy ROS subscription for topic %s: %s",
                     subscription.info.topic,
                     exc,
@@ -263,13 +270,18 @@ class RosSubscriptionRegistry:
             message_id_provider=self._next_message_id,
             requesters={requester_id: preferred_interval_ms},
             telemetry=self._telemetry,
+            logger=self._logger.child("topic_subscription"),
         )
 
     def _resolve_topic_types(self, ros_topic: str) -> list[str]:
         try:
             topics = self._node.get_topic_names_and_types()
         except Exception as exc:
-            logger.error("Failed to resolve ROS topic types: %s", exc, exc_info=True)
+            self._logger.error(
+                "Failed to resolve ROS topic types: %s",
+                exc,
+                exc_info=True,
+            )
             return []
 
         for name, types in topics:
@@ -352,7 +364,10 @@ class RosSubscriptionRegistry:
                 ),
             )
         except Exception:
-            logger.debug("Telemetry.emit failed for access denial", exc_info=True)
+            self._logger.debug(
+                "Telemetry.emit failed for access denial",
+                exc_info=True,
+            )
 
     def _drop_requesters(self, should_remove: Callable[[str], bool]) -> None:
         to_destroy: list[RosTopicSubscription] = []
@@ -367,7 +382,7 @@ class RosSubscriptionRegistry:
 
             subscription.remove_requesters(removed)
             if subscription.requesters:
-                logger.info(
+                self._logger.info(
                     "LiveKit ROS subscription requesters removed: ros_topic=%s removed=%s "
                     "applied_interval_ms=%s requester_count=%s",
                     topic,
@@ -379,7 +394,7 @@ class RosSubscriptionRegistry:
 
             self._subscriptions_by_topic.pop(topic, None)
             to_destroy.append(subscription)
-            logger.info(
+            self._logger.info(
                 "LiveKit ROS subscription requesters removed: ros_topic=%s removed=%s requester_count=0",
                 topic,
                 removed,
@@ -391,7 +406,7 @@ class RosSubscriptionRegistry:
     def _destroy_subscription(self, subscription: RosTopicSubscription) -> None:
         if subscription.destroy():
             return
-        logger.warning(
+        self._logger.warning(
             "Failed to destroy ROS subscription for topic %s",
             subscription.info.topic,
         )

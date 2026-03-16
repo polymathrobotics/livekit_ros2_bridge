@@ -17,11 +17,12 @@ import asyncio
 import datetime
 import threading
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 import livekit.api as api
 import livekit.rtc as rtc
 
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.livekit.utils import is_room_connected
 
 
@@ -87,7 +88,7 @@ class LivekitSession:
         config: LivekitConnectConfig,
         token_source: TokenSource,
         handler: RoomEventHandler,
-        logger: Any,
+        logger: Logger,
         initial_backoff_ms: int,
         max_backoff_ms: int,
     ) -> None:

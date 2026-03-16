@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from livekit_ros2_bridge.ros2.publisher_registry import RosPublisherRegistry
+from test.support.logger_harness import make_test_logger
 
 
 class MsgA:
@@ -73,7 +74,10 @@ class DummyNode:
 def test_resolve_topic_types_handles_invalid_and_missing_topics() -> None:
     node = DummyNode()
     node.topic_names_and_types = [("/foo", ["std_msgs/msg/String"])]
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
 
     assert publisher_registry.resolve_topic_types("") == []
     assert publisher_registry.resolve_topic_types("/missing") == []
@@ -83,14 +87,20 @@ def test_resolve_topic_types_handles_invalid_and_missing_topics() -> None:
 def test_resolve_topic_types_handles_graph_exceptions() -> None:
     node = DummyNode()
     node.raise_get_types = True
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
 
     assert publisher_registry.resolve_topic_types("/foo") == []
 
 
 def test_publish_creates_and_reuses_registered_publisher() -> None:
     node = DummyNode()
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
 
     msg1 = MsgA()
     msg2 = MsgA()
@@ -104,7 +114,10 @@ def test_publish_creates_and_reuses_registered_publisher() -> None:
 
 def test_publish_rejects_invalid_inputs_and_type_mismatch() -> None:
     node = DummyNode()
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
 
     publisher_registry.publish_message("/foo", MsgA())
     publisher_registry.publish_message("/foo", MsgB())
@@ -117,7 +130,10 @@ def test_publish_rejects_invalid_inputs_and_type_mismatch() -> None:
 
 def test_unregister_publisher_handles_success_failure_and_invalid_topic() -> None:
     node = DummyNode()
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
 
     publisher_registry.publish_message("/foo", MsgA())
 
@@ -128,7 +144,10 @@ def test_unregister_publisher_handles_success_failure_and_invalid_topic() -> Non
 
 def test_unregister_publisher_handles_destroy_failures() -> None:
     node = DummyNode()
-    publisher_registry = RosPublisherRegistry(node)
+    publisher_registry = RosPublisherRegistry(
+        node,
+        logger=make_test_logger("livekit_bridge.ros2.publisher_registry"),
+    )
     publisher_registry.publish_message("/foo", MsgA())
 
     node.destroy_return = False

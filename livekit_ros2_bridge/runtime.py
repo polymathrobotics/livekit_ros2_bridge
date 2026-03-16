@@ -21,6 +21,7 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.node import Node
 
 from livekit_ros2_bridge.core.access import AccessPolicy
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.telemetry import Telemetry
 from livekit_ros2_bridge.livekit.router import LivekitRouter
 from livekit_ros2_bridge.livekit.room_publisher import LivekitRoomPublisher
@@ -32,6 +33,7 @@ from livekit_ros2_bridge.livekit.session import (
 )
 from livekit_ros2_bridge.ros2.executor_dispatcher import RosExecutorDispatcher
 from livekit_ros2_bridge.ros2.publisher import PublisherConfig, RosPublisher
+from livekit_ros2_bridge.ros2.ros_logging import RosLogger
 from livekit_ros2_bridge.ros2.service_caller import (
     RosServiceCaller,
     ServiceConfig,
@@ -76,17 +78,22 @@ class Runtime(RoomEventHandler):
     ) -> None:
         self._shutting_down = False
         callback_group = MutuallyExclusiveCallbackGroup()
+        root_logger = RosLogger(node.get_logger())
+
         self._ros_dispatcher = RosExecutorDispatcher(
             node,
             callback_group=callback_group,
+            logger=root_logger.child("ros2", "executor_dispatcher"),
         )
         self._session = self._create_session(
-            node=node,
+            logger=root_logger.child("livekit", "session"),
             connect_config=connect_config,
             token_source=token_source,
             runtime_config=runtime_config,
         )
-        room_publisher = self._create_room_publisher()
+        room_publisher = self._create_room_publisher(
+            logger=root_logger.child("livekit", "room_publisher")
+        )
 
         ros_subscription_registry = RosSubscriptionRegistry(
             node,
@@ -95,6 +102,7 @@ class Runtime(RoomEventHandler):
             access_policy=access_policy,
             telemetry=telemetry,
             callback_group=callback_group,
+            logger=root_logger.child("ros2", "subscription_registry"),
         )
         self._service_caller = RosServiceCaller(
             node,
@@ -102,15 +110,19 @@ class Runtime(RoomEventHandler):
             access_policy=access_policy,
             telemetry=telemetry,
             callback_group=callback_group,
+            logger=root_logger.child("ros2", "service_caller"),
         )
         ros_publisher_registry = RosPublisherRegistry(
-            node, callback_group=callback_group
+            node,
+            callback_group=callback_group,
+            logger=root_logger.child("ros2", "publisher_registry"),
         )
         ros_publisher = RosPublisher(
             ros_publisher_registry,
             runtime_config.publisher,
             access_policy=access_policy,
             telemetry=telemetry,
+            logger=root_logger.child("ros2", "publisher"),
         )
 
         self._router = LivekitRouter(
@@ -120,12 +132,13 @@ class Runtime(RoomEventHandler):
             work_dispatcher=self._ros_dispatcher,
             telemetry=telemetry,
             service_default_timeout_ms=runtime_config.service.default_timeout_ms,
+            logger=root_logger.child("livekit", "router"),
         )
 
     def _create_session(
         self,
         *,
-        node: Node,
+        logger: Logger,
         connect_config: LivekitConnectConfig,
         token_source: TokenSource,
         runtime_config: RuntimeConfig,
@@ -134,15 +147,20 @@ class Runtime(RoomEventHandler):
             config=connect_config,
             token_source=token_source,
             handler=self,
-            logger=node.get_logger(),
+            logger=logger,
             initial_backoff_ms=runtime_config.initial_backoff_ms,
             max_backoff_ms=runtime_config.max_backoff_ms,
         )
 
-    def _create_room_publisher(self) -> LivekitRoomPublisher:
+    def _create_room_publisher(
+        self,
+        *,
+        logger: Logger,
+    ) -> LivekitRoomPublisher:
         return LivekitRoomPublisher(
             room_provider=self._session.get_room,
             loop_provider=self._session.get_loop,
+            logger=logger,
         )
 
     def start(self) -> None:

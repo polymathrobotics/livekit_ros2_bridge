@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import time
 from typing import Any, Callable, Iterable
 
@@ -32,6 +31,7 @@ from livekit_ros2_bridge.core.protocol import (
     LivekitRosMessageEnvelope,
     LivekitRosSubscriptionInfo,
 )
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.serialization import sanitize_payload
 from livekit_ros2_bridge.core.telemetry import (
     EgressMessageTelemetryEvent,
@@ -39,8 +39,6 @@ from livekit_ros2_bridge.core.telemetry import (
     Telemetry,
 )
 from livekit_ros2_bridge.core.room_publisher import RoomPublisher
-
-logger = logging.getLogger(__name__)
 
 
 class RosTopicSubscription:
@@ -58,11 +56,13 @@ class RosTopicSubscription:
         message_id_provider: Callable[[], str],
         requesters: dict[str, int] | None = None,
         telemetry: Telemetry | None = None,
+        logger: Logger,
     ) -> None:
         self._node = node
         self._room_publisher = room_publisher
         self._telemetry = telemetry or NullTelemetry()
         self._message_id_provider = message_id_provider
+        self._logger = logger
 
         self.info = info
         self.subscription: Subscription = node.create_subscription(
@@ -142,7 +142,10 @@ class RosTopicSubscription:
                 ),
             )
         except Exception:
-            logger.debug("Telemetry.emit failed for egress_message", exc_info=True)
+            self._logger.debug(
+                "Telemetry.emit failed for egress_message",
+                exc_info=True,
+            )
 
         self._room_publisher.publish_data(
             DATA_TOPIC,
@@ -167,7 +170,7 @@ class RosTopicSubscription:
             payload = message_to_ordereddict(msg)
             return sanitize_payload(payload)
         except Exception as exc:
-            logger.error(
+            self._logger.error(
                 "Failed to serialize ROS message for subscription %s: %s",
                 self.info.topic,
                 exc,

@@ -23,6 +23,7 @@ from test.support.ros_harness import (
     patch_get_message,
     patch_set_message_fields,
 )
+from test.support.logger_harness import make_test_logger
 from livekit_ros2_bridge.core.access import AccessOperation
 from livekit_ros2_bridge.core.access_static import StaticAccessPolicy
 from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
@@ -63,6 +64,7 @@ def _make_publisher(
             config,
             access_policy=access_policy,
             telemetry=telemetry,
+            logger=make_test_logger("livekit_bridge.ros2.publisher"),
         ),
         ros_publisher_registry,
     )
@@ -175,6 +177,7 @@ def test_publish_accepts_graph_type_and_caches(
         ros_publisher_registry,
         PublisherConfig(max_topics=50),
         access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.publisher"),
     )
 
     patch_get_message(

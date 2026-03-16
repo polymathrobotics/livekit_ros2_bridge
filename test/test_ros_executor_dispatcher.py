@@ -17,8 +17,9 @@ from collections.abc import Callable
 
 import pytest
 
-from livekit_ros2_bridge.ros2 import executor_dispatcher as executor_dispatcher_module
 from livekit_ros2_bridge.ros2.executor_dispatcher import RosExecutorDispatcher
+from livekit_ros2_bridge.ros2.ros_logging import RosLogger
+from test.support.logger_harness import DummyLogger, make_test_logger
 
 
 class DummyGuard:
@@ -51,7 +52,11 @@ class DummyNode:
 
 def test_submit_and_drain_runs_work() -> None:
     node = DummyNode()
-    dispatcher = RosExecutorDispatcher(node, callback_group=object())
+    dispatcher = RosExecutorDispatcher(
+        node,
+        callback_group=object(),
+        logger=make_test_logger("livekit_bridge.ros2.executor_dispatcher"),
+    )
 
     future = dispatcher.submit(lambda: "ok")
 
@@ -63,28 +68,33 @@ def test_submit_and_drain_runs_work() -> None:
     assert future.result() == "ok"
 
 
-def test_submit_noresult_logs_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_submit_noresult_logs_failures() -> None:
     node = DummyNode()
-    dispatcher = RosExecutorDispatcher(node, callback_group=object())
-    error_calls: list[tuple[str, object]] = []
+    backend = DummyLogger("livekit_bridge.ros2.executor_dispatcher")
+    dispatcher = RosExecutorDispatcher(
+        node,
+        callback_group=object(),
+        logger=RosLogger(backend),
+    )
 
     def _boom() -> None:
         raise RuntimeError("boom")
 
-    def _record_error(message: str, *args: object, **kwargs: object) -> None:
-        error_calls.append((message, kwargs.get("exc_info")))
-
-    monkeypatch.setattr(executor_dispatcher_module.logger, "error", _record_error)
-
     dispatcher.submit_noresult(_boom)
     dispatcher._drain()
 
-    assert error_calls == [("ROS dispatcher task failed", True)]
+    assert len(backend.records) == 1
+    assert backend.records[0].message.startswith("ROS dispatcher task failed")
+    assert "RuntimeError: boom" in backend.records[0].message
 
 
 def test_shutdown_marks_pending_and_future_submissions_as_failed() -> None:
     node = DummyNode()
-    dispatcher = RosExecutorDispatcher(node, callback_group=object())
+    dispatcher = RosExecutorDispatcher(
+        node,
+        callback_group=object(),
+        logger=make_test_logger("livekit_bridge.ros2.executor_dispatcher"),
+    )
 
     pending = dispatcher.submit(lambda: "never-runs")
     dispatcher.shutdown()
@@ -100,7 +110,11 @@ def test_shutdown_marks_pending_and_future_submissions_as_failed() -> None:
 def test_submit_handles_guard_trigger_failures() -> None:
     node = DummyNode()
     node.guard.raise_on_trigger = True
-    dispatcher = RosExecutorDispatcher(node, callback_group=object())
+    dispatcher = RosExecutorDispatcher(
+        node,
+        callback_group=object(),
+        logger=make_test_logger("livekit_bridge.ros2.executor_dispatcher"),
+    )
 
     future = dispatcher.submit(lambda: "ok")
 

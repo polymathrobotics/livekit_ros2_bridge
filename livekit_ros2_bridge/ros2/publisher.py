@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +25,7 @@ from livekit_ros2_bridge.core.access import (
     AccessResource,
     AccessDecision,
 )
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
 from livekit_ros2_bridge.core.names import normalize_ros_topic
 from livekit_ros2_bridge.core.protocol import LivekitRosPublishPayload
@@ -34,8 +34,6 @@ from livekit_ros2_bridge.core.telemetry import (
     AccessDenyTelemetryEvent,
     Telemetry,
 )
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,6 +51,7 @@ class RosPublisher:
         *,
         access_policy: AccessPolicy,
         telemetry: Telemetry | None = None,
+        logger: Logger,
     ) -> None:
         self._ros_publisher_registry = ros_publisher_registry
         self._access_policy = access_policy
@@ -60,6 +59,7 @@ class RosPublisher:
         self._max_topics = max(int(config.max_topics), 0)
         self._seen_topics: OrderedDict[str, None] = OrderedDict()
         self._expected_types: dict[str, str] = {}
+        self._logger = logger
 
     def handle_publish_payload(
         self,
@@ -76,7 +76,7 @@ class RosPublisher:
 
         topic = normalize_ros_topic(parsed.topic)
         if not topic:
-            logger.warning(
+            self._logger.warning(
                 "Ignoring publish payload with invalid topic: %s", parsed.topic
             )
             return AccessDecision(ok=False, reason="invalid_topic")
@@ -87,7 +87,7 @@ class RosPublisher:
             AccessResource(name=topic, ros_type=parsed.type),
         )
         if not decision.ok:
-            logger.warning(
+            self._logger.warning(
                 "Ignoring publish payload for denied topic: %s requester_id=%s reason=%s",
                 topic,
                 ctx.requester_id or "",
@@ -103,7 +103,10 @@ class RosPublisher:
                     ),
                 )
             except Exception:
-                logger.debug("Telemetry.emit failed for publish deny", exc_info=True)
+                self._logger.debug(
+                    "Telemetry.emit failed for publish deny",
+                    exc_info=True,
+                )
             return decision
 
         type_error = self._validate_topic_type(topic, parsed.type)
@@ -113,7 +116,7 @@ class RosPublisher:
         try:
             msg_cls = get_message(parsed.type)
         except Exception:
-            logger.error(
+            self._logger.warning(
                 "Unknown ROS message type for publish payload: %s",
                 parsed.type,
                 exc_info=True,
@@ -124,7 +127,7 @@ class RosPublisher:
             msg_instance = msg_cls()
             set_message_fields(msg_instance, parsed.msg)
         except Exception as exc:
-            logger.error(
+            self._logger.warning(
                 "Error setting ROS message fields for topic=%s type=%s: %s",
                 topic,
                 parsed.type,
@@ -136,7 +139,7 @@ class RosPublisher:
         try:
             self._ros_publisher_registry.publish_message(topic, msg_instance)
         except Exception as exc:
-            logger.error(
+            self._logger.error(
                 "Error publishing ROS message to topic=%s: %s",
                 topic,
                 exc,
@@ -149,7 +152,7 @@ class RosPublisher:
 
     def _parse_payload(self, payload: Any) -> LivekitRosPublishPayload | None:
         if not isinstance(payload, dict):
-            logger.warning(
+            self._logger.warning(
                 "Ignoring non-dict publish payload of type %s",
                 type(payload),
             )
@@ -157,7 +160,9 @@ class RosPublisher:
         try:
             return LivekitRosPublishPayload.parse_obj(payload)
         except ValidationError:
-            logger.warning("Ignoring publish payload without valid topic/type/msg.")
+            self._logger.warning(
+                "Ignoring publish payload without valid topic/type/msg."
+            )
             return None
 
     def _validate_topic_type(
@@ -169,13 +174,13 @@ class RosPublisher:
         if expected_type is None:
             graph_types = self._ros_publisher_registry.resolve_topic_types(topic)
             if not graph_types:
-                logger.warning(
+                self._logger.warning(
                     "Rejecting publish payload for topic=%s: no ROS graph type is available",
                     topic,
                 )
                 return AccessDecision(ok=False, reason="topic_type_unknown")
             if len(graph_types) > 1:
-                logger.warning(
+                self._logger.warning(
                     "Rejecting publish payload for topic=%s: multiple ROS graph types: %s",
                     topic,
                     ", ".join(graph_types),
@@ -187,7 +192,7 @@ class RosPublisher:
         if expected_type == requested_type:
             return None
 
-        logger.warning(
+        self._logger.warning(
             "Rejecting publish payload for topic=%s: type mismatch expected=%s got=%s",
             topic,
             expected_type,
@@ -207,7 +212,7 @@ class RosPublisher:
             evicted_topic, _ = self._seen_topics.popitem(last=False)
             self._expected_types.pop(evicted_topic, None)
             removed = self._ros_publisher_registry.unregister_publisher(evicted_topic)
-            logger.info(
+            self._logger.warning(
                 "Publisher topic cap reached; evicted topic=%s to allow topic=%s (publisher_removed=%s)",
                 evicted_topic,
                 ros_topic,

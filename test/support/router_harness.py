@@ -19,6 +19,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
+from livekit_ros2_bridge.ros2.ros_logging import RosLogger
+from test.support.logger_harness import DummyLogger
 from livekit_ros2_bridge.core.protocol import (
     LivekitRosSubscriptionInfo,
     LivekitRpcCallServiceRequest,
@@ -197,11 +199,14 @@ def make_router(
     dispatcher: Any | None = None,
     dispatch_timeout_s: float = 5.0,
     service_timeout_overhead_s: float = 0.5,
+    logger: Any | None = None,
 ) -> LivekitRouter:
     if publisher is None:
         publisher = MagicMock()
     if dispatcher is None:
         dispatcher = DummyDispatcher()
+    if logger is None:
+        logger = RosLogger(DummyLogger("livekit_bridge.livekit.router"))
     resolved_service_caller: DummyServiceCaller | None
     if service_caller is _DEFAULT:
         resolved_service_caller = DummyServiceCaller()
@@ -215,6 +220,7 @@ def make_router(
         telemetry=telemetry,
         dispatch_timeout_s=dispatch_timeout_s,
         service_timeout_overhead_s=service_timeout_overhead_s,
+        logger=logger,
     )
 
 
@@ -227,6 +233,7 @@ def make_rpc_handler(
     dispatcher: Any | None = None,
     dispatch_timeout_s: float = 5.0,
     service_timeout_overhead_s: float = 0.5,
+    logger: Any | None = None,
 ) -> tuple[LivekitRouter, Any]:
     router = make_router(
         subscriber=subscriber,
@@ -235,6 +242,7 @@ def make_rpc_handler(
         dispatcher=dispatcher,
         dispatch_timeout_s=dispatch_timeout_s,
         service_timeout_overhead_s=service_timeout_overhead_s,
+        logger=logger,
     )
     local_participant = DummyLocalParticipant()
     router.register_rpc_methods(cast(Any, local_participant))

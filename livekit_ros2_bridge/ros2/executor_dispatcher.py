@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 import queue
 from concurrent.futures import Future
 from threading import Lock
@@ -22,7 +21,7 @@ from typing import Any, Callable, TypeVar
 from rclpy.callback_groups import CallbackGroup
 from rclpy.node import Node
 
-logger = logging.getLogger(__name__)
+from livekit_ros2_bridge.core.logging import Logger
 
 T = TypeVar("T")
 
@@ -35,13 +34,20 @@ class RosExecutorDispatcher:
     - A periodic timer adds latency and forces a polling cadence even when idle.
     """
 
-    def __init__(self, node: Node, *, callback_group: CallbackGroup) -> None:
+    def __init__(
+        self,
+        node: Node,
+        *,
+        callback_group: CallbackGroup,
+        logger: Logger,
+    ) -> None:
         self._node = node
         self._queue: queue.SimpleQueue[tuple[Callable[[], Any], Future[Any]]] = (
             queue.SimpleQueue()
         )
         self._shutdown = False
         self._lock = Lock()
+        self._logger = logger
 
         self._guard = node.create_guard_condition(
             self._drain,
@@ -66,7 +72,7 @@ class RosExecutorDispatcher:
             try:
                 done.result()
             except Exception:
-                logger.error("ROS dispatcher task failed", exc_info=True)
+                self._logger.error("ROS dispatcher task failed", exc_info=True)
 
         future.add_done_callback(_log_if_failed)  # type: ignore[arg-type]
 
@@ -85,7 +91,7 @@ class RosExecutorDispatcher:
         try:
             self._guard.trigger()
         except Exception:
-            logger.debug("Failed triggering ROS guard condition", exc_info=True)
+            self._logger.debug("Failed triggering ROS guard condition", exc_info=True)
 
     def _drain(self) -> None:
         while True:

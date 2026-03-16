@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from rclpy.qos import QoSProfile
 
+from test.support.logger_harness import make_test_logger
 from test.support.ros_harness import (
     make_subscription_node,
     patch_message_to_ordereddict,
@@ -84,6 +85,7 @@ def test_bridge_subscription_targets_requesters(
         message_id_provider=lambda: "msg-1",
         requesters={"p1": 0, "p2": 0},
         telemetry=None,
+        logger=make_test_logger("livekit_bridge.ros2.topic_subscription"),
     )
 
     sub._ros_callback(object())
@@ -123,6 +125,7 @@ def test_bridge_subscription_does_not_publish_without_requesters(
         message_id_provider=lambda: "msg-1",
         requesters={},
         telemetry=None,
+        logger=make_test_logger("livekit_bridge.ros2.topic_subscription"),
     )
 
     sub._ros_callback(object())
@@ -159,6 +162,7 @@ def test_bridge_subscription_emits_egress_message_event(
         message_id_provider=lambda: "msg-1",
         requesters={"p1": 0},
         telemetry=telemetry,
+        logger=make_test_logger("livekit_bridge.ros2.topic_subscription"),
     )
 
     sub._ros_callback(object())

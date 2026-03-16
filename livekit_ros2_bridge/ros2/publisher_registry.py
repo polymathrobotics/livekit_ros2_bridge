@@ -13,16 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from rclpy.callback_groups import CallbackGroup
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
 
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.names import normalize_ros_topic
-
-logger = logging.getLogger(__name__)
 
 
 def _make_default_qos_profile() -> QoSProfile:
@@ -45,6 +43,7 @@ class RosPublisherRegistry:
         *,
         qos_profile: QoSProfile | None = None,
         callback_group: CallbackGroup | None = None,
+        logger: Logger,
     ) -> None:
         self._node = node
         self._qos_profile = (
@@ -52,6 +51,7 @@ class RosPublisherRegistry:
         )
         self._callback_group = callback_group
         self._publishers_by_topic: dict[str, tuple[type, Any]] = {}
+        self._logger = logger
 
     def resolve_topic_types(self, topic: str) -> list[str]:
         normalized_topic = normalize_ros_topic(topic)
@@ -61,7 +61,7 @@ class RosPublisherRegistry:
         try:
             topics = self._node.get_topic_names_and_types()
         except Exception as exc:
-            logger.warning(
+            self._logger.warning(
                 "Failed to get ROS topic names/types for type resolution: %s",
                 exc,
                 exc_info=True,
@@ -75,12 +75,12 @@ class RosPublisherRegistry:
 
     def publish_message(self, topic: str, message: object | None) -> None:
         if message is None:
-            logger.warning("Cannot publish ROS message: message is None.")
+            self._logger.warning("Cannot publish ROS message: message is None.")
             return
 
         ros_topic = normalize_ros_topic(topic)
         if not ros_topic:
-            logger.warning("Cannot publish ROS message: invalid topic=%s", topic)
+            self._logger.warning("Cannot publish ROS message: invalid topic=%s", topic)
             return
 
         msg_type = type(message)
@@ -96,7 +96,7 @@ class RosPublisherRegistry:
         else:
             registered_type, publisher = registered_publisher
             if registered_type is not msg_type:
-                logger.warning(
+                self._logger.warning(
                     "Cannot publish to topic=%s: registered type mismatch expected=%s got=%s",
                     ros_topic,
                     registered_type,
@@ -109,7 +109,10 @@ class RosPublisherRegistry:
     def unregister_publisher(self, topic: str) -> bool:
         ros_topic = normalize_ros_topic(topic)
         if not ros_topic:
-            logger.warning("Cannot unregister topic publisher: invalid topic=%s", topic)
+            self._logger.warning(
+                "Cannot unregister topic publisher: invalid topic=%s",
+                topic,
+            )
             return False
 
         registered_publisher = self._publishers_by_topic.get(ros_topic)
@@ -120,7 +123,7 @@ class RosPublisherRegistry:
         try:
             success = self._node.destroy_publisher(publisher)
         except Exception as exc:
-            logger.warning(
+            self._logger.warning(
                 "Failed to destroy topic publisher for topic=%s: %s",
                 ros_topic,
                 exc,
@@ -128,7 +131,10 @@ class RosPublisherRegistry:
             )
             return False
         if not success:
-            logger.warning("Failed to destroy topic publisher for topic=%s", ros_topic)
+            self._logger.warning(
+                "Failed to destroy topic publisher for topic=%s",
+                ros_topic,
+            )
             return False
 
         self._publishers_by_topic.pop(ros_topic, None)

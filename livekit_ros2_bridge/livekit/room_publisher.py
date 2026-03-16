@@ -15,19 +15,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, Mapping
 
 from livekit import rtc
 
+from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.room_publisher import RoomPublisher
 from livekit_ros2_bridge.core.serialization import sanitize_payload
 from livekit_ros2_bridge.livekit.utils import is_room_connected
 
-logger = logging.getLogger(__name__)
-
 LIVEKIT_RELIABLE_PACKET_WARN_BYTES = 15 * 1024
+_ROOM_UNAVAILABLE_THROTTLE_S = 30.0
 
 
 class LivekitRoomPublisher(RoomPublisher):
@@ -38,9 +37,12 @@ class LivekitRoomPublisher(RoomPublisher):
         *,
         room_provider: Callable[[], rtc.Room | None],
         loop_provider: Callable[[], asyncio.AbstractEventLoop | None],
+        logger: Logger,
     ) -> None:
         self._room_provider = room_provider
         self._loop_provider = loop_provider
+        self._logger = logger
+        self._availability_logger = logger.throttled(_ROOM_UNAVAILABLE_THROTTLE_S)
 
     def publish_data(
         self,
@@ -52,7 +54,9 @@ class LivekitRoomPublisher(RoomPublisher):
     ) -> None:
         room = self._room_provider()
         if not is_room_connected(room):
-            logger.info("Cannot publish data: not connected to a room.")
+            self._availability_logger.debug(
+                "Cannot publish data: not connected to a room."
+            )
             return
 
         try:
@@ -60,14 +64,14 @@ class LivekitRoomPublisher(RoomPublisher):
             message = json.dumps(sanitized_payload, allow_nan=False)
             message_bytes = message.encode("utf-8")
         except Exception as e:
-            logger.error(
+            self._logger.error(
                 "Failed to serialize LiveKit data payload: %s", e, exc_info=True
             )
             return
 
         message_size = len(message_bytes)
         if message_size > LIVEKIT_RELIABLE_PACKET_WARN_BYTES:
-            logger.warning(
+            self._logger.warning(
                 "LiveKit payload size %s bytes exceeds recommended %s bytes for topic=%s reliable=%s",
                 message_size,
                 LIVEKIT_RELIABLE_PACKET_WARN_BYTES,
@@ -89,8 +93,9 @@ class LivekitRoomPublisher(RoomPublisher):
             try:
                 local_participant = active_room.local_participant
             except Exception as e:
-                logger.warning(
-                    "Cannot publish data: local participant unavailable: %s", e
+                self._availability_logger.warning(
+                    "Cannot publish data: local participant unavailable: %s",
+                    e,
                 )
                 return
 
@@ -102,7 +107,7 @@ class LivekitRoomPublisher(RoomPublisher):
                     topic=topic,
                 )
             except Exception as e:
-                logger.error(
+                self._logger.error(
                     "Failed to publish LiveKit data topic=%s: %s",
                     topic,
                     e,
@@ -149,7 +154,7 @@ class LivekitRoomPublisher(RoomPublisher):
             asyncio.create_task(coroutine_factory())
             return
 
-        logger.warning(no_loop_message)
+        self._availability_logger.warning(no_loop_message)
 
 
 __all__ = ["LivekitRoomPublisher"]

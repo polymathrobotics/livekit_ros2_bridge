@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from test.support.logger_harness import make_test_logger
 from test.support.ros_harness import make_subscription_node, patch_get_message
 from livekit_ros2_bridge.core.access import AccessOperation
 from livekit_ros2_bridge.core.access_static import StaticAccessPolicy
@@ -62,6 +63,7 @@ def _make_subscription_registry(
             config,
             access_policy=access_policy,
             telemetry=telemetry,
+            logger=make_test_logger("livekit_bridge.ros2.subscription_registry"),
         ),
         node,
     )

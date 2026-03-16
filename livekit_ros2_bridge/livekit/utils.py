@@ -13,12 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from livekit import rtc
-
-logger = logging.getLogger(__name__)
 
 _PARTICIPANT_ID_FIELDS = ("identity", "sid", "name")
 
@@ -42,10 +39,6 @@ def get_participant_id_from_packet(data: Any) -> str | None:
 
     participant_sid = getattr(data, "participant_sid", None)
     if participant_sid:
-        logger.warning(
-            "LiveKit data packet missing participant_identity; using participant_sid=%s",
-            participant_sid,
-        )
         return str(participant_sid)
 
     return None

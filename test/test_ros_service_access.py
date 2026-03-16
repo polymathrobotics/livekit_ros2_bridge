@@ -18,6 +18,7 @@ from typing import Any, Callable, cast
 
 import pytest
 
+from test.support.logger_harness import make_test_logger
 from livekit_ros2_bridge.core.access import AccessOperation
 from livekit_ros2_bridge.core.access_static import StaticAccessPolicy
 from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
@@ -171,6 +172,7 @@ def test_service_call_denied_by_default() -> None:
         ServiceConfig(),
         access_policy=access_policy,
         telemetry=cast(Any, telemetry),
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
     )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
@@ -210,7 +212,12 @@ def test_service_call_allowlist_allows(monkeypatch: pytest.MonkeyPatch) -> None:
         client=DummyClient(DummyFuture(response=response)),
     )
     access_policy = StaticAccessPolicy(service_allow=["/foo"])
-    caller = RosServiceCaller(node, ServiceConfig(), access_policy=access_policy)
+    caller = RosServiceCaller(
+        node,
+        ServiceConfig(),
+        access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
+    )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
     outcomes: list[object] = []
@@ -237,7 +244,12 @@ def test_service_call_allowlist_allows(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_service_call_requires_resolved_type_when_missing_request_type() -> None:
     node = DummyNode(service_types=[])
     access_policy = StaticAccessPolicy(service_allow=["/foo"])
-    caller = RosServiceCaller(node, ServiceConfig(), access_policy=access_policy)
+    caller = RosServiceCaller(
+        node,
+        ServiceConfig(),
+        access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
+    )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
     with pytest.raises(ValueError, match="No ROS service types found"):
@@ -256,7 +268,12 @@ def test_service_call_requires_resolved_type_when_missing_request_type() -> None
 def test_service_call_rejects_ambiguous_graph_service_types() -> None:
     node = DummyNode(service_types=[("/foo", ["pkg/srv/Foo", "pkg/srv/Bar"])])
     access_policy = StaticAccessPolicy(service_allow=["/foo"])
-    caller = RosServiceCaller(node, ServiceConfig(), access_policy=access_policy)
+    caller = RosServiceCaller(
+        node,
+        ServiceConfig(),
+        access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
+    )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
     with pytest.raises(ValueError, match="Multiple ROS service types found"):
@@ -283,7 +300,12 @@ def test_service_call_cancel_call_and_unknown_call_id(
         client=DummyClient(future),
     )
     access_policy = StaticAccessPolicy(service_allow=["/foo"])
-    caller = RosServiceCaller(node, ServiceConfig(), access_policy=access_policy)
+    caller = RosServiceCaller(
+        node,
+        ServiceConfig(),
+        access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
+    )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
     outcomes: list[object] = []
@@ -318,6 +340,7 @@ def test_service_call_enforces_inflight_limit(monkeypatch: pytest.MonkeyPatch) -
         node,
         ServiceConfig(max_inflight_per_participant=1),
         access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
     )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
 
@@ -358,7 +381,12 @@ def test_service_call_shutdown_completes_pending_calls(
         client=DummyClient(future),
     )
     access_policy = StaticAccessPolicy(service_allow=["/foo"])
-    caller = RosServiceCaller(node, ServiceConfig(), access_policy=access_policy)
+    caller = RosServiceCaller(
+        node,
+        ServiceConfig(),
+        access_policy=access_policy,
+        logger=make_test_logger("livekit_bridge.ros2.service_caller"),
+    )
     ctx = RequestContext(requester_id="client-1", source=RequestSource.LIVEKIT_RPC)
     outcomes: list[object] = []
 
