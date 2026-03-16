@@ -13,7 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
+import os
 import sys
+
+import pytest
 
 from livekit_ros2_bridge.ros2.ros_logging import RosLogger
 from test.support.logger_harness import DummyLogger
@@ -58,3 +61,29 @@ def test_adapter_accepts_exception_tuple_and_throttle_filter() -> None:
     assert len(backend.records) == 1
     assert "ValueError: bad" in backend.records[0].message
     assert backend.records[0].kwargs == {"throttle_duration_sec": 5.0}
+
+
+def test_adapter_preserves_callsite_for_mixed_severity() -> None:
+    rcutils_logger = pytest.importorskip("rclpy.impl.rcutils_logger")
+    backend = rcutils_logger.RcutilsLogger(name="livekit_bridge")
+    logger = RosLogger(backend)
+
+    logger.info("info message")
+    logger.warning("warning message")
+
+    assert len(backend.contexts) == 2
+    caller_paths = {caller_id.file_path for caller_id in backend.contexts}
+    assert caller_paths == {os.path.realpath(__file__)}
+
+
+def test_adapter_preserves_callsite_for_throttle_changes() -> None:
+    rcutils_logger = pytest.importorskip("rclpy.impl.rcutils_logger")
+    backend = rcutils_logger.RcutilsLogger(name="livekit_bridge")
+    logger = RosLogger(backend)
+
+    logger.warning("warning message")
+    logger.throttled(1.0).warning("warning throttled")
+
+    assert len(backend.contexts) == 2
+    caller_paths = {caller_id.file_path for caller_id in backend.contexts}
+    assert caller_paths == {os.path.realpath(__file__)}

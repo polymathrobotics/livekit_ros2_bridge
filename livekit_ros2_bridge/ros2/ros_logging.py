@@ -13,10 +13,33 @@
 # limitations under the License.
 from __future__ import annotations
 
+import os
 import traceback
 from typing import Any
 
 from livekit_ros2_bridge.core.logging import ExcInfoLike
+
+_RCLPY_CALLSITE_REGISTERED = False
+
+
+def _register_rclpy_internal_caller(logger: Any) -> None:
+    """Make rclpy skip this adapter module when it records log callsites."""
+    global _RCLPY_CALLSITE_REGISTERED
+    if _RCLPY_CALLSITE_REGISTERED:
+        return
+
+    try:
+        from rclpy.impl import rcutils_logger
+    except ImportError:
+        return
+
+    if not isinstance(logger, rcutils_logger.RcutilsLogger):
+        return
+
+    module_path = os.path.realpath(__file__)
+    if module_path not in rcutils_logger._internal_callers:
+        rcutils_logger._internal_callers.append(module_path)
+    _RCLPY_CALLSITE_REGISTERED = True
 
 
 class RosLogger:
@@ -28,6 +51,7 @@ class RosLogger:
         *,
         throttle_duration_sec: float | None = None,
     ) -> None:
+        _register_rclpy_internal_caller(logger)
         self._logger = logger
         self._throttle_duration_sec = throttle_duration_sec
 
