@@ -18,7 +18,6 @@ project(livekit_ros2_bridge)
 
 # Find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_target_dependencies REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(generate_parameter_library REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -44,7 +43,7 @@ target_include_directories(${PROJECT_NAME}_node PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(${PROJECT_NAME}_node PUBLIC cxx_std_17)
-ament_target_dependencies(${PROJECT_NAME}_node rclcpp)
+target_link_libraries(${PROJECT_NAME}_node PUBLIC rclcpp::rclcpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
   target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
@@ -57,10 +56,9 @@ target_include_directories(${PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PRIVATE
   ${PROJECT_NAME}_node
 )
-ament_target_dependencies(${PROJECT_NAME} rclcpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
   target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
@@ -76,7 +74,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_cpp_smoke test/cpp/test_cpp_smoke.cpp)
   target_link_libraries(test_cpp_smoke ${PROJECT_NAME}_node)
-  ament_target_dependencies(test_cpp_smoke rclcpp)
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
 endif()
 
