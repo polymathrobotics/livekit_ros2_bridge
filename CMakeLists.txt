@@ -42,13 +42,20 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
-ament_auto_add_library(${PROJECT_NAME} SHARED
+add_library(${PROJECT_NAME} SHARED
   src/node.cpp
+)
+target_include_directories(${PROJECT_NAME} PUBLIC include)
+ament_target_dependencies(${PROJECT_NAME}
+  rclcpp
+  rclcpp_components
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
   EXECUTABLE ${PROJECT_NAME}_node
 )
+
+install(TARGETS ${PROJECT_NAME})
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
