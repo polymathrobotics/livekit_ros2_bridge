@@ -16,7 +16,6 @@
 
 namespace livekit_ros2_bridge {
 
-LiveKitRos2BridgeNode::LiveKitRos2BridgeNode()
-    : rclcpp::Node("livekit_ros2_bridge") {}
+Node::Node() : rclcpp::Node("livekit_ros2_bridge") {}
 
 }  // namespace livekit_ros2_bridge

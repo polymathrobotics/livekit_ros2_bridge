@@ -18,9 +18,9 @@
 
 namespace livekit_ros2_bridge {
 
-class LiveKitRos2BridgeNode final : public rclcpp::Node {
+class Node final : public rclcpp::Node {
 public:
-  LiveKitRos2BridgeNode();
+  Node();
 };
 
 }  // namespace livekit_ros2_bridge

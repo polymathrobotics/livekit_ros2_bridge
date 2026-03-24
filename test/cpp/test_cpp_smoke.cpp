@@ -25,7 +25,7 @@ namespace {
 TEST(CppSmokeTest, ConstructsNode) {
   rclcpp::init(0, nullptr);
 
-  const auto node = std::make_shared<LiveKitRos2BridgeNode>();
+  const auto node = std::make_shared<Node>();
 
   EXPECT_STREQ(node->get_name(), "livekit_ros2_bridge");
 

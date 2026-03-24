@@ -23,7 +23,7 @@ int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
 
   try {
-    auto node = std::make_shared<livekit_ros2_bridge::LiveKitRos2BridgeNode>();
+    auto node = std::make_shared<livekit_ros2_bridge::Node>();
     rclcpp::spin(node);
   } catch (const std::exception &exc) {
     RCLCPP_ERROR(
