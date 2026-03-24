@@ -38,10 +38,6 @@ ament_python_install_package(${PROJECT_NAME}
   SCRIPTS_DESTINATION lib/${PROJECT_NAME}
 )
 
-install(DIRECTORY config
-  DESTINATION share/${PROJECT_NAME}
-)
-
 add_library(${PROJECT_NAME} SHARED
   src/node.cpp
 )
@@ -55,6 +51,8 @@ rclcpp_components_register_node(${PROJECT_NAME}
   EXECUTABLE ${PROJECT_NAME}_node
 )
 
+install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME})
 
 if(BUILD_TESTING)
@@ -65,5 +63,4 @@ if(BUILD_TESTING)
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
 endif()
 
-install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 ament_package()
