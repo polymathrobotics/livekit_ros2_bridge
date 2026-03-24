@@ -42,33 +42,37 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
-add_library(${PROJECT_NAME}_node
+add_library(${PROJECT_NAME} SHARED
   src/node.cpp
 )
-target_include_directories(${PROJECT_NAME}_node PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_include_directories(${PROJECT_NAME} PUBLIC
+  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+  "$<INSTALL_INTERFACE:include>"
 )
-target_link_libraries(${PROJECT_NAME}_node PUBLIC rclcpp::rclcpp)
+target_link_libraries(${PROJECT_NAME} PUBLIC rclcpp::rclcpp)
 
-add_executable(${PROJECT_NAME}
+add_executable(${PROJECT_NAME}_node
   src/main.cpp
 )
-target_include_directories(${PROJECT_NAME} PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_link_libraries(${PROJECT_NAME} PRIVATE
-  ${PROJECT_NAME}_node
+target_link_libraries(${PROJECT_NAME}_node PRIVATE
+  ${PROJECT_NAME}
 )
 
-install(TARGETS ${PROJECT_NAME}
-  DESTINATION lib/${PROJECT_NAME}
+install(DIRECTORY include/
+  DESTINATION include
+)
+
+install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
 
   ament_add_gtest(test_cpp_smoke test/cpp/test_cpp_smoke.cpp)
-  target_link_libraries(test_cpp_smoke ${PROJECT_NAME}_node)
+  target_link_libraries(test_cpp_smoke ${PROJECT_NAME})
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
 endif()
 
