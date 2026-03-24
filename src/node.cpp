@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "livekit_ros2_bridge/node.hpp"
+#include "rclcpp_components/register_node_macro.hpp"
 
 namespace livekit_ros2_bridge {
 
@@ -20,3 +21,5 @@ Node::Node(const rclcpp::NodeOptions &options)
     : rclcpp::Node("livekit_ros2_bridge", options) {}
 
 }  // namespace livekit_ros2_bridge
+
+RCLCPP_COMPONENTS_REGISTER_NODE(livekit_ros2_bridge::Node)

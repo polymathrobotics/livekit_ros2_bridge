@@ -49,20 +49,22 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
   "$<INSTALL_INTERFACE:include>"
 )
-target_link_libraries(${PROJECT_NAME} PUBLIC rclcpp::rclcpp)
-
-add_executable(${PROJECT_NAME}_node
-  src/main.cpp
+target_link_libraries(${PROJECT_NAME}
+  PUBLIC
+    rclcpp::rclcpp
+  PRIVATE
+    rclcpp_components::component
 )
-target_link_libraries(${PROJECT_NAME}_node PRIVATE
-  ${PROJECT_NAME}
+rclcpp_components_register_node(${PROJECT_NAME}
+  PLUGIN "livekit_ros2_bridge::Node"
+  EXECUTABLE ${PROJECT_NAME}_node
 )
 
 install(DIRECTORY include/
   DESTINATION include
 )
 
-install(TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_node
+install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
