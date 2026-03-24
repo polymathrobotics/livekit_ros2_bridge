@@ -16,6 +16,15 @@
 cmake_minimum_required(VERSION 3.14)
 project(livekit_ros2_bridge)
 
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic -Werror=switch)
+  add_link_options("-Wl,--no-undefined")
+endif()
+
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
@@ -39,12 +48,7 @@ add_library(${PROJECT_NAME}_node
 target_include_directories(${PROJECT_NAME}_node PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_compile_features(${PROJECT_NAME}_node PUBLIC cxx_std_17)
 target_link_libraries(${PROJECT_NAME}_node PUBLIC rclcpp::rclcpp)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
-  target_compile_options(${PROJECT_NAME}_node PRIVATE -Wall -Wextra -Wpedantic)
-endif()
 
 add_executable(${PROJECT_NAME}
   src/main.cpp
@@ -52,14 +56,9 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 target_link_libraries(${PROJECT_NAME} PRIVATE
   ${PROJECT_NAME}_node
 )
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "(GNU|Clang)")
-  target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
-endif()
 
 install(TARGETS ${PROJECT_NAME}
   DESTINATION lib/${PROJECT_NAME}
