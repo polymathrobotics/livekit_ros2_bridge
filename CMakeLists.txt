@@ -16,11 +16,8 @@
 cmake_minimum_required(VERSION 3.14)
 project(livekit_ros2_bridge)
 
-# Find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
-find_package(generate_parameter_library REQUIRED)
-find_package(rclcpp REQUIRED)
+find_package(ament_cmake_auto REQUIRED)
+ament_auto_find_build_dependencies()
 
 generate_parameter_module(parameters
   livekit_ros2_bridge/parameters.yaml
@@ -69,8 +66,7 @@ install(TARGETS ${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
-  find_package(ament_cmake_gtest REQUIRED)
-  find_package(ament_cmake_pytest REQUIRED)
+  ament_auto_find_test_dependencies()
 
   ament_add_gtest(test_cpp_smoke test/cpp/test_cpp_smoke.cpp)
   target_link_libraries(test_cpp_smoke ${PROJECT_NAME}_node)
