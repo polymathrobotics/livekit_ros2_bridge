@@ -42,32 +42,12 @@ install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
-add_library(${PROJECT_NAME} SHARED
+ament_auto_add_library(${PROJECT_NAME} SHARED
   src/node.cpp
-)
-target_include_directories(${PROJECT_NAME} PUBLIC
-  "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  "$<INSTALL_INTERFACE:include>"
-)
-target_link_libraries(${PROJECT_NAME}
-  PUBLIC
-    rclcpp::rclcpp
-  PRIVATE
-    rclcpp_components::component
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
   EXECUTABLE ${PROJECT_NAME}_node
-)
-
-install(DIRECTORY include/
-  DESTINATION include
-)
-
-install(TARGETS ${PROJECT_NAME}
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
@@ -78,4 +58,4 @@ if(BUILD_TESTING)
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
 endif()
 
-ament_package()
+ament_auto_package()
