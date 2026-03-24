@@ -14,7 +14,7 @@
 
 #pragma once
 
-#include <rclcpp/node.hpp>
+#include "rclcpp/node.hpp"
 
 namespace livekit_ros2_bridge {
 

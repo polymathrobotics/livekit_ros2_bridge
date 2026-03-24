@@ -15,7 +15,7 @@
 #include <exception>
 #include <memory>
 
-#include <rclcpp/rclcpp.hpp>
+#include "rclcpp/rclcpp.hpp"
 
 #include "livekit_ros2_bridge/node.hpp"
 

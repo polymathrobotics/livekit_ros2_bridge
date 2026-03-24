@@ -14,8 +14,8 @@
 
 #include <memory>
 
-#include <gtest/gtest.h>
-#include <rclcpp/rclcpp.hpp>
+#include "gtest/gtest.h"
+#include "rclcpp/rclcpp.hpp"
 
 #include "livekit_ros2_bridge/node.hpp"
 
