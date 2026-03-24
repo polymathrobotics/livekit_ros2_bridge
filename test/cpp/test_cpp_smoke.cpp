@@ -20,7 +20,6 @@
 #include "livekit_ros2_bridge/node.hpp"
 
 namespace livekit_ros2_bridge {
-namespace {
 
 TEST(CppSmokeTest, ConstructsNode) {
   rclcpp::init(0, nullptr);
@@ -32,5 +31,4 @@ TEST(CppSmokeTest, ConstructsNode) {
   rclcpp::shutdown();
 }
 
-}  // namespace
 }  // namespace livekit_ros2_bridge
