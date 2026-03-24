@@ -46,9 +46,9 @@ add_library(${PROJECT_NAME} SHARED
   src/node.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC include)
-ament_target_dependencies(${PROJECT_NAME}
-  rclcpp
-  rclcpp_components
+target_link_libraries(${PROJECT_NAME} PUBLIC
+  rclcpp::rclcpp
+  rclcpp_components::component
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
