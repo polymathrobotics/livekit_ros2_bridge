@@ -18,7 +18,9 @@
 namespace livekit_ros2_bridge {
 
 Node::Node(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("livekit_ros2_bridge", options) {}
+    : rclcpp::Node("livekit_ros2_bridge", options) {
+  RCLCPP_INFO(get_logger(), "Node started");
+}
 
 }  // namespace livekit_ros2_bridge
 
