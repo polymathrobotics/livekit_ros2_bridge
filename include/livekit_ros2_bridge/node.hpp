@@ -15,12 +15,14 @@
 #pragma once
 
 #include "rclcpp/node.hpp"
+#include "rclcpp/node_options.hpp"
 
 namespace livekit_ros2_bridge {
 
 class Node final : public rclcpp::Node {
 public:
-  Node();
+  explicit Node(
+      const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 };
 
 }  // namespace livekit_ros2_bridge
