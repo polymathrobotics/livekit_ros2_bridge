@@ -4,7 +4,11 @@ livekit_ros2_bridge:
       type: string
       default_value: ""
       description: "LiveKit server URL."
+      validation:
+        not_empty<>: null
     token:
       type: string
       default_value: ""
       description: "LiveKit token."
+      validation:
+        not_empty<>: null

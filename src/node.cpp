@@ -31,12 +31,6 @@ Node::Node(const rclcpp::NodeOptions &options)
   const std::string &url = params_.livekit.url;
   const std::string &token = params_.livekit.token;
 
-  if (url.empty() || token.empty()) {
-    RCLCPP_WARN(get_logger(),
-                "livekit.url/livekit.token not set — skipping room connect");
-    return;
-  }
-
   room_ = std::make_unique<livekit::Room>();
   livekit::RoomOptions room_options;
   room_options.auto_subscribe = true;
