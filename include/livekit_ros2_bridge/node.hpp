@@ -14,6 +14,9 @@
 
 #pragma once
 
+#include <memory>
+
+#include "livekit/room.h"
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 
@@ -23,6 +26,10 @@ class Node final : public rclcpp::Node {
 public:
   explicit Node(
       const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+  ~Node() override;
+
+private:
+  std::unique_ptr<livekit::Room> room_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -28,6 +28,37 @@ endif()
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
 
+# Fetch pre-built LiveKit C++ SDK (distro-specific for glibc compat).
+# Update version and both hashes together.
+set(LIVEKIT_SDK_VERSION "0.3.1")
+set(LIVEKIT_SDK_SHA256_JAMMY "2c5909f6d9eb3bf86da46336713602a10e404f3d75b196ddefc3a596c64a2953")
+set(LIVEKIT_SDK_SHA256_NOBLE "2f100aa891dbae7db58a64dec30268e917b2e3dba8ff43004a5d431e37c2ac34")
+
+include(FetchContent)
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
+file(READ /etc/os-release _os_release)
+string(REGEX MATCH "VERSION_CODENAME=([a-z]+)" _ "${_os_release}")
+if(CMAKE_MATCH_1 STREQUAL "jammy")
+  set(_sdk_distro "jammy")
+  set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY}")
+else()
+  set(_sdk_distro "noble")
+  set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE}")
+endif()
+
+set(_sdk_base_url
+    "https://github.com/jon-mcmillan/livekit-client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}")
+fetchcontent_declare(livekit_sdk
+  URL "${_sdk_base_url}/livekit-sdk-linux-x64-${_sdk_distro}-${LIVEKIT_SDK_VERSION}.tar.gz"
+  URL_HASH SHA256=${_sdk_sha256}
+)
+fetchcontent_populate(livekit_sdk)
+list(APPEND CMAKE_PREFIX_PATH "${livekit_sdk_SOURCE_DIR}")
+find_package(LiveKit REQUIRED)
+
 generate_parameter_module(parameters
   livekit_ros2_bridge/parameters.yaml
   livekit_ros2_bridge.core.validators
@@ -45,6 +76,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC include)
 target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp::rclcpp
   rclcpp_components::component
+  LiveKit::livekit
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
@@ -54,6 +86,11 @@ rclcpp_components_register_node(${PROJECT_NAME}
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME})
+install(FILES
+  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit.so"
+  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit_ffi.so"
+  DESTINATION lib
+)
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()

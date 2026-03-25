@@ -13,13 +13,45 @@
 // limitations under the License.
 
 #include "livekit_ros2_bridge/node.hpp"
+
+#include "livekit/livekit.h"
 #include "rclcpp_components/register_node_macro.hpp"
 
 namespace livekit_ros2_bridge {
 
 Node::Node(const rclcpp::NodeOptions &options)
     : rclcpp::Node("livekit_ros2_bridge", options) {
-  RCLCPP_INFO(get_logger(), "Node started");
+  livekit::initialize();
+  RCLCPP_INFO(get_logger(), "LiveKit SDK initialized");
+
+  declare_parameter<std::string>("livekit.url", "");
+  declare_parameter<std::string>("livekit.token", "");
+
+  const auto url = get_parameter("livekit.url").as_string();
+  const auto token = get_parameter("livekit.token").as_string();
+
+  if (url.empty() || token.empty()) {
+    RCLCPP_WARN(get_logger(),
+                "livekit.url/livekit.token not set — skipping room connect");
+    return;
+  }
+
+  room_ = std::make_unique<livekit::Room>();
+  livekit::RoomOptions room_options;
+  room_options.auto_subscribe = true;
+
+  RCLCPP_INFO(get_logger(), "Connecting to LiveKit room at %s", url.c_str());
+  const bool connected = room_->Connect(url, token, room_options);
+  if (connected) {
+    RCLCPP_INFO(get_logger(), "Connected to LiveKit room");
+  } else {
+    RCLCPP_ERROR(get_logger(), "Failed to connect to LiveKit room");
+  }
+}
+
+Node::~Node() {
+  room_.reset();
+  livekit::shutdown();
 }
 
 }  // namespace livekit_ros2_bridge
