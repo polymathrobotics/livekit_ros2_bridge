@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-cmake_minimum_required(VERSION 3.21)
+cmake_minimum_required(VERSION 3.14)
 project(livekit_ros2_bridge)
 
 if(NOT CMAKE_CXX_STANDARD)
@@ -56,6 +56,11 @@ fetchcontent_declare(livekit_sdk
 fetchcontent_populate(livekit_sdk)
 list(APPEND CMAKE_PREFIX_PATH "${livekit_sdk_SOURCE_DIR}")
 find_package(LiveKit REQUIRED)
+install(FILES
+  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit.so"
+  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit_ffi.so"
+  DESTINATION lib
+)
 
 generate_parameter_module(parameters
   livekit_ros2_bridge/parameters.yaml
@@ -84,7 +89,6 @@ rclcpp_components_register_node(${PROJECT_NAME}
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME})
-install(IMPORTED_RUNTIME_ARTIFACTS LiveKit::livekit DESTINATION lib)
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
