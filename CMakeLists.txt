@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.21)
 project(livekit_ros2_bridge)
 
 if(NOT CMAKE_CXX_STANDARD)
@@ -39,9 +39,7 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-file(READ /etc/os-release _os_release)
-string(REGEX MATCH "VERSION_CODENAME=([a-z]+)" _ "${_os_release}")
-if(CMAKE_MATCH_1 STREQUAL "jammy")
+if("$ENV{ROS_DISTRO}" STREQUAL "humble")
   set(_sdk_distro "jammy")
   set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY}")
 else()
@@ -86,11 +84,7 @@ rclcpp_components_register_node(${PROJECT_NAME}
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME})
-install(FILES
-  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit.so"
-  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit_ffi.so"
-  DESTINATION lib
-)
+install(IMPORTED_RUNTIME_ARTIFACTS LiveKit::livekit DESTINATION lib)
 
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
