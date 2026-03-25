@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "livekit/room.h"
+#include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 
@@ -29,6 +30,8 @@ public:
   ~Node() override;
 
 private:
+  std::shared_ptr<ParamListener> param_listener_;
+  Params params_;
   std::unique_ptr<livekit::Room> room_;
 };
 

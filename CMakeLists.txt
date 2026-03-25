@@ -59,6 +59,10 @@ find_package(LiveKit REQUIRED)
 file(GLOB _sdk_libs "${livekit_sdk_SOURCE_DIR}/lib/*.so*")
 install(FILES ${_sdk_libs} DESTINATION lib)
 
+generate_parameter_library(livekit_ros2_bridge_parameters
+  src/parameters.yaml
+)
+
 generate_parameter_module(parameters
   livekit_ros2_bridge/parameters.yaml
   livekit_ros2_bridge.core.validators
@@ -76,6 +80,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC include)
 target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp::rclcpp
   rclcpp_components::component
+  livekit_ros2_bridge_parameters
   LiveKit::livekit
 )
 rclcpp_components_register_node(${PROJECT_NAME}

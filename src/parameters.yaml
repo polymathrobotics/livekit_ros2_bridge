@@ -1,0 +1,32 @@
+livekit_ros2_bridge:
+  livekit:
+    url:
+      type: string
+      default_value: ""
+      description: "LiveKit server URL."
+    room:
+      type: string
+      default_value: ""
+      description: "LiveKit room name."
+    identity:
+      type: string
+      default_value: ""
+      description: "Participant identity override."
+    token:
+      type: string
+      default_value: ""
+      description: "Static LiveKit token."
+    api_key:
+      type: string
+      default_value: ""
+      description: "LiveKit API key."
+    api_secret:
+      type: string
+      default_value: ""
+      description: "LiveKit API secret."
+    token_ttl_seconds:
+      type: int
+      default_value: 3600
+      description: "TTL for generated API key tokens in seconds."
+      validation:
+        gt_eq<>: [0]

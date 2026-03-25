@@ -24,11 +24,12 @@ Node::Node(const rclcpp::NodeOptions &options)
   livekit::initialize();
   RCLCPP_INFO(get_logger(), "LiveKit SDK initialized");
 
-  declare_parameter<std::string>("livekit.url", "");
-  declare_parameter<std::string>("livekit.token", "");
+  param_listener_ = std::make_shared<ParamListener>(get_node_parameters_interface());
+  params_ = param_listener_->get_params();
+  RCLCPP_INFO(get_logger(), "Parameters loaded");
 
-  const auto url = get_parameter("livekit.url").as_string();
-  const auto token = get_parameter("livekit.token").as_string();
+  const std::string &url = params_.livekit.url;
+  const std::string &token = params_.livekit.token;
 
   if (url.empty() || token.empty()) {
     RCLCPP_WARN(get_logger(),
