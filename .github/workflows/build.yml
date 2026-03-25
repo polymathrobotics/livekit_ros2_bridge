@@ -27,6 +27,7 @@ jobs:
       image: ghcr.io/ros-tooling/setup-ros-docker/setup-ros-docker-ubuntu-${{ matrix.ubuntu }}:latest
     env:
       PIP_BREAK_SYSTEM_PACKAGES: 1
+      ROS_DISTRO: ${{ matrix.ros }}
 
     steps:
       - uses: actions/checkout@v4
