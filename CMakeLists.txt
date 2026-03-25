@@ -56,11 +56,8 @@ fetchcontent_declare(livekit_sdk
 fetchcontent_populate(livekit_sdk)
 list(APPEND CMAKE_PREFIX_PATH "${livekit_sdk_SOURCE_DIR}")
 find_package(LiveKit REQUIRED)
-install(FILES
-  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit.so"
-  "${livekit_sdk_SOURCE_DIR}/lib/liblivekit_ffi.so"
-  DESTINATION lib
-)
+file(GLOB _sdk_libs "${livekit_sdk_SOURCE_DIR}/lib/*.so*")
+install(FILES ${_sdk_libs} DESTINATION lib)
 
 generate_parameter_module(parameters
   livekit_ros2_bridge/parameters.yaml
