@@ -18,8 +18,14 @@ from typing import Any, cast
 from livekit_ros2_bridge.core.protocol import (
     DATA_CONTENT_TYPE,
     LivekitRosMessageBody,
+    LivekitRosSubscriptionInfo,
     LivekitRpcCallServiceRequest,
     LivekitRpcSubscribeRequest,
+    LivekitRpcSubscribeResponse,
+    LivekitRpcSubscriptionDataTransport,
+    LivekitRpcSubscriptionStatus,
+    LivekitRpcSubscriptionVideoTransport,
+    RosSubscriptionReliability,
 )
 
 
@@ -49,3 +55,70 @@ def test_livekit_ros_message_body_uses_type_field() -> None:
 
     assert payload["type"] == "std_msgs/msg/String"
     assert "ros_type" not in payload
+
+
+def test_subscribe_response_requires_transport() -> None:
+    with pytest.raises(ValidationError):
+        LivekitRpcSubscribeResponse(
+            ok=True,
+            subscription=LivekitRosSubscriptionInfo(
+                topic="/foo",
+                type="std_msgs/msg/String",
+                reliability=RosSubscriptionReliability.RELIABLE,
+                depth=10,
+            ),
+            status=LivekitRpcSubscriptionStatus(
+                applied_interval_ms=100,
+                requester_count=1,
+            ),
+        )
+
+
+def test_subscribe_response_serializes_data_transport() -> None:
+    response = LivekitRpcSubscribeResponse(
+        ok=True,
+        subscription=LivekitRosSubscriptionInfo(
+            topic="/foo",
+            type="std_msgs/msg/String",
+            reliability=RosSubscriptionReliability.RELIABLE,
+            depth=10,
+        ),
+        status=LivekitRpcSubscriptionStatus(
+            applied_interval_ms=100,
+            requester_count=1,
+        ),
+        transport=LivekitRpcSubscriptionDataTransport(topic="ros.topic.messages"),
+    )
+
+    payload = response.dict()
+
+    assert payload["transport"] == {
+        "kind": "data",
+        "topic": "ros.topic.messages",
+    }
+
+
+def test_subscribe_response_serializes_video_transport() -> None:
+    response = LivekitRpcSubscribeResponse(
+        ok=True,
+        subscription=LivekitRosSubscriptionInfo(
+            topic="/camera/image",
+            type="sensor_msgs/msg/Image",
+            reliability=RosSubscriptionReliability.BEST_EFFORT,
+            depth=5,
+        ),
+        status=LivekitRpcSubscriptionStatus(
+            applied_interval_ms=0,
+            requester_count=1,
+        ),
+        transport=LivekitRpcSubscriptionVideoTransport(
+            track_name="ros-video:/camera/image"
+        ),
+    )
+
+    payload = response.dict()
+
+    assert payload["transport"] == {
+        "kind": "video",
+        "track_name": "ros-video:/camera/image",
+    }
