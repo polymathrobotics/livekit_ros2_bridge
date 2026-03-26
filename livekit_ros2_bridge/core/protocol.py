@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, validator
 
@@ -115,6 +115,26 @@ class LivekitRpcSubscriptionStatus(BaseModel):
     requester_count: int
 
 
+class LivekitRpcSubscriptionDataDelivery(BaseModel):
+    """Delivery details for data-channel ROS topic delivery."""
+
+    kind: Literal["data"] = "data"
+    topic: str = Field(min_length=1)
+
+
+class LivekitRpcSubscriptionVideoDelivery(BaseModel):
+    """Delivery details for LiveKit video-track ROS topic delivery."""
+
+    kind: Literal["video"] = "video"
+    track_name: str = Field(min_length=1)
+
+
+LivekitRpcSubscriptionDelivery = Union[
+    LivekitRpcSubscriptionDataDelivery,
+    LivekitRpcSubscriptionVideoDelivery,
+]
+
+
 class LivekitRpcServiceResponse(BaseModel):
     """Service identity details returned from `ros.service.call` RPCs."""
 
@@ -128,6 +148,7 @@ class LivekitRpcSubscribeResponse(BaseModel):
     ok: bool
     subscription: LivekitRosSubscriptionInfo
     status: LivekitRpcSubscriptionStatus
+    delivery: LivekitRpcSubscriptionDelivery
 
 
 class LivekitRpcCallServiceResponse(BaseModel):
@@ -165,7 +186,10 @@ __all__ = [
     "LivekitRpcServiceResponse",
     "LivekitRpcSubscribeRequest",
     "LivekitRpcSubscribeResponse",
+    "LivekitRpcSubscriptionDataDelivery",
+    "LivekitRpcSubscriptionDelivery",
     "LivekitRpcSubscriptionStatus",
+    "LivekitRpcSubscriptionVideoDelivery",
     "LivekitRpcUnsubscribeRequest",
     "PROTOCOL_VERSION",
     "PUBLISH_TOPIC",

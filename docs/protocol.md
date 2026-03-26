@@ -86,6 +86,10 @@ Response:
   "status": {
     "applied_interval_ms": 100,
     "requester_count": 1
+  },
+  "delivery": {
+    "kind": "data",
+    "topic": "ros.topic.messages"
   }
 }
 ```
@@ -96,6 +100,7 @@ Notes:
 - If multiple requesters subscribe to the same topic, the applied interval is the minimum across requesters.
 - The bridge uses LiveKit `caller_identity` as the requester identity for subscription tracking.
 - The bridge uses the requester identity as the LiveKit `destination_identity` for delivering `ros.topic.messages`.
+- `delivery` describes how the bridge sends messages for this subscription. `{"kind": "data", "topic": "ros.topic.messages"}` means messages arrive on the named LiveKit data channel. `{"kind": "video", "track_name": "<track>"}` means messages arrive as frames on a LiveKit video track.
 - Subscription QoS is currently fixed to RELIABLE with depth 10.
 
 ### `ros.topic.unsubscribe`

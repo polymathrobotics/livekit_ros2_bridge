@@ -58,6 +58,10 @@ async def test_rpc_subscribe_success() -> None:
     assert payload["ok"] is True
     assert payload["subscription"]["topic"] == "/foo"
     assert payload["status"]["applied_interval_ms"] == 100
+    assert payload["delivery"] == {
+        "kind": "data",
+        "topic": "ros.topic.messages",
+    }
     assert subscriber.last_requester == "participant-1"
 
 

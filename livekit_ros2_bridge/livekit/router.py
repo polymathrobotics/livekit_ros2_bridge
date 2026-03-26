@@ -28,6 +28,7 @@ from livekit_ros2_bridge.core.logging import Logger
 from livekit_ros2_bridge.core.names import normalize_ros_topic
 from livekit_ros2_bridge.core.request_context import RequestContext, RequestSource
 from livekit_ros2_bridge.core.protocol import (
+    DATA_TOPIC,
     PUBLISH_TOPIC,
     RPC_SERVICE_CALL,
     RPC_TOPIC_SUBSCRIBE,
@@ -42,6 +43,7 @@ from livekit_ros2_bridge.core.protocol import (
     LivekitRpcServiceResponse,
     LivekitRpcSubscribeRequest,
     LivekitRpcSubscribeResponse,
+    LivekitRpcSubscriptionDataDelivery,
     LivekitRpcSubscriptionStatus,
     LivekitRpcUnsubscribeRequest,
 )
@@ -414,6 +416,7 @@ class LivekitRouter:
             ok=True,
             subscription=info,
             status=status,
+            delivery=LivekitRpcSubscriptionDataDelivery(topic=DATA_TOPIC),
         )
         return response.json(allow_nan=False)
 
