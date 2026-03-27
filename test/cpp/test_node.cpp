@@ -44,6 +44,12 @@ public:
     return true;
   }
 
+  bool unregisterRpcMethod(const std::string & method_name) override
+  {
+    (void)method_name;
+    return true;
+  }
+
   void disconnect() override
   {}
 

@@ -59,6 +59,7 @@ public:
 
   virtual bool connect(const std::string & url, const std::string & token) = 0;
   virtual bool registerRpcMethod(const std::string & method_name, RpcHandler handler) = 0;
+  virtual bool unregisterRpcMethod(const std::string & method_name) = 0;
   virtual void disconnect() = 0;
 };
 

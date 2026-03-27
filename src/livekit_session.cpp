@@ -151,6 +151,27 @@ public:
     }
   }
 
+  bool unregisterRpcMethod(const std::string & method_name) override
+  {
+    if (room_ == nullptr) {
+      return false;
+    }
+
+    auto * participant = room_->localParticipant();
+    if (participant == nullptr) {
+      RCLCPP_ERROR(logger_, "Cannot unregister RPC method %s: local participant unavailable", method_name.c_str());
+      return false;
+    }
+
+    try {
+      participant->unregisterRpcMethod(method_name);
+      return true;
+    } catch (const std::exception & exc) {
+      RCLCPP_ERROR(logger_, "Failed to unregister RPC method %s: %s", method_name.c_str(), exc.what());
+      return false;
+    }
+  }
+
   void disconnect() override
   {
     room_.reset();
