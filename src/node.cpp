@@ -17,10 +17,12 @@
 #include "livekit/livekit.h"
 #include "rclcpp_components/register_node_macro.hpp"
 
-namespace livekit_ros2_bridge {
+namespace livekit_ros2_bridge
+{
 
-Node::Node(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("livekit_ros2_bridge", options) {
+Node::Node(const rclcpp::NodeOptions & options)
+: rclcpp::Node("livekit_ros2_bridge", options)
+{
   livekit::initialize();
   RCLCPP_INFO(get_logger(), "LiveKit SDK initialized");
 
@@ -28,8 +30,8 @@ Node::Node(const rclcpp::NodeOptions &options)
   params_ = param_listener_->get_params();
   RCLCPP_INFO(get_logger(), "Parameters loaded");
 
-  const std::string &url = params_.livekit.url;
-  const std::string &token = params_.livekit.token;
+  const std::string & url = params_.livekit.url;
+  const std::string & token = params_.livekit.token;
 
   room_ = std::make_unique<livekit::Room>();
   livekit::RoomOptions room_options;
@@ -44,7 +46,8 @@ Node::Node(const rclcpp::NodeOptions &options)
   }
 }
 
-Node::~Node() {
+Node::~Node()
+{
   room_.reset();
   livekit::shutdown();
 }

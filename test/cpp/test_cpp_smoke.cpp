@@ -15,19 +15,28 @@
 #include <memory>
 
 #include "gtest/gtest.h"
+#include "livekit_ros2_bridge/node.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-#include "livekit_ros2_bridge/node.hpp"
+namespace livekit_ros2_bridge
+{
 
-namespace livekit_ros2_bridge {
-
-class CppSmokeTest : public ::testing::Test {
+class CppSmokeTest : public ::testing::Test
+{
 protected:
-  static void SetUpTestSuite() { rclcpp::init(0, nullptr); }
-  static void TearDownTestSuite() { rclcpp::shutdown(); }
+  static void SetUpTestSuite()
+  {
+    rclcpp::init(0, nullptr);
+  }
+
+  static void TearDownTestSuite()
+  {
+    rclcpp::shutdown();
+  }
 };
 
-TEST_F(CppSmokeTest, ConstructsNode) {
+TEST_F(CppSmokeTest, ConstructsNode)
+{
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.url", "ws://localhost:7880");
   options.append_parameter_override("livekit.token", "test_token");
@@ -36,7 +45,8 @@ TEST_F(CppSmokeTest, ConstructsNode) {
   EXPECT_STREQ(node->get_name(), "livekit_ros2_bridge");
 }
 
-TEST_F(CppSmokeTest, ThrowsIfParametersEmpty) {
+TEST_F(CppSmokeTest, ThrowsIfParametersEmpty)
+{
   // No overrides — both params default to "", failing not_empty<> validation.
   EXPECT_THROW(std::make_shared<Node>(rclcpp::NodeOptions()), std::exception);
 }

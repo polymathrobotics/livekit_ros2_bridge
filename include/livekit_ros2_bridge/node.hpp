@@ -21,12 +21,13 @@
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 
-namespace livekit_ros2_bridge {
+namespace livekit_ros2_bridge
+{
 
-class Node final : public rclcpp::Node {
+class Node final : public rclcpp::Node
+{
 public:
-  explicit Node(
-      const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
   ~Node() override;
 
 private:
