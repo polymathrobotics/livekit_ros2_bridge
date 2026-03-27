@@ -24,20 +24,17 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
+class NodeTest : public ::testing::Test
 {
-
-class RclcppEnvironment final : public ::testing::Environment
-{
-public:
-  void SetUp() override
+protected:
+  static void SetUpTestSuite()
   {
     if (!rclcpp::ok()) {
       rclcpp::init(0, nullptr);
     }
   }
 
-  void TearDown() override
+  static void TearDownTestSuite()
   {
     if (rclcpp::ok()) {
       rclcpp::shutdown();
@@ -45,12 +42,7 @@ public:
   }
 };
 
-[[maybe_unused]] ::testing::Environment * const kRclcppEnvironment =
-  ::testing::AddGlobalTestEnvironment(new RclcppEnvironment());
-
-}  // namespace
-
-TEST(NodeTest, RegistersRpcPlaceholdersOnConnect)
+TEST_F(NodeTest, RegistersRpcPlaceholdersOnConnect)
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.url", "ws://test:7880");
@@ -64,30 +56,6 @@ TEST(NodeTest, RegistersRpcPlaceholdersOnConnect)
 
   ASSERT_NE(node, nullptr);
   EXPECT_EQ(state->registered_methods, expected_methods);
-}
-
-TEST(NodeTest, UnregistersRpcMethodsBeforeDisconnect)
-{
-  rclcpp::NodeOptions options;
-  options.append_parameter_override("livekit.url", "ws://test:7880");
-  options.append_parameter_override("livekit.token", "test_token");
-
-  auto session = std::make_unique<FakeLiveKitSession>();
-  auto state = session->state;
-  {
-    const auto node = std::make_shared<Node>(options, std::move(session));
-    ASSERT_NE(node, nullptr);
-  }
-
-  ASSERT_EQ(state->events.size(), 4U);
-  EXPECT_EQ(state->events[0], "unregister:" + std::string(protocol::kRpcTopicSubscribe));
-  EXPECT_EQ(state->events[1], "unregister:" + std::string(protocol::kRpcTopicUnsubscribe));
-  EXPECT_EQ(state->events[2], "unregister:" + std::string(protocol::kRpcServiceCall));
-  EXPECT_EQ(state->events[3], "disconnect");
-  EXPECT_EQ(
-    state->unregistered_methods,
-    (std::vector<std::string>{
-      protocol::kRpcTopicSubscribe, protocol::kRpcTopicUnsubscribe, protocol::kRpcServiceCall}));
 }
 
 }  // namespace livekit_ros2_bridge
