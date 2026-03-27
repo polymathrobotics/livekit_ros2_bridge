@@ -14,29 +14,32 @@
 
 #pragma once
 
-#include <memory>
+#include <optional>
+#include <string>
 
+#include "livekit_ros2_bridge/access_policy.hpp"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "livekit_ros2_bridge/livekit_session.hpp"
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "rclcpp/logger.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RpcController;
-
-class Node final : public rclcpp::Node
+class RpcController
 {
 public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<LiveKitSession> session);
-  ~Node() override;
+  RpcController(rclcpp::Logger logger, const Params & params);
+
+  void registerMethods(LiveKitSession & session);
+  void unregisterMethods(LiveKitSession & session);
 
 private:
-  std::shared_ptr<ParamListener> param_listener_;
-  std::unique_ptr<RpcController> rpc_controller_;
-  std::unique_ptr<LiveKitSession> session_;
+  std::optional<std::string> handleTopicSubscribe(const RpcInvocation & invocation) const;
+  std::optional<std::string> handleServiceCall(const RpcInvocation & invocation) const;
+
+  rclcpp::Logger logger_;
+  StaticAccessPolicy access_policy_;
+  bool methods_registered_ = false;
 };
 
 }  // namespace livekit_ros2_bridge

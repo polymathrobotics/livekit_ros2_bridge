@@ -27,6 +27,7 @@ endif()
 
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
+find_package(nlohmann_json REQUIRED)
 
 # Fetch pre-built LiveKit C++ SDK (distro-specific for glibc compat).
 # Update version and both hashes together.
@@ -74,11 +75,14 @@ ament_python_install_package(${PROJECT_NAME}
 )
 
 add_library(${PROJECT_NAME} SHARED
+  src/access_policy.cpp
   src/livekit_session.cpp
   src/node.cpp
+  src/rpc_controller.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC include)
 target_link_libraries(${PROJECT_NAME} PUBLIC
+  nlohmann_json::nlohmann_json
   rclcpp::rclcpp
   rclcpp_components::component
   livekit_ros2_bridge_parameters
@@ -96,6 +100,8 @@ install(TARGETS ${PROJECT_NAME})
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
 
+  ament_add_gtest(test_access_policy test/cpp/test_access_policy.cpp)
+  target_link_libraries(test_access_policy ${PROJECT_NAME})
   ament_add_gtest(test_node test/cpp/test_node.cpp)
   target_link_libraries(test_node ${PROJECT_NAME})
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)

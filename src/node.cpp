@@ -14,11 +14,10 @@
 
 #include "livekit_ros2_bridge/node.hpp"
 
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
-#include "livekit_ros2_bridge/protocol.hpp"
+#include "livekit_ros2_bridge/rpc_controller.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 
 namespace livekit_ros2_bridge
@@ -32,7 +31,8 @@ Node::Node(const rclcpp::NodeOptions & options, std::unique_ptr<LiveKitSession> 
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   param_listener_ = std::make_shared<ParamListener>(get_node_parameters_interface());
-  params_ = param_listener_->get_params();
+  const Params params = param_listener_->get_params();
+  rpc_controller_ = std::make_unique<RpcController>(get_logger(), params);
   RCLCPP_INFO(get_logger(), "Parameters loaded");
 
   session_ = std::move(session);
@@ -40,43 +40,21 @@ Node::Node(const rclcpp::NodeOptions & options, std::unique_ptr<LiveKitSession> 
     throw std::runtime_error("Failed to create LiveKit session");
   }
 
-  const std::string & url = params_.livekit.url;
-  const std::string & token = params_.livekit.token;
+  const std::string & url = params.livekit.url;
+  const std::string & token = params.livekit.token;
 
   if (session_->connect(url, token)) {
-    registerRpcMethods();
+    rpc_controller_->registerMethods(*session_);
   }
 }
 
 Node::~Node()
 {
   if (session_ != nullptr) {
+    if (rpc_controller_ != nullptr) {
+      rpc_controller_->unregisterMethods(*session_);
+    }
     session_->disconnect();
-  }
-}
-
-void Node::registerRpcMethods()
-{
-  const auto makeNotImplementedHandler = [](const std::string & method_name) -> RpcHandler {
-    return [method_name](const RpcInvocation &) -> std::optional<std::string> {
-      throw BridgeRpcError(protocol::kRpcErrorInternal, method_name + " is not implemented yet");
-    };
-  };
-
-  if (!session_->registerRpcMethod(
-        protocol::kRpcTopicSubscribe, makeNotImplementedHandler(protocol::kRpcTopicSubscribe)))
-  {
-    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcTopicSubscribe);
-  }
-
-  if (!session_->registerRpcMethod(
-        protocol::kRpcTopicUnsubscribe, makeNotImplementedHandler(protocol::kRpcTopicUnsubscribe)))
-  {
-    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcTopicUnsubscribe);
-  }
-
-  if (!session_->registerRpcMethod(protocol::kRpcServiceCall, makeNotImplementedHandler(protocol::kRpcServiceCall))) {
-    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcServiceCall);
   }
 }
 

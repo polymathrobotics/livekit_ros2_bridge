@@ -23,6 +23,9 @@ inline constexpr char kRpcTopicSubscribe[] = "ros.topic.subscribe";
 inline constexpr char kRpcTopicUnsubscribe[] = "ros.topic.unsubscribe";
 inline constexpr char kRpcServiceCall[] = "ros.service.call";
 
+inline constexpr std::uint32_t kRpcErrorInvalidRequest = 2400;
+inline constexpr std::uint32_t kRpcErrorUnauthorized = 2401;
+inline constexpr std::uint32_t kRpcErrorForbidden = 2403;
 inline constexpr std::uint32_t kRpcErrorInternal = 2500;
 
 }  // namespace livekit_ros2_bridge::protocol

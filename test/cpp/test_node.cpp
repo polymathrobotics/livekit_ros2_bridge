@@ -58,4 +58,58 @@ TEST_F(NodeTest, RegistersRpcPlaceholdersOnConnect)
   EXPECT_EQ(state->registered_methods, expected_methods);
 }
 
+TEST_F(NodeTest, UnregistersRpcMethodsBeforeDisconnect)
+{
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("livekit.url", "ws://test:7880");
+  options.append_parameter_override("livekit.token", "test_token");
+
+  auto session = std::make_unique<FakeLiveKitSession>();
+  auto state = session->state;
+  {
+    const auto node = std::make_shared<Node>(options, std::move(session));
+    ASSERT_NE(node, nullptr);
+  }
+
+  ASSERT_EQ(state->events.size(), 4U);
+  EXPECT_EQ(state->events[0], "unregister:" + std::string(protocol::kRpcTopicSubscribe));
+  EXPECT_EQ(state->events[1], "unregister:" + std::string(protocol::kRpcTopicUnsubscribe));
+  EXPECT_EQ(state->events[2], "unregister:" + std::string(protocol::kRpcServiceCall));
+  EXPECT_EQ(state->events[3], "disconnect");
+  EXPECT_EQ(
+    state->unregistered_methods,
+    (std::vector<std::string>{
+      protocol::kRpcTopicSubscribe, protocol::kRpcTopicUnsubscribe, protocol::kRpcServiceCall}));
+}
+
+TEST_F(NodeTest, SubscribeRpcReturnsForbiddenWhenTopicIsDenied)
+{
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("livekit.url", "ws://test:7880");
+  options.append_parameter_override("livekit.token", "test_token");
+  options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/allowed"});
+
+  auto session = std::make_unique<FakeLiveKitSession>();
+  auto state = session->state;
+  const auto node = std::make_shared<Node>(options, std::move(session));
+  ASSERT_NE(node, nullptr);
+
+  const auto handler_it = state->handlers.find(protocol::kRpcTopicSubscribe);
+  ASSERT_NE(handler_it, state->handlers.end());
+
+  try {
+    handler_it->second(
+      RpcInvocation{
+        "request-1",
+        "participant-1",
+        R"({"topic":"/blocked","preferred_interval_ms":100})",
+        0.0,
+      });
+    FAIL() << "Expected BridgeRpcError";
+  } catch (const BridgeRpcError & exc) {
+    EXPECT_EQ(exc.code(), protocol::kRpcErrorForbidden);
+    EXPECT_STREQ(exc.what(), "ROS topic '/blocked' not permitted.");
+  }
+}
+
 }  // namespace livekit_ros2_bridge

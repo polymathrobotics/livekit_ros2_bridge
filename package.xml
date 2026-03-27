@@ -12,6 +12,7 @@
   <buildtool_depend>ament_cmake_python</buildtool_depend>
   <build_depend>generate_parameter_library</build_depend>
 
+  <depend>nlohmann-json-dev</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_components</depend>
   <exec_depend>generate_parameter_library_py</exec_depend>

@@ -12,3 +12,23 @@ livekit_ros2_bridge:
       description: "LiveKit token."
       validation:
         not_empty<>: null
+  access:
+    rules:
+      subscribe:
+        allow:
+          type: string_array
+          default_value: []
+          description: "Allowlist patterns for subscribe targets. Empty allowlist denies all requests."
+        deny:
+          type: string_array
+          default_value: []
+          description: "Denylist patterns for subscribe targets."
+      service:
+        allow:
+          type: string_array
+          default_value: []
+          description: "Allowlist patterns for service targets. Empty allowlist denies all requests."
+        deny:
+          type: string_array
+          default_value: []
+          description: "Denylist patterns for service targets."
