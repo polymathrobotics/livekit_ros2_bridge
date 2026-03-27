@@ -74,6 +74,7 @@ ament_python_install_package(${PROJECT_NAME}
 )
 
 add_library(${PROJECT_NAME} SHARED
+  src/livekit_session.cpp
   src/node.cpp
 )
 target_include_directories(${PROJECT_NAME} PUBLIC include)
@@ -95,8 +96,8 @@ install(TARGETS ${PROJECT_NAME})
 if(BUILD_TESTING)
   ament_auto_find_test_dependencies()
 
-  ament_add_gtest(test_cpp_smoke test/cpp/test_cpp_smoke.cpp)
-  target_link_libraries(test_cpp_smoke ${PROJECT_NAME})
+  ament_add_gtest(test_node test/cpp/test_node.cpp)
+  target_link_libraries(test_node ${PROJECT_NAME})
   ament_add_pytest_test(pytest ${CMAKE_CURRENT_SOURCE_DIR}/test)
 endif()
 

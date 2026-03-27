@@ -14,39 +14,70 @@
 
 #include "livekit_ros2_bridge/node.hpp"
 
-#include "livekit/livekit.h"
+#include <optional>
+#include <stdexcept>
+#include <utility>
+
+#include "livekit_ros2_bridge/protocol.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 
-namespace livekit_ros2_bridge {
+namespace livekit_ros2_bridge
+{
 
-Node::Node(const rclcpp::NodeOptions &options)
-    : rclcpp::Node("livekit_ros2_bridge", options) {
-  livekit::initialize();
-  RCLCPP_INFO(get_logger(), "LiveKit SDK initialized");
+Node::Node(const rclcpp::NodeOptions & options)
+: Node(options, makeLiveKitSession())
+{}
 
+Node::Node(const rclcpp::NodeOptions & options, std::unique_ptr<LiveKitSession> session)
+: rclcpp::Node("livekit_ros2_bridge", options)
+{
   param_listener_ = std::make_shared<ParamListener>(get_node_parameters_interface());
   params_ = param_listener_->get_params();
   RCLCPP_INFO(get_logger(), "Parameters loaded");
 
-  const std::string &url = params_.livekit.url;
-  const std::string &token = params_.livekit.token;
+  session_ = std::move(session);
+  if (session_ == nullptr) {
+    throw std::runtime_error("Failed to create LiveKit session");
+  }
 
-  room_ = std::make_unique<livekit::Room>();
-  livekit::RoomOptions room_options;
-  room_options.auto_subscribe = true;
+  const std::string & url = params_.livekit.url;
+  const std::string & token = params_.livekit.token;
 
-  RCLCPP_INFO(get_logger(), "Connecting to LiveKit room at %s", url.c_str());
-  const bool connected = room_->Connect(url, token, room_options);
-  if (connected) {
-    RCLCPP_INFO(get_logger(), "Connected to LiveKit room");
-  } else {
-    RCLCPP_ERROR(get_logger(), "Failed to connect to LiveKit room");
+  if (session_->connect(url, token)) {
+    registerRpcMethods();
   }
 }
 
-Node::~Node() {
-  room_.reset();
-  livekit::shutdown();
+Node::~Node()
+{
+  if (session_ != nullptr) {
+    session_->disconnect();
+  }
+}
+
+void Node::registerRpcMethods()
+{
+  const auto makeNotImplementedHandler = [](const std::string & method_name) -> RpcHandler {
+    return [method_name](const RpcInvocation &) -> std::optional<std::string> {
+      throw BridgeRpcError(protocol::kRpcErrorInternal, method_name + " is not implemented yet");
+    };
+  };
+
+  if (!session_->registerRpcMethod(
+        protocol::kRpcTopicSubscribe, makeNotImplementedHandler(protocol::kRpcTopicSubscribe)))
+  {
+    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcTopicSubscribe);
+  }
+
+  if (!session_->registerRpcMethod(
+        protocol::kRpcTopicUnsubscribe, makeNotImplementedHandler(protocol::kRpcTopicUnsubscribe)))
+  {
+    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcTopicUnsubscribe);
+  }
+
+  if (!session_->registerRpcMethod(protocol::kRpcServiceCall, makeNotImplementedHandler(protocol::kRpcServiceCall))) {
+    RCLCPP_ERROR(get_logger(), "Failed to register RPC method %s", protocol::kRpcServiceCall);
+  }
 }
 
 }  // namespace livekit_ros2_bridge

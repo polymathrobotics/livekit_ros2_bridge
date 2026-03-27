@@ -16,23 +16,27 @@
 
 #include <memory>
 
-#include "livekit/room.h"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
+#include "livekit_ros2_bridge/livekit_session.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 
-namespace livekit_ros2_bridge {
+namespace livekit_ros2_bridge
+{
 
-class Node final : public rclcpp::Node {
+class Node final : public rclcpp::Node
+{
 public:
-  explicit Node(
-      const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+  Node(const rclcpp::NodeOptions & options, std::unique_ptr<LiveKitSession> session);
   ~Node() override;
 
 private:
+  void registerRpcMethods();
+
   std::shared_ptr<ParamListener> param_listener_;
   Params params_;
-  std::unique_ptr<livekit::Room> room_;
+  std::unique_ptr<LiveKitSession> session_;
 };
 
 }  // namespace livekit_ros2_bridge
