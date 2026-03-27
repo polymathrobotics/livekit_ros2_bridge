@@ -30,7 +30,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-livekit::LocalParticipant::RpcHandler makeSdkRpcHandler(
+livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(
   const rclcpp::Logger & logger, const std::string & method_name, RpcHandler handler)
 {
   return [logger, method_name, handler = std::move(handler)](
@@ -65,14 +65,14 @@ livekit::LocalParticipant::RpcHandler makeSdkRpcHandler(
   };
 }
 
-class SdkLiveKitSession final : public LiveKitSession
+class LiveKitRoomSession final : public LiveKitSession
 {
 public:
-  SdkLiveKitSession()
+  LiveKitRoomSession()
   : logger_(rclcpp::get_logger("livekit_ros2_bridge.livekit_session"))
   {}
 
-  ~SdkLiveKitSession() override
+  ~LiveKitRoomSession() override
   {
     disconnect();
   }
@@ -83,12 +83,14 @@ public:
       return true;
     }
 
+    // `initialize()` returning false means LiveKit is already running elsewhere
+    // in this process. Treat multiple sessions as unsupported and fail fast for now.
     if (!livekit::initialize()) {
-      RCLCPP_ERROR(logger_, "Failed to initialize LiveKit SDK");
+      RCLCPP_ERROR(logger_, "Failed to initialize LiveKit");
       return false;
     }
-    sdk_initialized_ = true;
-    RCLCPP_INFO(logger_, "LiveKit SDK initialized");
+    livekit_initialized_ = true;
+    RCLCPP_INFO(logger_, "LiveKit initialized");
 
     auto room = std::make_unique<livekit::Room>();
     livekit::RoomOptions room_options;
@@ -141,7 +143,7 @@ public:
     }
 
     try {
-      participant->registerRpcMethod(method_name, makeSdkRpcHandler(logger_, method_name, std::move(handler)));
+      participant->registerRpcMethod(method_name, makeLiveKitRpcHandler(logger_, method_name, std::move(handler)));
       return true;
     } catch (const std::exception & exc) {
       RCLCPP_ERROR(logger_, "Failed to register RPC method %s: %s", method_name.c_str(), exc.what());
@@ -152,23 +154,23 @@ public:
   void disconnect() override
   {
     room_.reset();
-    if (sdk_initialized_) {
+    if (livekit_initialized_) {
       livekit::shutdown();
-      sdk_initialized_ = false;
+      livekit_initialized_ = false;
     }
   }
 
 private:
   rclcpp::Logger logger_;
   std::unique_ptr<livekit::Room> room_;
-  bool sdk_initialized_ = false;
+  bool livekit_initialized_ = false;
 };
 
 }  // namespace
 
 std::unique_ptr<LiveKitSession> makeLiveKitSession()
 {
-  return std::make_unique<SdkLiveKitSession>();
+  return std::make_unique<LiveKitRoomSession>();
 }
 
 }  // namespace livekit_ros2_bridge
