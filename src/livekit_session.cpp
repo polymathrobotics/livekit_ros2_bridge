@@ -39,7 +39,7 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(
       invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
     RCLCPP_INFO(
       logger,
-      "Received RPC method %s request_id=%s caller_identity=%s payload_bytes=%zu",
+      "Received LiveKit RPC method=%s request_id=%s caller_identity=%s payload_bytes=%zu",
       method_name.c_str(),
       invocation.request_id.c_str(),
       caller_identity,
@@ -96,7 +96,7 @@ public:
     livekit::RoomOptions room_options;
     room_options.auto_subscribe = true;
 
-    RCLCPP_INFO(logger_, "Connecting to LiveKit room at %s", url.c_str());
+    RCLCPP_INFO(logger_, "Connecting to LiveKit url=%s", url.c_str());
     try {
       if (!room->Connect(url, token, room_options)) {
         RCLCPP_ERROR(logger_, "Failed to connect to LiveKit room");
@@ -157,6 +157,7 @@ public:
     if (livekit_initialized_) {
       livekit::shutdown();
       livekit_initialized_ = false;
+      RCLCPP_INFO(logger_, "LiveKit shutdown");
     }
   }
 
