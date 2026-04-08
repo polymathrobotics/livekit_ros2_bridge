@@ -14,28 +14,20 @@
 
 #pragma once
 
-#include <memory>
-
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+struct TopicPublishCommand
 {
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
-
-private:
-  std::unique_ptr<Runtime> runtime_;
+  std::string topic;
+  std::string interface_type;
+  std::vector<std::uint8_t> cdr_payload;
 };
+
+TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload);
 
 }  // namespace livekit_ros2_bridge

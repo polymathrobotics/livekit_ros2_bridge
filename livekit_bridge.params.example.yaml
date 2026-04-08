@@ -1,0 +1,70 @@
+# Example starter config for `livekit_ros2_bridge_node`.
+# See `parameters.yaml` for the full parameter list and default values.
+#
+# Copy this file, fill in the values for your environment, then run:
+#   ros2 run livekit_ros2_bridge livekit_ros2_bridge_node --ros-args \
+#     --params-file /path/to/your_livekit_bridge.params.yaml
+#
+# The bridge will not start until you set:
+# - `livekit.url`: your LiveKit server URL
+# - `livekit.room`: the room this bridge should join
+# - `livekit.token`, or both `livekit.api_key` and `livekit.api_secret`
+# - at least one allowed topic or service in `access.rules.*.allow`
+
+---
+livekit_ros2_bridge:
+  ros__parameters:
+    # Where the bridge should connect.
+    livekit.url: ""  # e.g. "wss://your-livekit.example"
+    livekit.room: ""  # e.g. "robot-room"
+
+    # Recommended: set the participant name used by the bridge in LiveKit.
+    livekit.identity: "" # e.g. "robot-bridge"
+
+    # Choose one authentication method.
+    # Option 1: use a token you already created.
+    livekit.token: ""
+    # Option 2: set both of these so the bridge can mint its own tokens.
+    livekit.api_key: ""
+    livekit.api_secret: ""
+
+    # Tell the bridge what remote clients are allowed to use.
+    # At least one of these allow lists must contain a real value.
+    # Leave [""] as a placeholder until you are ready to choose real patterns.
+    access.rules.subscribe.allow: [""]  # topics clients may subscribe to, e.g. ["/user/*"]
+    access.rules.publish.allow: [""]  # topics clients may publish to, e.g. ["/user/cmd_vel"]
+    access.rules.service.allow: [""]  # services clients may call, e.g. ["/example/service"]
+
+    # Optional video sources.
+    # Add entries here if you want the bridge to publish video into LiveKit.
+    # If you use video sidecars, set `livekit.api_key` and `livekit.api_secret` above.
+    # Each source must have a `kind`:
+    # - `ros` matches one or more ROS topics by pattern
+    # - `pipeline` runs a full GStreamer pipeline that you provide
+    # Set `videos.ids` to the source names you want to enable.
+    # Each `pipelines` entry is written as `alias=pipeline`.
+    # ROS sources can use the aliases `image`, `compressed_image`, or `default`.
+    # In ROS pipelines, `{topic}` is replaced with the matched topic name.
+    # Pipeline sources should use the `default` alias.
+    #
+    # videos.ids: ["front_camera", "back_rtsp", "usb_cam"]
+    #
+    # videos.front_camera.kind: "ros"
+    # videos.front_camera.pattern: "/camera/front/*"
+    # videos.front_camera.pipelines:
+    #   - "image=rosrawimagesrc ros-topic={topic} ros-reliable=true
+    #      ! queue max-size-buffers=2 leaky=downstream
+    #      ! videorate drop-only=true ! video/x-raw,framerate=30/1
+    #      ! videoconvert
+    #      ! vp8enc deadline=1 keyframe-max-dist=16 target-bitrate=2000000"
+    #   - "compressed_image=roscompressedimagesrc ros-topic={topic}
+    #      ros-reliable=true ! jpegdec
+    #      ! queue max-size-buffers=2 leaky=downstream
+    #      ! videoconvert
+    #      ! vp8enc deadline=1 keyframe-max-dist=16"
+    #
+    # videos.back_rtsp.kind: "pipeline"
+    # videos.back_rtsp.pipelines: ["default=uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"]
+    #
+    # videos.usb_cam.kind: "pipeline"
+    # videos.usb_cam.pipelines: ["default=v4l2src device=/dev/video0 do-timestamp=true ! videoconvert ! vp8enc deadline=1"]

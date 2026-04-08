@@ -12,30 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
-
-#include <memory>
-
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "gtest/gtest.h"
+#include "utils/subscription_target_naming.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+TEST(SubscriptionTargetNamingTest, SubscriptionTargetKeyIncludesKindAndResource)
 {
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
+  const SubscriptionTarget topic_target{SubscriptionTargetKind::Topic, "/camera"};
+  const SubscriptionTarget external_target{SubscriptionTargetKind::External, "/camera"};
 
-private:
-  std::unique_ptr<Runtime> runtime_;
-};
+  const std::string topic_key = makeSubscriptionTargetKey(topic_target);
+  const std::string external_key = makeSubscriptionTargetKey(external_target);
+
+  EXPECT_EQ(topic_key, "topic:/camera");
+  EXPECT_EQ(external_key, "external:/camera");
+  EXPECT_NE(topic_key, external_key);
+}
 
 }  // namespace livekit_ros2_bridge

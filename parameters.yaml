@@ -1,0 +1,101 @@
+---
+livekit_ros2_bridge:
+  livekit:
+    url:
+      type: string
+      default_value: ""
+      description: "LiveKit server URL."
+      validation:
+        not_empty<>: null
+    room:
+      type: string
+      default_value: ""
+      description: "LiveKit room name."
+      validation:
+        not_empty<>: null
+    identity:
+      type: string
+      default_value: ""
+      description: "Participant identity override."
+    token:
+      type: string
+      default_value: ""
+      description: "Static LiveKit token."
+    api_key:
+      type: string
+      default_value: ""
+      description: "LiveKit API key. Set together with livekit.api_secret or leave both unset."
+    api_secret:
+      type: string
+      default_value: ""
+      description: "LiveKit API secret. Set together with livekit.api_key or leave both unset."
+    token_ttl_seconds:
+      type: int
+      default_value: 3600
+      description: >-
+        TTL for LiveKit tokens minted from livekit.api_key/livekit.api_secret in
+        seconds. Must be greater than 0 when those credentials are used for
+        bridge auth or video sidecar token minting.
+      validation:
+        gt_eq<>: [0]
+    token_refresh_margin_seconds:
+      type: int
+      default_value: 300
+      description: "Refresh reconnect margin in seconds before token expiration."
+      validation:
+        gt_eq<>: [0]
+  access:
+    rules:
+      publish:
+        allow:
+          type: string_array
+          default_value: []
+          description: "Allowlist patterns for publish targets. Empty allowlist denies all requests."
+        deny:
+          type: string_array
+          default_value: []
+          description: "Denylist patterns for publish targets."
+      subscribe:
+        allow:
+          type: string_array
+          default_value: []
+          description: "Allowlist patterns for subscribe targets. Empty allowlist denies all requests."
+        deny:
+          type: string_array
+          default_value: []
+          description: "Denylist patterns for subscribe targets."
+      service:
+        allow:
+          type: string_array
+          default_value: []
+          description: "Allowlist patterns for service targets. Empty allowlist denies all requests."
+        deny:
+          type: string_array
+          default_value: []
+          description: "Denylist patterns for service targets."
+  publish:
+    max_topics:
+      type: int
+      default_value: 50
+      description: "Maximum active ROS publishers created by bridge ingress."
+      validation:
+        gt_eq<>: [0]
+  videos:
+    ids:
+      type: string_array
+      default_value: []
+      description: "Video entry ids defined under videos.<id>."
+    __map_ids:
+      kind:
+        type: string
+        description: "Video entry kind: ros (topic pattern) or pipeline (GStreamer source pipeline)."
+        validation:
+          one_of<>: [["ros", "pipeline"]]
+      pattern:
+        type: string
+        default_value: ""
+        description: "Topic pattern for ros kind (e.g. '/camera/front/*')."
+      pipelines:
+        type: string_array
+        default_value: []
+        description: "Pipeline map as alias=pipeline entries. ros kind supports image/compressed_image/default; pipeline kind requires default."

@@ -12,30 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
+#ifndef LIVEKIT_ROS2_BRIDGE__TRIM_HPP_
+#define LIVEKIT_ROS2_BRIDGE__TRIM_HPP_
 
-#include <memory>
-
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include <algorithm>
+#include <cctype>
+#include <string>
+#include <string_view>
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+inline std::string trim(std::string_view value)
 {
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
-
-private:
-  std::unique_ptr<Runtime> runtime_;
-};
+  const auto begin =
+    std::find_if_not(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; });
+  const auto end =
+    std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) { return std::isspace(ch) != 0; }).base();
+  if (begin >= end) {
+    return "";
+  }
+  return std::string(begin, end);
+}
 
 }  // namespace livekit_ros2_bridge
+
+#endif  // LIVEKIT_ROS2_BRIDGE__TRIM_HPP_

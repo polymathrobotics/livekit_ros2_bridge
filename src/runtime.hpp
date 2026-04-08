@@ -1,0 +1,78 @@
+// Copyright (c) 2025-present Polymath Robotics, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#pragma once
+
+#include <atomic>
+#include <functional>
+#include <memory>
+#include <string>
+
+#include "rclcpp/node.hpp"
+#include "rclcpp/timer.hpp"
+#include "runtime_config.hpp"
+
+namespace livekit_ros2_bridge
+{
+
+class RpcRouter;
+class CdrTrackPublisher;
+class ControlPacketRouter;
+class SubscriptionHeartbeatProcessor;
+class RosExecutorQueue;
+class RosServiceCaller;
+class SubscriptionRegistry;
+class RosTopicPublisher;
+struct VideoConfig;
+class VideoSidecarSupervisor;
+
+class Runtime final
+{
+public:
+  Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config);
+  ~Runtime();
+
+  void shutdown();
+  void setSessionResetHooksForTest(
+    std::function<void()> on_subscription_registry_reset, std::function<void()> on_ros_service_caller_reset);
+  void setParticipantDisconnectedHooksForTest(
+    std::function<void(const std::string &)> on_ros_service_caller_cancel_requester_identity);
+  void setTopicPublishHookForTest(std::function<void(const std::string &)> on_topic_publish_requester_identity);
+
+private:
+  bool isShuttingDown() const;
+  void submitExecutorWork(std::function<void()> fn);
+  void handleIncomingControlPacket(const IncomingControlPacket & packet) const;
+
+  rclcpp::Node & node_;
+  std::unique_ptr<RoomSession> room_session_;
+  std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
+  std::unique_ptr<RpcRouter> rpc_router_;
+  std::unique_ptr<CdrTrackPublisher> cdr_track_publisher_;
+  std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
+  std::unique_ptr<VideoSidecarSupervisor> video_sidecar_supervisor_;
+  std::unique_ptr<SubscriptionRegistry> subscription_registry_;
+  std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
+  std::unique_ptr<RosServiceCaller> ros_service_caller_;
+  std::unique_ptr<ControlPacketRouter> control_packet_router_;
+  std::unique_ptr<VideoConfig> video_config_;
+  rclcpp::TimerBase::SharedPtr lease_gc_timer_;
+  std::function<void()> on_subscription_registry_reset_for_test_;
+  std::function<void()> on_ros_service_caller_reset_for_test_;
+  std::function<void(const std::string &)> on_ros_service_caller_cancel_requester_identity_for_test_;
+  std::function<void(const std::string &)> on_topic_publish_requester_identity_for_test_;
+  std::atomic<bool> shutting_down_{false};
+};
+
+}  // namespace livekit_ros2_bridge

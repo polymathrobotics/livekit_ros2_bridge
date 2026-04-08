@@ -1,0 +1,183 @@
+// Copyright (c) 2025-present Polymath Robotics, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "topic_publisher.hpp"
+
+#include <stdexcept>
+#include <utility>
+
+#include "payloads/cdr_payload.hpp"
+#include "rclcpp/logging.hpp"
+#include "rclcpp/qos.hpp"
+#include "utils/interface_types.hpp"
+
+namespace livekit_ros2_bridge
+{
+
+namespace
+{
+
+constexpr std::size_t kPublisherDepth = 10U;
+const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
+
+class TopicPublishFailure final : public std::runtime_error
+{
+public:
+  using std::runtime_error::runtime_error;
+};
+
+}  // namespace
+
+RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, int max_topics)
+: node_(node)
+, access_policy_(std::move(access_policy))
+, max_topics_(max_topics)
+{
+  if (max_topics < 0) {
+    throw std::invalid_argument("max_topics must be >= 0");
+  }
+}
+
+void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
+{
+  const std::string & topic = command.topic;
+
+  if (is_shutdown_.load()) {
+    RCLCPP_WARN(
+      kTopicPublisherLogger,
+      "event=publish_ignored reason=shutdown topic=%s requester_identity=%s",
+      topic.c_str(),
+      requester_identity.c_str());
+    return;
+  }
+
+  if (!access_policy_.allows(AccessOperation::Publish, topic)) {
+    RCLCPP_WARN(
+      kTopicPublisherLogger,
+      "Ignoring publish command for denied topic: %s requester_identity=%s",
+      topic.c_str(),
+      requester_identity.c_str());
+    return;
+  }
+
+  std::string interface_type;
+  try {
+    interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
+  } catch (const std::exception & exc) {
+    RCLCPP_WARN(kTopicPublisherLogger, "Rejecting publish command for topic=%s: %s", topic.c_str(), exc.what());
+    return;
+  }
+
+  rclcpp::SerializedMessage serialized = toSerializedMessage(command.cdr_payload);
+
+  try {
+    publishWithPublisherCache(topic, interface_type, serialized);
+  } catch (const TopicPublishFailure & exc) {
+    RCLCPP_ERROR(kTopicPublisherLogger, "Failed publishing ROS message to topic=%s: %s", topic.c_str(), exc.what());
+    return;
+  } catch (const std::exception & exc) {
+    RCLCPP_ERROR(
+      kTopicPublisherLogger,
+      "Failed creating generic publisher for topic=%s type=%s: %s",
+      topic.c_str(),
+      interface_type.c_str(),
+      exc.what());
+    return;
+  }
+}
+
+void RosTopicPublisher::shutdown()
+{
+  if (is_shutdown_.exchange(true)) {
+    return;
+  }
+
+  auto publishers = std::move(publishers_);
+  publishers_.clear();
+  lru_topics_.clear();
+
+  for (auto & entry : publishers) {
+    entry.second.publisher_handle.reset();
+  }
+}
+
+std::string RosTopicPublisher::resolveTopicTypeOrThrow(
+  const std::string & topic, const std::string & requested_interface_type) const
+{
+  std::string expected_type;
+
+  const auto publisher_it = publishers_.find(topic);
+  if (publisher_it != publishers_.end()) {
+    expected_type = publisher_it->second.interface_type;
+  } else {
+    expected_type = requireUniqueInterfaceType(node_.get_topic_names_and_types(), topic, "topic");
+  }
+
+  if (expected_type != requested_interface_type) {
+    throw std::invalid_argument("type mismatch expected=" + expected_type + " got=" + requested_interface_type);
+  }
+  return expected_type;
+}
+
+void RosTopicPublisher::publishWithPublisherCache(
+  const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized)
+{
+  auto publisher_it = publishers_.find(topic);
+  if (publisher_it == publishers_.end()) {
+    const rclcpp::QoS qos(kPublisherDepth);
+    auto publisher = node_.create_generic_publisher(topic, interface_type, qos);
+    publisher_it =
+      publishers_.emplace(topic, PublisherCacheEntry{interface_type, std::move(publisher), lru_topics_.end()}).first;
+  }
+
+  try {
+    publisher_it->second.publisher_handle->publish(serialized);
+  } catch (const std::exception & exc) {
+    throw TopicPublishFailure(exc.what());
+  }
+
+  auto & cached_publisher = publisher_it->second;
+  if (cached_publisher.lru_position != lru_topics_.end()) {
+    lru_topics_.erase(cached_publisher.lru_position);
+  }
+
+  lru_topics_.push_back(topic);
+  cached_publisher.lru_position = std::prev(lru_topics_.end());
+
+  while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_) && !lru_topics_.empty()) {
+    const std::string evicted_topic = lru_topics_.front();
+    evictPublisher(evicted_topic);
+    RCLCPP_WARN(
+      kTopicPublisherLogger,
+      "Publisher topic cap reached; evicted topic=%s to allow topic=%s",
+      evicted_topic.c_str(),
+      topic.c_str());
+  }
+}
+
+void RosTopicPublisher::evictPublisher(const std::string & topic)
+{
+  const auto publisher_it = publishers_.find(topic);
+  if (publisher_it == publishers_.end()) {
+    return;
+  }
+
+  if (publisher_it->second.lru_position != lru_topics_.end()) {
+    lru_topics_.erase(publisher_it->second.lru_position);
+  }
+  publisher_it->second.publisher_handle.reset();
+  publishers_.erase(publisher_it);
+}
+
+}  // namespace livekit_ros2_bridge

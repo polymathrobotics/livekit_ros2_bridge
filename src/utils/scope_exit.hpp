@@ -12,30 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
+#ifndef LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_
+#define LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_
 
-#include <memory>
-
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include <functional>
+#include <utility>
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+class ScopeExit final
 {
 public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
+  explicit ScopeExit(std::function<void()> callback)
+  : callback_(std::move(callback))
+  {}
+
+  ~ScopeExit()
+  {
+    if (callback_) {
+      callback_();
+    }
+  }
+
+  ScopeExit(const ScopeExit &) = delete;
+  ScopeExit & operator=(const ScopeExit &) = delete;
+  ScopeExit(ScopeExit &&) = delete;
+  ScopeExit & operator=(ScopeExit &&) = delete;
 
 private:
-  std::unique_ptr<Runtime> runtime_;
+  std::function<void()> callback_;
 };
 
 }  // namespace livekit_ros2_bridge
+
+#endif  // LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_

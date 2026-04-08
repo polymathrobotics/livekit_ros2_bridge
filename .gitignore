@@ -9,6 +9,10 @@ htmlcov/
 # IDEs
 .vscode
 
+# Local environment files
+.env
+.env.*
+
 # Colcon build artifacts
 build/
 install/

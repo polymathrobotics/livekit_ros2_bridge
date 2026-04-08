@@ -14,28 +14,21 @@
 
 #pragma once
 
-#include <memory>
+#include <cstdint>
+#include <vector>
 
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "nlohmann/json_fwd.hpp"
+#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
+std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const char * field_name);
 
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
-{
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
+nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload);
+nlohmann::json serializeCdrPayload(const rclcpp::SerializedMessage & payload);
 
-private:
-  std::unique_ptr<Runtime> runtime_;
-};
+rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload);
+std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & payload);
 
 }  // namespace livekit_ros2_bridge

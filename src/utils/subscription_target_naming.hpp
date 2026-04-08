@@ -14,28 +14,30 @@
 
 #pragma once
 
-#include <memory>
+#include <string>
 
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "payloads/stream_control_payloads.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+inline const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
 {
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
+  return kind == SubscriptionTargetKind::Topic ? "topic" : "external";
+}
 
-private:
-  std::unique_ptr<Runtime> runtime_;
-};
+inline std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
+{
+  return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
+}
+
+inline std::string deriveVideoTrackName(SubscriptionTargetKind kind, const std::string & resource)
+{
+  std::string prefix = kind == SubscriptionTargetKind::External ? "ros.video.external" : "ros.video";
+  for (char ch : resource) {
+    prefix.push_back(ch == '/' ? '.' : ch);
+  }
+  return prefix;
+}
 
 }  // namespace livekit_ros2_bridge

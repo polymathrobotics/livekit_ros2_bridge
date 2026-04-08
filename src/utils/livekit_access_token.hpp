@@ -14,28 +14,34 @@
 
 #pragma once
 
-#include <memory>
+#include <chrono>
+#include <optional>
+#include <string>
 
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "nlohmann/json.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+struct LiveKitRoomGrant
 {
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
-
-private:
-  std::unique_ptr<Runtime> runtime_;
+  std::string room;
+  bool room_join = true;
+  bool can_publish = true;
+  bool can_subscribe = true;
+  bool can_publish_data = true;
 };
+
+std::string mintLiveKitAccessToken(
+  const std::string & api_key,
+  const std::string & api_secret,
+  const std::string & identity,
+  const LiveKitRoomGrant & grant,
+  std::chrono::system_clock::time_point issued_at,
+  std::chrono::seconds ttl);
+
+std::optional<nlohmann::json> decodeJwtPayload(const std::string & token);
+
+std::optional<std::chrono::system_clock::time_point> parseJwtExpiresAt(const std::string & token);
 
 }  // namespace livekit_ros2_bridge

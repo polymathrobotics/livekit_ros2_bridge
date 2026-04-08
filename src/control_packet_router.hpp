@@ -14,28 +14,33 @@
 
 #pragma once
 
-#include <memory>
+#include <functional>
+#include <string>
 
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include "payloads/stream_control_payloads.hpp"
+#include "rclcpp/logger.hpp"
+#include "room_session.hpp"
+#include "topic_publish_command.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
+class ControlPacketRouter final
 {
 public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
+  struct Handlers
+  {
+    std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)> on_subscription_heartbeat;
+    std::function<void(std::string requester_identity, TopicPublishCommand command)> on_topic_publish_command;
+  };
+
+  ControlPacketRouter(rclcpp::Logger logger, Handlers handlers);
+
+  void route(const IncomingControlPacket & packet) const;
 
 private:
-  std::unique_ptr<Runtime> runtime_;
+  rclcpp::Logger logger_;
+  Handlers handlers_;
 };
 
 }  // namespace livekit_ros2_bridge

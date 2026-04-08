@@ -14,28 +14,10 @@
 
 #pragma once
 
-#include <memory>
+#include <string>
 
-#include "rclcpp/node.hpp"
-#include "rclcpp/node_options.hpp"
+#include <gst/video/video-format.h>
 
-namespace livekit_ros2_bridge
-{
+#define GST_ROS_VIDEO_FORMAT_LIST "{ GRAY8, GRAY16_LE, RGB, BGR, RGBA, BGRA, UYVY, YUY2 }"
 
-class RoomSession;
-class Runtime;
-
-// Top-level ROS component boundary for the LiveKit bridge runtime.
-class Node final : public rclcpp::Node
-{
-public:
-  explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Public test seam for injecting a fake room session in unit tests.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
-  ~Node() override;
-
-private:
-  std::unique_ptr<Runtime> runtime_;
-};
-
-}  // namespace livekit_ros2_bridge
+GstVideoFormat rosEncodingToGstFormat(const std::string & encoding);

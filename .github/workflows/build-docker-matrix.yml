@@ -1,0 +1,45 @@
+---
+
+name: Build Docker matrix
+
+on:
+  # Manual only on purpose. Docker image validation is useful, but we do not
+  # want every in-progress branch to spend CI time building the full matrix.
+  workflow_dispatch:
+
+jobs:
+  docker_matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker buildx bake --file docker-bake.hcl --print all
+      - name: Build docker matrix
+        run: |
+          set -euo pipefail
+
+          # Reuse prebuilt publisher images when they exist. If the manual
+          # publisher workflow has not pushed them yet, fall back to building
+          # from source so this validation workflow still works.
+          jammy_image="ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
+          noble_image="ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:noble-407891dbdca2ad3113270fbeb350ab9f47615917"
+          bake_args=()
+
+          if docker buildx imagetools inspect "${jammy_image}" >/dev/null 2>&1; then
+            echo "Using prebuilt Jammy gstreamer-publisher image: ${jammy_image}"
+            bake_args+=(--set "dev-humble.args.GSTREAMER_PUBLISHER_SOURCE=${jammy_image}")
+            bake_args+=(--set "runtime-humble.args.GSTREAMER_PUBLISHER_SOURCE=${jammy_image}")
+          else
+            echo "Jammy gstreamer-publisher image not published yet; falling back to source build."
+          fi
+
+          if docker buildx imagetools inspect "${noble_image}" >/dev/null 2>&1; then
+            echo "Using prebuilt Noble gstreamer-publisher image: ${noble_image}"
+            for target in dev-jazzy dev-kilted dev-rolling runtime-jazzy runtime-kilted runtime-rolling; do
+              bake_args+=(--set "${target}.args.GSTREAMER_PUBLISHER_SOURCE=${noble_image}")
+            done
+          else
+            echo "Noble gstreamer-publisher image not published yet; falling back to source build."
+          fi
+
+          docker buildx bake --file docker-bake.hcl --progress=plain "${bake_args[@]}" runtime-all dev-humble dev-rolling

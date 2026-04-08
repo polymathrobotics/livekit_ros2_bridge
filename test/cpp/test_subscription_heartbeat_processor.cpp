@@ -1,0 +1,448 @@
+// Copyright (c) 2025-present Polymath Robotics, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "access_policy.hpp"
+#include "fake_room_session.hpp"
+#include "gtest/gtest.h"
+#include "nlohmann/json.hpp"
+#include "protocol.hpp"
+#include "rclcpp/executors/single_threaded_executor.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "room_session.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "subscription_heartbeat_processor.hpp"
+#include "subscription_registry.hpp"
+#include "video_sidecar_supervisor.hpp"
+
+namespace livekit_ros2_bridge
+{
+namespace
+{
+
+class ScopedRclcppInit
+{
+public:
+  ScopedRclcppInit()
+  {
+    if (!rclcpp::ok()) {
+      rclcpp::init(0, nullptr);
+    }
+  }
+
+  ~ScopedRclcppInit()
+  {
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
+  }
+};
+
+bool spinUntil(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::function<bool()> & predicate,
+  std::chrono::milliseconds timeout = std::chrono::seconds(2))
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return predicate();
+}
+
+bool waitForTopicType(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<rclcpp::Node> & node,
+  const std::string & topic,
+  const std::string & expected_type)
+{
+  return spinUntil(executor, [&]() {
+    const auto topics = node->get_topic_names_and_types();
+    for (const auto & entry : topics) {
+      if (entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+VideoSidecarSupervisor::Config makeTestVideoSidecarConfig()
+{
+  VideoSidecarSupervisor::Config config;
+  config.livekit_url = "ws://localhost:7880";
+  config.livekit_room = "test-room";
+  config.api_key = "test-api-key";
+  config.api_secret = "test-api-secret";
+  config.token_ttl = std::chrono::seconds(600);
+  config.bridge_identity = "bridge-test";
+  return config;
+}
+
+VideoConfig makeConfiguredVideoConfig()
+{
+  VideoConfig config = makeDefaultVideoConfig();
+
+  config.pipeline_sources.emplace(
+    "/sources/front",
+    ConfiguredPipelineSource{
+      "/sources/front",
+      "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"});
+  return config;
+}
+
+SubscriptionHeartbeat makeSubscriptionHeartbeat(const nlohmann::json & body)
+{
+  return parseSubscriptionHeartbeat(body);
+}
+
+void ignoreSerializedMessage(const std::string &, const std::uint8_t *, std::size_t)
+{}
+
+void ignoreTrackReservation(const std::string &, std::size_t)
+{}
+
+void ignoreTrackRelease(const std::string &)
+{}
+
+nlohmann::json extractSinglePublishedStatusEnvelope(
+  const FakeRoomSessionState & state, const std::string & requester_identity)
+{
+  if (state.published_outgoing_control_packets.size() != 1U) {
+    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_control_packets.size();
+    return nlohmann::json::object();
+  }
+
+  const auto & packet = state.published_outgoing_control_packets.front();
+  EXPECT_EQ(packet.control_topic, protocol::kControlSubscriptionsStatus);
+
+  if (packet.recipient_identities.size() != 1U) {
+    ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
+    return nlohmann::json::object();
+  }
+
+  EXPECT_EQ(packet.recipient_identities.front(), requester_identity);
+  return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+}
+
+nlohmann::json extractSinglePublishedStream(const FakeRoomSessionState & state, const std::string & requester_identity)
+{
+  const auto response = extractSinglePublishedStatusEnvelope(state, requester_identity);
+  if (!response.contains("streams") || response["streams"].size() != 1U) {
+    ADD_FAILURE() << "Expected one stream entry in status response";
+    return nlohmann::json::object();
+  }
+
+  return response["streams"].front();
+}
+
+class SubscriptionHeartbeatProcessorTest : public ::testing::Test
+{
+protected:
+  static void SetUpTestSuite()
+  {
+    static ScopedRclcppInit rclcpp_init;
+  }
+
+  void SetUp() override
+  {
+    node_ = std::make_shared<rclcpp::Node>("test_hb_node");
+    fake_session_ = std::make_unique<FakeRoomSession>();
+    state_ = fake_session_->state;
+    access_policy_ = AccessPolicy({}, {}, {"*"}, {}, {}, {});
+  }
+
+  SubscriptionRegistry makeRegistry(
+    VideoSidecarSupervisor * supervisor = nullptr, const VideoConfig * video_config = nullptr)
+  {
+    return SubscriptionRegistry(
+      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, supervisor, video_config);
+  }
+
+  std::shared_ptr<rclcpp::Node> node_;
+  std::unique_ptr<FakeRoomSession> fake_session_;
+  std::shared_ptr<FakeRoomSessionState> state_;
+  AccessPolicy access_policy_;
+};
+
+TEST_F(SubscriptionHeartbeatProcessorTest, EmptyHeartbeatDoesNotBroadcast)
+{
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {{"subscriptions", nlohmann::json::array()}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
+{
+  AccessPolicy deny_all({}, {}, {}, {"*"}, {}, {});
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "topic");
+  EXPECT_EQ(stream["topic"], "/battery_state");
+  EXPECT_EQ(stream["status"], "error");
+  EXPECT_EQ(stream["error"]["reason"], "forbidden");
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
+{
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "topic");
+  EXPECT_EQ(stream["topic"], "/nonexistent_topic");
+  EXPECT_EQ(stream["status"], "error");
+  EXPECT_EQ(stream["error"]["reason"], "not_found");
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, VideoSidecarStartupFailureReturnsUnavailable)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher = node_->create_publisher<sensor_msgs::msg::Image>("/camera/front", 1);
+  ASSERT_TRUE(waitForTopicType(executor, node_, "/camera/front", "sensor_msgs/msg/Image"));
+
+  auto config = makeTestVideoSidecarConfig();
+  VideoSidecarSupervisor supervisor(
+    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
+      return std::vector<std::string>{"/definitely/missing/gstreamer-publisher"};
+    });
+  auto registry = makeRegistry(&supervisor);
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {{"subscriptions", {{{"topic", "/camera/front"}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "topic");
+  EXPECT_EQ(stream["topic"], "/camera/front");
+  EXPECT_EQ(stream["status"], "error");
+  EXPECT_EQ(stream["error"]["reason"], "unavailable");
+  (void)publisher;
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
+{
+  AccessPolicy deny_all({}, {}, {}, {"*"}, {}, {});
+
+  auto config = makeTestVideoSidecarConfig();
+  VideoSidecarSupervisor supervisor(
+    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
+      return std::vector<std::string>{"sleep", "3600"};
+    });
+  const VideoConfig video_config = makeConfiguredVideoConfig();
+
+  auto registry = makeRegistry(&supervisor, &video_config);
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
+
+  const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/front"}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "external");
+  EXPECT_EQ(stream["external"], "/sources/front");
+  EXPECT_EQ(stream["status"], "active");
+  EXPECT_FALSE(stream.contains("error"));
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
+{
+  auto config = makeTestVideoSidecarConfig();
+  VideoSidecarSupervisor supervisor(
+    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
+      return std::vector<std::string>{"sleep", "3600"};
+    });
+  const VideoConfig video_config = makeConfiguredVideoConfig();
+
+  auto registry = makeRegistry(&supervisor, &video_config);
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/missing"}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "external");
+  EXPECT_EQ(stream["external"], "/sources/missing");
+  EXPECT_EQ(stream["status"], "error");
+  EXPECT_EQ(stream["error"]["reason"], "not_found");
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStatusEnvelope)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher = node_->create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 1);
+  ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"session_id", "session-1"},
+    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+  };
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(response["v"], protocol::kProtocolVersion);
+  EXPECT_EQ(response["type"], protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(response["session_id"], "session-1");
+  ASSERT_TRUE(response["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  ASSERT_EQ(response["streams"].size(), 1U);
+  EXPECT_EQ(response["streams"][0]["kind"], "topic");
+  EXPECT_EQ(response["streams"][0]["topic"], "/battery_state");
+  EXPECT_EQ(response["streams"][0]["status"], "active");
+  EXPECT_EQ(response["streams"][0]["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(response["streams"][0]["delivery"]["kind"], protocol::kDeliveryKindDataTrack);
+  EXPECT_EQ(response["streams"][0]["delivery"]["track_name"], "ros.cdr.battery_state");
+  EXPECT_EQ(response["streams"][0]["delivery"]["content_type"], "application/x-ros-cdr");
+  EXPECT_EQ(response["streams"][0]["applied_preferences"]["interval_ms"], 100);
+  EXPECT_FALSE(response["streams"][0]["delivery"].contains("publisher_identity"));
+  EXPECT_FALSE(response["streams"][0].contains("error"));
+  EXPECT_FALSE(response["streams"][0].contains("target"));
+  (void)publisher;
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownSession)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher = node_->create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 1);
+  ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"session_id", "session-1"},
+    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+  };
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  state_->published_outgoing_control_packets.clear();
+
+  processor.process("", makeSubscriptionHeartbeat(body));
+
+  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(response["session_id"], "session-1");
+  ASSERT_EQ(response["streams"].size(), 1U);
+  EXPECT_EQ(response["streams"][0]["topic"], "/battery_state");
+  EXPECT_EQ(response["streams"][0]["status"], "active");
+  (void)publisher;
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownSessionIsDropped)
+{
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"session_id", "unknown-session"},
+    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+  };
+
+  processor.process("", makeSubscriptionHeartbeat(body));
+
+  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, SessionConflictDoesNotRebindRequesterIdentity)
+{
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const auto body = makeSubscriptionHeartbeat(
+    nlohmann::json{
+      {"session_id", "session-1"},
+      {"subscriptions", nlohmann::json::array()},
+    });
+
+  processor.process("requester-1", body);
+  state_->published_outgoing_control_packets.clear();
+  const int publish_count_after_bind = state_->publish_control_packet_call_count;
+  processor.process("requester-2", body);
+
+  EXPECT_EQ(state_->publish_control_packet_call_count, publish_count_after_bind);
+  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
+{
+  AccessPolicy policy({}, {}, {}, {"*"}, {}, {});
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, policy, node_->get_clock());
+
+  policy = AccessPolicy({}, {}, {"*"}, {}, {}, {});
+
+  const nlohmann::json body = {
+    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+
+  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  EXPECT_EQ(stream["kind"], "topic");
+  EXPECT_EQ(stream["topic"], "/battery_state");
+  EXPECT_EQ(stream["status"], "error");
+  EXPECT_EQ(stream["error"]["reason"], "forbidden");
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledGracefully)
+{
+  state_->throw_on_publish_control_packet = true;
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+
+  const nlohmann::json body = {
+    {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+
+  EXPECT_NO_THROW(processor.process("requester-1", makeSubscriptionHeartbeat(body)));
+  EXPECT_EQ(state_->publish_control_packet_call_count, 1);
+  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+}
+
+}  // namespace
+}  // namespace livekit_ros2_bridge

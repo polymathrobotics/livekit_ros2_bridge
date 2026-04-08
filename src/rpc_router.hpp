@@ -1,0 +1,65 @@
+// Copyright (c) 2025-present Polymath Robotics, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#pragma once
+
+#include <array>
+#include <optional>
+#include <string>
+
+#include "access_policy.hpp"
+#include "rclcpp/node.hpp"
+#include "room_session.hpp"
+
+namespace livekit_ros2_bridge
+{
+
+class RosExecutorQueue;
+class RosServiceCaller;
+
+class RpcRouter
+{
+public:
+  RpcRouter(
+    rclcpp::Node & node,
+    const AccessPolicy & access_policy,
+    RosExecutorQueue & ros_executor_queue,
+    RosServiceCaller & ros_service_caller);
+
+  bool registerRpcMethods(RoomSession & session);
+  void unregisterRpcMethods(RoomSession & session);
+
+private:
+  using RegisteredRpcHandler = std::optional<std::string> (RpcRouter::*)(const RpcInvocation &);
+
+  struct RpcMethodBinding
+  {
+    const char * name;
+    RegisteredRpcHandler handler;
+  };
+
+  static const std::array<RpcMethodBinding, 4> & rpcMethodBindings();
+
+  std::optional<std::string> handleServiceCall(const RpcInvocation & invocation);
+  std::optional<std::string> handleInterfacesGet(const RpcInvocation & invocation);
+  std::optional<std::string> handleServiceList(const RpcInvocation & invocation);
+  std::optional<std::string> handleTopicList(const RpcInvocation & invocation);
+
+  rclcpp::Node & node_;
+  AccessPolicy access_policy_;
+  RosExecutorQueue & ros_executor_queue_;
+  RosServiceCaller & ros_service_caller_;
+};
+
+}  // namespace livekit_ros2_bridge

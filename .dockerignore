@@ -1,0 +1,15 @@
+.git
+.coverage
+.coverage.*
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.vscode/
+__pycache__/
+*.py[cod]
+build/
+install/
+log/
+coverage.xml
+htmlcov/
+livekit_ros2_bridge/parameters.py
