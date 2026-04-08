@@ -216,12 +216,18 @@ void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & reque
 void SubscriptionRegistry::refreshExistingLease(
   SubscriptionState & sub, const std::string & requester_identity, const RequesterLease & requester_lease)
 {
+  const bool requester_already_present = sub.requesters.find(requester_identity) != sub.requesters.end();
   auto updated_requesters = sub.requesters;
   updated_requesters[requester_identity] = requester_lease;
 
   if (auto * data = sub.data_track_ptr()) {
     sub.requesters = std::move(updated_requesters);
     data->applied_interval_ms = computeAppliedIntervalMs(sub.requesters);
+    if (!requester_already_present && data->cdr_track_state == CdrTrackState::kPublished) {
+      // Late joiners can observe the active stream status before LiveKit surfaces the already-published
+      // data track to their participant session, so force a replay the first time this requester appears.
+      requesters_needing_cdr_replay_.insert(requester_identity);
+    }
     if (data->cdr_track_state == CdrTrackState::kNone || data->cdr_track_state == CdrTrackState::kFailed) {
       publishPendingCdrTrack(sub.resource, *data, requester_identity);
     }

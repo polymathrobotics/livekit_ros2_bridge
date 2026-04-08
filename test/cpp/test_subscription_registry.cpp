@@ -841,6 +841,46 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshReplaysPublishedCdrTrackWithout
   EXPECT_EQ(published_names.size(), 2U);
 }
 
+TEST(SubscriptionRegistryTest, NewRequesterReplaysAlreadyPublishedCdrTrack)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_replay_test");
+  const std::string topic = "/battery/new_requester_replay";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+  (void)publisher;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  std::vector<std::string> published_names;
+  std::vector<std::string> unpublished_names;
+  SubscriptionRegistry registry(
+    *node,
+    noopCdrSend(),
+    [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
+    [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
+    nullptr);
+
+  const auto first_response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
+  ASSERT_EQ(published_names.size(), 1U);
+  EXPECT_TRUE(registry.onCdrTrackPublished(first_response.track_name, 0));
+
+  const auto second_response = registry.renewSubscription("bob", topic, 250, kFarFuture);
+  EXPECT_EQ(second_response.track_name, first_response.track_name);
+
+  registry.replayCdrTracksForRequester("bob");
+
+  EXPECT_TRUE(registry.hasSubscription(topic));
+  ASSERT_EQ(unpublished_names.size(), 1U);
+  EXPECT_EQ(unpublished_names[0], first_response.track_name);
+  ASSERT_EQ(published_names.size(), 2U);
+  EXPECT_EQ(published_names[0], published_names[1]);
+
+  registry.replayCdrTracksForRequester("bob");
+  EXPECT_EQ(published_names.size(), 2U);
+}
+
 TEST(SubscriptionRegistryTest, DisconnectAndExpiryPrunePathsRecomputeSurvivingDataIntervalTheSameWay)
 {
   ScopedRclcppInit init;

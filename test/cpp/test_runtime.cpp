@@ -380,6 +380,52 @@ TEST_F(RuntimeTest, ParticipantRefreshReplaysPublishedCdrTrackOnNextHeartbeat)
     harness.state->event_log.end());
 }
 
+TEST_F(RuntimeTest, NewParticipantReplaysPublishedCdrTrackOnFirstHeartbeat)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
+
+  auto harness = makeRuntimeHarness(options, [](FakeRoomSession & session) {
+    session.state->publish_cdr_track_handler = [](const std::string &) {
+      return std::shared_ptr<livekit::LocalDataTrack>{};
+    };
+  });
+  ASSERT_NE(harness.runtime, nullptr);
+
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("new_participant_replay_observer"));
+  auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
+  ASSERT_NE(publisher, nullptr);
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  executor.add_node(observer);
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
+
+  const std::string heartbeat =
+    R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
+  harness.fake_session->emitIncomingControlPacket(
+    IncomingControlPacket{
+      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
+      protocol::kControlSubscriptionsHeartbeat,
+      "participant-1",
+    });
+
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 1U; }));
+
+  harness.fake_session->emitIncomingControlPacket(
+    IncomingControlPacket{
+      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
+      protocol::kControlSubscriptionsHeartbeat,
+      "participant-2",
+    });
+
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 2U; }));
+  EXPECT_EQ(harness.state->published_cdr_track_names[0], harness.state->published_cdr_track_names[1]);
+  EXPECT_NE(
+    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_cdr_track"),
+    harness.state->event_log.end());
+}
+
 TEST_F(RuntimeTest, VideoWatchdogRestartsUnhealthyPublisherWithoutSessionReset)
 {
   const auto temp_dir = std::filesystem::temp_directory_path() / nextNodeName("runtime_fake_gstreamer_publisher");
