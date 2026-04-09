@@ -21,13 +21,31 @@
 #include "roscompressedimagesrc.h"
 #include "rosrawimagesrc.h"
 
+GST_DEBUG_CATEGORY_STATIC(rosbridge_plugin_debug);
+#define GST_CAT_DEFAULT rosbridge_plugin_debug
+
+static gboolean register_element_factory(GstPlugin * plugin, const gchar * factory_name, GType type)
+{
+  if (gst_element_register(plugin, factory_name, GST_RANK_NONE, type)) {
+    return TRUE;
+  }
+
+  GST_ERROR(
+    "event=plugin_init_failed resource=%s kind=element_factory "
+    "reason=gst_element_register_returned_false",
+    factory_name);
+  return FALSE;
+}
+
 // These factory names are part of the plugin surface that downstream pipelines
 // construct directly, so renaming them is a compatibility break.
 static gboolean plugin_init(GstPlugin * plugin)
 {
+  GST_DEBUG_CATEGORY_INIT(rosbridge_plugin_debug, "rosbridge", 0, "ROS 2 image source plugin registration");
+
   gboolean ok = TRUE;
-  ok &= gst_element_register(plugin, "rosrawimagesrc", GST_RANK_NONE, GST_TYPE_ROSRAWIMAGESRC);
-  ok &= gst_element_register(plugin, "roscompressedimagesrc", GST_RANK_NONE, GST_TYPE_ROSCOMPRESSEDIMAGESRC);
+  ok &= register_element_factory(plugin, "rosrawimagesrc", GST_TYPE_ROSRAWIMAGESRC);
+  ok &= register_element_factory(plugin, "roscompressedimagesrc", GST_TYPE_ROSCOMPRESSEDIMAGESRC);
   return ok;
 }
 
