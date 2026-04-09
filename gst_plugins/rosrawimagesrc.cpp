@@ -266,19 +266,26 @@ static GstFlowReturn rosrawimagesrc_create(GstPushSrc * push_src, GstBuffer ** b
     int msg_width = static_cast<int>(msg->width);
     int msg_height = static_cast<int>(msg->height);
     GstVideoFormat msg_format = rosEncodingToGstFormat(msg->encoding);
+    const gchar * expected_format = gst_video_format_to_string(self->format);
+    const gchar * actual_format =
+      msg_format == GST_VIDEO_FORMAT_UNKNOWN ? "UNKNOWN" : gst_video_format_to_string(msg_format);
 
     // This source does not renegotiate mid-stream. A format change after caps
     // are fixed is treated as a stream error instead of rewriting caps.
     if (msg_width != self->width || msg_height != self->height || msg_format != self->format) {
-      GST_WARNING_OBJECT(
+      GST_ERROR_OBJECT(
         self,
-        "ROS message does not match negotiated caps: expected %dx%d %s, got %dx%d %s",
+        "event=caps_mismatch topic=%s reason=message_does_not_match_negotiated_caps "
+        "expected_width=%d expected_height=%d expected_format=%s "
+        "actual_width=%d actual_height=%d actual_format=%s actual_ros_encoding=%s",
+        self->ros_topic,
         self->width,
         self->height,
-        gst_video_format_to_string(self->format),
+        expected_format,
         msg_width,
         msg_height,
-        gst_video_format_to_string(msg_format));
+        actual_format,
+        msg->encoding.c_str());
       return GST_FLOW_ERROR;
     }
   }

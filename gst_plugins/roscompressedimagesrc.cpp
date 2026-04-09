@@ -168,7 +168,12 @@ static GstCaps * roscompressedimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * 
   } else if (self->detected_format == "png") {
     caps = gst_caps_new_empty_simple("image/png");
   } else {
-    GST_ERROR_OBJECT(self, "Unsupported CompressedImage format: %s", self->detected_format.c_str());
+    GST_ERROR_OBJECT(
+      self,
+      "event=unsupported_compressed_format topic=%s reason=format_not_supported "
+      "expected_format=jpeg_or_png actual_format=%s",
+      self->ros_topic,
+      self->detected_format.c_str());
     return gst_pad_get_pad_template_caps(base_src->srcpad);
   }
 
@@ -265,8 +270,13 @@ static GstFlowReturn roscompressedimagesrc_create(GstPushSrc * push_src, GstBuff
     // This source does not renegotiate mid-stream. Once the first frame picks
     // JPEG vs PNG, later format changes are reported as stream errors.
     if (msg_format != self->detected_format) {
-      GST_WARNING_OBJECT(
-        self, "CompressedImage format changed from '%s' to '%s'", self->detected_format.c_str(), msg_format.c_str());
+      GST_ERROR_OBJECT(
+        self,
+        "event=format_mismatch topic=%s reason=compressed_format_changed "
+        "expected_format=%s actual_format=%s",
+        self->ros_topic,
+        self->detected_format.c_str(),
+        msg_format.c_str());
       return GST_FLOW_ERROR;
     }
   }
