@@ -44,7 +44,9 @@
 #include "rmw/types.h"
 #include "rosidl_runtime_cpp/message_initialization.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
+#include "utils/event_throttle.hpp"
 #include "utils/interface_types.hpp"
+#include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
@@ -392,8 +394,7 @@ struct RosServiceCaller::Impl
   std::function<void()> poll_callback_enter_hook;
   std::function<void()> poll_callback_exit_hook;
   bool shutdown_flag = false;
-  std::size_t late_response_drops_since_log = 0U;
-  std::chrono::steady_clock::time_point next_late_response_log_at{};
+  EventThrottle late_response_drop_throttle{std::chrono::milliseconds(kResponseLogThrottleMs)};
 };
 
 std::string RosServiceCaller::Impl::resolveServiceType(
@@ -519,29 +520,25 @@ void RosServiceCaller::Impl::logPendingSettlementSummary(
   }
 
   if (warn) {
-    RCLCPP_WARN(
-      logger,
-      "event=service_calls_settled reason=%s action=%s service=%s interface_type=%s requester_identity=%s "
-      "count=%zu",
-      reason,
-      action,
-      service,
-      interface_type,
-      requester_identity,
-      count);
+    LogEvent(logger, "service_calls_settled")
+      .kv("reason", reason)
+      .kv("action", action)
+      .kv("service", service)
+      .kv("interface_type", interface_type)
+      .kv("requester_identity", requester_identity)
+      .kv("count", count)
+      .warn();
     return;
   }
 
-  RCLCPP_INFO(
-    logger,
-    "event=service_calls_settled reason=%s action=%s service=%s interface_type=%s requester_identity=%s "
-    "count=%zu",
-    reason,
-    action,
-    service,
-    interface_type,
-    requester_identity,
-    count);
+  LogEvent(logger, "service_calls_settled")
+    .kv("reason", reason)
+    .kv("action", action)
+    .kv("service", service)
+    .kv("interface_type", interface_type)
+    .kv("requester_identity", requester_identity)
+    .kv("count", count)
+    .info();
 }
 
 void RosServiceCaller::Impl::onPollTimer()
@@ -580,19 +577,14 @@ void RosServiceCaller::Impl::drainResponses()
       // callers to different services cannot steal each other's responses.
       auto call_it = pending_calls.find(PendingCallKey{cached.get(), header.sequence_number});
       if (call_it == pending_calls.end()) {
-        ++late_response_drops_since_log;
-        const auto now = std::chrono::steady_clock::now();
-        if (next_late_response_log_at == std::chrono::steady_clock::time_point{} || now >= next_late_response_log_at) {
-          RCLCPP_WARN(
-            kRosServiceCallerLogger,
-            "event=service_response_dropped reason=late_or_unknown_pending_call service=%s interface_type=%s "
-            "sequence_number=%lld count=%zu",
-            cached->service_name.c_str(),
-            cached->service_type_name.c_str(),
-            static_cast<long long>(header.sequence_number),
-            late_response_drops_since_log);
-          late_response_drops_since_log = 0U;
-          next_late_response_log_at = now + std::chrono::milliseconds(kResponseLogThrottleMs);
+        if (const std::size_t count = late_response_drop_throttle.recordAndCheck(); count > 0U) {
+          LogEvent(kRosServiceCallerLogger, "service_response_dropped")
+            .kv("reason", "late_or_unknown_pending_call")
+            .kv("service", cached->service_name)
+            .kv("interface_type", cached->service_type_name)
+            .kv("sequence_number", static_cast<long long>(header.sequence_number))
+            .kv("count", count)
+            .warn();
         }
         continue;
       }
@@ -678,14 +670,14 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
     }
   } catch (const std::exception & exc) {
     if (inflight.has_value()) {
-      RCLCPP_ERROR(
-        kRosServiceCallerLogger,
-        "event=service_call_failed reason=start_failed service=%s interface_type=%s requester_identity=%s "
-        "action=fail_future error=%s",
-        request.service.c_str(),
-        interface_type.c_str(),
-        requester_identity.c_str(),
-        exc.what());
+      LogEvent(kRosServiceCallerLogger, "service_call_failed")
+        .kv("reason", "start_failed")
+        .kv("service", request.service)
+        .kv("interface_type", interface_type)
+        .kv("requester_identity", requester_identity)
+        .kv("action", "fail_future")
+        .kv("error", exc.what())
+        .error();
     }
     result_promise.set_exception(std::current_exception());
     return result_future;
@@ -693,13 +685,13 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   const PendingCallKey key{cached, sequence_number};
   if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
-    RCLCPP_ERROR(
-      kRosServiceCallerLogger,
-      "event=service_call_failed reason=duplicate_pending_key service=%s interface_type=%s requester_identity=%s "
-      "action=fail_future",
-      request.service.c_str(),
-      interface_type.c_str(),
-      requester_identity.c_str());
+    LogEvent(kRosServiceCallerLogger, "service_call_failed")
+      .kv("reason", "duplicate_pending_key")
+      .kv("service", request.service)
+      .kv("interface_type", interface_type)
+      .kv("requester_identity", requester_identity)
+      .kv("action", "fail_future")
+      .error();
     result_promise.set_exception(std::make_exception_ptr(std::runtime_error("Duplicate pending service call key.")));
     return result_future;
   }

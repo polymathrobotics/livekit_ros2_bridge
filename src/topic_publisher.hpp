@@ -27,6 +27,7 @@
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "topic_publish_command.hpp"
+#include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -74,8 +75,7 @@ private:
   std::unordered_map<std::string, PublisherCacheEntry> publishers_;
   std::list<std::string> lru_topics_;
   std::function<void()> before_publish_hook_for_test_;
-  std::size_t publisher_cache_evictions_since_log_ = 0U;
-  std::chrono::steady_clock::time_point next_publisher_cache_eviction_log_at_{};
+  EventThrottle publisher_cache_eviction_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge

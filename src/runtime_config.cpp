@@ -23,6 +23,7 @@
 
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
@@ -401,35 +402,36 @@ RuntimeConfig loadRuntimeConfig(
       loadVideoSidecarConfig(runtime_config.loaded_params, runtime_config.connect_config, auth_mode);
     sidecar_enabled = runtime_config.video_sidecar_config.has_value();
 
-    RCLCPP_INFO(
-      kRuntimeConfigLogger,
-      "event=runtime_config_loaded phase=startup room=%s identity=%s auth_mode=%s sidecar_enabled=%s",
-      runtime_config.connect_config.room.empty() ? "<unset>" : runtime_config.connect_config.room.c_str(),
-      runtime_config.connect_config.identity.empty() ? "<unset>" : runtime_config.connect_config.identity.c_str(),
-      auth_mode_name,
-      sidecar_enabled ? "true" : "false");
+    LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
+      .kv("phase", "startup")
+      .kvOr("room", runtime_config.connect_config.room, "<unset>")
+      .kvOr("identity", runtime_config.connect_config.identity, "<unset>")
+      .kv("auth_mode", auth_mode_name)
+      .kv("sidecar_enabled", sidecar_enabled)
+      .info();
 
     return runtime_config;
   } catch (const std::exception & exc) {
-    RCLCPP_ERROR(
-      kRuntimeConfigLogger,
-      "event=runtime_config_load_failed phase=startup reason=config_validation_failed room=%s identity=%s "
-      "auth_mode=%s sidecar_enabled=%s error=%s",
-      room.c_str(),
-      identity.c_str(),
-      auth_mode_name,
-      sidecar_enabled ? "true" : "false",
-      exc.what());
+    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
+      .kv("phase", "startup")
+      .kv("reason", "config_validation_failed")
+      .kv("room", room)
+      .kv("identity", identity)
+      .kv("auth_mode", auth_mode_name)
+      .kv("sidecar_enabled", sidecar_enabled)
+      .kv("error", exc.what())
+      .error();
     throw;
   } catch (...) {
-    RCLCPP_ERROR(
-      kRuntimeConfigLogger,
-      "event=runtime_config_load_failed phase=startup reason=config_validation_failed room=%s identity=%s "
-      "auth_mode=%s sidecar_enabled=%s error=unknown_exception",
-      room.c_str(),
-      identity.c_str(),
-      auth_mode_name,
-      sidecar_enabled ? "true" : "false");
+    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
+      .kv("phase", "startup")
+      .kv("reason", "config_validation_failed")
+      .kv("room", room)
+      .kv("identity", identity)
+      .kv("auth_mode", auth_mode_name)
+      .kv("sidecar_enabled", sidecar_enabled)
+      .kv("error", "unknown_exception")
+      .error();
     throw;
   }
 }

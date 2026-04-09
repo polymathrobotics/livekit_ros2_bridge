@@ -135,11 +135,19 @@ if(BUILD_TESTING)
   ament_add_gtest(test_interface_definition_lookup test/cpp/test_interface_definition_lookup.cpp)
   target_link_libraries(test_interface_definition_lookup ${PROJECT_NAME})
 
+  ament_add_gtest(test_event_throttle test/cpp/test_event_throttle.cpp)
+  target_include_directories(test_event_throttle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(test_event_throttle ${PROJECT_NAME})
+
   ament_add_gtest(test_interface_payloads test/cpp/test_interface_payloads.cpp)
   target_link_libraries(test_interface_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
   ament_add_gtest(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
   target_link_libraries(test_interface_type_utils ${PROJECT_NAME})
+
+  ament_add_gtest(test_log_event test/cpp/test_log_event.cpp)
+  target_include_directories(test_log_event PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(test_log_event ${PROJECT_NAME})
 
   ament_add_gtest(test_node test/cpp/test_node.cpp)
   target_link_libraries(test_node ${PROJECT_NAME} ${std_srvs_TARGETS})
@@ -207,10 +215,12 @@ if(BUILD_TESTING)
     test_access_policy
     test_cdr_track_publisher
     test_control_packet_router
+    test_event_throttle
     test_interface_definition_lookup
     test_interface_payloads
     test_interface_type_utils
     test_livekit_access_token
+    test_log_event
     test_node
     test_resource_list_payloads
     test_ros_executor_queue

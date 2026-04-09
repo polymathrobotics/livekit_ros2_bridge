@@ -27,6 +27,7 @@
 #include "subscription_registry.hpp"
 #include "topic_publish_command.hpp"
 #include "topic_publisher.hpp"
+#include "utils/log_event.hpp"
 #include "video_sidecar_supervisor.hpp"
 
 namespace livekit_ros2_bridge
@@ -38,14 +39,6 @@ namespace
 constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
 constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
-constexpr auto kIngressLogThrottleMs = 5000;
-constexpr auto kIngressLogThrottlePeriod = std::chrono::milliseconds(kIngressLogThrottleMs);
-
-const char * requesterIdentityForLog(const IncomingControlPacket & packet)
-{
-  return packet.requester_identity.empty() ? "<unknown>" : packet.requester_identity.c_str();
-}
-
 }  // namespace
 
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config)
@@ -60,12 +53,12 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     throw std::runtime_error("Failed to create LiveKit session");
   }
 
-  RCLCPP_INFO(
-    node_.get_logger(),
-    "event=runtime_startup_begin phase=startup room=%s identity=%s sidecar_enabled=%s",
-    room_.empty() ? "<unset>" : room_.c_str(),
-    identity_.empty() ? "<unset>" : identity_.c_str(),
-    sidecar_enabled_ ? "true" : "false");
+  LogEvent(node_.get_logger(), "runtime_startup_begin")
+    .kv("phase", "startup")
+    .kvOr("room", room_, "<unset>")
+    .kvOr("identity", identity_, "<unset>")
+    .kv("sidecar_enabled", sidecar_enabled_)
+    .info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
@@ -151,23 +144,23 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     kReconnectMaxBackoff,
     std::chrono::seconds(runtime_config.loaded_params.livekit.token_refresh_margin_seconds));
   if (!rpc_router_->registerRpcMethods(*room_session_)) {
-    RCLCPP_ERROR(
-      node_.get_logger(),
-      "event=runtime_startup_failed phase=startup reason=required_rpc_registration_failed room=%s identity=%s "
-      "sidecar_enabled=%s",
-      room_.empty() ? "<unset>" : room_.c_str(),
-      identity_.empty() ? "<unset>" : identity_.c_str(),
-      sidecar_enabled_ ? "true" : "false");
+    LogEvent(node_.get_logger(), "runtime_startup_failed")
+      .kv("phase", "startup")
+      .kv("reason", "required_rpc_registration_failed")
+      .kvOr("room", room_, "<unset>")
+      .kvOr("identity", identity_, "<unset>")
+      .kv("sidecar_enabled", sidecar_enabled_)
+      .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
 
-  RCLCPP_INFO(
-    node_.get_logger(),
-    "event=runtime_ready phase=startup room=%s identity=%s sidecar_enabled=%s",
-    room_.empty() ? "<unset>" : room_.c_str(),
-    identity_.empty() ? "<unset>" : identity_.c_str(),
-    sidecar_enabled_ ? "true" : "false");
+  LogEvent(node_.get_logger(), "runtime_ready")
+    .kv("phase", "startup")
+    .kvOr("room", room_, "<unset>")
+    .kvOr("identity", identity_, "<unset>")
+    .kv("sidecar_enabled", sidecar_enabled_)
+    .info();
 }
 
 Runtime::~Runtime()
@@ -181,12 +174,12 @@ void Runtime::shutdown()
     return;
   }
 
-  RCLCPP_INFO(
-    node_.get_logger(),
-    "event=runtime_shutdown_start phase=shutdown room=%s identity=%s sidecar_enabled=%s",
-    room_.empty() ? "<unset>" : room_.c_str(),
-    identity_.empty() ? "<unset>" : identity_.c_str(),
-    sidecar_enabled_ ? "true" : "false");
+  LogEvent(node_.get_logger(), "runtime_shutdown_start")
+    .kv("phase", "shutdown")
+    .kvOr("room", room_, "<unset>")
+    .kvOr("identity", identity_, "<unset>")
+    .kv("sidecar_enabled", sidecar_enabled_)
+    .info();
 
   lease_gc_timer_.reset();
 
@@ -217,12 +210,12 @@ void Runtime::shutdown()
     ros_topic_publisher_->shutdown();
   }
 
-  RCLCPP_INFO(
-    node_.get_logger(),
-    "event=runtime_shutdown_complete phase=shutdown room=%s identity=%s sidecar_enabled=%s",
-    room_.empty() ? "<unset>" : room_.c_str(),
-    identity_.empty() ? "<unset>" : identity_.c_str(),
-    sidecar_enabled_ ? "true" : "false");
+  LogEvent(node_.get_logger(), "runtime_shutdown_complete")
+    .kv("phase", "shutdown")
+    .kvOr("room", room_, "<unset>")
+    .kvOr("identity", identity_, "<unset>")
+    .kv("sidecar_enabled", sidecar_enabled_)
+    .info();
 }
 
 bool Runtime::isShuttingDown() const
@@ -232,45 +225,38 @@ bool Runtime::isShuttingDown() const
 
 void Runtime::submitExecutorWork(std::function<void()> fn)
 {
-  auto logExecutorDrop =
-    [this](const char * reason, const char * stage, std::size_t & count, SteadyClock::time_point & next_log_at) {
-      ++count;
-      const auto now = SteadyClock::now();
-      if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
-        RCLCPP_WARN(
-          node_.get_logger(), "event=executor_work_dropped reason=%s stage=%s count=%zu", reason, stage, count);
-        count = 0U;
-        next_log_at = now + kIngressLogThrottlePeriod;
-      }
-    };
+  auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
+    if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+      LogEvent(node_.get_logger(), "executor_work_dropped")
+        .kv("reason", reason)
+        .kv("stage", stage)
+        .kv("count", count)
+        .warn();
+    }
+  };
 
   if (isShuttingDown()) {
-    logExecutorDrop(
-      "shutdown", "enqueue", executor_shutdown_enqueue_drops_since_log_, next_executor_shutdown_enqueue_log_at_);
+    logExecutorDrop("shutdown", "enqueue", executor_shutdown_enqueue_drop_throttle_);
     return;
   }
   if (ros_executor_queue_ == nullptr) {
-    logExecutorDrop(
-      "executor_unavailable", "enqueue", executor_unavailable_drops_since_log_, next_executor_unavailable_log_at_);
+    logExecutorDrop("executor_unavailable", "enqueue", executor_unavailable_drop_throttle_);
     return;
   }
   (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
-    auto logExecutorDrop =
-      [this](const char * reason, const char * stage, std::size_t & count, SteadyClock::time_point & next_log_at) {
-        ++count;
-        const auto now = SteadyClock::now();
-        if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
-          RCLCPP_WARN(
-            node_.get_logger(), "event=executor_work_dropped reason=%s stage=%s count=%zu", reason, stage, count);
-          count = 0U;
-          next_log_at = now + kIngressLogThrottlePeriod;
-        }
-      };
+    auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
+      if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+        LogEvent(node_.get_logger(), "executor_work_dropped")
+          .kv("reason", reason)
+          .kv("stage", stage)
+          .kv("count", count)
+          .warn();
+      }
+    };
 
     // The queue can still be draining work that was accepted before shutdown flipped the flag.
     if (isShuttingDown()) {
-      logExecutorDrop(
-        "shutdown", "execute", executor_shutdown_execute_drops_since_log_, next_executor_shutdown_execute_log_at_);
+      logExecutorDrop("shutdown", "execute", executor_shutdown_execute_drop_throttle_);
       return;
     }
     fn();
@@ -279,32 +265,23 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
 
 void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) const
 {
-  auto logControlPacketDrop = [this, &packet](
-                                const char * reason, std::size_t & count, SteadyClock::time_point & next_log_at) {
-    ++count;
-    const auto now = SteadyClock::now();
-    if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
-      RCLCPP_WARN(
-        node_.get_logger(),
-        "event=control_packet_dropped reason=%s control_topic=%s requester_identity=%s count=%zu",
-        reason,
-        packet.control_topic.c_str(),
-        requesterIdentityForLog(packet),
-        count);
-      count = 0U;
-      next_log_at = now + kIngressLogThrottlePeriod;
+  auto logControlPacketDrop = [this, &packet](const char * reason, EventThrottle & throttle) {
+    if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+      LogEvent(node_.get_logger(), "control_packet_dropped")
+        .kv("reason", reason)
+        .kv("control_topic", packet.control_topic)
+        .kvOr("requester_identity", packet.requester_identity)
+        .kv("count", count)
+        .warn();
     }
   };
 
   if (isShuttingDown()) {
-    logControlPacketDrop("shutdown", control_packet_shutdown_drops_since_log_, next_control_packet_shutdown_log_at_);
+    logControlPacketDrop("shutdown", control_packet_shutdown_drop_throttle_);
     return;
   }
   if (control_packet_router_ == nullptr) {
-    logControlPacketDrop(
-      "router_unavailable",
-      control_packet_router_unavailable_drops_since_log_,
-      next_control_packet_router_unavailable_log_at_);
+    logControlPacketDrop("router_unavailable", control_packet_router_unavailable_drop_throttle_);
     return;
   }
   control_packet_router_->route(packet);

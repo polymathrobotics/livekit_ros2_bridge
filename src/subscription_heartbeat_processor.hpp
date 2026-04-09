@@ -24,6 +24,7 @@
 #include "nlohmann/json_fwd.hpp"
 #include "payloads/stream_control_payloads.hpp"
 #include "rclcpp/clock.hpp"
+#include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -79,8 +80,7 @@ private:
   rclcpp::Clock::SharedPtr clock_;
   // Tracks which requester identity is allowed to renew a session_id anonymously until expiry.
   std::unordered_map<std::string, SessionLease> session_leases_;
-  std::size_t session_conflicts_since_log_ = 0U;
-  std::chrono::steady_clock::time_point next_session_conflict_log_at_{};
+  EventThrottle session_conflict_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge

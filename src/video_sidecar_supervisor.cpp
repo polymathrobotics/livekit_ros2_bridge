@@ -32,6 +32,7 @@
 #include "access_policy.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/livekit_access_token.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -59,15 +60,14 @@ void logSidecarSubprocessFailure(
   const char * error,
   pid_t pid)
 {
-  RCLCPP_ERROR(
-    kLogger,
-    "event=video_sidecar_subprocess_failed sidecar_key=%s publisher_identity=%s phase=%s reason=%s error=%s pid=%d",
-    sidecar_key.c_str(),
-    publisher_identity.c_str(),
-    phase,
-    reason,
-    error,
-    static_cast<int>(pid));
+  LogEvent(kLogger, "video_sidecar_subprocess_failed")
+    .kv("sidecar_key", sidecar_key)
+    .kv("publisher_identity", publisher_identity)
+    .kv("phase", phase)
+    .kv("reason", reason)
+    .kv("error", error)
+    .kv("pid", static_cast<int>(pid))
+    .error();
 }
 
 void signalSidecarProcessGroup(pid_t pid, int signal_number)
@@ -268,23 +268,21 @@ void VideoSidecarSupervisor::tryRestartSidecar(
     restartSidecar(sidecar_key, sidecar);
   } catch (const std::exception & exc) {
     const char * phase = sidecar.pid > 0 ? "prepare" : "spawn";
-    RCLCPP_ERROR(
-      kLogger,
-      "event=video_sidecar_restart_failed sidecar_key=%s publisher_identity=%s phase=%s reason=%s error=%s",
-      sidecar_key.c_str(),
-      sidecar.publisher_identity.c_str(),
-      phase,
-      reason,
-      exc.what());
+    LogEvent(kLogger, "video_sidecar_restart_failed")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("phase", phase)
+      .kv("reason", reason)
+      .kv("error", exc.what())
+      .error();
   } catch (...) {
     const char * phase = sidecar.pid > 0 ? "prepare" : "spawn";
-    RCLCPP_ERROR(
-      kLogger,
-      "event=video_sidecar_restart_failed sidecar_key=%s publisher_identity=%s phase=%s reason=%s",
-      sidecar_key.c_str(),
-      sidecar.publisher_identity.c_str(),
-      phase,
-      reason);
+    LogEvent(kLogger, "video_sidecar_restart_failed")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("phase", phase)
+      .kv("reason", reason)
+      .error();
   }
 }
 
@@ -390,12 +388,11 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   sidecar.spawned_at = SteadyClock::now();
   sidecar.consecutive_unhealthy_checks = 0;
   sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
-  RCLCPP_INFO(
-    kLogger,
-    "event=video_sidecar_spawned sidecar_key=%s publisher_identity=%s pid=%d",
-    sidecar_key.c_str(),
-    sidecar.publisher_identity.c_str(),
-    static_cast<int>(pid));
+  LogEvent(kLogger, "video_sidecar_spawned")
+    .kv("sidecar_key", sidecar_key)
+    .kv("publisher_identity", sidecar.publisher_identity)
+    .kv("pid", static_cast<int>(pid))
+    .info();
 }
 
 void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, SidecarRecord & sidecar)
@@ -411,14 +408,14 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
   pid_t result = waitpidNoIntr(pid, &status, WNOHANG);
   if (result < 0) {
     const int error_code = errno;
-    RCLCPP_ERROR(
-      kLogger,
-      "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait reason=sigterm_waitpid_failed "
-      "error=%s pid=%d",
-      sidecar_key.c_str(),
-      sidecar.publisher_identity.c_str(),
-      strerror(error_code),
-      static_cast<int>(pid));
+    LogEvent(kLogger, "video_sidecar_stop_failed")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("phase", "wait")
+      .kv("reason", "sigterm_waitpid_failed")
+      .kv("error", strerror(error_code))
+      .kv("pid", static_cast<int>(pid))
+      .error();
     sidecar.pid = -1;
     sidecar.consecutive_unhealthy_checks = 0;
     sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
@@ -430,14 +427,14 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
     result = waitpidNoIntr(pid, &status, WNOHANG);
     if (result < 0) {
       const int error_code = errno;
-      RCLCPP_ERROR(
-        kLogger,
-        "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait reason=sigterm_waitpid_failed "
-        "error=%s pid=%d",
-        sidecar_key.c_str(),
-        sidecar.publisher_identity.c_str(),
-        strerror(error_code),
-        static_cast<int>(pid));
+      LogEvent(kLogger, "video_sidecar_stop_failed")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("phase", "wait")
+        .kv("reason", "sigterm_waitpid_failed")
+        .kv("error", strerror(error_code))
+        .kv("pid", static_cast<int>(pid))
+        .error();
       sidecar.pid = -1;
       sidecar.consecutive_unhealthy_checks = 0;
       sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
@@ -449,26 +446,26 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
       result = waitpidNoIntr(pid, &status, 0);
       if (result < 0) {
         const int error_code = errno;
-        RCLCPP_ERROR(
-          kLogger,
-          "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait "
-          "reason=sigkill_waitpid_failed error=%s pid=%d",
-          sidecar_key.c_str(),
-          sidecar.publisher_identity.c_str(),
-          strerror(error_code),
-          static_cast<int>(pid));
+        LogEvent(kLogger, "video_sidecar_stop_failed")
+          .kv("sidecar_key", sidecar_key)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("phase", "wait")
+          .kv("reason", "sigkill_waitpid_failed")
+          .kv("error", strerror(error_code))
+          .kv("pid", static_cast<int>(pid))
+          .error();
         sidecar.pid = -1;
         sidecar.consecutive_unhealthy_checks = 0;
         sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
         return;
       }
 
-      RCLCPP_WARN(
-        kLogger,
-        "event=video_sidecar_killed sidecar_key=%s publisher_identity=%s reason=sigterm_timeout pid=%d",
-        sidecar_key.c_str(),
-        sidecar.publisher_identity.c_str(),
-        static_cast<int>(pid));
+      LogEvent(kLogger, "video_sidecar_killed")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("reason", "sigterm_timeout")
+        .kv("pid", static_cast<int>(pid))
+        .warn();
       sidecar.pid = -1;
       sidecar.consecutive_unhealthy_checks = 0;
       sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
@@ -476,12 +473,11 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
     }
   }
 
-  RCLCPP_INFO(
-    kLogger,
-    "event=video_sidecar_stopped sidecar_key=%s publisher_identity=%s pid=%d",
-    sidecar_key.c_str(),
-    sidecar.publisher_identity.c_str(),
-    static_cast<int>(pid));
+  LogEvent(kLogger, "video_sidecar_stopped")
+    .kv("sidecar_key", sidecar_key)
+    .kv("publisher_identity", sidecar.publisher_identity)
+    .kv("pid", static_cast<int>(pid))
+    .info();
   sidecar.pid = -1;
   sidecar.consecutive_unhealthy_checks = 0;
   sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
@@ -507,21 +503,19 @@ void VideoSidecarSupervisor::reapExitedSidecars()
 
     if (result < 0) {
       if (errno == ECHILD) {
-        RCLCPP_WARN(
-          kLogger,
-          "event=video_sidecar_not_waitable sidecar_key=%s publisher_identity=%s pid=%d",
-          entry.first.c_str(),
-          sidecar.publisher_identity.c_str(),
-          static_cast<int>(sidecar.pid));
+        LogEvent(kLogger, "video_sidecar_not_waitable")
+          .kv("sidecar_key", entry.first)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("pid", static_cast<int>(sidecar.pid))
+          .warn();
         sidecar.pid = -1;
       } else {
-        RCLCPP_ERROR(
-          kLogger,
-          "event=video_sidecar_waitpid_error sidecar_key=%s publisher_identity=%s pid=%d error=%s",
-          entry.first.c_str(),
-          sidecar.publisher_identity.c_str(),
-          static_cast<int>(sidecar.pid),
-          strerror(errno));
+        LogEvent(kLogger, "video_sidecar_waitpid_error")
+          .kv("sidecar_key", entry.first)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("pid", static_cast<int>(sidecar.pid))
+          .kv("error", strerror(errno))
+          .error();
       }
       continue;
     }
@@ -529,19 +523,17 @@ void VideoSidecarSupervisor::reapExitedSidecars()
     sidecar.pid = -1;
 
     if (WIFEXITED(status)) {
-      RCLCPP_WARN(
-        kLogger,
-        "event=video_sidecar_exited sidecar_key=%s publisher_identity=%s exit_code=%d",
-        entry.first.c_str(),
-        sidecar.publisher_identity.c_str(),
-        WEXITSTATUS(status));
+      LogEvent(kLogger, "video_sidecar_exited")
+        .kv("sidecar_key", entry.first)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("exit_code", WEXITSTATUS(status))
+        .warn();
     } else if (WIFSIGNALED(status)) {
-      RCLCPP_WARN(
-        kLogger,
-        "event=video_sidecar_signaled sidecar_key=%s publisher_identity=%s signal=%d",
-        entry.first.c_str(),
-        sidecar.publisher_identity.c_str(),
-        WTERMSIG(status));
+      LogEvent(kLogger, "video_sidecar_signaled")
+        .kv("sidecar_key", entry.first)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("signal", WTERMSIG(status))
+        .warn();
     }
   }
 }
@@ -570,19 +562,17 @@ void VideoSidecarSupervisor::restartUnhealthy()
     try {
       healthy = is_publisher_healthy_(sidecar.publisher_identity);
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(
-        kLogger,
-        "event=video_sidecar_health_check_failed sidecar_key=%s publisher_identity=%s error=%s",
-        entry.first.c_str(),
-        sidecar.publisher_identity.c_str(),
-        exc.what());
+      LogEvent(kLogger, "video_sidecar_health_check_failed")
+        .kv("sidecar_key", entry.first)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("error", exc.what())
+        .error();
       continue;
     } catch (...) {
-      RCLCPP_ERROR(
-        kLogger,
-        "event=video_sidecar_health_check_failed sidecar_key=%s publisher_identity=%s",
-        entry.first.c_str(),
-        sidecar.publisher_identity.c_str());
+      LogEvent(kLogger, "video_sidecar_health_check_failed")
+        .kv("sidecar_key", entry.first)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .error();
       continue;
     }
 
@@ -595,24 +585,23 @@ void VideoSidecarSupervisor::restartUnhealthy()
     ++sidecar.consecutive_unhealthy_checks;
     if (sidecar.consecutive_unhealthy_checks < config_.unhealthy_restart_threshold) {
       if (sidecar.next_unhealthy_log_at == SteadyClock::time_point{} || now >= sidecar.next_unhealthy_log_at) {
-        RCLCPP_WARN(
-          kLogger,
-          "event=video_sidecar_unhealthy sidecar_key=%s publisher_identity=%s reason=publisher_unhealthy "
-          "count=%zu threshold=%zu",
-          entry.first.c_str(),
-          sidecar.publisher_identity.c_str(),
-          sidecar.consecutive_unhealthy_checks,
-          config_.unhealthy_restart_threshold);
+        LogEvent(kLogger, "video_sidecar_unhealthy")
+          .kv("sidecar_key", entry.first)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("reason", "publisher_unhealthy")
+          .kv("count", sidecar.consecutive_unhealthy_checks)
+          .kv("threshold", config_.unhealthy_restart_threshold)
+          .warn();
         sidecar.next_unhealthy_log_at = now + kUnhealthyLogThrottlePeriod;
       }
       continue;
     }
 
-    RCLCPP_WARN(
-      kLogger,
-      "event=video_sidecar_restart sidecar_key=%s publisher_identity=%s reason=publisher_unhealthy",
-      entry.first.c_str(),
-      sidecar.publisher_identity.c_str());
+    LogEvent(kLogger, "video_sidecar_restart")
+      .kv("sidecar_key", entry.first)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("reason", "publisher_unhealthy")
+      .warn();
     tryRestartSidecar(entry.first, sidecar, "publisher_unhealthy");
   }
 }
@@ -640,12 +629,12 @@ void VideoSidecarSupervisor::restartExpiring()
       continue;
     }
 
-    RCLCPP_INFO(
-      kLogger,
-      "event=video_sidecar_restart sidecar_key=%s publisher_identity=%s reason=token_expiring pid=%d",
-      entry.first.c_str(),
-      sidecar.publisher_identity.c_str(),
-      static_cast<int>(sidecar.pid));
+    LogEvent(kLogger, "video_sidecar_restart")
+      .kv("sidecar_key", entry.first)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("reason", "token_expiring")
+      .kv("pid", static_cast<int>(sidecar.pid))
+      .info();
 
     tryRestartSidecar(entry.first, sidecar, "token_expiring");
   }

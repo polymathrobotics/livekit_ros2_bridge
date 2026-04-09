@@ -22,6 +22,7 @@
 #include "rclcpp/node.hpp"
 #include "rclcpp/timer.hpp"
 #include "runtime_config.hpp"
+#include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -76,16 +77,11 @@ private:
   std::string identity_;
   bool sidecar_enabled_ = false;
   std::atomic<bool> shutting_down_{false};
-  std::size_t executor_shutdown_enqueue_drops_since_log_ = 0U;
-  std::size_t executor_unavailable_drops_since_log_ = 0U;
-  std::size_t executor_shutdown_execute_drops_since_log_ = 0U;
-  mutable std::size_t control_packet_shutdown_drops_since_log_ = 0U;
-  mutable std::size_t control_packet_router_unavailable_drops_since_log_ = 0U;
-  SteadyClock::time_point next_executor_shutdown_enqueue_log_at_{};
-  SteadyClock::time_point next_executor_unavailable_log_at_{};
-  SteadyClock::time_point next_executor_shutdown_execute_log_at_{};
-  mutable SteadyClock::time_point next_control_packet_shutdown_log_at_{};
-  mutable SteadyClock::time_point next_control_packet_router_unavailable_log_at_{};
+  EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
+  EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};
+  EventThrottle executor_shutdown_execute_drop_throttle_{std::chrono::seconds(5)};
+  mutable EventThrottle control_packet_shutdown_drop_throttle_{std::chrono::seconds(5)};
+  mutable EventThrottle control_packet_router_unavailable_drop_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge

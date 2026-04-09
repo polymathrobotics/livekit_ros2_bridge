@@ -38,6 +38,7 @@
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/livekit_access_token.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -63,13 +64,12 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
   return [method_name, handler](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
     const char * requester_identity = requesterIdentityForLog(invocation);
     const char * request_id = requestIdForLog(invocation);
-    RCLCPP_INFO(
-      kRoomSessionLogger,
-      "event=rpc_request_received method=%s request_id=%s requester_identity=%s payload_bytes=%zu",
-      method_name.c_str(),
-      request_id,
-      requester_identity,
-      invocation.payload.size());
+    LogEvent(kRoomSessionLogger, "rpc_request_received")
+      .kv("method", method_name)
+      .kv("request_id", request_id)
+      .kv("requester_identity", requester_identity)
+      .kv("payload_bytes", invocation.payload.size())
+      .info();
 
     try {
       return handler(
@@ -81,22 +81,22 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
     } catch (const RpcHandlerError & exc) {
       throw livekit::RpcError(exc.code(), exc.what());
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(
-        kRoomSessionLogger,
-        "event=rpc_request_failed reason=internal method=%s request_id=%s requester_identity=%s error=%s",
-        method_name.c_str(),
-        request_id,
-        requester_identity,
-        exc.what());
+      LogEvent(kRoomSessionLogger, "rpc_request_failed")
+        .kv("reason", "internal")
+        .kv("method", method_name)
+        .kv("request_id", request_id)
+        .kv("requester_identity", requester_identity)
+        .kv("error", exc.what())
+        .error();
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     } catch (...) {
-      RCLCPP_ERROR(
-        kRoomSessionLogger,
-        "event=rpc_request_failed reason=internal method=%s request_id=%s requester_identity=%s "
-        "error=unknown_exception",
-        method_name.c_str(),
-        request_id,
-        requester_identity);
+      LogEvent(kRoomSessionLogger, "rpc_request_failed")
+        .kv("reason", "internal")
+        .kv("method", method_name)
+        .kv("request_id", request_id)
+        .kv("requester_identity", requester_identity)
+        .kv("error", "unknown_exception")
+        .error();
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     }
   };
@@ -166,11 +166,11 @@ public:
     static_expiry_warned_ = false;
     last_reconnect_reason_.clear();
     thread_started_ = true;
-    RCLCPP_INFO(
-      kRoomSessionLogger,
-      "event=room_session_start_requested phase=startup room=%s identity=%s",
-      config_.room.empty() ? "<unset>" : config_.room.c_str(),
-      config_.identity.empty() ? "<unset>" : config_.identity.c_str());
+    LogEvent(kRoomSessionLogger, "room_session_start_requested")
+      .kv("phase", "startup")
+      .kvOr("room", config_.room, "<unset>")
+      .kvOr("identity", config_.identity, "<unset>")
+      .info();
     worker_thread_ = std::thread([this]() { run(); });
   }
 
@@ -213,7 +213,10 @@ public:
     try {
       participant->unregisterRpcMethod(method_name);
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRoomSessionLogger, "Failed to unregister RPC method %s: %s", method_name.c_str(), exc.what());
+      LogEvent(kRoomSessionLogger, "rpc_method_unregistration_failed")
+        .kv("method", method_name)
+        .kv("error", exc.what())
+        .error();
       return false;
     }
     return true;
@@ -365,7 +368,10 @@ private:
   void run()
   {
     if (!livekit::initialize()) {
-      RCLCPP_ERROR(kRoomSessionLogger, "Failed to initialize LiveKit");
+      LogEvent(kRoomSessionLogger, "livekit_initialize_failed")
+        .kv("phase", "startup")
+        .kv("reason", "initialize_returned_false")
+        .error();
       return;
     }
 
@@ -373,7 +379,7 @@ private:
       std::lock_guard<std::mutex> lock(mutex_);
       livekit_initialized_ = true;
     }
-    RCLCPP_INFO(kRoomSessionLogger, "LiveKit initialized");
+    LogEvent(kRoomSessionLogger, "livekit_initialized").kv("phase", "startup").info();
 
     auto backoff = initialBackoff();
     bool immediate_retry = false;
@@ -398,13 +404,13 @@ private:
       }
 
       if (backoff.count() > 0) {
-        RCLCPP_WARN(
-          kRoomSessionLogger,
-          "event=room_reconnect_backoff phase=reconnect reason=%s room=%s identity=%s delay_seconds=%.1f",
-          lastReconnectReason().c_str(),
-          config_.room.empty() ? "<unset>" : config_.room.c_str(),
-          config_.identity.empty() ? "<unset>" : config_.identity.c_str(),
-          backoff.count() / 1000.0);
+        LogEvent(kRoomSessionLogger, "room_reconnect_backoff")
+          .kv("phase", "reconnect")
+          .kv("reason", lastReconnectReason())
+          .kvOr("room", config_.room, "<unset>")
+          .kvOr("identity", config_.identity, "<unset>")
+          .kv("delay_seconds", backoff.count() / 1000.0)
+          .warn();
         waitForStop(backoff);
       }
       backoff = std::min(backoff * 2, maxBackoff());
@@ -413,7 +419,7 @@ private:
     clearRoomState(false);
     if (livekit_initialized_) {
       livekit::shutdown();
-      RCLCPP_INFO(kRoomSessionLogger, "LiveKit shutdown");
+      LogEvent(kRoomSessionLogger, "livekit_shutdown_complete").kv("phase", "shutdown").info();
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -434,12 +440,23 @@ private:
     try {
       token = token_source->getToken(config);
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRoomSessionLogger, "Failed generating LiveKit token: %s", exc.what());
+      LogEvent(kRoomSessionLogger, "room_token_load_failed")
+        .kv("phase", "connect")
+        .kv("reason", "exception")
+        .kvOr("room", config.room, "<unset>")
+        .kvOr("identity", config.identity, "<unset>")
+        .kv("error", exc.what())
+        .error();
       return false;
     }
 
     if (token.value.empty()) {
-      RCLCPP_ERROR(kRoomSessionLogger, "Failed generating LiveKit token: token is empty");
+      LogEvent(kRoomSessionLogger, "room_token_load_failed")
+        .kv("phase", "connect")
+        .kv("reason", "empty_token")
+        .kvOr("room", config.room, "<unset>")
+        .kvOr("identity", config.identity, "<unset>")
+        .error();
       return false;
     }
 
@@ -454,27 +471,57 @@ private:
     // publication does not depend on bringing up a second peer connection.
     room_options.single_peer_connection = true;
 
-    RCLCPP_INFO(kRoomSessionLogger, "Connecting to LiveKit url=%s room=%s", config.url.c_str(), config.room.c_str());
+    LogEvent(kRoomSessionLogger, "room_connect_begin")
+      .kv("phase", "connect")
+      .kv("url", config.url)
+      .kv("room", config.room)
+      .kvOr("identity", config.identity, "<unset>")
+      .info();
 
     try {
       if (!room->Connect(config.url, token.value, room_options)) {
-        RCLCPP_ERROR(kRoomSessionLogger, "Failed to connect to LiveKit room");
+        LogEvent(kRoomSessionLogger, "room_connect_failed")
+          .kv("phase", "connect")
+          .kv("reason", "connect_returned_false")
+          .kv("url", config.url)
+          .kv("room", config.room)
+          .kvOr("identity", config.identity, "<unset>")
+          .error();
         room->setDelegate(nullptr);
         return false;
       }
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRoomSessionLogger, "LiveKit room connect failed: %s", exc.what());
+      LogEvent(kRoomSessionLogger, "room_connect_failed")
+        .kv("phase", "connect")
+        .kv("reason", "exception")
+        .kv("url", config.url)
+        .kv("room", config.room)
+        .kvOr("identity", config.identity, "<unset>")
+        .kv("error", exc.what())
+        .error();
       room->setDelegate(nullptr);
       return false;
     } catch (...) {
-      RCLCPP_ERROR(kRoomSessionLogger, "LiveKit room connect failed with unknown exception");
+      LogEvent(kRoomSessionLogger, "room_connect_failed")
+        .kv("phase", "connect")
+        .kv("reason", "unknown_exception")
+        .kv("url", config.url)
+        .kv("room", config.room)
+        .kvOr("identity", config.identity, "<unset>")
+        .error();
       room->setDelegate(nullptr);
       return false;
     }
 
     auto * participant = room->localParticipant();
     if (participant == nullptr) {
-      RCLCPP_ERROR(kRoomSessionLogger, "LiveKit local participant unavailable");
+      LogEvent(kRoomSessionLogger, "room_connect_failed")
+        .kv("phase", "connect")
+        .kv("reason", "local_participant_unavailable")
+        .kv("url", config.url)
+        .kv("room", config.room)
+        .kvOr("identity", config.identity, "<unset>")
+        .error();
       room->setDelegate(nullptr);
       return false;
     }
@@ -491,7 +538,7 @@ private:
     }
 
     if (!rpc_methods_registered) {
-      RCLCPP_ERROR(kRoomSessionLogger, "event=rpc_registration_incomplete phase=connect");
+      LogEvent(kRoomSessionLogger, "rpc_registration_incomplete").kv("phase", "connect").error();
       clearRoomState(false);
       return false;
     }
@@ -501,8 +548,12 @@ private:
     const char * room_sid = room_info.sid.has_value() ? room_info.sid->c_str() : "<unknown>";
     const std::string & local_identity = participant->identity();
     const char * identity = local_identity.empty() ? "<unknown>" : local_identity.c_str();
-    RCLCPP_INFO(
-      kRoomSessionLogger, "Connected to LiveKit room name=%s sid=%s identity=%s", room_name, room_sid, identity);
+    LogEvent(kRoomSessionLogger, "room_connected")
+      .kv("phase", "connect")
+      .kv("room", room_name)
+      .kv("sid", room_sid)
+      .kv("identity", identity)
+      .info();
     return true;
   }
 
@@ -531,12 +582,13 @@ private:
         // active LiveKit connection in place.
         const auto deadline = computeRefreshDeadline(current_token_, refresh_margin_);
         if (deadline.has_value() && now >= *deadline) {
-          RCLCPP_INFO(
-            kRoomSessionLogger,
-            "event=room_reconnect_requested phase=runtime reason=token_refresh_due room=%s identity=%s exp_unix=%s",
-            config_.room.empty() ? "<unset>" : config_.room.c_str(),
-            config_.identity.empty() ? "<unset>" : config_.identity.c_str(),
-            formatTokenExpiry(current_token_.expires_at).c_str());
+          LogEvent(kRoomSessionLogger, "room_reconnect_requested")
+            .kv("phase", "runtime")
+            .kv("reason", "token_refresh_due")
+            .kvOr("room", config_.room, "<unset>")
+            .kvOr("identity", config_.identity, "<unset>")
+            .kv("exp_unix", formatTokenExpiry(current_token_.expires_at))
+            .info();
           reconnect_requested_ = true;
           last_reconnect_reason_ = "token_refresh_due";
           return true;
@@ -547,10 +599,12 @@ private:
       const auto warn_deadline = *current_token_.expires_at - refresh_margin_;
       if (!static_expiry_warned_ && now >= warn_deadline) {
         static_expiry_warned_ = true;
-        RCLCPP_WARN(
-          kRoomSessionLogger,
-          "Static LiveKit token is nearing expiry: exp_unix=%s automatic refresh is unavailable",
-          formatTokenExpiry(current_token_.expires_at).c_str());
+        LogEvent(kRoomSessionLogger, "room_token_expiry_warning")
+          .kv("phase", "runtime")
+          .kv("mode", "static")
+          .kv("reason", "automatic_refresh_unavailable")
+          .kv("exp_unix", formatTokenExpiry(current_token_.expires_at))
+          .warn();
       }
     }
 
@@ -585,12 +639,12 @@ private:
     // The runtime only rebuilds per-connection ROS state after an actual disconnect or reconnect
     // cycle, not during final stop().
     if (notify_session_reset && callback) {
-      RCLCPP_INFO(
-        kRoomSessionLogger,
-        "event=room_session_reset phase=reconnect reason=%s room=%s identity=%s",
-        reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str(),
-        room_name.empty() ? "<unset>" : room_name.c_str(),
-        identity.empty() ? "<unset>" : identity.c_str());
+      LogEvent(kRoomSessionLogger, "room_session_reset")
+        .kv("phase", "reconnect")
+        .kv("reason", reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str())
+        .kvOr("room", room_name, "<unset>")
+        .kvOr("identity", identity, "<unset>")
+        .info();
       callback();
     }
   }
@@ -613,12 +667,12 @@ private:
     }
 
     if (should_log) {
-      RCLCPP_WARN(
-        kRoomSessionLogger,
-        "event=room_reconnect_requested phase=runtime reason=%s room=%s identity=%s",
-        reason,
-        room_name.empty() ? "<unset>" : room_name.c_str(),
-        identity.empty() ? "<unset>" : identity.c_str());
+      LogEvent(kRoomSessionLogger, "room_reconnect_requested")
+        .kv("phase", "runtime")
+        .kv("reason", reason)
+        .kvOr("room", room_name, "<unset>")
+        .kvOr("identity", identity, "<unset>")
+        .warn();
     }
   }
 
@@ -656,7 +710,10 @@ private:
     try {
       participant->registerRpcMethod(method_name, makeLiveKitRpcHandler(method_name, handler_it->second));
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRoomSessionLogger, "Failed to register RPC method %s: %s", method_name.c_str(), exc.what());
+      LogEvent(kRoomSessionLogger, "rpc_method_registration_failed")
+        .kv("method", method_name)
+        .kv("error", exc.what())
+        .error();
       return false;
     }
     return true;
@@ -700,20 +757,28 @@ private:
   void logTokenState(const AccessToken & token)
   {
     if (token.refreshable) {
-      RCLCPP_INFO(
-        kRoomSessionLogger, "Using refreshable LiveKit token exp_unix=%s", formatTokenExpiry(token.expires_at).c_str());
+      LogEvent(kRoomSessionLogger, "room_token_loaded")
+        .kv("phase", "connect")
+        .kv("mode", "refreshable")
+        .kv("exp_unix", formatTokenExpiry(token.expires_at))
+        .info();
       return;
     }
 
     if (token.expires_at.has_value()) {
-      RCLCPP_INFO(
-        kRoomSessionLogger, "Using static LiveKit token exp_unix=%s", formatTokenExpiry(token.expires_at).c_str());
+      LogEvent(kRoomSessionLogger, "room_token_loaded")
+        .kv("phase", "connect")
+        .kv("mode", "static")
+        .kv("exp_unix", formatTokenExpiry(token.expires_at))
+        .info();
       return;
     }
 
-    RCLCPP_WARN(
-      kRoomSessionLogger,
-      "Using static LiveKit token without parseable exp claim; proactive expiry handling is unavailable");
+    LogEvent(kRoomSessionLogger, "room_token_expiry_unavailable")
+      .kv("phase", "connect")
+      .kv("mode", "static")
+      .kv("reason", "parseable_exp_missing")
+      .warn();
   }
 
   void waitForStop(std::chrono::milliseconds duration)

@@ -21,6 +21,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -29,12 +30,6 @@ namespace
 {
 
 constexpr auto kControlPacketLogThrottleMs = 5000;
-
-const char * requesterIdentityForLog(const IncomingControlPacket & packet)
-{
-  return packet.requester_identity.empty() ? "<unknown>" : packet.requester_identity.c_str();
-}
-
 }  // namespace
 
 ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
@@ -64,70 +59,56 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     try {
       body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
     } catch (const std::exception & exc) {
-      RCLCPP_WARN_THROTTLE(
-        logger_,
-        *clock_,
-        kControlPacketLogThrottleMs,
-        "event=control_packet_rejected reason=malformed_heartbeat control_topic=%s requester_identity=%s "
-        "error=%s",
-        packet.control_topic.c_str(),
-        requesterIdentityForLog(packet),
-        exc.what());
+      LogEvent(logger_, "control_packet_rejected")
+        .kv("reason", "malformed_heartbeat")
+        .kv("control_topic", packet.control_topic)
+        .kvOr("requester_identity", packet.requester_identity)
+        .kv("error", exc.what())
+        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
       return;
     }
 
     try {
       handlers_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
     } catch (const std::exception & exc) {
-      RCLCPP_WARN_THROTTLE(
-        logger_,
-        *clock_,
-        kControlPacketLogThrottleMs,
-        "event=control_packet_rejected reason=invalid_heartbeat control_topic=%s requester_identity=%s "
-        "error=%s",
-        packet.control_topic.c_str(),
-        requesterIdentityForLog(packet),
-        exc.what());
+      LogEvent(logger_, "control_packet_rejected")
+        .kv("reason", "invalid_heartbeat")
+        .kv("control_topic", packet.control_topic)
+        .kvOr("requester_identity", packet.requester_identity)
+        .kv("error", exc.what())
+        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
     }
     return;
   }
 
   if (packet.control_topic == protocol::kControlTopicPublish) {
     if (packet.requester_identity.empty()) {
-      RCLCPP_WARN_THROTTLE(
-        logger_,
-        *clock_,
-        kControlPacketLogThrottleMs,
-        "event=control_packet_rejected reason=missing_requester_identity control_topic=%s "
-        "requester_identity=%s",
-        packet.control_topic.c_str(),
-        requesterIdentityForLog(packet));
+      LogEvent(logger_, "control_packet_rejected")
+        .kv("reason", "missing_requester_identity")
+        .kv("control_topic", packet.control_topic)
+        .kvOr("requester_identity", packet.requester_identity)
+        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
       return;
     }
 
     try {
       handlers_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
     } catch (const std::exception & exc) {
-      RCLCPP_WARN_THROTTLE(
-        logger_,
-        *clock_,
-        kControlPacketLogThrottleMs,
-        "event=control_packet_rejected reason=invalid_publish_command control_topic=%s requester_identity=%s "
-        "error=%s",
-        packet.control_topic.c_str(),
-        requesterIdentityForLog(packet),
-        exc.what());
+      LogEvent(logger_, "control_packet_rejected")
+        .kv("reason", "invalid_publish_command")
+        .kv("control_topic", packet.control_topic)
+        .kvOr("requester_identity", packet.requester_identity)
+        .kv("error", exc.what())
+        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
     }
     return;
   }
 
-  RCLCPP_WARN_THROTTLE(
-    logger_,
-    *clock_,
-    kControlPacketLogThrottleMs,
-    "event=control_packet_dropped reason=unsupported_control_topic control_topic=%s requester_identity=%s",
-    packet.control_topic.c_str(),
-    requesterIdentityForLog(packet));
+  LogEvent(logger_, "control_packet_dropped")
+    .kv("reason", "unsupported_control_topic")
+    .kv("control_topic", packet.control_topic)
+    .kvOr("requester_identity", packet.requester_identity)
+    .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
 }
 
 }  // namespace livekit_ros2_bridge

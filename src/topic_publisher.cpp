@@ -22,6 +22,7 @@
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
 #include "utils/interface_types.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -31,7 +32,6 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 constexpr auto kPublishLogThrottleMs = 5000;
-constexpr auto kPublishLogThrottlePeriod = std::chrono::milliseconds(kPublishLogThrottleMs);
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -64,26 +64,24 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   // Publish commands come from a streaming control path, so this component is
   // intentionally best-effort: invalid or late commands are dropped after logging.
   if (is_shutdown_.load()) {
-    RCLCPP_WARN_THROTTLE(
-      kTopicPublisherLogger,
-      *node_.get_clock(),
-      kPublishLogThrottleMs,
-      "event=publish_request_rejected reason=shutdown resource=topics topic=%s requester_identity=%s "
-      "interface_type=%s",
-      topic.c_str(),
-      requester_identity.c_str(),
-      command.interface_type.c_str());
+    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+      .kv("reason", "shutdown")
+      .kv("resource", "topics")
+      .kv("topic", topic)
+      .kv("requester_identity", requester_identity)
+      .kv("interface_type", command.interface_type)
+      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(kPublishLogThrottleMs));
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
-    RCLCPP_WARN(
-      kTopicPublisherLogger,
-      "event=publish_request_rejected reason=forbidden resource=topics topic=%s requester_identity=%s "
-      "interface_type=%s",
-      topic.c_str(),
-      requester_identity.c_str(),
-      command.interface_type.c_str());
+    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+      .kv("reason", "forbidden")
+      .kv("resource", "topics")
+      .kv("topic", topic)
+      .kv("requester_identity", requester_identity)
+      .kv("interface_type", command.interface_type)
+      .warn();
     return;
   }
 
@@ -91,14 +89,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
   } catch (const std::exception & exc) {
-    RCLCPP_WARN(
-      kTopicPublisherLogger,
-      "event=publish_request_rejected reason=invalid_request resource=topics topic=%s "
-      "requester_identity=%s interface_type=%s error=%s",
-      topic.c_str(),
-      requester_identity.c_str(),
-      command.interface_type.c_str(),
-      exc.what());
+    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+      .kv("reason", "invalid_request")
+      .kv("resource", "topics")
+      .kv("topic", topic)
+      .kv("requester_identity", requester_identity)
+      .kv("interface_type", command.interface_type)
+      .kv("error", exc.what())
+      .warn();
     return;
   }
 
@@ -107,14 +105,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     publishWithPublisherCache(topic, interface_type, serialized);
   } catch (const std::exception & exc) {
-    RCLCPP_ERROR(
-      kTopicPublisherLogger,
-      "event=publish_request_failed reason=internal resource=topics topic=%s requester_identity=%s "
-      "interface_type=%s error=%s",
-      topic.c_str(),
-      requester_identity.c_str(),
-      interface_type.c_str(),
-      exc.what());
+    LogEvent(kTopicPublisherLogger, "publish_request_failed")
+      .kv("reason", "internal")
+      .kv("resource", "topics")
+      .kv("topic", topic)
+      .kv("requester_identity", requester_identity)
+      .kv("interface_type", interface_type)
+      .kv("error", exc.what())
+      .error();
     return;
   }
 }
@@ -126,10 +124,11 @@ void RosTopicPublisher::shutdown()
   }
 
   const std::size_t cached_publishers = publishers_.size();
-  RCLCPP_INFO(
-    kTopicPublisherLogger,
-    "event=topic_publisher_state_changed reason=shutdown action=clear_cached_publishers cached_publishers=%zu",
-    cached_publishers);
+  LogEvent(kTopicPublisherLogger, "topic_publisher_state_changed")
+    .kv("reason", "shutdown")
+    .kv("action", "clear_cached_publishers")
+    .kv("cached_publishers", cached_publishers)
+    .info();
 
   auto publishers = std::move(publishers_);
   publishers_.clear();
@@ -203,22 +202,15 @@ void RosTopicPublisher::publishWithPublisherCache(
   while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
     eraseCachedPublisher(evicted_topic);
-    ++publisher_cache_evictions_since_log_;
-    const auto now = std::chrono::steady_clock::now();
-    if (
-      next_publisher_cache_eviction_log_at_ == std::chrono::steady_clock::time_point{} ||
-      now >= next_publisher_cache_eviction_log_at_)
-    {
-      RCLCPP_WARN(
-        kTopicPublisherLogger,
-        "event=publisher_cache_evicted reason=max_topics_exceeded topic=%s evicted_topic=%s count=%zu "
-        "policy=lru max_topics=%d",
-        topic.c_str(),
-        evicted_topic.c_str(),
-        publisher_cache_evictions_since_log_,
-        max_topics_);
-      publisher_cache_evictions_since_log_ = 0U;
-      next_publisher_cache_eviction_log_at_ = now + kPublishLogThrottlePeriod;
+    if (const std::size_t count = publisher_cache_eviction_throttle_.recordAndCheck(); count > 0U) {
+      LogEvent(kTopicPublisherLogger, "publisher_cache_evicted")
+        .kv("reason", "max_topics_exceeded")
+        .kv("topic", topic)
+        .kv("evicted_topic", evicted_topic)
+        .kv("count", count)
+        .kv("policy", "lru")
+        .kv("max_topics", max_topics_)
+        .warn();
     }
   }
 }

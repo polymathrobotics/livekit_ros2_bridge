@@ -28,6 +28,7 @@
 #include "rclcpp/logging.hpp"
 #include "room_session.hpp"
 #include "subscription_registry.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -126,11 +127,10 @@ void SubscriptionHeartbeatProcessor::sweepExpiredSessionLeases()
       continue;
     }
 
-    RCLCPP_INFO(
-      kHeartbeatProcessorLogger,
-      "event=heartbeat_session_expired session_id=%s requester_identity=%s",
-      it->first.c_str(),
-      it->second.requester_identity.c_str());
+    LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_expired")
+      .kv("session_id", it->first)
+      .kv("requester_identity", it->second.requester_identity)
+      .info();
     it = session_leases_.erase(it);
   }
 }
@@ -150,19 +150,18 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   }
 
   if (!update.session_id.has_value()) {
-    RCLCPP_WARN_THROTTLE(
-      kHeartbeatProcessorLogger, *clock_, 5000, "event=heartbeat_dropped reason=anonymous_requester_without_session");
+    LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
+      .kv("reason", "anonymous_requester_without_session")
+      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
     return std::nullopt;
   }
 
   const auto lease_it = session_leases_.find(*update.session_id);
   if (lease_it == session_leases_.end()) {
-    RCLCPP_WARN_THROTTLE(
-      kHeartbeatProcessorLogger,
-      *clock_,
-      5000,
-      "event=heartbeat_dropped reason=unknown_session_id session_id=%s",
-      update.session_id->c_str());
+    LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
+      .kv("reason", "unknown_session_id")
+      .kv("session_id", *update.session_id)
+      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
     return std::nullopt;
   }
 
@@ -170,13 +169,11 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   // we treat a known session_id as proof that this heartbeat belongs to the same previously
   // authenticated browser tab and continue renewing that tab's leases instead of dropping them.
   lease_it->second.expiry = expiry;
-  RCLCPP_WARN_THROTTLE(
-    kHeartbeatProcessorLogger,
-    *clock_,
-    5000,
-    "event=heartbeat_session_fallback session_id=%s requester_identity=%s reason=anonymous_requester",
-    update.session_id->c_str(),
-    lease_it->second.requester_identity.c_str());
+  LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_fallback")
+    .kv("session_id", *update.session_id)
+    .kv("requester_identity", lease_it->second.requester_identity)
+    .kv("reason", "anonymous_requester")
+    .warnThrottle(*clock_, std::chrono::milliseconds(5000));
   return lease_it->second.requester_identity;
 }
 
@@ -186,30 +183,22 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   auto it = session_leases_.find(session_id);
   if (it == session_leases_.end()) {
     session_leases_.emplace(session_id, SessionLease{requester_identity, expiry});
-    RCLCPP_INFO(
-      kHeartbeatProcessorLogger,
-      "event=heartbeat_session_bound session_id=%s requester_identity=%s",
-      session_id.c_str(),
-      requester_identity.c_str());
+    LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_bound")
+      .kv("session_id", session_id)
+      .kv("requester_identity", requester_identity)
+      .info();
     return true;
   }
 
   if (it->second.requester_identity != requester_identity) {
-    ++session_conflicts_since_log_;
-    const auto now = std::chrono::steady_clock::now();
-    if (
-      next_session_conflict_log_at_ == std::chrono::steady_clock::time_point{} || now >= next_session_conflict_log_at_)
-    {
-      RCLCPP_WARN(
-        kHeartbeatProcessorLogger,
-        "event=heartbeat_session_conflict reason=requester_identity_mismatch session_id=%s requester_identity=%s "
-        "existing_requester_identity=%s count=%zu",
-        session_id.c_str(),
-        requester_identity.c_str(),
-        it->second.requester_identity.c_str(),
-        session_conflicts_since_log_);
-      session_conflicts_since_log_ = 0U;
-      next_session_conflict_log_at_ = now + kHeartbeatLogThrottlePeriod;
+    if (const std::size_t count = session_conflict_throttle_.recordAndCheck(); count > 0U) {
+      LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_conflict")
+        .kv("reason", "requester_identity_mismatch")
+        .kv("session_id", session_id)
+        .kv("requester_identity", requester_identity)
+        .kv("existing_requester_identity", it->second.requester_identity)
+        .kv("count", count)
+        .warn();
     }
     return false;
   }
@@ -248,14 +237,11 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   try {
     room_session_.publishControlPacket(packet);
   } catch (const std::exception & exc) {
-    RCLCPP_WARN_THROTTLE(
-      kHeartbeatProcessorLogger,
-      *clock_,
-      5000,
-      "event=subscription_status_publish_failed requester_identity=%s control_topic=%s error=%s",
-      requester_identity.c_str(),
-      packet.control_topic.c_str(),
-      exc.what());
+    LogEvent(kHeartbeatProcessorLogger, "subscription_status_publish_failed")
+      .kv("requester_identity", requester_identity)
+      .kv("control_topic", packet.control_topic)
+      .kv("error", exc.what())
+      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
   }
 }
 

@@ -34,6 +34,7 @@
 #include "rclcpp/logging.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -113,76 +114,26 @@ const char * rpcReasonForCode(std::uint32_t code)
   const auto code = rpcErrorCodeForException(exc);
   const char * reason = rpcReasonForCode(code);
   const char * request_resource = resource != nullptr ? resource : resourceForMethod(method_name);
+  LogEvent event(kRpcRouterLogger, code == protocol::kRpcErrorInternal ? "rpc_request_failed" : "rpc_request_rejected");
+  event.kv("reason", reason)
+    .kv("method", method_name)
+    .kv("request_id", requestIdForLog(invocation))
+    .kv("requester_identity", requesterIdentityForLog(invocation));
 
   if (service != nullptr) {
-    if (code == protocol::kRpcErrorInternal) {
-      RCLCPP_ERROR(
-        kRpcRouterLogger,
-        "event=rpc_request_failed reason=%s method=%s request_id=%s requester_identity=%s resource=%s "
-        "service=%s error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        request_resource == nullptr ? "<unknown>" : request_resource,
-        service,
-        exc.what());
-    } else {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=%s method=%s request_id=%s requester_identity=%s resource=%s "
-        "service=%s error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        request_resource == nullptr ? "<unknown>" : request_resource,
-        service,
-        exc.what());
-    }
+    event.kv("resource", request_resource == nullptr ? "<unknown>" : request_resource)
+      .kv("service", service)
+      .kv("error", exc.what());
   } else if (request_resource != nullptr) {
-    if (code == protocol::kRpcErrorInternal) {
-      RCLCPP_ERROR(
-        kRpcRouterLogger,
-        "event=rpc_request_failed reason=%s method=%s request_id=%s requester_identity=%s resource=%s error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        request_resource,
-        exc.what());
-    } else {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=%s method=%s request_id=%s requester_identity=%s resource=%s "
-        "error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        request_resource,
-        exc.what());
-    }
+    event.kv("resource", request_resource).kv("error", exc.what());
   } else {
-    if (code == protocol::kRpcErrorInternal) {
-      RCLCPP_ERROR(
-        kRpcRouterLogger,
-        "event=rpc_request_failed reason=%s method=%s request_id=%s requester_identity=%s error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        exc.what());
-    } else {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=%s method=%s request_id=%s requester_identity=%s error=%s",
-        reason,
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        exc.what());
-    }
+    event.kv("error", exc.what());
+  }
+
+  if (code == protocol::kRpcErrorInternal) {
+    event.error();
+  } else {
+    event.warn();
   }
 
   rethrowAsRpcHandlerError(exc);
@@ -248,22 +199,22 @@ std::optional<std::string> handleRpcWithCallerIdentity(
   if (invocation.caller_identity.empty()) {
     const char * resource = resourceForMethod(method_name);
     if (resource != nullptr) {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=unauthorized method=%s request_id=%s requester_identity=%s "
-        "resource=%s error=caller_identity_required",
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        resource);
+      LogEvent(kRpcRouterLogger, "rpc_request_rejected")
+        .kv("reason", "unauthorized")
+        .kv("method", method_name)
+        .kv("request_id", requestIdForLog(invocation))
+        .kv("requester_identity", requesterIdentityForLog(invocation))
+        .kv("resource", resource)
+        .kv("error", "caller_identity_required")
+        .warn();
     } else {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=unauthorized method=%s request_id=%s requester_identity=%s "
-        "error=caller_identity_required",
-        method_name,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation));
+      LogEvent(kRpcRouterLogger, "rpc_request_rejected")
+        .kv("reason", "unauthorized")
+        .kv("method", method_name)
+        .kv("request_id", requestIdForLog(invocation))
+        .kv("requester_identity", requesterIdentityForLog(invocation))
+        .kv("error", "caller_identity_required")
+        .warn();
     }
     throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
   }
@@ -342,7 +293,7 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
   bool all_registered = true;
   for (const auto & method : rpcMethodCatalog()) {
     if (!session.registerRpcMethod(method.first, method.second)) {
-      RCLCPP_ERROR(kRpcRouterLogger, "event=rpc_method_registration_failed method=%s", method.first);
+      LogEvent(kRpcRouterLogger, "rpc_method_registration_failed").kv("method", method.first).error();
       // Registration is best-effort rather than transactional so one failure
       // does not hide other methods that can still be served on this session.
       all_registered = false;
@@ -355,7 +306,7 @@ void RpcRouter::unregisterRpcMethods(RoomSession & session)
 {
   for (const auto & method : rpcMethodCatalog()) {
     if (!session.unregisterRpcMethod(method.first)) {
-      RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method.first);
+      LogEvent(kRpcRouterLogger, "rpc_method_unregistration_failed").kv("method", method.first).error();
     }
   }
 }
@@ -371,14 +322,15 @@ std::optional<std::string> RpcRouter::handleServiceCall(const RpcInvocation & in
     }
 
     if (!access_policy_.allows(AccessOperation::CallService, request.service)) {
-      RCLCPP_WARN(
-        kRpcRouterLogger,
-        "event=rpc_request_rejected reason=forbidden method=%s request_id=%s requester_identity=%s "
-        "resource=services service=%s error=service_not_permitted",
-        protocol::kRpcServiceCall,
-        requestIdForLog(invocation),
-        requesterIdentityForLog(invocation),
-        request.service.c_str());
+      LogEvent(kRpcRouterLogger, "rpc_request_rejected")
+        .kv("reason", "forbidden")
+        .kv("method", protocol::kRpcServiceCall)
+        .kv("request_id", requestIdForLog(invocation))
+        .kv("requester_identity", requesterIdentityForLog(invocation))
+        .kv("resource", "services")
+        .kv("service", request.service)
+        .kv("error", "service_not_permitted")
+        .warn();
       throw RpcHandlerError(protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
     }
 

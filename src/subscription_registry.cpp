@@ -22,6 +22,7 @@
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
 #include "utils/interface_types.hpp"
+#include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/scope_exit.hpp"
 #include "video_sidecar_supervisor.hpp"
@@ -153,26 +154,15 @@ StreamStatus SubscriptionRegistry::renewSubscription(
       refreshExistingLease(it->second, requester_identity, requester_lease);
     } catch (const std::exception & exc) {
       const auto & sub = it->second;
+      LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
+      event.kv("resource", sub.resource)
+        .kv("kind", subscriptionKindToString(sub.target_kind))
+        .kv("requester_identity", requester_identity);
       if (sub.sidecar_launch_spec.has_value()) {
-        RCLCPP_WARN(
-          kSubscriptionRegistryLogger,
-          "event=subscription_renew_failed resource=%s kind=%s requester_identity=%s sidecar_key=%s "
-          "publisher_identity=%s error=%s",
-          sub.resource.c_str(),
-          subscriptionKindToString(sub.target_kind),
-          requester_identity.c_str(),
-          sub.sidecar_launch_spec->sidecar_key.c_str(),
-          sub.video_publisher_identity.c_str(),
-          exc.what());
-      } else {
-        RCLCPP_WARN(
-          kSubscriptionRegistryLogger,
-          "event=subscription_renew_failed resource=%s kind=%s requester_identity=%s error=%s",
-          sub.resource.c_str(),
-          subscriptionKindToString(sub.target_kind),
-          requester_identity.c_str(),
-          exc.what());
+        event.kv("sidecar_key", sub.sidecar_launch_spec->sidecar_key)
+          .kv("publisher_identity", sub.video_publisher_identity);
       }
+      event.kv("error", exc.what()).warn();
       throw;
     }
     return makeStreamStatus(it->second);
@@ -196,50 +186,31 @@ StreamStatus SubscriptionRegistry::renewSubscription(
                                  (!interface_type.empty() && classifyRosVideoInterfaceType(interface_type).has_value());
     const std::optional<std::string> sidecar_key =
       is_video_target ? tryResolveVideoSidecarKey(*video_config_, target, interface_type) : std::nullopt;
+    LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
+    event.kv("resource", target.name)
+      .kv("kind", subscriptionKindToString(target.kind))
+      .kv("requester_identity", requester_identity);
     if (sidecar_key.has_value()) {
-      RCLCPP_WARN(
-        kSubscriptionRegistryLogger,
-        "event=subscription_renew_failed resource=%s kind=%s requester_identity=%s sidecar_key=%s error=%s",
-        target.name.c_str(),
-        subscriptionKindToString(target.kind),
-        requester_identity.c_str(),
-        sidecar_key->c_str(),
-        exc.what());
-    } else {
-      RCLCPP_WARN(
-        kSubscriptionRegistryLogger,
-        "event=subscription_renew_failed resource=%s kind=%s requester_identity=%s error=%s",
-        target.name.c_str(),
-        subscriptionKindToString(target.kind),
-        requester_identity.c_str(),
-        exc.what());
+      event.kv("sidecar_key", *sidecar_key);
     }
+    event.kv("error", exc.what()).warn();
     throw;
   }
 
   StreamStatus stream_status = makeStreamStatus(sub);
+  LogEvent event(kSubscriptionRegistryLogger, "subscription_created");
+  event.kv("resource", sub.resource)
+    .kv("kind", subscriptionKindToString(sub.target_kind))
+    .kv("delivery", streamDeliveryKindString(stream_status.delivery_kind))
+    .kv("requester_identity", requester_identity);
   if (sub.sidecar_launch_spec.has_value()) {
-    RCLCPP_INFO(
-      kSubscriptionRegistryLogger,
-      "event=subscription_created resource=%s kind=%s delivery=%s requester_identity=%s sidecar_key=%s "
-      "publisher_identity=%s",
-      sub.resource.c_str(),
-      subscriptionKindToString(sub.target_kind),
-      streamDeliveryKindString(stream_status.delivery_kind),
-      requester_identity.c_str(),
-      sub.sidecar_launch_spec->sidecar_key.c_str(),
-      sub.video_publisher_identity.c_str());
+    event.kv("sidecar_key", sub.sidecar_launch_spec->sidecar_key)
+      .kv("publisher_identity", sub.video_publisher_identity);
   } else {
     const auto * data = sub.data_track_ptr();
-    RCLCPP_INFO(
-      kSubscriptionRegistryLogger,
-      "event=subscription_created resource=%s kind=%s delivery=%s requester_identity=%s track_name=%s",
-      sub.resource.c_str(),
-      subscriptionKindToString(sub.target_kind),
-      streamDeliveryKindString(stream_status.delivery_kind),
-      requester_identity.c_str(),
-      data == nullptr ? "" : data->track_name.c_str());
+    event.kv("track_name", data == nullptr ? "" : data->track_name);
   }
+  event.info();
   subscriptions_.emplace(subscription_key, std::move(sub));
   return stream_status;
 }
@@ -299,12 +270,12 @@ void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & reque
       continue;
     }
 
-    RCLCPP_INFO(
-      kSubscriptionRegistryLogger,
-      "event=cdr_track_replay resource=%s kind=topic track_name=%s requester_identity=%s",
-      sub.resource.c_str(),
-      data->track_name.c_str(),
-      requester_identity.c_str());
+    LogEvent(kSubscriptionRegistryLogger, "cdr_track_replay")
+      .kv("resource", sub.resource)
+      .kv("kind", "topic")
+      .kv("track_name", data->track_name)
+      .kv("requester_identity", requester_identity)
+      .info();
     unpublish_cdr_track_fn_(data->track_name);
     data->cdr_track_state = CdrTrackState::kNone;
     data->last_sent_time.reset();
@@ -424,12 +395,12 @@ void SubscriptionRegistry::publishPendingCdrTrack(
   const std::string & topic, DataTrackResource & data, const std::string & requester_identity)
 {
   data.cdr_track_state = CdrTrackState::kPending;
-  RCLCPP_INFO(
-    kSubscriptionRegistryLogger,
-    "event=cdr_track_pending resource=%s kind=topic track_name=%s requester_identity=%s",
-    topic.c_str(),
-    data.track_name.c_str(),
-    requester_identity.c_str());
+  LogEvent(kSubscriptionRegistryLogger, "cdr_track_pending")
+    .kv("resource", topic)
+    .kv("kind", "topic")
+    .kv("track_name", data.track_name)
+    .kv("requester_identity", requester_identity)
+    .info();
   publish_cdr_track_fn_(data.track_name, data.generation);
 }
 
@@ -497,12 +468,11 @@ void SubscriptionRegistry::resetSessionState()
   if (is_shutdown_.load()) {
     return;
   }
-  RCLCPP_INFO(
-    kSubscriptionRegistryLogger,
-    "event=subscription_registry_reset_begin resource=subscriptions subscription_count=%zu "
-    "pending_cdr_replays=%zu",
-    subscriptions_.size(),
-    requesters_needing_cdr_replay_.size());
+  LogEvent(kSubscriptionRegistryLogger, "subscription_registry_reset_begin")
+    .kv("resource", "subscriptions")
+    .kv("subscription_count", subscriptions_.size())
+    .kv("pending_cdr_replays", requesters_needing_cdr_replay_.size())
+    .info();
   const std::size_t callback_generation = quiesceMessageCallbacks();
   requesters_needing_cdr_replay_.clear();
   clearSubscriptions();
@@ -514,12 +484,11 @@ void SubscriptionRegistry::shutdown()
   if (is_shutdown_.exchange(true)) {
     return;
   }
-  RCLCPP_INFO(
-    kSubscriptionRegistryLogger,
-    "event=subscription_registry_shutdown_begin resource=subscriptions subscription_count=%zu "
-    "pending_cdr_replays=%zu",
-    subscriptions_.size(),
-    requesters_needing_cdr_replay_.size());
+  LogEvent(kSubscriptionRegistryLogger, "subscription_registry_shutdown_begin")
+    .kv("resource", "subscriptions")
+    .kv("subscription_count", subscriptions_.size())
+    .kv("pending_cdr_replays", requesters_needing_cdr_replay_.size())
+    .info();
   (void)quiesceMessageCallbacks();
   clearSubscriptions();
 }
@@ -542,11 +511,11 @@ bool SubscriptionRegistry::onCdrTrackPublished(const std::string & track_name, s
     return false;
   }
   data->cdr_track_state = CdrTrackState::kPublished;
-  RCLCPP_INFO(
-    kSubscriptionRegistryLogger,
-    "event=cdr_track_published resource=%s kind=topic track_name=%s",
-    sub.resource.c_str(),
-    data->track_name.c_str());
+  LogEvent(kSubscriptionRegistryLogger, "cdr_track_published")
+    .kv("resource", sub.resource)
+    .kv("kind", "topic")
+    .kv("track_name", data->track_name)
+    .info();
   return true;
 }
 
@@ -564,11 +533,11 @@ void SubscriptionRegistry::onCdrTrackFailed(const std::string & track_name)
   if (data == nullptr) {
     return;
   }
-  RCLCPP_WARN(
-    kSubscriptionRegistryLogger,
-    "event=cdr_track_publish_failed resource=%s kind=topic track_name=%s",
-    sub.resource.c_str(),
-    data->track_name.c_str());
+  LogEvent(kSubscriptionRegistryLogger, "cdr_track_publish_failed")
+    .kv("resource", sub.resource)
+    .kv("kind", "topic")
+    .kv("track_name", data->track_name)
+    .warn();
   data->cdr_track_state = CdrTrackState::kFailed;
 }
 
@@ -696,18 +665,15 @@ void SubscriptionRegistry::removeRequesterLeasesIf(
         reason == RequesterLeaseRemovalReason::kLeaseExpired ? "expired_by_ms" : "expires_in_ms";
       const long time_value = reason == RequesterLeaseRemovalReason::kLeaseExpired ? static_cast<long>(-delta_ms)
                                                                                    : static_cast<long>(delta_ms);
-      RCLCPP_INFO(
-        kSubscriptionRegistryLogger,
-        "event=requester_lease_removed resource=%s kind=%s requester_identity=%s reason=%s preferred_interval_ms=%d "
-        "remaining_requesters=%zu %s=%ld",
-        sub.resource.c_str(),
-        subscriptionKindToString(sub.target_kind),
-        requester_identity.c_str(),
-        requesterRemovalReasonToString(reason),
-        requester_lease.preferred_interval_ms,
-        remaining_requesters,
-        time_label,
-        time_value);
+      LogEvent event(kSubscriptionRegistryLogger, "requester_lease_removed");
+      event.kv("resource", sub.resource)
+        .kv("kind", subscriptionKindToString(sub.target_kind))
+        .kv("requester_identity", requester_identity)
+        .kv("reason", requesterRemovalReasonToString(reason))
+        .kv("preferred_interval_ms", requester_lease.preferred_interval_ms)
+        .kv("remaining_requesters", remaining_requesters)
+        .kv(time_label, time_value)
+        .info();
 
       removed_any = true;
       requesters_needing_cdr_replay_.erase(requester_identity);
@@ -742,22 +708,20 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
   auto & sub = it->second;
   if (sub.requesters.empty()) {
     if (const auto * data = sub.data_track_ptr()) {
-      RCLCPP_INFO(
-        kSubscriptionRegistryLogger,
-        "event=subscription_pruned resource=%s kind=%s reason=%s track_name=%s",
-        sub.resource.c_str(),
-        subscriptionKindToString(sub.target_kind),
-        requesterRemovalReasonToString(reason),
-        data->track_name.c_str());
+      LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
+        .kv("resource", sub.resource)
+        .kv("kind", subscriptionKindToString(sub.target_kind))
+        .kv("reason", requesterRemovalReasonToString(reason))
+        .kv("track_name", data->track_name)
+        .info();
     } else {
-      RCLCPP_INFO(
-        kSubscriptionRegistryLogger,
-        "event=subscription_pruned resource=%s kind=%s reason=%s sidecar_key=%s publisher_identity=%s",
-        sub.resource.c_str(),
-        subscriptionKindToString(sub.target_kind),
-        requesterRemovalReasonToString(reason),
-        videoSidecarLaunchSpec(sub).sidecar_key.c_str(),
-        sub.video_publisher_identity.c_str());
+      LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
+        .kv("resource", sub.resource)
+        .kv("kind", subscriptionKindToString(sub.target_kind))
+        .kv("reason", requesterRemovalReasonToString(reason))
+        .kv("sidecar_key", videoSidecarLaunchSpec(sub).sidecar_key)
+        .kv("publisher_identity", sub.video_publisher_identity)
+        .info();
     }
     destroyResource(sub);
     return subscriptions_.erase(it);
@@ -796,14 +760,12 @@ void SubscriptionRegistry::handleSerializedMessage(const std::string & topic, co
     try {
       send_cdr_fn_(data->track_name, rcl_msg.buffer, rcl_msg.buffer_length);
     } catch (const std::exception & exc) {
-      RCLCPP_WARN_THROTTLE(
-        kSubscriptionRegistryLogger,
-        *node_.get_clock(),
-        5000,
-        "event=cdr_track_delivery_failed resource=%s kind=topic track_name=%s error=%s",
-        sub.resource.c_str(),
-        data->track_name.c_str(),
-        exc.what());
+      LogEvent(kSubscriptionRegistryLogger, "cdr_track_delivery_failed")
+        .kv("resource", sub.resource)
+        .kv("kind", "topic")
+        .kv("track_name", data->track_name)
+        .kv("error", exc.what())
+        .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(5000));
     }
   }
 }
@@ -833,13 +795,12 @@ std::size_t SubscriptionRegistry::registryGeneration() const
 void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
 {
   if (auto * data = sub.data_track_ptr()) {
-    RCLCPP_INFO(
-      kSubscriptionRegistryLogger,
-      "event=subscription_destroyed resource=%s kind=%s interface_type=%s track_name=%s",
-      sub.resource.c_str(),
-      subscriptionKindToString(sub.target_kind),
-      sub.interface_type.c_str(),
-      data->track_name.c_str());
+    LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
+      .kv("resource", sub.resource)
+      .kv("kind", subscriptionKindToString(sub.target_kind))
+      .kv("interface_type", sub.interface_type)
+      .kv("track_name", data->track_name)
+      .info();
     if (data->cdr_track_state == CdrTrackState::kPublished) {
       unpublish_cdr_track_fn_(data->track_name);
     }
@@ -850,15 +811,13 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
     // generation before any delayed publish/disconnect callback can target the replacement entry.
     registry_generation_.fetch_add(1);
   } else {
-    RCLCPP_INFO(
-      kSubscriptionRegistryLogger,
-      "event=subscription_destroyed resource=%s kind=%s interface_type=%s sidecar_key=%s "
-      "publisher_identity=%s",
-      sub.resource.c_str(),
-      subscriptionKindToString(sub.target_kind),
-      sub.interface_type.c_str(),
-      videoSidecarLaunchSpec(sub).sidecar_key.c_str(),
-      sub.video_publisher_identity.c_str());
+    LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
+      .kv("resource", sub.resource)
+      .kv("kind", subscriptionKindToString(sub.target_kind))
+      .kv("interface_type", sub.interface_type)
+      .kv("sidecar_key", videoSidecarLaunchSpec(sub).sidecar_key)
+      .kv("publisher_identity", sub.video_publisher_identity)
+      .info();
     videoSidecarSupervisor().stopSidecar(videoSidecarLaunchSpec(sub).sidecar_key);
   }
 }

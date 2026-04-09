@@ -24,6 +24,7 @@
 #include "rclcpp/guard_condition.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/version.h"
+#include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge
@@ -203,11 +204,17 @@ void RosExecutorQueue::wake_executor()
   try {
     waitable->wake_executor();
   } catch (const std::exception & exc) {
-    RCLCPP_ERROR(
-      kRosExecutorQueueLogger, "event=executor_wake_failed reason=exception action=shutdown error=%s", exc.what());
+    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
+      .kv("reason", "exception")
+      .kv("action", "shutdown")
+      .kv("error", exc.what())
+      .error();
     shutdown();
   } catch (...) {
-    RCLCPP_ERROR(kRosExecutorQueueLogger, "event=executor_wake_failed reason=unknown_error action=shutdown");
+    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
+      .kv("reason", "unknown_error")
+      .kv("action", "shutdown")
+      .error();
     shutdown();
   }
 }
@@ -243,10 +250,11 @@ void RosExecutorQueue::shutdown()
   }
 
   if (canceled_count > 0U) {
-    RCLCPP_WARN(
-      kRosExecutorQueueLogger,
-      "event=executor_queue_settled reason=shutdown action=cancel_pending count=%zu",
-      canceled_count);
+    LogEvent(kRosExecutorQueueLogger, "executor_queue_settled")
+      .kv("reason", "shutdown")
+      .kv("action", "cancel_pending")
+      .kv("count", canceled_count)
+      .warn();
   }
 
   while (!pending.empty()) {
@@ -293,9 +301,16 @@ void RosExecutorQueue::drain()
       // so queued work observes the same callback-group affinity as ROS callbacks.
       task.run();
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRosExecutorQueueLogger, "ROS executor queue task failed: %s", exc.what());
+      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
+        .kv("reason", "exception")
+        .kv("action", "continue")
+        .kv("error", exc.what())
+        .error();
     } catch (...) {
-      RCLCPP_ERROR(kRosExecutorQueueLogger, "ROS executor queue task failed with unknown error");
+      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
+        .kv("reason", "unknown_exception")
+        .kv("action", "continue")
+        .error();
     }
   }
 }

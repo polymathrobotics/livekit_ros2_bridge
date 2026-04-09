@@ -1,0 +1,116 @@
+// Copyright (c) 2025-present Polymath Robotics, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#pragma once
+
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <ostream>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <utility>
+
+#include "rclcpp/clock.hpp"
+#include "rclcpp/logging.hpp"
+
+namespace livekit_ros2_bridge
+{
+
+class LogEvent
+{
+public:
+  explicit LogEvent(rclcpp::Logger logger, std::string_view event_name)
+  : logger_(std::move(logger))
+  {
+    stream_ << std::boolalpha << "event=" << event_name;
+  }
+
+  template <typename T>
+  LogEvent & kv(std::string_view key, const T & value)
+  {
+    stream_ << " " << key << "=" << value;
+    return *this;
+  }
+
+  LogEvent & kv(std::string_view key, const char * value)
+  {
+    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
+    return *this;
+  }
+
+  LogEvent & kvOr(std::string_view key, const std::string & value, std::string_view fallback = "<unknown>")
+  {
+    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
+    return *this;
+  }
+
+  LogEvent & kvOr(std::string_view key, std::string_view value, std::string_view fallback = "<unknown>")
+  {
+    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
+    return *this;
+  }
+
+  LogEvent & kvOr(std::string_view key, const char * value, std::string_view fallback = "<unknown>")
+  {
+    stream_ << " " << key << "=";
+    if (value == nullptr || value[0] == '\0') {
+      stream_ << fallback;
+    } else {
+      stream_ << value;
+    }
+    return *this;
+  }
+
+  std::string str() const
+  {
+    return stream_.str();
+  }
+
+  void debug() const
+  {
+    RCLCPP_DEBUG_STREAM(logger_, str());
+  }
+
+  void info() const
+  {
+    RCLCPP_INFO_STREAM(logger_, str());
+  }
+
+  void warn() const
+  {
+    RCLCPP_WARN_STREAM(logger_, str());
+  }
+
+  void error() const
+  {
+    RCLCPP_ERROR_STREAM(logger_, str());
+  }
+
+  template <typename Rep, typename Period>
+  void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
+  {
+    const std::string message = str();
+    const auto interval_ms =
+      std::max<std::int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(interval).count());
+    RCLCPP_WARN_THROTTLE(logger_, clock, interval_ms, "%s", message.c_str());
+  }
+
+private:
+  rclcpp::Logger logger_;
+  std::ostringstream stream_;
+};
+
+}  // namespace livekit_ros2_bridge

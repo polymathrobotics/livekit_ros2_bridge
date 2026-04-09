@@ -22,6 +22,7 @@
 #include "room_session.hpp"
 #include "runtime.hpp"
 #include "runtime_config.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -29,64 +30,68 @@ namespace livekit_ros2_bridge
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
-  RCLCPP_INFO(get_logger(), "event=node_startup_begin phase=startup");
+  LogEvent(get_logger(), "node_startup_begin").kv("phase", "startup").info();
   RuntimeConfig runtime_config = [this]() {
     try {
       return loadRuntimeConfig(get_node_parameters_interface(), get_name());
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(
-        get_logger(), "event=node_startup_failed phase=startup reason=runtime_config_load_failed error=%s", exc.what());
+      LogEvent(get_logger(), "node_startup_failed")
+        .kv("phase", "startup")
+        .kv("reason", "runtime_config_load_failed")
+        .kv("error", exc.what())
+        .error();
       throw;
     } catch (...) {
-      RCLCPP_ERROR(
-        get_logger(),
-        "event=node_startup_failed phase=startup reason=runtime_config_load_failed error=unknown_exception");
+      LogEvent(get_logger(), "node_startup_failed")
+        .kv("phase", "startup")
+        .kv("reason", "runtime_config_load_failed")
+        .kv("error", "unknown_exception")
+        .error();
       throw;
     }
   }();
 
-  const char * room =
-    runtime_config.connect_config.room.empty() ? "<unset>" : runtime_config.connect_config.room.c_str();
-  const char * identity =
-    runtime_config.connect_config.identity.empty() ? "<unset>" : runtime_config.connect_config.identity.c_str();
-  const char * sidecar_enabled = runtime_config.video_sidecar_config.has_value() ? "true" : "false";
+  const std::string room = runtime_config.connect_config.room;
+  const std::string identity = runtime_config.connect_config.identity;
+  const bool sidecar_enabled = runtime_config.video_sidecar_config.has_value();
 
   try {
     runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
   } catch (const std::exception & exc) {
-    RCLCPP_ERROR(
-      get_logger(),
-      "event=node_startup_failed phase=startup reason=runtime_initialization_failed room=%s identity=%s "
-      "sidecar_enabled=%s error=%s",
-      room,
-      identity,
-      sidecar_enabled,
-      exc.what());
+    LogEvent(get_logger(), "node_startup_failed")
+      .kv("phase", "startup")
+      .kv("reason", "runtime_initialization_failed")
+      .kvOr("room", room, "<unset>")
+      .kvOr("identity", identity, "<unset>")
+      .kv("sidecar_enabled", sidecar_enabled)
+      .kv("error", exc.what())
+      .error();
     throw;
   } catch (...) {
-    RCLCPP_ERROR(
-      get_logger(),
-      "event=node_startup_failed phase=startup reason=runtime_initialization_failed room=%s identity=%s "
-      "sidecar_enabled=%s error=unknown_exception",
-      room,
-      identity,
-      sidecar_enabled);
+    LogEvent(get_logger(), "node_startup_failed")
+      .kv("phase", "startup")
+      .kv("reason", "runtime_initialization_failed")
+      .kvOr("room", room, "<unset>")
+      .kvOr("identity", identity, "<unset>")
+      .kv("sidecar_enabled", sidecar_enabled)
+      .kv("error", "unknown_exception")
+      .error();
     throw;
   }
 
-  RCLCPP_INFO(
-    get_logger(),
-    "event=node_ready phase=startup room=%s identity=%s sidecar_enabled=%s",
-    room,
-    identity,
-    sidecar_enabled);
+  LogEvent(get_logger(), "node_ready")
+    .kv("phase", "startup")
+    .kvOr("room", room, "<unset>")
+    .kvOr("identity", identity, "<unset>")
+    .kv("sidecar_enabled", sidecar_enabled)
+    .info();
 }
 
 Node::~Node()
 {
-  RCLCPP_INFO(get_logger(), "event=node_shutdown_start phase=shutdown");
+  LogEvent(get_logger(), "node_shutdown_start").kv("phase", "shutdown").info();
   runtime_.reset();
-  RCLCPP_INFO(get_logger(), "event=node_shutdown_complete phase=shutdown");
+  LogEvent(get_logger(), "node_shutdown_complete").kv("phase", "shutdown").info();
 }
 
 }  // namespace livekit_ros2_bridge
