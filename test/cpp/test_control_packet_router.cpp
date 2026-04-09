@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -30,6 +31,11 @@ namespace livekit_ros2_bridge
 {
 namespace
 {
+
+rclcpp::Clock::SharedPtr makeTestClock()
+{
+  return std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
+}
 
 std::vector<std::uint8_t> toBytes(const std::string & command_payload)
 {
@@ -78,6 +84,7 @@ struct RouterProbe final
 
   ControlPacketRouter makeRouter()
   {
+    auto clock = makeTestClock();
     ControlPacketRouter::Handlers handlers;
     handlers.on_subscription_heartbeat = [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
       heartbeat_call = RoutedSubscriptionHeartbeat{std::move(requester_identity), std::move(heartbeat)};
@@ -85,7 +92,7 @@ struct RouterProbe final
     handlers.on_topic_publish_command = [this](std::string requester_identity, TopicPublishCommand command) {
       publish_call = RoutedPublishCommand{std::move(requester_identity), std::move(command)};
     };
-    return ControlPacketRouter(rclcpp::get_logger("control_packet_router_test"), std::move(handlers));
+    return ControlPacketRouter(rclcpp::get_logger("control_packet_router_test"), std::move(clock), std::move(handlers));
   }
 };
 
@@ -188,6 +195,7 @@ TEST(ControlPacketRouterTest, RequiresHeartbeatHandler)
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),
+      makeTestClock(),
       ControlPacketRouter::Handlers{
         {},
         [](std::string, TopicPublishCommand) {},
@@ -200,6 +208,7 @@ TEST(ControlPacketRouterTest, RequiresPublishHandler)
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),
+      makeTestClock(),
       ControlPacketRouter::Handlers{
         [](std::string, SubscriptionHeartbeat) {},
         {},

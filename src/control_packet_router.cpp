@@ -28,6 +28,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr auto kControlPacketLogThrottleMs = 5000;
+
 const char * requesterIdentityForLog(const IncomingControlPacket & packet)
 {
   return packet.requester_identity.empty() ? "<unknown>" : packet.requester_identity.c_str();
@@ -35,10 +37,15 @@ const char * requesterIdentityForLog(const IncomingControlPacket & packet)
 
 }  // namespace
 
-ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, Handlers handlers)
+ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
 : logger_(std::move(logger))
+, clock_(std::move(clock))
 , handlers_(std::move(handlers))
 {
+  if (clock_ == nullptr) {
+    throw std::invalid_argument("ControlPacketRouter requires a clock.");
+  }
+
   if (!handlers_.on_subscription_heartbeat) {
     throw std::invalid_argument("ControlPacketRouter requires an on_subscription_heartbeat handler.");
   }
@@ -59,8 +66,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     try {
       body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
     } catch (const std::exception & exc) {
-      RCLCPP_WARN(
+      RCLCPP_WARN_THROTTLE(
         logger_,
+        *clock_,
+        kControlPacketLogThrottleMs,
         "event=control_packet_rejected reason=malformed_heartbeat control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),
@@ -72,8 +81,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     try {
       handlers_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
     } catch (const std::exception & exc) {
-      RCLCPP_WARN(
+      RCLCPP_WARN_THROTTLE(
         logger_,
+        *clock_,
+        kControlPacketLogThrottleMs,
         "event=control_packet_rejected reason=invalid_heartbeat control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),
@@ -85,8 +96,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 
   if (packet.control_topic == protocol::kControlTopicPublish) {
     if (packet.requester_identity.empty()) {
-      RCLCPP_WARN(
+      RCLCPP_WARN_THROTTLE(
         logger_,
+        *clock_,
+        kControlPacketLogThrottleMs,
         "event=control_packet_rejected reason=missing_requester_identity control_topic=%s "
         "requester_identity=%s",
         packet.control_topic.c_str(),
@@ -97,8 +110,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     try {
       handlers_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
     } catch (const std::exception & exc) {
-      RCLCPP_WARN(
+      RCLCPP_WARN_THROTTLE(
         logger_,
+        *clock_,
+        kControlPacketLogThrottleMs,
         "event=control_packet_rejected reason=invalid_publish_command control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),

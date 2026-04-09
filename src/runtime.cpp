@@ -38,6 +38,12 @@ namespace
 constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
 constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
+constexpr auto kIngressLogThrottleMs = 5000;
+
+const char * requesterIdentityForLog(const IncomingControlPacket & packet)
+{
+  return packet.requester_identity.empty() ? "<unknown>" : packet.requester_identity.c_str();
+}
 
 }  // namespace
 
@@ -95,6 +101,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     std::make_unique<RpcRouter>(node_, runtime_config.access_policy, *ros_executor_queue_, *ros_service_caller_);
   control_packet_router_ = std::make_unique<ControlPacketRouter>(
     node_.get_logger(),
+    node_.get_clock(),
     ControlPacketRouter::Handlers{
       [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
         submitExecutorWork(
@@ -224,12 +231,30 @@ bool Runtime::isShuttingDown() const
 
 void Runtime::submitExecutorWork(std::function<void()> fn)
 {
-  if (isShuttingDown() || ros_executor_queue_ == nullptr) {
+  if (isShuttingDown()) {
+    RCLCPP_WARN_THROTTLE(
+      node_.get_logger(),
+      *node_.get_clock(),
+      kIngressLogThrottleMs,
+      "event=executor_work_dropped reason=shutdown stage=enqueue");
+    return;
+  }
+  if (ros_executor_queue_ == nullptr) {
+    RCLCPP_WARN_THROTTLE(
+      node_.get_logger(),
+      *node_.get_clock(),
+      kIngressLogThrottleMs,
+      "event=executor_work_dropped reason=executor_unavailable stage=enqueue");
     return;
   }
   (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
     // The queue can still be draining work that was accepted before shutdown flipped the flag.
     if (isShuttingDown()) {
+      RCLCPP_WARN_THROTTLE(
+        node_.get_logger(),
+        *node_.get_clock(),
+        kIngressLogThrottleMs,
+        "event=executor_work_dropped reason=shutdown stage=execute");
       return;
     }
     fn();
@@ -238,7 +263,24 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
 
 void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) const
 {
-  if (isShuttingDown() || control_packet_router_ == nullptr) {
+  if (isShuttingDown()) {
+    RCLCPP_WARN_THROTTLE(
+      node_.get_logger(),
+      *node_.get_clock(),
+      kIngressLogThrottleMs,
+      "event=control_packet_dropped reason=shutdown control_topic=%s requester_identity=%s",
+      packet.control_topic.c_str(),
+      requesterIdentityForLog(packet));
+    return;
+  }
+  if (control_packet_router_ == nullptr) {
+    RCLCPP_WARN_THROTTLE(
+      node_.get_logger(),
+      *node_.get_clock(),
+      kIngressLogThrottleMs,
+      "event=control_packet_dropped reason=router_unavailable control_topic=%s requester_identity=%s",
+      packet.control_topic.c_str(),
+      requesterIdentityForLog(packet));
     return;
   }
   control_packet_router_->route(packet);

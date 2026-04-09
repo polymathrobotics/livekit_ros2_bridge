@@ -194,9 +194,12 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   }
 
   if (it->second.requester_identity != requester_identity) {
-    RCLCPP_WARN(
+    RCLCPP_WARN_THROTTLE(
       kHeartbeatProcessorLogger,
-      "event=heartbeat_session_conflict session_id=%s requester_identity=%s existing_requester_identity=%s",
+      *clock_,
+      5000,
+      "event=heartbeat_session_conflict reason=requester_identity_mismatch session_id=%s requester_identity=%s "
+      "existing_requester_identity=%s",
       session_id.c_str(),
       requester_identity.c_str(),
       it->second.requester_identity.c_str());

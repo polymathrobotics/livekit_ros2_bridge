@@ -40,6 +40,7 @@ namespace
 {
 
 const rclcpp::Logger kLogger = rclcpp::get_logger("video_sidecar_supervisor");
+constexpr auto kUnhealthyLogThrottlePeriod = std::chrono::seconds(5);
 
 pid_t waitpidNoIntr(pid_t pid, int * status, int options)
 {
@@ -388,6 +389,7 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   sidecar.token_expires_at = launch.token_expires_at;
   sidecar.spawned_at = SteadyClock::now();
   sidecar.consecutive_unhealthy_checks = 0;
+  sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
   RCLCPP_INFO(
     kLogger,
     "event=video_sidecar_spawned sidecar_key=%s publisher_identity=%s pid=%d",
@@ -419,6 +421,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
       static_cast<int>(pid));
     sidecar.pid = -1;
     sidecar.consecutive_unhealthy_checks = 0;
+    sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
     return;
   }
 
@@ -437,6 +440,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
         static_cast<int>(pid));
       sidecar.pid = -1;
       sidecar.consecutive_unhealthy_checks = 0;
+      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
       return;
     }
 
@@ -455,6 +459,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
           static_cast<int>(pid));
         sidecar.pid = -1;
         sidecar.consecutive_unhealthy_checks = 0;
+        sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
         return;
       }
 
@@ -466,6 +471,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
         static_cast<int>(pid));
       sidecar.pid = -1;
       sidecar.consecutive_unhealthy_checks = 0;
+      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
       return;
     }
   }
@@ -478,6 +484,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
     static_cast<int>(pid));
   sidecar.pid = -1;
   sidecar.consecutive_unhealthy_checks = 0;
+  sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
 }
 
 void VideoSidecarSupervisor::reapExitedSidecars()
@@ -581,18 +588,23 @@ void VideoSidecarSupervisor::restartUnhealthy()
 
     if (healthy) {
       sidecar.consecutive_unhealthy_checks = 0;
+      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
       continue;
     }
 
     ++sidecar.consecutive_unhealthy_checks;
-    RCLCPP_WARN(
-      kLogger,
-      "event=video_sidecar_unhealthy sidecar_key=%s publisher_identity=%s miss_count=%zu threshold=%zu",
-      entry.first.c_str(),
-      sidecar.publisher_identity.c_str(),
-      sidecar.consecutive_unhealthy_checks,
-      config_.unhealthy_restart_threshold);
     if (sidecar.consecutive_unhealthy_checks < config_.unhealthy_restart_threshold) {
+      if (sidecar.next_unhealthy_log_at == SteadyClock::time_point{} || now >= sidecar.next_unhealthy_log_at) {
+        RCLCPP_WARN(
+          kLogger,
+          "event=video_sidecar_unhealthy sidecar_key=%s publisher_identity=%s reason=publisher_unhealthy "
+          "count=%zu threshold=%zu",
+          entry.first.c_str(),
+          sidecar.publisher_identity.c_str(),
+          sidecar.consecutive_unhealthy_checks,
+          config_.unhealthy_restart_threshold);
+        sidecar.next_unhealthy_log_at = now + kUnhealthyLogThrottlePeriod;
+      }
       continue;
     }
 

@@ -70,6 +70,7 @@ using MessageMembers = rosidl_typesupport_introspection_cpp::MessageMembers;
 constexpr char kSerializationTsId[] = "rosidl_typesupport_cpp";
 constexpr char kIntrospectionTsId[] = "rosidl_typesupport_introspection_cpp";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
+constexpr auto kResponseLogThrottleMs = 5000;
 constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
 const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
@@ -201,7 +202,9 @@ const rosidl_service_type_support_t * loadServiceTypeSupportHandle(
 struct ServiceClientEntry
 {
   ServiceClientEntry(const std::string & service_name, const std::string & service_type, rcl_node_t * node_handle)
-  : request_type(serviceRequestTypeName(service_type))
+  : service_name(service_name)
+  , service_type_name(service_type)
+  , request_type(serviceRequestTypeName(service_type))
   , response_type(serviceResponseTypeName(service_type))
   , client(rcl_get_zero_initialized_client())
   {
@@ -228,6 +231,8 @@ struct ServiceClientEntry
   ServiceClientEntry(const ServiceClientEntry &) = delete;
   ServiceClientEntry & operator=(const ServiceClientEntry &) = delete;
 
+  std::string service_name;
+  std::string service_type_name;
   ResolvedMessageSupport request_type;
   ResolvedMessageSupport response_type;
   rcl_client_t client;
@@ -573,6 +578,15 @@ void RosServiceCaller::Impl::drainResponses()
       // callers to different services cannot steal each other's responses.
       auto call_it = pending_calls.find(PendingCallKey{cached.get(), header.sequence_number});
       if (call_it == pending_calls.end()) {
+        RCLCPP_WARN_THROTTLE(
+          kRosServiceCallerLogger,
+          *node.get_clock(),
+          kResponseLogThrottleMs,
+          "event=service_response_dropped reason=late_or_unknown_pending_call service=%s interface_type=%s "
+          "sequence_number=%lld",
+          cached->service_name.c_str(),
+          cached->service_type_name.c_str(),
+          static_cast<long long>(header.sequence_number));
         continue;
       }
 

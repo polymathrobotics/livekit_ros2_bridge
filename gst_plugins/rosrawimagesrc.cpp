@@ -26,6 +26,8 @@ enum
   PROP_ROS_RELIABLE,
 };
 
+constexpr gint64 kDropLogThrottlePeriodUs = 5 * G_USEC_PER_SEC;
+
 #define RAW_IMAGE_CAPS                  \
   "video/x-raw, "                       \
   "format = " GST_ROS_VIDEO_FORMAT_LIST \
@@ -183,6 +185,8 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY: {
+      self->dropped_frames_since_log = 0;
+      self->next_drop_log_time_us = 0;
       try {
         self->node_runner = std::make_unique<RosNodeRunner>("gst_raw_image_src");
       } catch (const std::exception & e) {
@@ -196,6 +200,19 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
         // frame so slow downstream consumers do not build latency here.
         if (self->msg_queue.size() >= 1) {
           self->msg_queue.pop_back();
+          ++self->dropped_frames_since_log;
+          const gint64 now_us = g_get_monotonic_time();
+          if (self->next_drop_log_time_us == 0 || now_us >= self->next_drop_log_time_us) {
+            GST_WARNING_OBJECT(
+              self,
+              "event=raw_image_frame_dropped reason=slow_consumer topic=%s count=%" G_GUINT64_FORMAT
+              " "
+              "policy=latest_frame_wins",
+              self->ros_topic,
+              self->dropped_frames_since_log);
+            self->dropped_frames_since_log = 0;
+            self->next_drop_log_time_us = now_us + kDropLogThrottlePeriodUs;
+          }
         }
         self->msg_queue.push_front(msg);
         self->msg_queue_cv.notify_one();
@@ -237,6 +254,8 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
       self->sub.reset();
       self->node_runner.reset();
       self->caps_set = FALSE;
+      self->dropped_frames_since_log = 0;
+      self->next_drop_log_time_us = 0;
       break;
 
     default:
@@ -317,6 +336,8 @@ static void rosrawimagesrc_init(RosRawImageSrc * self)
   self->ros_reliable = FALSE;
   self->flushing = FALSE;
   self->caps_set = FALSE;
+  self->dropped_frames_since_log = 0;
+  self->next_drop_log_time_us = 0;
 
   // GObject zero-initializes the instance but does not run C++ constructors.
   new (&self->msg_queue) std::deque<sensor_msgs::msg::Image::ConstSharedPtr>();

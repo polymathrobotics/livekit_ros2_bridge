@@ -64,6 +64,8 @@ struct _RosRawImageSrc
   int width;
   int height;
   GstVideoFormat format;
+  guint64 dropped_frames_since_log;
+  gint64 next_drop_log_time_us;
 };
 
 struct _RosRawImageSrcClass

@@ -85,6 +85,7 @@ private:
     SteadyClock::time_point spawned_at;
     // Cleared on spawn, stop, and healthy checks; counts consecutive failed health probes otherwise.
     std::size_t consecutive_unhealthy_checks = 0;
+    SteadyClock::time_point next_unhealthy_log_at{};
   };
 
   using SidecarMap = std::unordered_map<std::string, SidecarRecord>;

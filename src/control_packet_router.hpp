@@ -18,6 +18,7 @@
 #include <string>
 
 #include "payloads/stream_control_payloads.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
 #include "room_session.hpp"
 #include "topic_publish_command.hpp"
@@ -35,7 +36,7 @@ public:
   };
 
   // Both handlers are required; construction fails if either callback is empty.
-  ControlPacketRouter(rclcpp::Logger logger, Handlers handlers);
+  ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers);
 
   // Routes only the control topics this bridge understands. Unknown topics, malformed payloads,
   // and anonymous publish commands are dropped before dispatch. Anonymous heartbeats are still
@@ -44,6 +45,7 @@ public:
 
 private:
   rclcpp::Logger logger_;
+  rclcpp::Clock::SharedPtr clock_;
   Handlers handlers_;
 };
 

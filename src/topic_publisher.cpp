@@ -29,6 +29,7 @@ namespace
 {
 
 constexpr std::size_t kPublisherDepth = 10U;
+constexpr auto kPublishLogThrottleMs = 5000;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -61,8 +62,10 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   // Publish commands come from a streaming control path, so this component is
   // intentionally best-effort: invalid or late commands are dropped after logging.
   if (is_shutdown_.load()) {
-    RCLCPP_WARN(
+    RCLCPP_WARN_THROTTLE(
       kTopicPublisherLogger,
+      *node_.get_clock(),
+      kPublishLogThrottleMs,
       "event=publish_request_rejected reason=shutdown resource=topics topic=%s requester_identity=%s "
       "interface_type=%s",
       topic.c_str(),
@@ -198,11 +201,15 @@ void RosTopicPublisher::publishWithPublisherCache(
   while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
     eraseCachedPublisher(evicted_topic);
-    RCLCPP_WARN(
+    RCLCPP_WARN_THROTTLE(
       kTopicPublisherLogger,
-      "Publisher topic cap reached; evicted topic=%s to allow topic=%s",
+      *node_.get_clock(),
+      kPublishLogThrottleMs,
+      "event=publisher_cache_evicted reason=max_topics_exceeded topic=%s evicted_topic=%s policy=lru "
+      "max_topics=%d",
+      topic.c_str(),
       evicted_topic.c_str(),
-      topic.c_str());
+      max_topics_);
   }
 }
 
