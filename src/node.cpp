@@ -14,8 +14,10 @@
 
 #include "livekit_ros2_bridge/node.hpp"
 
+#include <exception>
 #include <utility>
 
+#include "rclcpp/logging.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "room_session.hpp"
 #include "runtime.hpp"
@@ -27,11 +29,65 @@ namespace livekit_ros2_bridge
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
-  RuntimeConfig runtime_config = loadRuntimeConfig(get_node_parameters_interface(), get_name());
-  runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
+  RCLCPP_INFO(get_logger(), "event=node_startup_begin phase=startup");
+  RuntimeConfig runtime_config = [this]() {
+    try {
+      return loadRuntimeConfig(get_node_parameters_interface(), get_name());
+    } catch (const std::exception & exc) {
+      RCLCPP_ERROR(
+        get_logger(), "event=node_startup_failed phase=startup reason=runtime_config_load_failed error=%s", exc.what());
+      throw;
+    } catch (...) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "event=node_startup_failed phase=startup reason=runtime_config_load_failed error=unknown_exception");
+      throw;
+    }
+  }();
+
+  const char * room =
+    runtime_config.connect_config.room.empty() ? "<unset>" : runtime_config.connect_config.room.c_str();
+  const char * identity =
+    runtime_config.connect_config.identity.empty() ? "<unset>" : runtime_config.connect_config.identity.c_str();
+  const char * sidecar_enabled = runtime_config.video_sidecar_config.has_value() ? "true" : "false";
+
+  try {
+    runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
+  } catch (const std::exception & exc) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "event=node_startup_failed phase=startup reason=runtime_initialization_failed room=%s identity=%s "
+      "sidecar_enabled=%s error=%s",
+      room,
+      identity,
+      sidecar_enabled,
+      exc.what());
+    throw;
+  } catch (...) {
+    RCLCPP_ERROR(
+      get_logger(),
+      "event=node_startup_failed phase=startup reason=runtime_initialization_failed room=%s identity=%s "
+      "sidecar_enabled=%s error=unknown_exception",
+      room,
+      identity,
+      sidecar_enabled);
+    throw;
+  }
+
+  RCLCPP_INFO(
+    get_logger(),
+    "event=node_ready phase=startup room=%s identity=%s sidecar_enabled=%s",
+    room,
+    identity,
+    sidecar_enabled);
 }
 
-Node::~Node() = default;
+Node::~Node()
+{
+  RCLCPP_INFO(get_logger(), "event=node_shutdown_start phase=shutdown");
+  runtime_.reset();
+  RCLCPP_INFO(get_logger(), "event=node_shutdown_complete phase=shutdown");
+}
 
 }  // namespace livekit_ros2_bridge
 

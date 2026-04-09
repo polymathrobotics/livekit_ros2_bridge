@@ -45,20 +45,20 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
 : node_(node)
 , room_session_(std::move(session))
 , video_config_(std::move(runtime_config.video_config))
+, room_(runtime_config.connect_config.room)
+, identity_(runtime_config.connect_config.identity)
+, sidecar_enabled_(runtime_config.video_sidecar_config.has_value())
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
   }
 
-  RCLCPP_INFO(node_.get_logger(), "Parameters loaded");
   RCLCPP_INFO(
     node_.get_logger(),
-    "LiveKit config loaded: url=%s room=%s identity=%s ttl_seconds=%ld refresh_margin_seconds=%ld",
-    runtime_config.connect_config.url.c_str(),
-    runtime_config.connect_config.room.c_str(),
-    runtime_config.connect_config.identity.c_str(),
-    static_cast<long>(runtime_config.loaded_params.livekit.token_ttl_seconds),
-    static_cast<long>(runtime_config.loaded_params.livekit.token_refresh_margin_seconds));
+    "event=runtime_startup_begin phase=startup room=%s identity=%s sidecar_enabled=%s",
+    room_.empty() ? "<unset>" : room_.c_str(),
+    identity_.empty() ? "<unset>" : identity_.c_str(),
+    sidecar_enabled_ ? "true" : "false");
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
@@ -143,10 +143,23 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     kReconnectMaxBackoff,
     std::chrono::seconds(runtime_config.loaded_params.livekit.token_refresh_margin_seconds));
   if (!rpc_router_->registerRpcMethods(*room_session_)) {
-    RCLCPP_ERROR(node_.get_logger(), "event=runtime_startup_failed reason=required_rpc_registration_failed");
+    RCLCPP_ERROR(
+      node_.get_logger(),
+      "event=runtime_startup_failed phase=startup reason=required_rpc_registration_failed room=%s identity=%s "
+      "sidecar_enabled=%s",
+      room_.empty() ? "<unset>" : room_.c_str(),
+      identity_.empty() ? "<unset>" : identity_.c_str(),
+      sidecar_enabled_ ? "true" : "false");
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
+
+  RCLCPP_INFO(
+    node_.get_logger(),
+    "event=runtime_ready phase=startup room=%s identity=%s sidecar_enabled=%s",
+    room_.empty() ? "<unset>" : room_.c_str(),
+    identity_.empty() ? "<unset>" : identity_.c_str(),
+    sidecar_enabled_ ? "true" : "false");
 }
 
 Runtime::~Runtime()
@@ -159,6 +172,13 @@ void Runtime::shutdown()
   if (shutting_down_.exchange(true)) {
     return;
   }
+
+  RCLCPP_INFO(
+    node_.get_logger(),
+    "event=runtime_shutdown_start phase=shutdown room=%s identity=%s sidecar_enabled=%s",
+    room_.empty() ? "<unset>" : room_.c_str(),
+    identity_.empty() ? "<unset>" : identity_.c_str(),
+    sidecar_enabled_ ? "true" : "false");
 
   lease_gc_timer_.reset();
 
@@ -188,6 +208,13 @@ void Runtime::shutdown()
   if (ros_topic_publisher_ != nullptr) {
     ros_topic_publisher_->shutdown();
   }
+
+  RCLCPP_INFO(
+    node_.get_logger(),
+    "event=runtime_shutdown_complete phase=shutdown room=%s identity=%s sidecar_enabled=%s",
+    room_.empty() ? "<unset>" : room_.c_str(),
+    identity_.empty() ? "<unset>" : identity_.c_str(),
+    sidecar_enabled_ ? "true" : "false");
 }
 
 bool Runtime::isShuttingDown() const

@@ -16,16 +16,48 @@
 
 #include <algorithm>
 
+#include "rclcpp/logging.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
 {
 
+namespace
+{
+
+const auto kAccessPolicyLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
+
+const char * boolString(const bool value)
+{
+  return value ? "true" : "false";
+}
+
+}  // namespace
+
 AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 : publish_rules_(parseRuleset(config.publish.allow, config.publish.deny))
 , subscribe_rules_(parseRuleset(config.subscribe.allow, config.subscribe.deny))
 , service_rules_(parseRuleset(config.service.allow, config.service.deny))
-{}
+{
+  RCLCPP_INFO(
+    kAccessPolicyLogger,
+    "event=access_policy_loaded phase=startup "
+    "publish_allow_all=%s publish_allow_patterns=%zu publish_deny_all=%s publish_deny_patterns=%zu "
+    "subscribe_allow_all=%s subscribe_allow_patterns=%zu subscribe_deny_all=%s subscribe_deny_patterns=%zu "
+    "service_allow_all=%s service_allow_patterns=%zu service_deny_all=%s service_deny_patterns=%zu",
+    boolString(publish_rules_.allow.matches_all),
+    publish_rules_.allow.patterns.size(),
+    boolString(publish_rules_.deny.matches_all),
+    publish_rules_.deny.patterns.size(),
+    boolString(subscribe_rules_.allow.matches_all),
+    subscribe_rules_.allow.patterns.size(),
+    boolString(subscribe_rules_.deny.matches_all),
+    subscribe_rules_.deny.patterns.size(),
+    boolString(service_rules_.allow.matches_all),
+    service_rules_.allow.patterns.size(),
+    boolString(service_rules_.deny.matches_all),
+    service_rules_.deny.patterns.size());
+}
 
 bool AccessPolicy::allows(AccessOperation op, std::string_view name) const
 {

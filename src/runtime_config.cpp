@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
+#include "rclcpp/logging.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
@@ -29,6 +30,8 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+
+const auto kRuntimeConfigLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
 
 std::string deriveDefaultIdentity(const std::string & node_name)
 {
@@ -65,6 +68,24 @@ enum class LiveKitAuthMode
   StaticTokenWithApiCredentials,
   ApiKeyAndSecret,
 };
+
+const char * authModeString(const LiveKitAuthMode auth_mode)
+{
+  switch (auth_mode) {
+    case LiveKitAuthMode::Missing:
+      return "missing";
+    case LiveKitAuthMode::InvalidApiCredentialPair:
+      return "invalid_api_credential_pair";
+    case LiveKitAuthMode::StaticToken:
+      return "static_token";
+    case LiveKitAuthMode::StaticTokenWithApiCredentials:
+      return "static_token_with_api_credentials";
+    case LiveKitAuthMode::ApiKeyAndSecret:
+      return "api_key_and_secret";
+  }
+
+  return "unknown";
+}
 
 LiveKitAuthMode classifyLiveKitAuthMode(const Params & params)
 {
@@ -350,23 +371,67 @@ RuntimeConfig loadRuntimeConfig(
   const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
   const std::string & node_name)
 {
-  if (parameters_interface == nullptr) {
-    throw std::invalid_argument("parameters_interface is required");
-  }
+  std::string room = "<unset>";
+  std::string identity = "<unset>";
+  const char * auth_mode_name = "unknown";
+  bool sidecar_enabled = false;
 
-  ParamListener param_listener(parameters_interface);
-  RuntimeConfig runtime_config;
-  runtime_config.loaded_params = param_listener.get_params();
-  const LiveKitAuthMode auth_mode = classifyLiveKitAuthMode(runtime_config.loaded_params);
-  validateLiveKitApiCredentialPair(auth_mode);
-  validateTokenTtl(runtime_config.loaded_params, auth_mode);
-  runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params, node_name);
-  runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
-  runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
-  runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
-  runtime_config.video_sidecar_config =
-    loadVideoSidecarConfig(runtime_config.loaded_params, runtime_config.connect_config, auth_mode);
-  return runtime_config;
+  try {
+    if (parameters_interface == nullptr) {
+      throw std::invalid_argument("parameters_interface is required");
+    }
+
+    ParamListener param_listener(parameters_interface);
+    RuntimeConfig runtime_config;
+    runtime_config.loaded_params = param_listener.get_params();
+    room = runtime_config.loaded_params.livekit.room.empty() ? "<unset>" : runtime_config.loaded_params.livekit.room;
+
+    const LiveKitAuthMode auth_mode = classifyLiveKitAuthMode(runtime_config.loaded_params);
+    auth_mode_name = authModeString(auth_mode);
+    identity = runtime_config.loaded_params.livekit.identity.empty() ? deriveDefaultIdentity(node_name)
+                                                                     : runtime_config.loaded_params.livekit.identity;
+
+    validateLiveKitApiCredentialPair(auth_mode);
+    validateTokenTtl(runtime_config.loaded_params, auth_mode);
+    runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params, node_name);
+    runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
+    runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
+    runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
+    runtime_config.video_sidecar_config =
+      loadVideoSidecarConfig(runtime_config.loaded_params, runtime_config.connect_config, auth_mode);
+    sidecar_enabled = runtime_config.video_sidecar_config.has_value();
+
+    RCLCPP_INFO(
+      kRuntimeConfigLogger,
+      "event=runtime_config_loaded phase=startup room=%s identity=%s auth_mode=%s sidecar_enabled=%s",
+      runtime_config.connect_config.room.empty() ? "<unset>" : runtime_config.connect_config.room.c_str(),
+      runtime_config.connect_config.identity.empty() ? "<unset>" : runtime_config.connect_config.identity.c_str(),
+      auth_mode_name,
+      sidecar_enabled ? "true" : "false");
+
+    return runtime_config;
+  } catch (const std::exception & exc) {
+    RCLCPP_ERROR(
+      kRuntimeConfigLogger,
+      "event=runtime_config_load_failed phase=startup reason=config_validation_failed room=%s identity=%s "
+      "auth_mode=%s sidecar_enabled=%s error=%s",
+      room.c_str(),
+      identity.c_str(),
+      auth_mode_name,
+      sidecar_enabled ? "true" : "false",
+      exc.what());
+    throw;
+  } catch (...) {
+    RCLCPP_ERROR(
+      kRuntimeConfigLogger,
+      "event=runtime_config_load_failed phase=startup reason=config_validation_failed room=%s identity=%s "
+      "auth_mode=%s sidecar_enabled=%s error=unknown_exception",
+      room.c_str(),
+      identity.c_str(),
+      auth_mode_name,
+      sidecar_enabled ? "true" : "false");
+    throw;
+  }
 }
 
 }  // namespace livekit_ros2_bridge

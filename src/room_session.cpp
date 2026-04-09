@@ -141,7 +141,13 @@ public:
     stop_requested_ = false;
     reconnect_requested_ = false;
     static_expiry_warned_ = false;
+    last_reconnect_reason_.clear();
     thread_started_ = true;
+    RCLCPP_INFO(
+      kRoomSessionLogger,
+      "event=room_session_start_requested phase=startup room=%s identity=%s",
+      config_.room.empty() ? "<unset>" : config_.room.c_str(),
+      config_.identity.empty() ? "<unset>" : config_.identity.c_str());
     worker_thread_ = std::thread([this]() { run(); });
   }
 
@@ -309,28 +315,28 @@ public:
     }
 
     if (event.state == livekit::ConnectionState::Disconnected) {
-      requestReconnect();
+      requestReconnect("connection_state_disconnected");
     }
   }
 
   void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent &) override
   {
-    resetAndReconnect();
+    resetAndReconnect("room_disconnected");
   }
 
   void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
   {
-    resetAndReconnect();
+    resetAndReconnect("room_eos");
   }
 
 private:
-  void resetAndReconnect()
+  void resetAndReconnect(const char * reason)
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
     }
-    requestReconnect();
+    requestReconnect(reason);
   }
 
   void run()
@@ -369,7 +375,13 @@ private:
       }
 
       if (backoff.count() > 0) {
-        RCLCPP_WARN(kRoomSessionLogger, "Reconnecting to LiveKit in %.1fs", backoff.count() / 1000.0);
+        RCLCPP_WARN(
+          kRoomSessionLogger,
+          "event=room_reconnect_backoff phase=reconnect reason=%s room=%s identity=%s delay_seconds=%.1f",
+          lastReconnectReason().c_str(),
+          config_.room.empty() ? "<unset>" : config_.room.c_str(),
+          config_.identity.empty() ? "<unset>" : config_.identity.c_str(),
+          backoff.count() / 1000.0);
         waitForStop(backoff);
       }
       backoff = std::min(backoff * 2, maxBackoff());
@@ -498,9 +510,12 @@ private:
         if (deadline.has_value() && now >= *deadline) {
           RCLCPP_INFO(
             kRoomSessionLogger,
-            "Refreshing LiveKit token before expiry: exp_unix=%s",
+            "event=room_reconnect_requested phase=runtime reason=token_refresh_due room=%s identity=%s exp_unix=%s",
+            config_.room.empty() ? "<unset>" : config_.room.c_str(),
+            config_.identity.empty() ? "<unset>" : config_.identity.c_str(),
             formatTokenExpiry(current_token_.expires_at).c_str());
           reconnect_requested_ = true;
+          last_reconnect_reason_ = "token_refresh_due";
           return true;
         }
         continue;
@@ -523,12 +538,19 @@ private:
   {
     std::shared_ptr<livekit::Room> room;
     std::function<void()> callback;
+    std::string reconnect_reason;
+    std::string room_name;
+    std::string identity;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
       room = std::move(room_);
       current_token_ = AccessToken{};
       reconnect_requested_ = false;
+      reconnect_reason = last_reconnect_reason_;
+      room_name = config_.room;
+      identity = config_.identity;
+      last_reconnect_reason_.clear();
       callback = callbacks_.on_session_reset;
     }
 
@@ -540,15 +562,47 @@ private:
     // The runtime only rebuilds per-connection ROS state after an actual disconnect or reconnect
     // cycle, not during final stop().
     if (notify_session_reset && callback) {
+      RCLCPP_INFO(
+        kRoomSessionLogger,
+        "event=room_session_reset phase=reconnect reason=%s room=%s identity=%s",
+        reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str(),
+        room_name.empty() ? "<unset>" : room_name.c_str(),
+        identity.empty() ? "<unset>" : identity.c_str());
       callback();
     }
   }
 
-  void requestReconnect()
+  void requestReconnect(const char * reason)
+  {
+    std::string room_name;
+    std::string identity;
+    bool should_log = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      should_log = !reconnect_requested_;
+      reconnect_requested_ = true;
+      if (should_log) {
+        last_reconnect_reason_ = reason;
+      }
+      room_name = config_.room;
+      identity = config_.identity;
+      condition_.notify_all();
+    }
+
+    if (should_log) {
+      RCLCPP_WARN(
+        kRoomSessionLogger,
+        "event=room_reconnect_requested phase=runtime reason=%s room=%s identity=%s",
+        reason,
+        room_name.empty() ? "<unset>" : room_name.c_str(),
+        identity.empty() ? "<unset>" : identity.c_str());
+    }
+  }
+
+  std::string lastReconnectReason() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    reconnect_requested_ = true;
-    condition_.notify_all();
+    return last_reconnect_reason_.empty() ? "retry_backoff" : last_reconnect_reason_;
   }
 
   bool registerAllRpcMethodsLocked()
@@ -683,6 +737,7 @@ private:
   // requester disappearing permanently.
   bool participant_disconnects_enabled_ = false;
   bool thread_started_ = false;
+  std::string last_reconnect_reason_;
 };
 
 }  // namespace

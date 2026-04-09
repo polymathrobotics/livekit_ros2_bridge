@@ -70,6 +70,9 @@ private:
   std::unique_ptr<ControlPacketRouter> control_packet_router_;
   VideoConfig video_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
+  std::string room_;
+  std::string identity_;
+  bool sidecar_enabled_ = false;
   std::atomic<bool> shutting_down_{false};
 };
 
