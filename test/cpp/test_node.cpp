@@ -12,14 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <memory>
-#include <string>
-
-#include "fake_room_session.hpp"
 #include "gtest/gtest.h"
 #include "livekit_ros2_bridge/node.hpp"
 #include "rclcpp/rclcpp.hpp"
-#include "room_session.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -42,26 +37,17 @@ protected:
   }
 };
 
-TEST_F(NodeTest, ConstructsWithInjectedSessionAndOwnsRuntimeLifecycle)
+TEST_F(NodeTest, ConstructsWithDefaultSessionPath)
 {
   rclcpp::NodeOptions options;
-  options.append_parameter_override("livekit.url", "ws://test:7880");
+  options.append_parameter_override("livekit.url", "not-a-url");
   options.append_parameter_override("livekit.room", "robot-room");
   options.append_parameter_override("livekit.token", "test-token");
 
-  auto session = std::make_unique<FakeRoomSession>();
-  auto state = session->state;
+  const auto node = std::make_shared<Node>(options);
 
-  {
-    const auto node = std::make_shared<Node>(options, std::move(session));
-
-    ASSERT_NE(node, nullptr);
-    EXPECT_STREQ(node->get_name(), "livekit_ros2_bridge");
-    EXPECT_TRUE(state->started);
-    EXPECT_FALSE(state->stopped);
-  }
-
-  EXPECT_TRUE(state->stopped);
+  ASSERT_NE(node, nullptr);
+  EXPECT_STREQ(node->get_name(), "livekit_ros2_bridge");
 }
 
 }  // namespace livekit_ros2_bridge

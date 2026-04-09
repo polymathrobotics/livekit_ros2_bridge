@@ -34,7 +34,6 @@ class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionRegistry;
 class RosTopicPublisher;
-struct VideoConfig;
 class VideoSidecarSupervisor;
 
 // Wires one RoomSession to the ROS-facing publishers, RPC handlers, and sidecars for a node.
@@ -50,11 +49,6 @@ public:
   // ingress reaches ROS while shutdown is in progress, and the executor queue is then shut down
   // after already-running work has had a chance to drain.
   void shutdown();
-  void setSessionResetHooksForTest(
-    std::function<void()> on_subscription_registry_reset, std::function<void()> on_ros_service_caller_reset);
-  void setParticipantDisconnectedHooksForTest(
-    std::function<void(const std::string &)> on_ros_service_caller_cancel_requester_identity);
-  void setTopicPublishHookForTest(std::function<void(const std::string &)> on_topic_publish_requester_identity);
 
 private:
   bool isShuttingDown() const;
@@ -74,12 +68,8 @@ private:
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<ControlPacketRouter> control_packet_router_;
-  std::unique_ptr<VideoConfig> video_config_;
+  VideoConfig video_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
-  std::function<void()> on_subscription_registry_reset_for_test_;
-  std::function<void()> on_ros_service_caller_reset_for_test_;
-  std::function<void(const std::string &)> on_ros_service_caller_cancel_requester_identity_for_test_;
-  std::function<void(const std::string &)> on_topic_publish_requester_identity_for_test_;
   std::atomic<bool> shutting_down_{false};
 };
 

@@ -35,18 +35,10 @@ struct RuntimeConfig
   Params loaded_params;
   RoomConnectionConfig connect_config;
   std::shared_ptr<AccessTokenSource> token_source;
-  std::string auth_mode_label;
   AccessPolicy access_policy;
   VideoConfig video_config;
   std::optional<VideoSidecarSupervisor::Config> video_sidecar_config;
 };
-
-namespace detail
-{
-
-VideoConfig loadVideoConfig(const Params & params);
-
-}  // namespace detail
 
 // Loads and validates the bridge's startup-only configuration from parameters, deriving the
 // bridge identity, connection settings, refresh-capable token source, access policy, and optional

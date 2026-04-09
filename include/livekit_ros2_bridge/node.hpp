@@ -22,7 +22,6 @@
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
 class Runtime;
 
 // ROS component boundary that loads startup config and owns one bridge runtime.
@@ -31,9 +30,6 @@ class Node final : public rclcpp::Node
 public:
   // Builds the default LiveKit session implementation and starts the runtime before returning.
   explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Transfers ownership of an already-constructed session to the runtime. The session is started
-  // during construction and stopped when this node is destroyed.
-  Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session);
   ~Node() override;
 
 private:

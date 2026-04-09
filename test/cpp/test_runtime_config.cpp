@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -88,22 +90,6 @@ rclcpp::NodeOptions makeStaticTokenOptions()
   return options;
 }
 
-Params makeBaseParams()
-{
-  Params params;
-  return params;
-}
-
-void expectVideoConfigError(const Params & params, const char * expected_error)
-{
-  try {
-    (void)detail::loadVideoConfig(params);
-    FAIL() << "Expected loadVideoConfig to throw '" << expected_error << "'";
-  } catch (const std::runtime_error & error) {
-    EXPECT_STREQ(error.what(), expected_error);
-  }
-}
-
 RuntimeConfig loadRuntimeConfigForNode(const std::string & node_name, const rclcpp::NodeOptions & options)
 {
   auto node = std::make_shared<rclcpp::Node>(node_name, options);
@@ -152,7 +138,6 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupKeepsConfiguredIdentity)
   EXPECT_EQ(startup_config.connect_config.url, "ws://test:7880");
   EXPECT_EQ(startup_config.connect_config.room, "robot-room");
   EXPECT_EQ(startup_config.connect_config.identity, "bridge-id");
-  EXPECT_EQ(startup_config.auth_mode_label, "static token");
   EXPECT_FALSE(startup_config.video_sidecar_config.has_value());
 
   const auto token = startup_config.token_source->getToken(startup_config.connect_config);
@@ -200,7 +185,6 @@ TEST_F(RuntimeConfigTest, GeneratedTokenStartupBuildsSupervisorConfig)
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_api_key", options);
 
   EXPECT_TRUE(usesDerivedIdentity("startup_config_api_key", startup_config.connect_config.identity));
-  EXPECT_EQ(startup_config.auth_mode_label, "api key/secret");
   expectSupervisorConfig(startup_config, std::chrono::seconds(600), std::chrono::seconds(120));
 
   const auto token = startup_config.token_source->getToken(startup_config.connect_config);
@@ -217,7 +201,6 @@ TEST_F(RuntimeConfigTest, StaticTokenSidecarSetupBuildsSupervisorConfig)
   options.append_parameter_override("livekit.token_refresh_margin_seconds", 120);
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_static_token_sidecar", options);
 
-  EXPECT_EQ(startup_config.auth_mode_label, "static token");
   expectSupervisorConfig(startup_config, std::chrono::seconds(600), std::chrono::seconds(120));
 
   const auto token = startup_config.token_source->getToken(startup_config.connect_config);
@@ -311,95 +294,119 @@ TEST_F(RuntimeConfigTest, RosVideoEntryAcceptsDefaultPipelineAlias)
 
 TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front", "front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "ros";
-  entry.pattern = "/camera/front/*";
-  entry.pipelines = {"default=rosrawimagesrc ros-topic={topic} ! vp8enc"};
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front", "front"});
+  options.append_parameter_override("videos.front.kind", "ros");
+  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
+  options.append_parameter_override(
+    "videos.front.pipelines", std::vector<std::string>{"default=rosrawimagesrc ros-topic={topic} ! vp8enc"});
 
-  expectVideoConfigError(params, "duplicate video entry id 'front'");
+  expectRuntimeConfigError("startup_config_duplicate_video_entry_id", options, "duplicate video entry id 'front'");
 }
 
 TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersReportsSectionSpecificError)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
 
-  expectVideoConfigError(params, "video entry 'front' is missing generated parameters");
+  expectRuntimeConfigError(
+    "startup_config_missing_video_entry_params", options, "video entry 'front' is missing generated parameters");
 }
 
 TEST_F(RuntimeConfigTest, RosVideoEntryWithoutPipelinesIsRejected)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "ros";
-  entry.pattern = "/camera/front/*";
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("videos.front.kind", "ros");
+  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
 
-  expectVideoConfigError(params, missingRosPipelineConfigError());
+  expectRuntimeConfigError("startup_config_missing_ros_pipeline", options, missingRosPipelineConfigError());
 }
 
 TEST_F(RuntimeConfigTest, RosVideoEntryRejectsUnsupportedPipelineAlias)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "ros";
-  entry.pattern = "/camera/front/*";
-  entry.pipelines = {"foo=rosrawimagesrc ros-topic={topic} ! vp8enc"};
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("videos.front.kind", "ros");
+  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
+  options.append_parameter_override(
+    "videos.front.pipelines", std::vector<std::string>{"foo=rosrawimagesrc ros-topic={topic} ! vp8enc"});
 
-  expectVideoConfigError(params, "video entry 'front' (ros kind) has unsupported pipeline alias 'foo'");
+  expectRuntimeConfigError(
+    "startup_config_unsupported_ros_pipeline_alias",
+    options,
+    "video entry 'front' (ros kind) has unsupported pipeline alias 'foo'");
 }
 
 TEST_F(RuntimeConfigTest, VideoEntryRejectsDuplicatePipelineAliases)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "ros";
-  entry.pattern = "/camera/front/*";
-  entry.pipelines = {
-    "image=rosrawimagesrc ros-topic={topic} ! first-encoder",
-    "image=rosrawimagesrc ros-topic={topic} ! second-encoder",
-  };
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("videos.front.kind", "ros");
+  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
+  options.append_parameter_override(
+    "videos.front.pipelines",
+    std::vector<std::string>{
+      "image=rosrawimagesrc ros-topic={topic} ! first-encoder",
+      "image=rosrawimagesrc ros-topic={topic} ! second-encoder",
+    });
 
-  expectVideoConfigError(params, "video entry 'front' has duplicate pipeline alias 'image'");
+  expectRuntimeConfigError(
+    "startup_config_duplicate_pipeline_alias", options, "video entry 'front' has duplicate pipeline alias 'image'");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"/front_rtsp", "/front_rtsp/"};
-  auto & entry1 = params.videos.ids_map["/front_rtsp"];
-  entry1.kind = "pipeline";
-  entry1.pipelines = {"default=uridecodebin uri=rtsp://127.0.0.1:8554/front ! vp8enc"};
-  auto & entry2 = params.videos.ids_map["/front_rtsp/"];
-  entry2.kind = "pipeline";
-  entry2.pipelines = {"default=uridecodebin uri=rtsp://127.0.0.1:8554/front-copy ! vp8enc"};
+  const std::string node_name = "startup_config_duplicate_pipeline_source";
+  const auto params_path =
+    std::filesystem::temp_directory_path() / "livekit_ros2_bridge_duplicate_pipeline_source_params.yaml";
 
-  expectVideoConfigError(params, "duplicate configured video external name '/front_rtsp'");
+  {
+    std::ofstream params_file(params_path);
+    ASSERT_TRUE(params_file.is_open());
+    params_file << node_name << ":\n";
+    params_file << "  ros__parameters:\n";
+    params_file << "    livekit.url: ws://test:7880\n";
+    params_file << "    livekit.room: robot-room\n";
+    params_file << "    livekit.token: static-token\n";
+    params_file << "    videos.ids: ['/front_rtsp', '/front_rtsp/']\n";
+    params_file << "    \"videos./front_rtsp.kind\": pipeline\n";
+    params_file
+      << "    \"videos./front_rtsp.pipelines\": ['default=uridecodebin uri=rtsp://127.0.0.1:8554/front ! vp8enc']\n";
+    params_file << "    \"videos./front_rtsp/.kind\": pipeline\n";
+    params_file << "    \"videos./front_rtsp/.pipelines\": ['default=uridecodebin uri=rtsp://127.0.0.1:8554/front-copy "
+                   "! vp8enc']\n";
+  }
+
+  rclcpp::NodeOptions options;
+  options.arguments({"--ros-args", "--params-file", params_path.string()});
+  expectRuntimeConfigError(node_name, options, "duplicate configured video external name '/front_rtsp'");
+
+  std::filesystem::remove(params_path);
 }
 
 TEST_F(RuntimeConfigTest, PipelineVideoEntryRejectsMissingDefaultAlias)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "pipeline";
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("videos.front.kind", "pipeline");
 
-  expectVideoConfigError(params, "video entry 'front' (pipeline kind) requires a 'default' pipeline key");
+  expectRuntimeConfigError(
+    "startup_config_missing_pipeline_default",
+    options,
+    "video entry 'front' (pipeline kind) requires a 'default' pipeline key");
 }
 
 TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejected)
 {
-  auto params = makeBaseParams();
-  params.videos.ids = {"front"};
-  auto & entry = params.videos.ids_map["front"];
-  entry.kind = "gstream";
-  entry.pipelines = {"default=videotestsrc pattern=ball ! vp8enc"};
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("videos.front.kind", "gstream");
+  options.append_parameter_override(
+    "videos.front.pipelines", std::vector<std::string>{"default=videotestsrc pattern=ball ! vp8enc"});
 
-  expectVideoConfigError(params, "video entry 'front' has unsupported kind 'gstream'");
+  expectRuntimeConfigError(
+    "startup_config_unsupported_video_kind", options, "video entry 'front' has unsupported kind 'gstream'");
 }
 
 }  // namespace livekit_ros2_bridge

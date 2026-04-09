@@ -44,6 +44,7 @@ constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config)
 : node_(node)
 , room_session_(std::move(session))
+, video_config_(std::move(runtime_config.video_config))
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
@@ -52,12 +53,10 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
   RCLCPP_INFO(node_.get_logger(), "Parameters loaded");
   RCLCPP_INFO(
     node_.get_logger(),
-    "LiveKit config loaded: url=%s room=%s identity=%s auth_mode=%s ttl_seconds=%ld "
-    "refresh_margin_seconds=%ld",
+    "LiveKit config loaded: url=%s room=%s identity=%s ttl_seconds=%ld refresh_margin_seconds=%ld",
     runtime_config.connect_config.url.c_str(),
     runtime_config.connect_config.room.c_str(),
     runtime_config.connect_config.identity.c_str(),
-    runtime_config.auth_mode_label.c_str(),
     static_cast<long>(runtime_config.loaded_params.livekit.token_ttl_seconds),
     static_cast<long>(runtime_config.loaded_params.livekit.token_refresh_margin_seconds));
 
@@ -65,7 +64,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(
     node_, runtime_config.access_policy, runtime_config.loaded_params.publish.max_topics);
-  video_config_ = std::make_unique<VideoConfig>(runtime_config.video_config);
 
   if (runtime_config.video_sidecar_config.has_value()) {
     video_sidecar_supervisor_ = std::make_unique<VideoSidecarSupervisor>(
@@ -88,7 +86,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     },
     [this](const std::string & track_name) { cdr_track_publisher_->unpublishTrack(track_name); },
     video_sidecar_supervisor_.get(),
-    video_config_.get());
+    &video_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_session_, runtime_config.access_policy, node_.get_clock());
@@ -107,9 +105,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
       [this](std::string requester_identity, TopicPublishCommand command) {
         submitExecutorWork([this, requester_identity = std::move(requester_identity), command = std::move(command)]() {
           ros_topic_publisher_->publish(requester_identity, command);
-          if (on_topic_publish_requester_identity_for_test_) {
-            on_topic_publish_requester_identity_for_test_(requester_identity);
-          }
         });
       },
     });
@@ -129,13 +124,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
         submitExecutorWork([this]() {
           cdr_track_publisher_->unpublishAll();
           subscription_registry_->resetSessionState();
-          if (on_subscription_registry_reset_for_test_) {
-            on_subscription_registry_reset_for_test_();
-          }
           ros_service_caller_->resetSessionState();
-          if (on_ros_service_caller_reset_for_test_) {
-            on_ros_service_caller_reset_for_test_();
-          }
         });
       },
       [this](const std::string & requester_identity) {
@@ -146,9 +135,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
           // old participant session that just disconnected.
           subscription_registry_->markRequesterForCdrReplay(requester_identity, gen);
           ros_service_caller_->cancelCallsForRequester(requester_identity);
-          if (on_ros_service_caller_cancel_requester_identity_for_test_) {
-            on_ros_service_caller_cancel_requester_identity_for_test_(requester_identity);
-          }
         });
       },
       [this](const IncomingControlPacket & packet) { handleIncomingControlPacket(packet); },
@@ -202,25 +188,6 @@ void Runtime::shutdown()
   if (ros_topic_publisher_ != nullptr) {
     ros_topic_publisher_->shutdown();
   }
-}
-
-void Runtime::setSessionResetHooksForTest(
-  std::function<void()> on_subscription_registry_reset, std::function<void()> on_ros_service_caller_reset)
-{
-  on_subscription_registry_reset_for_test_ = std::move(on_subscription_registry_reset);
-  on_ros_service_caller_reset_for_test_ = std::move(on_ros_service_caller_reset);
-}
-
-void Runtime::setParticipantDisconnectedHooksForTest(
-  std::function<void(const std::string &)> on_ros_service_caller_cancel_requester_identity)
-{
-  on_ros_service_caller_cancel_requester_identity_for_test_ =
-    std::move(on_ros_service_caller_cancel_requester_identity);
-}
-
-void Runtime::setTopicPublishHookForTest(std::function<void(const std::string &)> on_topic_publish_requester_identity)
-{
-  on_topic_publish_requester_identity_for_test_ = std::move(on_topic_publish_requester_identity);
 }
 
 bool Runtime::isShuttingDown() const

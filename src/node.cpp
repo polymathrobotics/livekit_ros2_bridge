@@ -25,14 +25,10 @@ namespace livekit_ros2_bridge
 {
 
 Node::Node(const rclcpp::NodeOptions & options)
-: Node(options, makeRoomSession())
-{}
-
-Node::Node(const rclcpp::NodeOptions & options, std::unique_ptr<RoomSession> session)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   RuntimeConfig runtime_config = loadRuntimeConfig(get_node_parameters_interface(), get_name());
-  runtime_ = std::make_unique<Runtime>(*this, std::move(session), std::move(runtime_config));
+  runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
 }
 
 Node::~Node() = default;

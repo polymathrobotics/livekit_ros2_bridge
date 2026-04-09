@@ -252,7 +252,7 @@ const typename EntryMap::mapped_type & requireUniqueGeneratedVideoEntry(
 
 }  // namespace
 
-VideoConfig detail::loadVideoConfig(const Params & params)
+VideoConfig loadVideoConfig(const Params & params)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -363,9 +363,8 @@ RuntimeConfig loadRuntimeConfig(
   validateTokenTtl(runtime_config.loaded_params, auth_mode);
   runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params, node_name);
   runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
-  runtime_config.auth_mode_label = usesStaticToken(auth_mode) ? "static token" : "api key/secret";
   runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
-  runtime_config.video_config = detail::loadVideoConfig(runtime_config.loaded_params);
+  runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
   runtime_config.video_sidecar_config =
     loadVideoSidecarConfig(runtime_config.loaded_params, runtime_config.connect_config, auth_mode);
   return runtime_config;
