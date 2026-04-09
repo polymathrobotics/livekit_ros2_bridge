@@ -63,18 +63,22 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   if (is_shutdown_.load()) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
-      "event=publish_request_rejected reason=shutdown topic=%s requester_identity=%s",
+      "event=publish_request_rejected reason=shutdown resource=topics topic=%s requester_identity=%s "
+      "interface_type=%s",
       topic.c_str(),
-      requester_identity.c_str());
+      requester_identity.c_str(),
+      command.interface_type.c_str());
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
-      "event=publish_request_rejected reason=forbidden topic=%s requester_identity=%s",
+      "event=publish_request_rejected reason=forbidden resource=topics topic=%s requester_identity=%s "
+      "interface_type=%s",
       topic.c_str(),
-      requester_identity.c_str());
+      requester_identity.c_str(),
+      command.interface_type.c_str());
     return;
   }
 
@@ -84,8 +88,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
-      "event=publish_request_rejected reason=invalid_request topic=%s requester_identity=%s interface_type=%s "
-      "error=%s",
+      "event=publish_request_rejected reason=invalid_request resource=topics topic=%s "
+      "requester_identity=%s interface_type=%s error=%s",
       topic.c_str(),
       requester_identity.c_str(),
       command.interface_type.c_str(),
@@ -100,7 +104,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     RCLCPP_ERROR(
       kTopicPublisherLogger,
-      "event=publish_request_failed reason=internal topic=%s requester_identity=%s interface_type=%s error=%s",
+      "event=publish_request_failed reason=internal resource=topics topic=%s requester_identity=%s "
+      "interface_type=%s error=%s",
       topic.c_str(),
       requester_identity.c_str(),
       interface_type.c_str(),

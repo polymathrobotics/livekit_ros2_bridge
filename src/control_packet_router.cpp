@@ -24,6 +24,17 @@
 
 namespace livekit_ros2_bridge
 {
+
+namespace
+{
+
+const char * requesterIdentityForLog(const IncomingControlPacket & packet)
+{
+  return packet.requester_identity.empty() ? "<unknown>" : packet.requester_identity.c_str();
+}
+
+}  // namespace
+
 ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, Handlers handlers)
 : logger_(std::move(logger))
 , handlers_(std::move(handlers))
@@ -53,7 +64,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         "event=control_packet_rejected reason=malformed_heartbeat control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),
-        packet.requester_identity.c_str(),
+        requesterIdentityForLog(packet),
         exc.what());
       return;
     }
@@ -66,7 +77,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         "event=control_packet_rejected reason=invalid_heartbeat control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),
-        packet.requester_identity.c_str(),
+        requesterIdentityForLog(packet),
         exc.what());
     }
     return;
@@ -76,8 +87,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     if (packet.requester_identity.empty()) {
       RCLCPP_WARN(
         logger_,
-        "event=control_packet_rejected reason=missing_requester_identity control_topic=%s",
-        packet.control_topic.c_str());
+        "event=control_packet_rejected reason=missing_requester_identity control_topic=%s "
+        "requester_identity=%s",
+        packet.control_topic.c_str(),
+        requesterIdentityForLog(packet));
       return;
     }
 
@@ -89,7 +102,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         "event=control_packet_rejected reason=invalid_publish_command control_topic=%s requester_identity=%s "
         "error=%s",
         packet.control_topic.c_str(),
-        packet.requester_identity.c_str(),
+        requesterIdentityForLog(packet),
         exc.what());
     }
   }

@@ -48,18 +48,27 @@ namespace
 using Clock = std::chrono::system_clock;
 const auto kRoomSessionLogger = rclcpp::get_logger("livekit_ros2_bridge.room_session");
 
+const char * requestIdForLog(const livekit::RpcInvocationData & invocation)
+{
+  return invocation.request_id.empty() ? "<unknown>" : invocation.request_id.c_str();
+}
+
+const char * requesterIdentityForLog(const livekit::RpcInvocationData & invocation)
+{
+  return invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
+}
+
 livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & method_name, const RpcHandler & handler)
 {
   return [method_name, handler](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
-    const char * caller_identity =
-      invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
-    const char * request_id = invocation.request_id.empty() ? "<unknown>" : invocation.request_id.c_str();
+    const char * requester_identity = requesterIdentityForLog(invocation);
+    const char * request_id = requestIdForLog(invocation);
     RCLCPP_INFO(
       kRoomSessionLogger,
-      "Received LiveKit RPC method=%s request_id=%s caller_identity=%s payload_bytes=%zu",
+      "event=rpc_request_received method=%s request_id=%s requester_identity=%s payload_bytes=%zu",
       method_name.c_str(),
       request_id,
-      caller_identity,
+      requester_identity,
       invocation.payload.size());
 
     try {
@@ -77,7 +86,7 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
         "event=rpc_request_failed reason=internal method=%s request_id=%s requester_identity=%s error=%s",
         method_name.c_str(),
         request_id,
-        caller_identity,
+        requester_identity,
         exc.what());
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     } catch (...) {
@@ -87,7 +96,7 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
         "error=unknown_exception",
         method_name.c_str(),
         request_id,
-        caller_identity);
+        requester_identity);
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     }
   };
