@@ -25,6 +25,7 @@ namespace livekit_ros2_bridge
 
 struct LiveKitRoomGrant
 {
+  // Room-scoped grant encoded into bridge- or sidecar-minted LiveKit JWTs.
   std::string room;
   bool room_join = true;
   bool can_publish = true;
@@ -32,6 +33,9 @@ struct LiveKitRoomGrant
   bool can_publish_data = true;
 };
 
+// Mints a signed HS256 LiveKit access token for the supplied bridge identity and room grant.
+// Callers are responsible for protecting the API secret and for choosing an issued_at/ttl window
+// that matches their refresh policy.
 std::string mintLiveKitAccessToken(
   const std::string & api_key,
   const std::string & api_secret,
@@ -40,8 +44,12 @@ std::string mintLiveKitAccessToken(
   std::chrono::system_clock::time_point issued_at,
   std::chrono::seconds ttl);
 
+// Decodes the JWT payload without verifying the signature. Use only for local metadata extraction
+// from tokens you already trust, never as an authentication decision.
 std::optional<nlohmann::json> decodeJwtPayload(const std::string & token);
 
+// Reads the exp claim via decodeJwtPayload(). Returns nullopt for malformed tokens or missing exp
+// and inherits the same "parse only, no signature verification" trust boundary.
 std::optional<std::chrono::system_clock::time_point> parseJwtExpiresAt(const std::string & token);
 
 }  // namespace livekit_ros2_bridge

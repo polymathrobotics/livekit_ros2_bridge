@@ -38,7 +38,11 @@ class CdrTrackPublisher final
 public:
   CdrTrackPublisher(RoomSession & session, rclcpp::Clock::SharedPtr clock);
 
+  // Best-effort push to an already-published CDR data track. Missing tracks and backpressure are
+  // dropped so ROS message delivery never blocks waiting on LiveKit's data-track queue.
   void pushMessage(const std::string & track_name, const std::uint8_t * data, std::size_t size);
+  // Publishes the LiveKit data track for a registry-reserved track name. Completion is reported
+  // back with the caller's generation so the registry can reject stale publishes after teardown.
   void publishTrack(
     const std::string & track_name, std::size_t generation, SubscriptionRegistry & subscription_registry);
   void unpublishTrack(const std::string & track_name);

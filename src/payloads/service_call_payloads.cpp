@@ -41,6 +41,8 @@ ServiceCallRequest parseServiceCallRequest(const std::string & payload)
 
   result.request = parseCdrPayload(json, "request");
   if (result.request.empty()) {
+    // Service calls always forward a concrete serialized request message; an empty payload is
+    // treated as malformed rather than as a typed default instance.
     throw std::invalid_argument("request.payload_base64 must not be empty");
   }
 

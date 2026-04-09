@@ -42,8 +42,10 @@ struct RoomConnectionConfig
 struct AccessToken
 {
   std::string value;
+  // Best-effort minting metadata used only for reconnect and refresh timing.
   std::optional<std::chrono::system_clock::time_point> issued_at;
   std::optional<std::chrono::system_clock::time_point> expires_at;
+  // True when getToken() can mint a replacement token for the same bridge identity.
   bool refreshable = false;
 };
 
@@ -51,6 +53,8 @@ class AccessTokenSource
 {
 public:
   virtual ~AccessTokenSource() = default;
+  // Returns the token the bridge should use for the next room connection attempt. The config
+  // carries the bridge's own LiveKit identity, not a remote requester or RPC caller identity.
   virtual AccessToken getToken(const RoomConnectionConfig & config) = 0;
 };
 
@@ -118,8 +122,14 @@ struct OutgoingControlPacket
 
 struct RoomSessionCallbacks
 {
+  // Called after a connected session has been torn down and any per-connection room state should
+  // be rebuilt on the next connect.
   std::function<void()> on_session_reset;
+  // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
+  // session suppresses transient participant disconnects so leases can survive browser refreshes.
   std::function<void(const std::string &)> on_participant_disconnected;
+  // Delivers one incoming control packet. Callbacks may run on session-managed background threads
+  // and must hand off ROS work instead of assuming executor-thread affinity.
   std::function<void(const IncomingControlPacket &)> on_incoming_control_packet_received;
 };
 
@@ -128,6 +138,8 @@ class RoomSession
 public:
   virtual ~RoomSession() = default;
 
+  // Starts the background connection and reconnect loop. Repeated calls after a successful start
+  // are ignored until stop() returns.
   virtual void start(
     RoomConnectionConfig config,
     std::shared_ptr<AccessTokenSource> access_token_source,
@@ -135,7 +147,10 @@ public:
     std::chrono::milliseconds initial_backoff,
     std::chrono::milliseconds max_backoff,
     std::chrono::seconds refresh_margin) = 0;
+  // Stops the reconnect loop and waits for any session-owned background thread to exit.
   virtual void stop() = 0;
+  // Registers or replaces an RPC handler and reapplies it after reconnects when a local
+  // participant is available.
   virtual bool registerRpcMethod(const std::string & method_name, RpcHandler handler) = 0;
   virtual bool unregisterRpcMethod(const std::string & method_name) = 0;
   virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;

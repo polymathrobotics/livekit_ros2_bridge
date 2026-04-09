@@ -21,13 +21,19 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parsed form of a `ros.topics.publish` control message.
 struct TopicPublishCommand
 {
+  /// Normalized absolute topic name from the required `topic` field.
   std::string topic;
+  /// Trimmed ROS interface type from the required `interface_type` field.
   std::string interface_type;
+  /// Raw CDR bytes from the required non-empty `message` payload object.
   std::vector<std::uint8_t> cdr_payload;
 };
 
+/// Parse a JSON command object with required `topic`, `interface_type`, and `message` fields.
+/// `topic` is normalized as a ROS resource name and `message` must use the stable CDR payload schema.
 TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload);
 
 }  // namespace livekit_ros2_bridge

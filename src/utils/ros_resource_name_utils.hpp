@@ -22,8 +22,10 @@
 namespace livekit_ros2_bridge
 {
 
-/// Normalize a ROS resource name by trimming whitespace, collapsing repeated slashes,
-/// ensuring a leading slash, and removing trailing slashes except for the root "/".
+/// Canonicalize a ROS topic/service/resource name for policy and protocol comparisons:
+/// trim surrounding whitespace, collapse repeated `/`, prepend a leading `/` when missing,
+/// and drop trailing `/` except for the root name `/`. Returns an empty string only when the
+/// trimmed input is empty.
 inline std::string normalizeRosResourceName(std::string_view name)
 {
   const std::string trimmed = trim(name);
@@ -58,8 +60,9 @@ inline std::string normalizeRosResourceName(std::string_view name)
   return normalized;
 }
 
-/// Match a normalized ROS resource name against either an exact pattern ("/camera")
-/// or a subtree pattern ending in "/*" ("/camera/*").
+/// Match normalized names against normalized policy patterns.
+/// Exact patterns match only the same resource; patterns ending in `/*` match descendants under
+/// that prefix, with `/*` acting as the root-subtree wildcard.
 inline bool rosResourceMatchesPattern(std::string_view name, std::string_view pattern)
 {
   if (pattern.size() >= 2 && pattern.substr(pattern.size() - 2) == "/*") {

@@ -104,7 +104,11 @@ ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, Handlers handler
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
+  // Unknown topics are a silent no-op so newer peers can add control packets without flooding logs
+  // on bridges that only understand the current heartbeat and topic-publish vocabulary.
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
+    // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
+    // heartbeat processor can still recover that identity from a leased session_id.
     parseAndRouteControlPacket<SubscriptionHeartbeat>(
       logger_,
       packet,

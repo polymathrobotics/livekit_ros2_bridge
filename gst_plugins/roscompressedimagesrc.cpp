@@ -98,6 +98,7 @@ static void roscompressedimagesrc_finalize(GObject * object)
   g_free(self->ros_topic);
   self->sub.reset();
   self->node_runner.reset();
+  // These members were constructed with placement new in init().
   self->detected_format.~basic_string();
   self->msg_queue.~deque();
   self->msg_queue_mtx.~mutex();
@@ -105,6 +106,8 @@ static void roscompressedimagesrc_finalize(GObject * object)
   G_OBJECT_CLASS(roscompressedimagesrc_parent_class)->finalize(object);
 }
 
+// Wait until a frame arrives or unlock() requests a flush. The returned frame
+// stays queued until the caller decides whether to reuse or drop it.
 static sensor_msgs::msg::CompressedImage::ConstSharedPtr wait_for_compressed_msg(RosCompressedImageSrc * self)
 {
   std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
@@ -119,6 +122,7 @@ static gboolean roscompressedimagesrc_unlock(GstBaseSrc * base_src)
 {
   RosCompressedImageSrc * self = GST_ROSCOMPRESSEDIMAGESRC(base_src);
   std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+  // Flushing is the shared wakeup/abort signal for getcaps() and create().
   self->flushing = TRUE;
   self->msg_queue_cv.notify_all();
   return TRUE;
@@ -152,6 +156,8 @@ static GstCaps * roscompressedimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * 
 
     {
       std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+      // getcaps() samples one frame to negotiate and intentionally drops it so
+      // create() starts from frames received after negotiation completed.
       self->msg_queue.clear();
     }
   }
@@ -189,6 +195,8 @@ static GstStateChangeReturn roscompressedimagesrc_change_state(GstElement * elem
 
       auto cb = [self](sensor_msgs::msg::CompressedImage::ConstSharedPtr msg) {
         std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+        // This source is live and latest-frame-wins: keep at most one queued
+        // frame so slow downstream consumers do not build latency here.
         if (self->msg_queue.size() >= 1) {
           self->msg_queue.pop_back();
         }
@@ -241,6 +249,8 @@ static GstFlowReturn roscompressedimagesrc_create(GstPushSrc * push_src, GstBuff
 
   if (self->caps_set) {
     std::string msg_format = parseCompressedFormat(msg->format);
+    // This source does not renegotiate mid-stream. Once the first frame picks
+    // JPEG vs PNG, later format changes are reported as stream errors.
     if (msg_format != self->detected_format) {
       GST_WARNING_OBJECT(
         self, "CompressedImage format changed from '%s' to '%s'", self->detected_format.c_str(), msg_format.c_str());
@@ -250,6 +260,8 @@ static GstFlowReturn roscompressedimagesrc_create(GstPushSrc * push_src, GstBuff
 
   {
     std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+    // After handing one frame downstream, drop anything older than the next
+    // callback-delivered latest frame.
     self->msg_queue.clear();
   }
 
@@ -274,6 +286,7 @@ static void roscompressedimagesrc_init(RosCompressedImageSrc * self)
   self->flushing = FALSE;
   self->caps_set = FALSE;
 
+  // GObject zero-initializes the instance but does not run C++ constructors.
   new (&self->detected_format) std::string();
   new (&self->msg_queue) std::deque<sensor_msgs::msg::CompressedImage::ConstSharedPtr>();
   new (&self->msg_queue_mtx) std::mutex();

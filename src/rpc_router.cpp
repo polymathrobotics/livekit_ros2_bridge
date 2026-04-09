@@ -90,6 +90,8 @@ std::vector<ResourceListEntry> filterResourceListEntries(
   if (dynamic_cast<const RpcHandlerError *>(&exc) != nullptr) {
     throw;
   }
+  // Payload and bounds errors are caller-fixable invalid requests; everything
+  // else is reported as an internal bridge failure.
   if (
     dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
     dynamic_cast<const std::out_of_range *>(&exc) != nullptr)
@@ -102,6 +104,8 @@ std::vector<ResourceListEntry> filterResourceListEntries(
 template <typename HandleRpcT>
 std::optional<std::string> handleRpcWithCallerIdentity(const RpcInvocation & invocation, HandleRpcT handle_rpc)
 {
+  // Caller identity is part of the authorization model, so reject anonymous
+  // invocations before parsing payloads or touching bridge state.
   requireCallerIdentity(invocation);
 
   try {
@@ -129,6 +133,8 @@ std::optional<std::string> handleResourceListRpc(
      query_resources = std::move(query_resources),
      serialize_response = std::move(serialize_response)]() mutable {
       auto request = parseResourceListRequest(invocation.payload);
+      // Query the ROS graph on the executor thread, then apply access-policy
+      // filtering before serializing the response back to the RPC caller.
       auto future = ros_executor_queue.submit(
         [request, &access_policy, access_op, query_resources = std::move(query_resources)]() mutable {
           return filterResourceListEntries(query_resources(), access_policy, access_op, request);
@@ -165,11 +171,15 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
 {
   bool all_registered = true;
   for (const auto & method : rpcMethodBindings()) {
+    // RoomSession keeps the callable after registration, so bind the member
+    // function once here and remove it later with unregisterRpcMethods().
     const auto handler = [this, member_handler = method.handler](const RpcInvocation & invocation) {
       return (this->*member_handler)(invocation);
     };
     if (!session.registerRpcMethod(method.name, handler)) {
       RCLCPP_ERROR(kRpcRouterLogger, "event=rpc_method_registration_failed method=%s", method.name);
+      // Registration is best-effort rather than transactional so one failure
+      // does not hide other methods that can still be served on this session.
       all_registered = false;
     }
   }
@@ -195,6 +205,8 @@ std::optional<std::string> RpcRouter::handleServiceCall(const RpcInvocation & in
     }
 
     const auto start = std::chrono::steady_clock::now();
+    // First hop onto the ROS executor thread to create the client/request with
+    // node-affine APIs, then wait on the returned service-call future here.
     auto queued_call_future = ros_executor_queue_.submit(
       [this, requester_identity = invocation.caller_identity, request = std::move(request)]() mutable {
         return ros_service_caller_.call(requester_identity, request);

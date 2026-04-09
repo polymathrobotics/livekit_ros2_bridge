@@ -18,6 +18,10 @@
 
 #include <gst/video/video-format.h>
 
+// Raw ROS images negotiate through this fixed caps subset. Keep it aligned with
+// the encodings accepted by rosEncodingToGstFormat().
 #define GST_ROS_VIDEO_FORMAT_LIST "{ GRAY8, GRAY16_LE, RGB, BGR, RGBA, BGRA, UYVY, YUY2 }"
 
+// Maps the supported raw ROS encodings to the caps formats above. Unsupported
+// encodings return GST_VIDEO_FORMAT_UNKNOWN so callers can reject or fall back.
 GstVideoFormat rosEncodingToGstFormat(const std::string & encoding);

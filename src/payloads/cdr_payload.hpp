@@ -23,12 +23,20 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parse `body[field_name]` as a CDR payload object with
+/// `content_type="application/x-ros-cdr"` and padded standard-base64 `payload_base64`.
+/// Throws `std::invalid_argument` when the field is missing, mistyped, uses a different
+/// content type, or contains invalid base64.
 std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const char * field_name);
 
+/// Serialize raw ROS 2 CDR bytes as `{ "content_type", "payload_base64" }`.
 nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload);
+/// Serialize a serialized ROS message using the same stable JSON schema as the byte overload.
 nlohmann::json serializeCdrPayload(const rclcpp::SerializedMessage & payload);
 
+/// Copy raw CDR bytes into an owning `rclcpp::SerializedMessage` with `buffer_length == payload.size()`.
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload);
+/// Return the current serialized byte span, or an empty vector when the message has no buffer.
 std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & payload);
 
 }  // namespace livekit_ros2_bridge

@@ -45,7 +45,6 @@ std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payloa
       throw std::invalid_argument("interface_types entries must be strings");
     }
     auto trimmed = element.get<std::string>();
-    // Trim whitespace
     const auto start = trimmed.find_first_not_of(" \t\n\r");
     const auto end = trimmed.find_last_not_of(" \t\n\r");
     if (start == std::string::npos) {

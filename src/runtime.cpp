@@ -179,6 +179,8 @@ void Runtime::shutdown()
   if (rpc_router_ != nullptr && room_session_ != nullptr) {
     rpc_router_->unregisterRpcMethods(*room_session_);
   }
+  // Stop the room session before shutting down the executor queue so SDK callbacks can no longer
+  // enqueue fresh ROS work while already-running executor tasks finish.
   if (room_session_ != nullptr) {
     room_session_->stop();
   }
@@ -232,6 +234,7 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
     return;
   }
   (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
+    // The queue can still be draining work that was accepted before shutdown flipped the flag.
     if (isShuttingDown()) {
       return;
     }

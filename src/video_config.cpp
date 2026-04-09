@@ -114,6 +114,7 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
 
   const RosTopicRule * matched_rule = nullptr;
   std::size_t best_len = 0;
+  // Update only on a strictly longer pattern so same-length matches stay first-declared.
   for (const auto & rule : config.ros_topic_rules) {
     if (
       rosResourceMatchesPattern(normalized, rule.pattern) &&
@@ -164,6 +165,7 @@ SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, con
   const auto & source = source_it->second;
 
   SidecarLaunchSpec spec;
+  // sidecar_key, external_name, and selected_config_key all use the same canonical configured-source name.
   spec.sidecar_key = makeVideoSidecarKey("external", normalized);
   spec.external_name = normalized;
   spec.source_kind = VideoSourceKind::Pipeline;

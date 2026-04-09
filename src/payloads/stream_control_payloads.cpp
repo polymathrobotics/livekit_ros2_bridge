@@ -149,6 +149,8 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
     }
 
     auto & existing = update.subscriptions[it->second];
+    // Heartbeats are treated as a set keyed by normalized target; repeated requests tighten the
+    // interval so the bridge keeps the most demanding subscriber cadence.
     if (entry.preferred_interval_ms.has_value() && existing.preferred_interval_ms.has_value()) {
       existing.preferred_interval_ms = std::min(*existing.preferred_interval_ms, *entry.preferred_interval_ms);
     } else if (entry.preferred_interval_ms.has_value()) {
@@ -178,8 +180,7 @@ nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
   }
 
   if (stream_status.delivery_kind == protocol::kDeliveryKindVideo) {
-    // track_name is empty until gstreamer-publisher exposes a way to set the
-    // published track name (it currently does not accept a --track-name flag).
+    // Video publishers choose the track name internally today, so the bridge cannot report one yet.
     entry["delivery"] = {
       {"kind", protocol::kDeliveryKindVideo},
       {"publisher_identity", stream_status.publisher_identity},

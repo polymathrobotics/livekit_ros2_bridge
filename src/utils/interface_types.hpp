@@ -26,6 +26,8 @@ namespace livekit_ros2_bridge
 inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
 inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
 
+// Returns the only graph-advertised type for a resource or throws when the
+// graph is missing or ambiguous, so callers never guess a ROS interface type.
 inline std::string requireUniqueInterfaceType(
   const std::map<std::string, std::vector<std::string>> & names_and_types,
   const std::string & name,
@@ -41,6 +43,7 @@ inline std::string requireUniqueInterfaceType(
   return it->second.front();
 }
 
+// Video launch resolution only supports interface types that have a defined alias and ingest_mode mapping.
 inline bool isSupportedVideoInterfaceType(std::string_view interface_type)
 {
   return interface_type == kImageInterfaceType || interface_type == kCompressedImageInterfaceType;

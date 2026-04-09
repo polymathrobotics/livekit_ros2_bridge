@@ -28,6 +28,9 @@ namespace livekit_ros2_bridge
 class RosExecutorQueue;
 class RosServiceCaller;
 
+// Registers the LiveKit RPC surface exposed by this bridge and maps each RPC to
+// the ROS-side helper that performs authorization, executor handoff, and
+// protocol-level error reporting.
 class RpcRouter
 {
 public:
@@ -37,6 +40,9 @@ public:
     RosExecutorQueue & ros_executor_queue,
     RosServiceCaller & ros_service_caller);
 
+  // Attempts to register every supported RPC method on the session. Returns
+  // false if any individual registration fails; successful handlers remain
+  // installed until unregisterRpcMethods() is called.
   bool registerRpcMethods(RoomSession & session);
   void unregisterRpcMethods(RoomSession & session);
 

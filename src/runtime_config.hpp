@@ -28,6 +28,8 @@
 namespace livekit_ros2_bridge
 {
 
+// Immutable startup configuration derived once from ROS parameters and then shared across the
+// runtime, reconnect loop, and optional video sidecar.
 struct RuntimeConfig
 {
   Params loaded_params;
@@ -46,6 +48,9 @@ VideoConfig loadVideoConfig(const Params & params);
 
 }  // namespace detail
 
+// Loads and validates the bridge's startup-only configuration from parameters, deriving the
+// bridge identity, connection settings, refresh-capable token source, access policy, and optional
+// sidecar auth inputs in one pass before Runtime starts.
 RuntimeConfig loadRuntimeConfig(
   const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
   const std::string & node_name);

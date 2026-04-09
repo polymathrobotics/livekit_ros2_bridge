@@ -217,6 +217,8 @@ void RosExecutorQueue::shutdown()
   {
     std::unique_lock<std::mutex> lock(mutex_);
     if (shutdown_) {
+      // shutdown() may be called re-entrantly from a running task; in that case
+      // we only wait for drains owned by some other thread.
       drain_finished_.wait(
         lock, [this, &caller_thread_id]() { return !drain_active_ || drain_thread_id_ == caller_thread_id; });
       return;
@@ -241,6 +243,8 @@ void RosExecutorQueue::shutdown()
   }
 
   std::unique_lock<std::mutex> lock(mutex_);
+  // Already-started drain work runs to completion; only tasks still in the
+  // pending queue above are canceled during shutdown.
   drain_finished_.wait(
     lock, [this, &caller_thread_id]() { return !drain_active_ || drain_thread_id_ == caller_thread_id; });
 }
@@ -272,6 +276,8 @@ void RosExecutorQueue::drain()
     }
 
     try {
+      // drain() always runs on the executor thread that consumed the waitable,
+      // so queued work observes the same callback-group affinity as ROS callbacks.
       if (task.run) {
         task.run();
       }

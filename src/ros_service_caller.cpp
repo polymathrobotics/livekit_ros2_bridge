@@ -127,6 +127,8 @@ private:
 
 struct ResolvedMessageSupport
 {
+  // Keep both libraries alive for as long as the cached serialization and
+  // introspection handles may be used by an active client entry.
   explicit ResolvedMessageSupport(const std::string & interface_type)
   : serialization_library(rclcpp::get_typesupport_library(interface_type, kSerializationTsId))
   , introspection_library(rclcpp::get_typesupport_library(interface_type, kIntrospectionTsId))
@@ -219,6 +221,8 @@ struct ServiceClientEntry
 
 struct PendingCallKey
 {
+  // Sequence numbers come from the underlying rcl client, so the client
+  // instance is part of the key when matching responses back to pending calls.
   const ServiceClientEntry * client = nullptr;
   std::int64_t sequence_number = 0;
 
@@ -247,6 +251,8 @@ struct RosServiceCaller::Impl
   class InflightReservation
   {
   public:
+    // Reserve quota before any request build or send step that can fail, then
+    // release automatically unless the call is committed into pending_calls.
     InflightReservation(Impl & owner, std::string requester_identity)
     : owner_(&owner)
     , requester_identity_(std::move(requester_identity))
@@ -355,6 +361,8 @@ struct RosServiceCaller::Impl
   rclcpp::TimerBase::SharedPtr poll_timer;
   std::mutex poll_callback_mutex;
   std::condition_variable poll_callback_quiesced;
+  // shutdown() disables new poll callbacks, then waits for any callback already
+  // running on another thread to finish before tearing down clients or timers.
   bool poll_callbacks_enabled = true;
   bool poll_callback_active = false;
   std::thread::id poll_callback_thread_id;
@@ -458,6 +466,8 @@ void RosServiceCaller::Impl::quiescePollCallbacks()
   const auto caller_thread_id = std::this_thread::get_id();
   std::unique_lock<std::mutex> lock(poll_callback_mutex);
   poll_callbacks_enabled = false;
+  // Allow shutdown from inside the active poll callback without self-deadlock,
+  // while still blocking external callers until the callback has exited.
   poll_callback_quiesced.wait(
     lock, [this, &caller_thread_id]() { return !poll_callback_active || poll_callback_thread_id == caller_thread_id; });
 }
@@ -501,6 +511,8 @@ void RosServiceCaller::Impl::drainResponses()
         break;
       }
 
+      // Match on both the client instance and sequence number so concurrent
+      // callers to different services cannot steal each other's responses.
       auto call_it = pending_calls.find(PendingCallKey{cached.get(), header.sequence_number});
       if (call_it == pending_calls.end()) {
         continue;
@@ -539,6 +551,8 @@ RosServiceCaller::Impl::PendingCallRegistration RosServiceCaller::Impl::prepareP
   }
 
   const std::string interface_type = resolveServiceType(request.service, request.interface_type);
+  // Count the request against the requester before any expensive setup so the
+  // limit covers work that is already being assembled for rcl_send_request().
   InflightReservation inflight(*this, requester_identity);
 
   ServiceClientEntry * cached = nullptr;
@@ -611,6 +625,8 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
       std::move(result_promise),
       registration->deadline,
     });
+  // From here on every settlement path goes through pending_calls, so ownership
+  // of the inflight quota transfers from the local guard to that map entry.
   registration->inflight_reservation.commit();
 
   impl_->ensurePollTimer();
@@ -635,6 +651,8 @@ void RosServiceCaller::resetSessionState()
 void RosServiceCaller::shutdown()
 {
   impl_->shutdown_flag = true;
+  // The poll timer touches pending_calls and clients, so stop future callbacks
+  // and wait for any active callback before tearing down shared state below.
   impl_->quiescePollCallbacks();
 
   if (impl_->poll_timer != nullptr) {

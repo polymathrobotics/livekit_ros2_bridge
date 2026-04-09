@@ -24,6 +24,8 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parse `payload` as JSON and require the top-level value to be an object.
+/// The supplied error strings are forwarded unchanged when parsing fails or the root is not an object.
 inline nlohmann::json parseJsonObject(
   const std::string & payload, const char * invalid_json_message, const char * invalid_object_message)
 {
@@ -41,6 +43,8 @@ inline nlohmann::json parseJsonObject(
   return json;
 }
 
+/// Read a required string field, trim surrounding whitespace, and require the trimmed result
+/// to stay non-empty.
 inline std::string parseRequiredNonEmptyTrimmedStringField(
   const nlohmann::json & json, const char * field_name, const char * required_message)
 {
@@ -57,6 +61,9 @@ inline std::string parseRequiredNonEmptyTrimmedStringField(
   return value;
 }
 
+/// Read an optional string field and return the trimmed value when non-empty.
+/// Missing fields always return `std::nullopt`; blank strings also return `std::nullopt`.
+/// When `null_is_absent` is true, a JSON null is treated the same as a missing field.
 inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringField(
   const nlohmann::json & json, const char * field_name, const char * invalid_message, bool null_is_absent = false)
 {

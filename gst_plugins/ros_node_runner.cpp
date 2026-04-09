@@ -28,12 +28,16 @@ RosNodeRunner::RosNodeRunner(const std::string & node_name)
   executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>(executor_options);
   executor_->add_node(node_);
 
+  // Start spinning during construction so element setup can use the runner's
+  // node immediately without relying on any process-global executor.
   spin_thread_ = std::thread([this]() { executor_->spin(); });
 }
 
 RosNodeRunner::~RosNodeRunner() noexcept
 {
   try {
+    // Tear down in reverse execution order so the spin loop exits before the
+    // node is removed and the isolated context is shut down.
     executor_->cancel();
     if (spin_thread_.joinable()) {
       spin_thread_.join();

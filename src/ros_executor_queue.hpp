@@ -35,6 +35,9 @@ namespace livekit_ros2_bridge
 
 class ExecutorWakeWaitable;
 
+// Queues work that must run on the node's ROS executor thread. Submitted
+// futures either complete from that executor context or fail with a shutdown
+// error if the task never starts draining.
 class RosExecutorQueue final
 {
 public:
@@ -84,6 +87,8 @@ public:
     return future;
   }
 
+  // Cancels queued-but-not-yet-started work and waits for any other thread
+  // already draining the queue to leave that critical section.
   void shutdown();
 
 private:
@@ -103,6 +108,8 @@ private:
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_interface_;
   bool shutdown_ = false;
+  // Used so shutdown() can wait for an in-progress drain without deadlocking
+  // when shutdown itself is called from the executor thread running drain().
   bool drain_active_ = false;
   std::thread::id drain_thread_id_;
 };

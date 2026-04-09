@@ -22,8 +22,14 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parse an interfaces-get request body of the form
+/// `{ "interface_types": ["pkg/msg/Type", ...] }`.
+/// Entries are trimmed, must stay non-empty, and are returned in request order.
 std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payload);
 
+/// Serialize interface definitions as
+/// `{ "interfaces": [{ "interface_type", "schema_encoding", "definition" }, ...] }`
+/// while preserving the input order.
 std::string serializeInterfacesResponse(const std::vector<InterfaceDefinition> & interfaces);
 
 }  // namespace livekit_ros2_bridge

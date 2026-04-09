@@ -20,21 +20,29 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+// Owns a ROS node with a fully isolated context, executor, and spin thread for
+// one plugin instance. Construction starts spinning immediately, and teardown
+// stops that thread before the runner-owned context is shut down.
 class RosNodeRunner
 {
 public:
+  // Starts the isolated ROS context and executor thread before returning.
   explicit RosNodeRunner(const std::string & node_name);
   ~RosNodeRunner() noexcept;
 
   RosNodeRunner(const RosNodeRunner &) = delete;
   RosNodeRunner & operator=(const RosNodeRunner &) = delete;
 
+  // Returns the node bound to this runner's isolated context and executor.
+  // Callers must not retain it past the runner lifetime.
   rclcpp::Node::SharedPtr node() const
   {
     return node_;
   }
 
 private:
+  // These members share one isolated ROS graph that is torn down with this
+  // runner and never shared across plugin instances.
   rclcpp::Context::SharedPtr context_;
   rclcpp::Node::SharedPtr node_;
   rclcpp::executors::SingleThreadedExecutor::SharedPtr executor_;

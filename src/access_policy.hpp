@@ -24,6 +24,7 @@
 namespace livekit_ros2_bridge
 {
 
+/// Resource access categories enforced by the bridge.
 enum class AccessOperation
 {
   Publish,
@@ -31,6 +32,10 @@ enum class AccessOperation
   CallService,
 };
 
+/// Operation-specific allow/deny rules over normalized ROS resource names.
+/// The policy is default-deny, a literal `"*"` allow entry means allow all for that operation,
+/// and deny entries always win over allows. Entries are trimmed and normalized before matching;
+/// exact patterns match one resource and `.../*` patterns match descendants.
 class AccessPolicy
 {
 public:
@@ -43,12 +48,15 @@ public:
     const std::vector<std::string> & service_allow,
     const std::vector<std::string> & service_deny);
 
+  /// Return whether `name` is allowed after normalization. Empty or whitespace-only names are denied.
   bool allows(AccessOperation op, std::string_view name) const;
 
 private:
   struct ParsedAllowlist
   {
+    // True when the configured allowlist contained `"*"`.
     bool allow_all = false;
+    // Normalized exact or subtree patterns. `"*"` is represented only by `allow_all`.
     std::set<std::string> patterns;
   };
 
@@ -61,11 +69,17 @@ private:
     const std::set<std::string> & allowlist,
     const std::set<std::string> & denylist);
 
+  // Normalized publish allow rules plus the allow-all sentinel.
   ParsedAllowlist publish_allow_;
+  // Normalized publish deny rules. Denies always override allows.
   std::set<std::string> publish_deny_;
+  // Normalized subscribe allow rules plus the allow-all sentinel.
   ParsedAllowlist subscribe_allow_;
+  // Normalized subscribe deny rules. Denies always override allows.
   std::set<std::string> subscribe_deny_;
+  // Normalized service-call allow rules plus the allow-all sentinel.
   ParsedAllowlist service_allow_;
+  // Normalized service-call deny rules. Denies always override allows.
   std::set<std::string> service_deny_;
 };
 

@@ -37,12 +37,18 @@ class RosTopicPublisher;
 struct VideoConfig;
 class VideoSidecarSupervisor;
 
+// Wires one RoomSession to the ROS-facing publishers, RPC handlers, and sidecars for a node.
+// Construction performs eager startup; destruction shuts the room session down before the ROS
+// ingress pipeline is torn down.
 class Runtime final
 {
 public:
   Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config);
   ~Runtime();
 
+  // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
+  // ingress reaches ROS while shutdown is in progress, and the executor queue is then shut down
+  // after already-running work has had a chance to drain.
   void shutdown();
   void setSessionResetHooksForTest(
     std::function<void()> on_subscription_registry_reset, std::function<void()> on_ros_service_caller_reset);
@@ -52,6 +58,8 @@ public:
 
 private:
   bool isShuttingDown() const;
+  // Drops new ingress once shutdown starts. Work accepted before shutdown may still execute if it
+  // reaches the ROS executor before the queue is shut down.
   void submitExecutorWork(std::function<void()> fn);
   void handleIncomingControlPacket(const IncomingControlPacket & packet) const;
 

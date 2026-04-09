@@ -20,25 +20,30 @@
 namespace livekit_ros2_bridge
 {
 
+/// One ROS interface schema entry returned to a remote caller.
 struct InterfaceDefinition
 {
+  /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
   std::string interface_type;
+  /// Stable schema encoding label for `definition`.
   std::string schema_encoding;
+  /// Raw `.msg` or `.srv` file contents as read from the ROS package share directory.
   std::string definition;
 };
 
+/// Lookup result split into the requested interface and the additional schemas it references.
 struct InterfaceDefinitions
 {
+  /// The exact interface requested by the caller.
   InterfaceDefinition requested;
+  /// Transitive dependencies of `requested`, excluding duplicates and excluding `requested` itself.
+  /// Entries follow first-discovery order during recursive traversal.
   std::vector<InterfaceDefinition> dependencies;
 };
 
-/// Look up the requested ROS interface definition and its transitive dependency definitions for a
-/// fully-qualified ROS interface type.
-///
-/// @param interface_type  Fully-qualified ROS interface type, e.g. "sensor_msgs/msg/BatteryState"
-/// @throws std::invalid_argument if the interface type name is malformed
-/// @throws std::runtime_error if the interface definition cannot be found or read
+/// Look up a fully-qualified ROS interface type and read its `.msg` or `.srv` definition plus any
+/// transitive message dependencies. The requested type is returned separately from `dependencies`
+/// so response payloads can keep the requested schema first.
 InterfaceDefinitions lookupInterfaceDefinitions(const std::string & interface_type);
 
 }  // namespace livekit_ros2_bridge

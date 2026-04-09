@@ -26,11 +26,13 @@ inline const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
   return kind == SubscriptionTargetKind::Topic ? "topic" : "external";
 }
 
+// target.name is expected to be canonical already; the result matches the key format used for subscription and sidecar lookup.
 inline std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
 {
   return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
 }
 
+// Callers should pass canonical resource names so equivalent spellings map to one stable LiveKit track name.
 inline std::string deriveVideoTrackName(SubscriptionTargetKind kind, const std::string & resource)
 {
   std::string prefix = kind == SubscriptionTargetKind::External ? "ros.video.external" : "ros.video";

@@ -21,6 +21,8 @@
 #include "roscompressedimagesrc.h"
 #include "rosrawimagesrc.h"
 
+// These factory names are part of the plugin surface that downstream pipelines
+// construct directly, so renaming them is a compatibility break.
 static gboolean plugin_init(GstPlugin * plugin)
 {
   gboolean ok = TRUE;

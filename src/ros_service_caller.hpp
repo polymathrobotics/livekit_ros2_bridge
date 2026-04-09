@@ -32,6 +32,9 @@ namespace livekit_ros2_bridge
 struct ServiceCallRequest;
 class RosServiceCallerTestPeer;
 
+// Owns dynamic ROS service clients and settles each request asynchronously from
+// a poll timer so RPC handlers can enqueue work without blocking the executor
+// thread that created the request.
 class RosServiceCaller final
 {
 public:
@@ -52,6 +55,9 @@ public:
   RosServiceCaller(const RosServiceCaller &) = delete;
   RosServiceCaller & operator=(const RosServiceCaller &) = delete;
 
+  // Starts a service call for a connected requester. The returned future is
+  // ready immediately only for validation, quota, or shutdown failures;
+  // otherwise it resolves later from the poll timer.
   std::future<ServiceCallResponse> call(const std::string & requester_identity, const ServiceCallRequest & request);
 
   void cancelCallsForRequester(const std::string & requester_identity);

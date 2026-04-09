@@ -63,6 +63,8 @@ void CdrTrackPublisher::pushMessage(const std::string & track_name, const std::u
   auto result = it->second->tryPush(std::vector<std::uint8_t>(data, data + size));
   if (!result) {
     if (result.error().code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL) {
+      // CDR forwarding is intentionally best-effort. Dropping here keeps the ROS subscription
+      // callback non-blocking even when the participant is not draining the LiveKit queue.
       RCLCPP_WARN_THROTTLE(
         kCdrTrackPublisherLogger, *clock_, 5000, "CDR data track queue full, dropping frame: %s", track_name.c_str());
       return;
@@ -80,9 +82,9 @@ void CdrTrackPublisher::publishTrack(
 {
   try {
     auto track = session_.publishCdrTrack(track_name);
-    // A queued publish can complete after the subscription registry entry was already cleared
-    // or after the subscription was destroyed and recreated (stale generation). Reclaim that
-    // orphaned track immediately instead of keeping it until a later reset.
+    // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
+    // accepts only the current generation for this track name, so stale completions are reclaimed
+    // immediately instead of leaving an orphaned LiveKit track behind.
     if (!subscription_registry.onCdrTrackPublished(track_name, generation)) {
       unpublishTrackSafely(session_, track_name, track);
       return;

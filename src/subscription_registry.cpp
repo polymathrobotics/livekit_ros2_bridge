@@ -224,8 +224,8 @@ void SubscriptionRegistry::refreshExistingLease(
     sub.requesters = std::move(updated_requesters);
     data->applied_interval_ms = computeAppliedIntervalMs(sub.requesters);
     if (!requester_already_present && data->cdr_track_state == CdrTrackState::kPublished) {
-      // Late joiners can observe the active stream status before LiveKit surfaces the already-published
-      // data track to their participant session, so force a replay the first time this requester appears.
+      // A new requester can receive stream status before LiveKit surfaces the existing published
+      // data track to that participant session, so queue one replay when the requester first joins.
       requesters_needing_cdr_replay_.insert(requester_identity);
     }
     if (data->cdr_track_state == CdrTrackState::kNone || data->cdr_track_state == CdrTrackState::kFailed) {
@@ -322,6 +322,8 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
     qos,
     [this, callback_generation, topic_key = subscription_key, normalized_topic = topic](
       std::shared_ptr<rclcpp::SerializedMessage> message) {
+      // Reset/shutdown bumps callback_generation before tearing down subscriptions. Any queued
+      // callback from the old generation exits before touching cleared subscription state.
       if (message == nullptr) {
         return;
       }
@@ -548,6 +550,8 @@ std::size_t SubscriptionRegistry::quiesceMessageCallbacks()
 {
   std::unique_lock<std::mutex> lock(message_callback_mutex_);
   message_callbacks_enabled_ = false;
+  // Force queued callbacks to compare against a new generation, then wait until every callback
+  // that already entered endMessageCallback() before reset/shutdown continues.
   ++message_callback_generation_;
   message_callback_quiesced_.wait(lock, [this]() { return active_message_callbacks_ == 0U; });
   return message_callback_generation_;
@@ -722,6 +726,8 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
     data->cdr_track_state = CdrTrackState::kNone;
     data->subscription_handle.reset();
     sub.data_track_resource.reset();
+    // Track names are deterministic per topic, so destroying a data subscription must advance the
+    // generation before any delayed publish/disconnect callback can target the replacement entry.
     registry_generation_.fetch_add(1);
   } else if (video_sidecar_supervisor_ != nullptr && sub.sidecar_launch_spec.has_value()) {
     video_sidecar_supervisor_->stopSidecar(sub.sidecar_launch_spec->sidecar_key);

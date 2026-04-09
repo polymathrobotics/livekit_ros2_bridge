@@ -124,6 +124,7 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_started_) {
+      // The bridge owns a single reconnect loop per session instance.
       return;
     }
 
@@ -349,6 +350,8 @@ public:
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      // LiveKit can report participant disconnects as part of a transport loss. Suppress those
+      // until the room is fully connected again so runtime state survives reconnects and refreshes.
       participant_disconnects_enabled_ = event.state == livekit::ConnectionState::Connected;
       if (event.state == livekit::ConnectionState::Connected) {
         rebuildRemotePublisherStateLocked();
@@ -556,6 +559,8 @@ private:
       }
 
       if (current_token_.refreshable) {
+        // Refresh by reconnecting with a newly minted token before exp, rather than mutating the
+        // active LiveKit connection in place.
         const auto deadline = computeRefreshDeadline(current_token_, refresh_margin_);
         if (deadline.has_value() && now >= *deadline) {
           RCLCPP_INFO(
@@ -600,6 +605,8 @@ private:
       room.reset();
     }
 
+    // The runtime only rebuilds per-connection ROS state after an actual disconnect or reconnect
+    // cycle, not during final stop().
     if (notify_session_reset && callback) {
       callback();
     }
@@ -775,6 +782,8 @@ private:
   bool reconnect_requested_ = false;
   bool static_expiry_warned_ = false;
   bool livekit_initialized_ = false;
+  // Guards runtime-facing disconnect callbacks so transient reconnect churn does not look like a
+  // requester disappearing permanently.
   bool participant_disconnects_enabled_ = false;
   bool thread_started_ = false;
 };

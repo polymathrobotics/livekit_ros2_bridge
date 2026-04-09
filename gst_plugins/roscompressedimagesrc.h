@@ -45,14 +45,22 @@ struct _RosCompressedImageSrc
   gchar * ros_topic;
   gboolean ros_reliable;
 
+  // GObject allocates the instance as raw storage, so these C++ members are
+  // placement-new'd in init() and destroyed manually in finalize().
   std::unique_ptr<RosNodeRunner> node_runner;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub;
 
+  // The subscription callback keeps only the newest frame. Both getcaps() and
+  // create() wait on this queue, then decide when to drop stale entries.
   std::deque<sensor_msgs::msg::CompressedImage::ConstSharedPtr> msg_queue;
   std::mutex msg_queue_mtx;
   std::condition_variable msg_queue_cv;
 
+  // flushing wakes blocked waiters during unlock() and makes them return
+  // GST_FLOW_FLUSHING instead of consuming queued data.
   gboolean flushing;
+  // Caps are latched from the first negotiated frame and held until the element
+  // returns to READY/NULL.
   gboolean caps_set;
   std::string detected_format;
 };

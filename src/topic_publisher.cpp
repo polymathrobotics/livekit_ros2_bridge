@@ -53,6 +53,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 {
   const std::string & topic = command.topic;
 
+  // Publish commands come from a streaming control path, so this component is
+  // intentionally best-effort: invalid or late commands are dropped after logging.
   if (is_shutdown_.load()) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
@@ -119,6 +121,8 @@ std::string RosTopicPublisher::resolveTopicTypeOrThrow(
 
   const auto publisher_it = publishers_.find(topic);
   if (publisher_it != publishers_.end()) {
+    // Reuse the cache's interface type once a publisher exists so later
+    // commands stay consistent even if graph introspection lags that creation.
     expected_type = publisher_it->second.interface_type;
   } else {
     expected_type = requireUniqueInterfaceType(node_.get_topic_names_and_types(), topic, "topic");
@@ -147,6 +151,8 @@ void RosTopicPublisher::publishWithPublisherCache(
     throw TopicPublishFailure(exc.what());
   }
 
+  // Refresh recency only after a successful publish so failed attempts do not
+  // keep a topic resident in the bounded cache.
   auto & cached_publisher = publisher_it->second;
   if (cached_publisher.lru_position != lru_topics_.end()) {
     lru_topics_.erase(cached_publisher.lru_position);
@@ -155,6 +161,8 @@ void RosTopicPublisher::publishWithPublisherCache(
   lru_topics_.push_back(topic);
   cached_publisher.lru_position = std::prev(lru_topics_.end());
 
+  // Enforce the cap after serving the current command: the publish succeeds and
+  // an older cached publisher is discarded to make room for future use.
   while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_) && !lru_topics_.empty()) {
     const std::string evicted_topic = lru_topics_.front();
     evictPublisher(evicted_topic);

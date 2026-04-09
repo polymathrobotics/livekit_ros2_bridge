@@ -29,11 +29,16 @@
 namespace livekit_ros2_bridge
 {
 
+// Publishes serialized ROS messages for authorized LiveKit requesters while
+// caching generic publishers per topic. Failures are logged and dropped rather
+// than surfaced back through a retry or delivery guarantee.
 class RosTopicPublisher final
 {
 public:
   RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, int max_topics);
 
+  // Publishes best-effort: denied topics, type mismatches, shutdown, and
+  // publisher errors are logged and ignored without throwing to the caller.
   void publish(const std::string & requester_identity, const TopicPublishCommand & command);
 
   void shutdown();
@@ -43,6 +48,8 @@ private:
   {
     std::string interface_type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher_handle;
+    // lru_position points at this topic's node in lru_topics_ while the cache
+    // entry is live, or lru_topics_.end() before first successful publish.
     std::list<std::string>::iterator lru_position;
   };
 
@@ -55,6 +62,9 @@ private:
   AccessPolicy access_policy_;
   int max_topics_ = 0;
   std::atomic<bool> is_shutdown_{false};
+  // publishers_ and lru_topics_ are updated together so the list contains each
+  // cached topic at most once and eviction can remove the least-recently used
+  // handle.
   std::unordered_map<std::string, PublisherCacheEntry> publishers_;
   std::list<std::string> lru_topics_;
 };

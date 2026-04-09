@@ -22,22 +22,29 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parsed form of a topics/services list request. Unknown JSON fields are ignored.
 struct ResourceListRequest
 {
+  /// Optional trimmed query string. Missing, null, or blank values are treated as absent.
   std::optional<std::string> query;
+  /// Optional positive integer result cap. Missing or null means no explicit limit.
   std::optional<std::size_t> limit;
 };
 
+/// A single topics/services list response entry.
 struct ResourceListEntry
 {
   std::string name;
   std::string interface_type;
 };
 
+/// Parse a JSON object request with optional `query` and `limit` fields.
 ResourceListRequest parseResourceListRequest(const std::string & payload);
 
+/// Serialize a response body as `{ "services": [{ "name", "interface_type" }, ...] }`.
 std::string serializeServiceListResponse(const std::vector<ResourceListEntry> & services);
 
+/// Serialize a response body as `{ "topics": [{ "name", "interface_type" }, ...] }`.
 std::string serializeTopicListResponse(const std::vector<ResourceListEntry> & topics);
 
 }  // namespace livekit_ros2_bridge

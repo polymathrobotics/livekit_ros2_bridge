@@ -84,12 +84,15 @@ static void rosrawimagesrc_finalize(GObject * object)
   g_free(self->ros_topic);
   self->sub.reset();
   self->node_runner.reset();
+  // These members were constructed with placement new in init().
   self->msg_queue.~deque();
   self->msg_queue_mtx.~mutex();
   self->msg_queue_cv.~condition_variable();
   G_OBJECT_CLASS(rosrawimagesrc_parent_class)->finalize(object);
 }
 
+// Wait until a frame arrives or unlock() requests a flush. The returned frame
+// stays queued until the caller decides whether to reuse or drop it.
 static sensor_msgs::msg::Image::ConstSharedPtr wait_for_msg(RosRawImageSrc * self)
 {
   std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
@@ -104,6 +107,7 @@ static gboolean rosrawimagesrc_unlock(GstBaseSrc * base_src)
 {
   RosRawImageSrc * self = GST_ROSRAWIMAGESRC(base_src);
   std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+  // Flushing is the shared wakeup/abort signal for getcaps() and create().
   self->flushing = TRUE;
   self->msg_queue_cv.notify_all();
   return TRUE;
@@ -138,6 +142,8 @@ static GstCaps * rosrawimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
 
     {
       std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+      // getcaps() samples one frame to negotiate and intentionally drops it so
+      // create() starts from frames received after negotiation completed.
       self->msg_queue.clear();
     }
 
@@ -186,6 +192,8 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
 
       auto cb = [self](sensor_msgs::msg::Image::ConstSharedPtr msg) {
         std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+        // This source is live and latest-frame-wins: keep at most one queued
+        // frame so slow downstream consumers do not build latency here.
         if (self->msg_queue.size() >= 1) {
           self->msg_queue.pop_back();
         }
@@ -236,6 +244,8 @@ static GstFlowReturn rosrawimagesrc_create(GstPushSrc * push_src, GstBuffer ** b
 
   {
     std::unique_lock<std::mutex> lk(self->msg_queue_mtx);
+    // After handing one frame downstream, drop anything older than the next
+    // callback-delivered latest frame.
     self->msg_queue.clear();
   }
 
@@ -244,6 +254,8 @@ static GstFlowReturn rosrawimagesrc_create(GstPushSrc * push_src, GstBuffer ** b
     int msg_height = static_cast<int>(msg->height);
     GstVideoFormat msg_format = rosEncodingToGstFormat(msg->encoding);
 
+    // This source does not renegotiate mid-stream. A format change after caps
+    // are fixed is treated as a stream error instead of rewriting caps.
     if (msg_width != self->width || msg_height != self->height || msg_format != self->format) {
       GST_WARNING_OBJECT(
         self,
@@ -279,6 +291,7 @@ static void rosrawimagesrc_init(RosRawImageSrc * self)
   self->flushing = FALSE;
   self->caps_set = FALSE;
 
+  // GObject zero-initializes the instance but does not run C++ constructors.
   new (&self->msg_queue) std::deque<sensor_msgs::msg::Image::ConstSharedPtr>();
   new (&self->msg_queue_mtx) std::mutex();
   new (&self->msg_queue_cv) std::condition_variable();

@@ -233,6 +233,8 @@ VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSid
 
 void VideoSidecarSupervisor::restartSidecar(const std::string & sidecar_key, SidecarRecord & sidecar)
 {
+  // Prepare the replacement before killing the current child so command or token
+  // failures leave the existing publisher running.
   auto launch = prepareSidecarLaunch(sidecar);
   if (sidecar.pid > 0) {
     killSidecar(sidecar_key, sidecar);
@@ -270,6 +272,8 @@ void VideoSidecarSupervisor::tryRestartSidecar(
 void VideoSidecarSupervisor::spawnPreparedSidecar(
   const std::string & sidecar_key, SidecarRecord & sidecar, PreparedSidecarLaunch launch)
 {
+  // The child writes errno only when execvp() fails. On success, FD_CLOEXEC
+  // closes the write end during exec and the parent observes EOF instead.
   int exec_status_pipe[2] = {-1, -1};
   if (pipe(exec_status_pipe) != 0) {
     RCLCPP_ERROR(kLogger, "pipe() failed for sidecar_key=%s: %s", sidecar_key.c_str(), strerror(errno));
@@ -414,6 +418,7 @@ void VideoSidecarSupervisor::reapExitedSidecars()
     }
 
     int status = 0;
+    // Reap only known sidecar pids so unrelated children remain waitable by their owner.
     const pid_t result = waitpid(sidecar.pid, &status, WNOHANG);
     if (result == 0) {
       continue;
@@ -535,6 +540,7 @@ void VideoSidecarSupervisor::restartExpiring()
   const auto refresh_margin =
     std::chrono::duration_cast<std::chrono::system_clock::duration>(config_.token_refresh_margin);
   const auto half_ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(config_.token_ttl) / 2;
+  // Clamp the lead time so an oversized configured margin does not make every fresh sidecar immediately expire.
   const auto margin = std::min(refresh_margin, half_ttl);
 
   for (auto & entry : sidecars_) {

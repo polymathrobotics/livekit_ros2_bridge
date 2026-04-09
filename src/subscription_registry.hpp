@@ -58,7 +58,7 @@ enum class RequesterLeaseRemovalReason
   kLeaseExpired
 };
 
-// Owns requester leases and the shared stream resources they keep alive.
+// Owns requester leases, CDR replay bookkeeping, and the shared stream resources they keep alive.
 class SubscriptionRegistry final
 {
 public:
@@ -80,10 +80,12 @@ public:
     int preferred_interval_ms,
     Clock::time_point expiry);
 
-  // Participant disconnects do not clear leases immediately because a page refresh often rejoins
-  // with the same requester identity. Instead we remember which identities need their shared CDR
-  // publications replayed once the next heartbeat confirms they are back.
+  // Participant disconnect callbacks can lag behind lease expiry or a same-topic resubscribe. The
+  // caller supplies the registry generation observed for that session; only a matching generation
+  // marks the requester for CDR replay on the next heartbeat-confirmed reconnect.
   void markRequesterForCdrReplay(const std::string & requester_identity, std::size_t generation);
+  // Replays currently published CDR tracks for a requester once a fresh heartbeat proves the
+  // requester has rejoined and still owns those subscriptions.
   void replayCdrTracksForRequester(const std::string & requester_identity);
   void removeRequesterLeases(const std::string & requester_identity);
   void sweepExpiredLeases();
@@ -118,6 +120,8 @@ private:
     std::string track_name;
     int applied_interval_ms = 0;
     CdrTrackState cdr_track_state = CdrTrackState::kNone;
+    // Snapshot of registry_generation_ when this track name was reserved. Publish completions must
+    // match it so stale callbacks cannot claim a recycled subscription after reset or re-create.
     std::size_t generation = 0;
   };
 
@@ -181,6 +185,8 @@ private:
   bool beginMessageCallback(std::size_t callback_generation);
   void endMessageCallback();
   std::size_t currentMessageCallbackGeneration() const;
+  // Stops new serialized-message callbacks from entering, advances the callback generation seen by
+  // subscriptions, and waits for in-flight callbacks to leave before resources are torn down.
   std::size_t quiesceMessageCallbacks();
   void resumeMessageCallbacks(std::size_t callback_generation);
   void removeRequesterLeasesIf(
@@ -206,10 +212,14 @@ private:
   std::condition_variable message_callback_quiesced_;
   bool message_callbacks_enabled_ = true;
   std::size_t active_message_callbacks_ = 0U;
+  // Subscriptions capture this value in their message callback. Reset/shutdown increments it
+  // before teardown so queued callbacks from the old session self-reject on entry.
   std::size_t message_callback_generation_ = 0U;
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> registry_generation_{0};
   SubscriptionStateMap subscriptions_;
+  // Requesters whose next confirmed heartbeat should force currently published CDR tracks through
+  // an unpublish/publish cycle so the rejoined participant session sees them again.
   std::unordered_set<std::string> requesters_needing_cdr_replay_;
 };
 

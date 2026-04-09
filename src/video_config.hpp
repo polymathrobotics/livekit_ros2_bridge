@@ -65,6 +65,7 @@ struct RosTopicRule
 
 struct ConfiguredPipelineSource
 {
+  // Canonical normalized external name used for lookup and selected_config_key.
   std::string external_name;
   std::string pipeline;
 };
@@ -72,29 +73,40 @@ struct ConfiguredPipelineSource
 struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
+  // Keyed by normalizeExternalName(...); the stored external_name repeats that canonical key.
   std::unordered_map<std::string, ConfiguredPipelineSource> pipeline_sources;
 };
 
 struct SidecarLaunchSpec
 {
+  // Stable supervisor key: "topic:<normalized topic>" or "external:<normalized external name>".
   std::string sidecar_key;
+  // Set only for ROS-topic sources after ROS resource normalization.
   std::string ros_topic;
+  // Set only for ROS-topic sources and must pass isSupportedVideoInterfaceType().
   std::string interface_type;
+  // Set only for configured pipeline sources after external-name normalization.
   std::string external_name;
   VideoSourceKind source_kind = VideoSourceKind::RosTopic;
   std::string ingest_mode;
+  // ROS sources store the matched rule id; pipeline sources store the canonical external name.
   std::string selected_config_key;
   std::optional<std::string> degraded_reason;
+  // Tokenized argv appended after `gstreamer-publisher --`.
   std::vector<std::string> source_pipeline;
 };
 
 VideoConfig makeDefaultVideoConfig();
 
+// Canonicalizes configured source names so equivalent spellings share one config key and track name.
 std::string normalizeExternalName(std::string_view external_name);
 std::string videoSourceKindToString(VideoSourceKind kind);
 
+// Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
+// Interface-specific aliases prefer "image"/"compressed_image" and fall back to "default".
 SidecarLaunchSpec resolveRosVideoLaunchSpec(
   const VideoConfig & config, const std::string & topic, const std::string & interface_type);
+// Normalizes the configured source name before lookup and fills only the pipeline-source fields in the result.
 SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, const std::string & external_name);
 
 }  // namespace livekit_ros2_bridge

@@ -23,43 +23,64 @@
 namespace livekit_ros2_bridge
 {
 
+/// Stable subscription target discriminators used in heartbeat and stream-status payloads.
 enum class SubscriptionTargetKind
 {
   Topic,
   External,
 };
 
+/// A normalized subscription identifier. `kind` decides whether the wire field is `topic` or `external`.
 struct SubscriptionTarget
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
   std::string name;
 };
 
+/// A single requested stream plus any non-zero delivery preference overrides.
 struct SubscriptionRequest
 {
   SubscriptionTarget target;
   std::optional<int> preferred_interval_ms;
 };
 
+/// Parsed form of a subscriptions heartbeat.
 struct SubscriptionHeartbeat
 {
+  /// Optional trimmed session identifier. Missing, null, or blank values are treated as absent.
   std::optional<std::string> session_id;
+  /// Requested subscriptions in first-seen order after coalescing duplicate normalized targets.
   std::vector<SubscriptionRequest> subscriptions;
 };
 
+/// Stream status entry serialized onto `ros.subscriptions.status`.
 struct StreamStatus
 {
   SubscriptionTarget target;
+  /// Omitted from the payload when empty.
   std::string degraded_reason;
+  /// Omitted from the payload when empty.
   std::string interface_type;
+  /// Serialized only for `data_track` delivery as `applied_preferences.interval_ms`.
   int applied_interval_ms = 0;
+  /// One of the stable delivery.kind literals from `protocol.hpp`.
   std::string delivery_kind;
+  /// Serialized only for `video` delivery.
   std::string publisher_identity;
+  /// Serialized for both delivery modes. Video currently leaves this empty
+  /// because gstreamer-publisher can't set track name.
   std::string track_name;
 };
 
+/// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
+/// Each subscription entry must contain exactly one of `topic` or `external`, plus an optional
+/// `delivery_preferences.interval_ms` integer. Topic and external names are normalized separately,
+/// duplicate normalized targets are coalesced, and duplicate intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
+/// Serialize one active stream-status entry. Data-track deliveries include
+/// `content_type="application/x-ros-cdr"` and `applied_preferences.interval_ms`;
+/// video deliveries include `publisher_identity`.
 nlohmann::json serializeStreamStatus(const StreamStatus & stream_status);
 
 }  // namespace livekit_ros2_bridge

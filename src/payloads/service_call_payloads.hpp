@@ -21,16 +21,26 @@
 namespace livekit_ros2_bridge
 {
 
+/// Parsed form of a `ros.services.call` request body.
 struct ServiceCallRequest
 {
+  /// Normalized absolute ROS service name from the required `service` field.
   std::string service;
+  /// Optional trimmed `interface_type` hint. Blank or omitted values become empty.
   std::string interface_type;
+  /// Raw request CDR bytes from the required non-empty `request` payload object.
   std::vector<std::uint8_t> request;
+  /// Optional integer timeout from `timeout_ms`. Zero means the caller did not request a timeout.
   int timeout_ms = 0;
 };
 
+/// Parse a JSON object request with required `service` and `request` fields, plus optional
+/// `interface_type` and `timeout_ms`. The nested `request` object uses the stable CDR payload
+/// schema and must not decode to an empty byte vector.
 ServiceCallRequest parseServiceCallRequest(const std::string & payload);
 
+/// Serialize a successful service-call response as
+/// `{ "ok": true, "service": { "name", "interface_type" }, "response": <cdr>, "elapsed_ms": ... }`.
 std::string serializeServiceCallResponse(
   const std::string & service,
   const std::string & interface_type,

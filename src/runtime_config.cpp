@@ -256,8 +256,8 @@ VideoConfig detail::loadVideoConfig(const Params & params)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  // Save the built-in catch-all and rebuild ros_topic_rules with user entries first
-  // so user entries win same-length ties via first-declared-wins.
+  // Rebuild user rules ahead of the built-in catch-all so longest-match selection
+  // still works and same-length ties stay first-declared.
   auto builtin_rules = std::move(config.ros_topic_rules);
   config.ros_topic_rules.clear();
 
@@ -282,6 +282,8 @@ VideoConfig detail::loadVideoConfig(const Params & params)
     } else if (entry.kind == "pipeline") {
       validateConfiguredSourcePipelines(entry_id, pipelines);
 
+      // Configured sources are keyed by the canonical normalized external name,
+      // so spelling variants collapse to one lookup key and one sidecar contract.
       const std::string normalized_external_name = normalizeExternalName(entry_id);
       if (normalized_external_name.empty()) {
         throw std::runtime_error("video entry '" + entry_id + "' must normalize to a valid external name");
@@ -325,6 +327,8 @@ std::optional<VideoSidecarSupervisor::Config> loadVideoSidecarConfig(
 {
   validateLiveKitApiCredentialPair(auth_mode);
 
+  // Sidecars need API credentials whenever they mint their own publisher token.
+  // A static bridge token can coexist with that, but without minting there is no sidecar config to build.
   if (!enablesApiMintedTokens(auth_mode)) {
     return std::nullopt;
   }

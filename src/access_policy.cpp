@@ -97,6 +97,7 @@ std::set<std::string> AccessPolicy::parseDenylist(const std::vector<std::string>
   std::set<std::string> parsed;
   parseAccessEntries(
     entries,
+    // Represent deny-all with the same subtree matcher used for explicit `.../*` entries.
     [&parsed]() { parsed.insert("/*"); },
     [&parsed](const std::string & normalized) { parsed.insert(normalized); });
   return parsed;

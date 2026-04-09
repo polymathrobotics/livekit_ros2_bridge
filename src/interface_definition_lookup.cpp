@@ -201,6 +201,8 @@ void collectDependencies(
   const std::string path = resolveInterfaceDefinitionPath(parsed);
   const std::string definition = readInterfaceDefinitionFile(path);
 
+  // Record each schema before recursing so callers can keep the requested type first and the
+  // remaining entries in the same first-discovery order used for dependency traversal.
   dependencies.push_back({interface_type, kSchemaEncodingRos2Msg, definition});
 
   for (const auto & ref : extractTypeReferences(definition)) {

@@ -38,6 +38,8 @@ using SidecarCommandBuilder = std::function<std::vector<std::string>(
   const SidecarLaunchSpec & spec, const std::string & livekit_url, const std::string & livekit_token)>;
 using PublisherHealthCheck = std::function<bool(const std::string & publisher_identity)>;
 
+// Owns the managed video sidecar child process for each sidecar_key.
+// Callers drive maintenance by invoking reap/restart methods; the supervisor does not poll in the background.
 class VideoSidecarSupervisor final
 {
 public:
@@ -48,9 +50,13 @@ public:
     std::string api_key;
     std::string api_secret;
     std::chrono::seconds token_ttl{3600};
+    // restartExpiring() clamps this to at most half of token_ttl to avoid immediate refresh churn.
     std::chrono::seconds token_refresh_margin{300};
+    // restartUnhealthy() ignores missing publications until a fresh sidecar has had time to join the room.
     std::chrono::milliseconds health_check_startup_grace{std::chrono::seconds(5)};
+    // Consecutive failed health checks required before the managed sidecar is restarted.
     std::size_t unhealthy_restart_threshold{5};
+    // Prefix for the publisher identity owned by each managed sidecar.
     std::string bridge_identity;
   };
 
@@ -58,8 +64,7 @@ public:
     Config config, SidecarCommandBuilder build_sidecar_command, PublisherHealthCheck is_publisher_healthy = {});
   ~VideoSidecarSupervisor();
 
-  // Returns the publisher_identity for the launch spec. Spawns a new sidecar if
-  // none exists, or respawns if the previous one crashed.
+  // Returns the stable publisher identity for spec.sidecar_key and ensures its managed child is running.
   std::string ensureSidecar(const SidecarLaunchSpec & spec);
 
   void stopSidecar(const std::string & sidecar_key);
@@ -75,10 +80,13 @@ private:
   struct SidecarRecord
   {
     SidecarLaunchSpec spec;
+    // Stable LiveKit publisher identity currently assigned to this sidecar_key.
     std::string publisher_identity;
     pid_t pid = -1;
+    // Expiration time for the token minted for the current child process.
     std::chrono::system_clock::time_point token_expires_at;
     SteadyClock::time_point spawned_at;
+    // Cleared on spawn, stop, and healthy checks; counts consecutive failed health probes otherwise.
     std::size_t consecutive_unhealthy_checks = 0;
   };
 
@@ -88,6 +96,7 @@ private:
   {
     std::string publisher_identity;
     std::vector<std::string> argv;
+    // Token lifetime for the replacement child prepared before any running child is killed.
     std::chrono::system_clock::time_point token_expires_at;
   };
 
@@ -105,6 +114,7 @@ private:
   SidecarCommandBuilder build_sidecar_command_;
   PublisherHealthCheck is_publisher_healthy_;
   std::atomic<bool> is_shutdown_{false};
+  // Managed children keyed by the canonical SidecarLaunchSpec::sidecar_key.
   SidecarMap sidecars_;
 };
 

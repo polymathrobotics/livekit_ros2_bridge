@@ -68,6 +68,7 @@ std::vector<std::uint8_t> base64Decode(const std::string & value)
   }
 
   std::size_t actual_size = static_cast<std::size_t>(written);
+  // EVP_DecodeBlock reports the padded output size, so trim bytes implied only by '=' padding.
   if (!value.empty() && value.back() == '=') {
     --actual_size;
   }
