@@ -2,10 +2,6 @@ variable "DEFAULT_PLATFORM" {
   default = "linux/amd64"
 }
 
-variable "PARAMETER_LIBRARY_OVERLAY_REF" {
-  default = "0.7.1"
-}
-
 variable "GSTREAMER_PUBLISHER_REF_JAMMY" {
   default = "8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
 }
@@ -80,10 +76,8 @@ target "dev-humble" {
   inherits = ["_dev-common"]
   tags = ["livekit_ros2_bridge-builder:humble"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_JAMMY
     LIVEKIT_SDK_DISTRO = "jammy"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:humble-builder-ubuntu"
     ROS_DISTRO = "humble"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:humble-ready-ubuntu"
@@ -94,10 +88,8 @@ target "dev-jazzy" {
   inherits = ["_dev-common"]
   tags = ["livekit_ros2_bridge-builder:jazzy"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:jazzy-builder-ubuntu"
     ROS_DISTRO = "jazzy"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:jazzy-ready-ubuntu"
@@ -108,10 +100,8 @@ target "dev-kilted" {
   inherits = ["_dev-common"]
   tags = ["livekit_ros2_bridge-builder:kilted"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:kilted-builder-ubuntu"
     ROS_DISTRO = "kilted"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:kilted-ready-ubuntu"
@@ -122,10 +112,8 @@ target "dev-rolling" {
   inherits = ["_dev-common"]
   tags = ["livekit_ros2_bridge-builder:rolling"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:rolling-builder-ubuntu"
     ROS_DISTRO = "rolling"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:rolling-ready-ubuntu"
@@ -136,10 +124,8 @@ target "runtime-humble" {
   inherits = ["_runtime-common"]
   tags = ["livekit_ros2_bridge:humble"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "0"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_JAMMY
     LIVEKIT_SDK_DISTRO = "jammy"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:humble-builder-ubuntu"
     ROS_DISTRO = "humble"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:humble-ready-ubuntu"
@@ -150,10 +136,8 @@ target "runtime-jazzy" {
   inherits = ["_runtime-common"]
   tags = ["livekit_ros2_bridge:jazzy"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:jazzy-builder-ubuntu"
     ROS_DISTRO = "jazzy"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:jazzy-ready-ubuntu"
@@ -164,10 +148,8 @@ target "runtime-kilted" {
   inherits = ["_runtime-common"]
   tags = ["livekit_ros2_bridge:kilted"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:kilted-builder-ubuntu"
     ROS_DISTRO = "kilted"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:kilted-ready-ubuntu"
@@ -178,10 +160,8 @@ target "runtime-rolling" {
   inherits = ["_runtime-common"]
   tags = ["livekit_ros2_bridge:rolling"]
   args = {
-    ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
     GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
-    PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:rolling-builder-ubuntu"
     ROS_DISTRO = "rolling"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:rolling-ready-ubuntu"

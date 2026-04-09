@@ -4,8 +4,6 @@ ARG ROS_DISTRO=humble
 ARG ROS_BUILDER_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-builder-ubuntu
 ARG ROS_RUNTIME_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-ready-ubuntu
 ARG GSTREAMER_PUBLISHER_IMAGE=docker.io/polymathrobotics/gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e
-ARG ENABLE_PARAMETER_LIBRARY_OVERLAY=1
-ARG PARAMETER_LIBRARY_OVERLAY_REF=0.7.1
 ARG LIVEKIT_SDK_DISTRO=
 ARG LIVEKIT_SDK_URL_OVERRIDE=
 ARG LIVEKIT_SDK_SHA256_OVERRIDE=
@@ -19,15 +17,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG ROS_DISTRO
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV PIP_BREAK_SYSTEM_PACKAGES=1
 ENV ROS_DISTRO=${ROS_DISTRO}
 
 COPY docker/scripts/generate-rosdep-install-script.sh /usr/local/bin/generate-rosdep-install-script
-COPY docker/scripts/apply-parameter-library-overlay.sh /usr/local/bin/apply-parameter-library-overlay
+COPY docker/scripts/configure-parameter-library-apt-pin.sh /usr/local/bin/configure-parameter-library-apt-pin
 
 RUN chmod +x \
       /usr/local/bin/generate-rosdep-install-script \
-      /usr/local/bin/apply-parameter-library-overlay \
+      /usr/local/bin/configure-parameter-library-apt-pin \
  && rosdep update --rosdistro "${ROS_DISTRO}"
 
 FROM ros-builder-base AS dev
@@ -35,7 +32,6 @@ FROM ros-builder-base AS dev
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG ROS_DISTRO
-ARG PARAMETER_LIBRARY_OVERLAY_REF
 
 ENV CCACHE_DIR=/ccache
 
@@ -43,9 +39,11 @@ WORKDIR /opt/dev-bootstrap
 
 COPY package.xml /opt/dev-bootstrap/src/livekit_ros2_bridge/package.xml
 
-# Distro packages still ship generate_parameter_library_py 0.6.x, which mis-generates
-# nested map parameters. Overlay 0.7.1 until the ROS packages catch up.
-RUN generate-rosdep-install-script /tmp/install-dev-deps.sh /opt/dev-bootstrap/src \
+# Jazzy and Rolling still lag on packages.ros.org main for the
+# generate_parameter_library family. Add ros2-testing, but pin only those
+# packages so the rest of ROS continues to come from the stable main repo.
+RUN /usr/local/bin/configure-parameter-library-apt-pin "${ROS_DISTRO}" \
+ && generate-rosdep-install-script /tmp/install-dev-deps.sh /opt/dev-bootstrap/src \
  && apt-get update \
  && /tmp/install-dev-deps.sh \
  && apt-get install -y --no-install-recommends \
@@ -55,10 +53,8 @@ RUN generate-rosdep-install-script /tmp/install-dev-deps.sh /opt/dev-bootstrap/s
       libgstreamer-plugins-base1.0-dev \
       libgstreamer1.0-dev \
       pkg-config \
-      python3-pip \
       ros-${ROS_DISTRO}-ros2cli \
       ros-${ROS_DISTRO}-ros2cli-common-extensions \
- && /usr/local/bin/apply-parameter-library-overlay "${ROS_DISTRO}" "${PARAMETER_LIBRARY_OVERLAY_REF}" \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=gstreamer-publisher-source /usr/local/bin/gstreamer-publisher /usr/local/bin/gstreamer-publisher
@@ -82,8 +78,6 @@ FROM ros-builder-base AS builder
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG ROS_DISTRO
-ARG ENABLE_PARAMETER_LIBRARY_OVERLAY
-ARG PARAMETER_LIBRARY_OVERLAY_REF
 ARG LIVEKIT_SDK_DISTRO
 ARG LIVEKIT_SDK_URL_OVERRIDE
 ARG LIVEKIT_SDK_SHA256_OVERRIDE
@@ -92,20 +86,18 @@ WORKDIR /opt/ros_ws
 
 COPY package.xml src/livekit_ros2_bridge/package.xml
 
-# Distro packages still ship generate_parameter_library_py 0.6.x, which mis-generates
-# nested map parameters. Overlay 0.7.1 until the ROS packages catch up.
-RUN generate-rosdep-install-script /tmp/install-build-deps.sh src \
+# Jazzy and Rolling still lag on packages.ros.org main for the
+# generate_parameter_library family. Add ros2-testing, but pin only those
+# packages so the rest of ROS continues to come from the stable main repo.
+RUN /usr/local/bin/configure-parameter-library-apt-pin "${ROS_DISTRO}" \
+ && generate-rosdep-install-script /tmp/install-build-deps.sh src \
  && DEPENDENCY_TYPES=exec generate-rosdep-install-script /tmp/install-runtime-deps.sh src \
  && apt-get update \
  && /tmp/install-build-deps.sh \
- && build_packages=( \
+ && apt-get install -y --no-install-recommends \
       libgstreamer-plugins-base1.0-dev \
       libgstreamer1.0-dev \
       pkg-config \
-    ) \
- && if [[ "${ENABLE_PARAMETER_LIBRARY_OVERLAY}" == "1" ]]; then build_packages+=(python3-pip); fi \
- && apt-get install -y --no-install-recommends "${build_packages[@]}" \
- && if [[ "${ENABLE_PARAMETER_LIBRARY_OVERLAY}" == "1" ]]; then /usr/local/bin/apply-parameter-library-overlay "${ROS_DISTRO}" "${PARAMETER_LIBRARY_OVERLAY_REF}"; fi \
  && rm -rf /var/lib/apt/lists/*
 
 COPY . src/livekit_ros2_bridge
