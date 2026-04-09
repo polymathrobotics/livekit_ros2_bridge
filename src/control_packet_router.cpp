@@ -57,8 +57,6 @@ ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::S
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
-  // Unknown topics are a silent no-op so newer peers can add control packets without flooding logs
-  // on bridges that only understand the current heartbeat and topic-publish vocabulary.
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
     // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
     // heartbeat processor can still recover that identity from a leased session_id.
@@ -120,7 +118,16 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         requesterIdentityForLog(packet),
         exc.what());
     }
+    return;
   }
+
+  RCLCPP_WARN_THROTTLE(
+    logger_,
+    *clock_,
+    kControlPacketLogThrottleMs,
+    "event=control_packet_dropped reason=unsupported_control_topic control_topic=%s requester_identity=%s",
+    packet.control_topic.c_str(),
+    requesterIdentityForLog(packet));
 }
 
 }  // namespace livekit_ros2_bridge

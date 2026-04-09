@@ -392,6 +392,8 @@ struct RosServiceCaller::Impl
   std::function<void()> poll_callback_enter_hook;
   std::function<void()> poll_callback_exit_hook;
   bool shutdown_flag = false;
+  std::size_t late_response_drops_since_log = 0U;
+  std::chrono::steady_clock::time_point next_late_response_log_at{};
 };
 
 std::string RosServiceCaller::Impl::resolveServiceType(
@@ -578,15 +580,20 @@ void RosServiceCaller::Impl::drainResponses()
       // callers to different services cannot steal each other's responses.
       auto call_it = pending_calls.find(PendingCallKey{cached.get(), header.sequence_number});
       if (call_it == pending_calls.end()) {
-        RCLCPP_WARN_THROTTLE(
-          kRosServiceCallerLogger,
-          *node.get_clock(),
-          kResponseLogThrottleMs,
-          "event=service_response_dropped reason=late_or_unknown_pending_call service=%s interface_type=%s "
-          "sequence_number=%lld",
-          cached->service_name.c_str(),
-          cached->service_type_name.c_str(),
-          static_cast<long long>(header.sequence_number));
+        ++late_response_drops_since_log;
+        const auto now = std::chrono::steady_clock::now();
+        if (next_late_response_log_at == std::chrono::steady_clock::time_point{} || now >= next_late_response_log_at) {
+          RCLCPP_WARN(
+            kRosServiceCallerLogger,
+            "event=service_response_dropped reason=late_or_unknown_pending_call service=%s interface_type=%s "
+            "sequence_number=%lld count=%zu",
+            cached->service_name.c_str(),
+            cached->service_type_name.c_str(),
+            static_cast<long long>(header.sequence_number),
+            late_response_drops_since_log);
+          late_response_drops_since_log = 0U;
+          next_late_response_log_at = now + std::chrono::milliseconds(kResponseLogThrottleMs);
+        }
         continue;
       }
 

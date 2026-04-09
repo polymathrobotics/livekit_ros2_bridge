@@ -15,6 +15,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <list>
 #include <memory>
@@ -73,6 +74,8 @@ private:
   std::unordered_map<std::string, PublisherCacheEntry> publishers_;
   std::list<std::string> lru_topics_;
   std::function<void()> before_publish_hook_for_test_;
+  std::size_t publisher_cache_evictions_since_log_ = 0U;
+  std::chrono::steady_clock::time_point next_publisher_cache_eviction_log_at_{};
 };
 
 }  // namespace livekit_ros2_bridge

@@ -244,6 +244,15 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
     case GST_STATE_CHANGE_PAUSED_TO_READY:
     case GST_STATE_CHANGE_READY_TO_NULL:
       if (self->sub || self->node_runner) {
+        if (self->dropped_frames_since_log > 0) {
+          GST_WARNING_OBJECT(
+            self,
+            "event=raw_image_frame_dropped reason=slow_consumer topic=%s count=%" G_GUINT64_FORMAT
+            " "
+            "policy=latest_frame_wins",
+            self->ros_topic,
+            self->dropped_frames_since_log);
+        }
         GST_INFO_OBJECT(
           self,
           "event=source_stopped topic=%s kind=raw_image reliable=%s resource=subscription reason=%s",

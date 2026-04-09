@@ -14,6 +14,7 @@
 
 #include "topic_publisher.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -30,6 +31,7 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 constexpr auto kPublishLogThrottleMs = 5000;
+constexpr auto kPublishLogThrottlePeriod = std::chrono::milliseconds(kPublishLogThrottleMs);
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -201,15 +203,23 @@ void RosTopicPublisher::publishWithPublisherCache(
   while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
     eraseCachedPublisher(evicted_topic);
-    RCLCPP_WARN_THROTTLE(
-      kTopicPublisherLogger,
-      *node_.get_clock(),
-      kPublishLogThrottleMs,
-      "event=publisher_cache_evicted reason=max_topics_exceeded topic=%s evicted_topic=%s policy=lru "
-      "max_topics=%d",
-      topic.c_str(),
-      evicted_topic.c_str(),
-      max_topics_);
+    ++publisher_cache_evictions_since_log_;
+    const auto now = std::chrono::steady_clock::now();
+    if (
+      next_publisher_cache_eviction_log_at_ == std::chrono::steady_clock::time_point{} ||
+      now >= next_publisher_cache_eviction_log_at_)
+    {
+      RCLCPP_WARN(
+        kTopicPublisherLogger,
+        "event=publisher_cache_evicted reason=max_topics_exceeded topic=%s evicted_topic=%s count=%zu "
+        "policy=lru max_topics=%d",
+        topic.c_str(),
+        evicted_topic.c_str(),
+        publisher_cache_evictions_since_log_,
+        max_topics_);
+      publisher_cache_evictions_since_log_ = 0U;
+      next_publisher_cache_eviction_log_at_ = now + kPublishLogThrottlePeriod;
+    }
   }
 }
 

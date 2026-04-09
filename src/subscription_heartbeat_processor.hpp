@@ -15,6 +15,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -78,6 +79,8 @@ private:
   rclcpp::Clock::SharedPtr clock_;
   // Tracks which requester identity is allowed to renew a session_id anonymously until expiry.
   std::unordered_map<std::string, SessionLease> session_leases_;
+  std::size_t session_conflicts_since_log_ = 0U;
+  std::chrono::steady_clock::time_point next_session_conflict_log_at_{};
 };
 
 }  // namespace livekit_ros2_bridge

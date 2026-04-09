@@ -39,6 +39,7 @@ constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
 constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
 constexpr auto kIngressLogThrottleMs = 5000;
+constexpr auto kIngressLogThrottlePeriod = std::chrono::milliseconds(kIngressLogThrottleMs);
 
 const char * requesterIdentityForLog(const IncomingControlPacket & packet)
 {
@@ -231,30 +232,45 @@ bool Runtime::isShuttingDown() const
 
 void Runtime::submitExecutorWork(std::function<void()> fn)
 {
+  auto logExecutorDrop =
+    [this](const char * reason, const char * stage, std::size_t & count, SteadyClock::time_point & next_log_at) {
+      ++count;
+      const auto now = SteadyClock::now();
+      if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
+        RCLCPP_WARN(
+          node_.get_logger(), "event=executor_work_dropped reason=%s stage=%s count=%zu", reason, stage, count);
+        count = 0U;
+        next_log_at = now + kIngressLogThrottlePeriod;
+      }
+    };
+
   if (isShuttingDown()) {
-    RCLCPP_WARN_THROTTLE(
-      node_.get_logger(),
-      *node_.get_clock(),
-      kIngressLogThrottleMs,
-      "event=executor_work_dropped reason=shutdown stage=enqueue");
+    logExecutorDrop(
+      "shutdown", "enqueue", executor_shutdown_enqueue_drops_since_log_, next_executor_shutdown_enqueue_log_at_);
     return;
   }
   if (ros_executor_queue_ == nullptr) {
-    RCLCPP_WARN_THROTTLE(
-      node_.get_logger(),
-      *node_.get_clock(),
-      kIngressLogThrottleMs,
-      "event=executor_work_dropped reason=executor_unavailable stage=enqueue");
+    logExecutorDrop(
+      "executor_unavailable", "enqueue", executor_unavailable_drops_since_log_, next_executor_unavailable_log_at_);
     return;
   }
   (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
+    auto logExecutorDrop =
+      [this](const char * reason, const char * stage, std::size_t & count, SteadyClock::time_point & next_log_at) {
+        ++count;
+        const auto now = SteadyClock::now();
+        if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
+          RCLCPP_WARN(
+            node_.get_logger(), "event=executor_work_dropped reason=%s stage=%s count=%zu", reason, stage, count);
+          count = 0U;
+          next_log_at = now + kIngressLogThrottlePeriod;
+        }
+      };
+
     // The queue can still be draining work that was accepted before shutdown flipped the flag.
     if (isShuttingDown()) {
-      RCLCPP_WARN_THROTTLE(
-        node_.get_logger(),
-        *node_.get_clock(),
-        kIngressLogThrottleMs,
-        "event=executor_work_dropped reason=shutdown stage=execute");
+      logExecutorDrop(
+        "shutdown", "execute", executor_shutdown_execute_drops_since_log_, next_executor_shutdown_execute_log_at_);
       return;
     }
     fn();
@@ -263,24 +279,32 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
 
 void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) const
 {
+  auto logControlPacketDrop = [this, &packet](
+                                const char * reason, std::size_t & count, SteadyClock::time_point & next_log_at) {
+    ++count;
+    const auto now = SteadyClock::now();
+    if (next_log_at == SteadyClock::time_point{} || now >= next_log_at) {
+      RCLCPP_WARN(
+        node_.get_logger(),
+        "event=control_packet_dropped reason=%s control_topic=%s requester_identity=%s count=%zu",
+        reason,
+        packet.control_topic.c_str(),
+        requesterIdentityForLog(packet),
+        count);
+      count = 0U;
+      next_log_at = now + kIngressLogThrottlePeriod;
+    }
+  };
+
   if (isShuttingDown()) {
-    RCLCPP_WARN_THROTTLE(
-      node_.get_logger(),
-      *node_.get_clock(),
-      kIngressLogThrottleMs,
-      "event=control_packet_dropped reason=shutdown control_topic=%s requester_identity=%s",
-      packet.control_topic.c_str(),
-      requesterIdentityForLog(packet));
+    logControlPacketDrop("shutdown", control_packet_shutdown_drops_since_log_, next_control_packet_shutdown_log_at_);
     return;
   }
   if (control_packet_router_ == nullptr) {
-    RCLCPP_WARN_THROTTLE(
-      node_.get_logger(),
-      *node_.get_clock(),
-      kIngressLogThrottleMs,
-      "event=control_packet_dropped reason=router_unavailable control_topic=%s requester_identity=%s",
-      packet.control_topic.c_str(),
-      requesterIdentityForLog(packet));
+    logControlPacketDrop(
+      "router_unavailable",
+      control_packet_router_unavailable_drops_since_log_,
+      next_control_packet_router_unavailable_log_at_);
     return;
   }
   control_packet_router_->route(packet);

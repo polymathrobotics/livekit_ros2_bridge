@@ -35,6 +35,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 constexpr auto kLeaseExpiry = std::chrono::seconds(45);
+constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
 const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
 {
@@ -194,15 +195,22 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   }
 
   if (it->second.requester_identity != requester_identity) {
-    RCLCPP_WARN_THROTTLE(
-      kHeartbeatProcessorLogger,
-      *clock_,
-      5000,
-      "event=heartbeat_session_conflict reason=requester_identity_mismatch session_id=%s requester_identity=%s "
-      "existing_requester_identity=%s",
-      session_id.c_str(),
-      requester_identity.c_str(),
-      it->second.requester_identity.c_str());
+    ++session_conflicts_since_log_;
+    const auto now = std::chrono::steady_clock::now();
+    if (
+      next_session_conflict_log_at_ == std::chrono::steady_clock::time_point{} || now >= next_session_conflict_log_at_)
+    {
+      RCLCPP_WARN(
+        kHeartbeatProcessorLogger,
+        "event=heartbeat_session_conflict reason=requester_identity_mismatch session_id=%s requester_identity=%s "
+        "existing_requester_identity=%s count=%zu",
+        session_id.c_str(),
+        requester_identity.c_str(),
+        it->second.requester_identity.c_str(),
+        session_conflicts_since_log_);
+      session_conflicts_since_log_ = 0U;
+      next_session_conflict_log_at_ = now + kHeartbeatLogThrottlePeriod;
+    }
     return false;
   }
 

@@ -51,6 +51,8 @@ public:
   void shutdown();
 
 private:
+  using SteadyClock = std::chrono::steady_clock;
+
   bool isShuttingDown() const;
   // Drops new ingress once shutdown starts. Work accepted before shutdown may still execute if it
   // reaches the ROS executor before the queue is shut down.
@@ -74,6 +76,16 @@ private:
   std::string identity_;
   bool sidecar_enabled_ = false;
   std::atomic<bool> shutting_down_{false};
+  std::size_t executor_shutdown_enqueue_drops_since_log_ = 0U;
+  std::size_t executor_unavailable_drops_since_log_ = 0U;
+  std::size_t executor_shutdown_execute_drops_since_log_ = 0U;
+  mutable std::size_t control_packet_shutdown_drops_since_log_ = 0U;
+  mutable std::size_t control_packet_router_unavailable_drops_since_log_ = 0U;
+  SteadyClock::time_point next_executor_shutdown_enqueue_log_at_{};
+  SteadyClock::time_point next_executor_unavailable_log_at_{};
+  SteadyClock::time_point next_executor_shutdown_execute_log_at_{};
+  mutable SteadyClock::time_point next_control_packet_shutdown_log_at_{};
+  mutable SteadyClock::time_point next_control_packet_router_unavailable_log_at_{};
 };
 
 }  // namespace livekit_ros2_bridge
