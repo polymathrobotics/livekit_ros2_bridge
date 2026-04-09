@@ -25,9 +25,8 @@
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "protocol.hpp"
-#include "rclcpp/executors/single_threaded_executor.hpp"
-#include "rclcpp/rclcpp.hpp"
 #include "room_session.hpp"
+#include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_heartbeat_processor.hpp"
@@ -38,57 +37,8 @@ namespace livekit_ros2_bridge
 {
 namespace
 {
-
-class ScopedRclcppInit
-{
-public:
-  ScopedRclcppInit()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  ~ScopedRclcppInit()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-};
-
-bool spinUntil(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(2))
-{
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    executor.spin_some();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  return predicate();
-}
-
-bool waitForTopicType(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::shared_ptr<rclcpp::Node> & node,
-  const std::string & topic,
-  const std::string & expected_type)
-{
-  return spinUntil(executor, [&]() {
-    const auto topics = node->get_topic_names_and_types();
-    for (const auto & entry : topics) {
-      if (entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type) {
-        return true;
-      }
-    }
-    return false;
-  });
-}
+using test_support::ScopedRclcppInit;
+using test_support::waitForTopicType;
 
 VideoSidecarSupervisor::Config makeTestVideoSidecarConfig()
 {

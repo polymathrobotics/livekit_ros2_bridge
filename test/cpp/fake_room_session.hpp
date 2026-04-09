@@ -19,6 +19,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,12 +31,7 @@ namespace livekit_ros2_bridge
 
 struct FakeRoomSessionState
 {
-  RoomConnectionConfig connect_config;
-  std::shared_ptr<AccessTokenSource> token_source;
   RoomSessionCallbacks callbacks;
-  std::chrono::milliseconds initial_backoff{0};
-  std::chrono::milliseconds max_backoff{0};
-  std::chrono::seconds refresh_margin{0};
   bool started = false;
   bool stopped = false;
   std::vector<std::string> registered_rpc_methods;
@@ -44,6 +40,8 @@ struct FakeRoomSessionState
   std::vector<OutgoingControlPacket> published_outgoing_control_packets;
   std::vector<std::string> published_cdr_track_names;
   std::vector<std::string> unpublished_cdr_track_names;
+  std::vector<std::string> attempted_cdr_track_unpublish_names;
+  std::vector<std::string> rejected_cdr_track_unpublish_names;
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, bool> healthy_video_publishers;
   std::map<std::string, RpcHandler> rpc_handlers;
@@ -69,13 +67,13 @@ public:
     std::chrono::milliseconds max_backoff,
     std::chrono::seconds refresh_margin) override
   {
+    (void)config;
+    (void)token_source;
+    (void)initial_backoff;
+    (void)max_backoff;
+    (void)refresh_margin;
     state->started = true;
-    state->connect_config = std::move(config);
-    state->token_source = std::move(token_source);
     state->callbacks = std::move(callbacks);
-    state->initial_backoff = initial_backoff;
-    state->max_backoff = max_backoff;
-    state->refresh_margin = refresh_margin;
   }
 
   bool registerRpcMethod(const std::string & method_name, RpcHandler handler) override
@@ -113,15 +111,27 @@ public:
   {
     state->event_log.push_back("publish_cdr_track:" + name);
     state->published_cdr_track_names.push_back(name);
-    if (state->publish_cdr_track_handler) {
-      return state->publish_cdr_track_handler(name);
+    auto track = state->publish_cdr_track_handler ? state->publish_cdr_track_handler(name) : makeSyntheticTrack();
+    if (track != nullptr) {
+      cdr_track_names_[track.get()] = name;
     }
-    throw std::runtime_error("LiveKit local participant unavailable.");
+    return track;
   }
 
-  void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
+  void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
+    const std::string name = lookupTrackName(track);
+    state->attempted_cdr_track_unpublish_names.push_back(name);
+    if (
+      std::find(
+        state->rejected_cdr_track_unpublish_names.begin(), state->rejected_cdr_track_unpublish_names.end(), name) !=
+      state->rejected_cdr_track_unpublish_names.end())
+    {
+      throw std::runtime_error("simulated unpublish failure");
+    }
     state->event_log.push_back("unpublish_cdr_track");
+    state->unpublished_cdr_track_names.push_back(name);
+    cdr_track_names_.erase(track.get());
   }
 
   bool isVideoPublisherHealthy(const std::string & publisher_identity) const override
@@ -169,6 +179,22 @@ public:
   }
 
   std::shared_ptr<FakeRoomSessionState> state;
+
+private:
+  std::shared_ptr<livekit::LocalDataTrack> makeSyntheticTrack()
+  {
+    auto owner = std::make_shared<int>(next_track_id_++);
+    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+  }
+
+  std::string lookupTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
+  {
+    const auto it = cdr_track_names_.find(track.get());
+    return it == cdr_track_names_.end() ? "<unknown>" : it->second;
+  }
+
+  int next_track_id_ = 1;
+  std::map<const livekit::LocalDataTrack *, std::string> cdr_track_names_;
 };
 
 }  // namespace livekit_ros2_bridge

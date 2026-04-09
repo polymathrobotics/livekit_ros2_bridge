@@ -19,16 +19,12 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <thread>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "cdr_track_publisher.hpp"
+#include "fake_room_session.hpp"
 #include "gtest/gtest.h"
-#include "rclcpp/executors/single_threaded_executor.hpp"
-#include "rclcpp/rclcpp.hpp"
-#include "room_session.hpp"
+#include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_registry.hpp"
 
@@ -36,128 +32,8 @@ namespace livekit_ros2_bridge
 {
 namespace
 {
-
-class ScopedRclcppInit
-{
-public:
-  ScopedRclcppInit()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  ~ScopedRclcppInit()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-};
-
-bool spinUntil(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(2))
-{
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    executor.spin_some();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  return predicate();
-}
-
-bool waitForTopicType(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::shared_ptr<rclcpp::Node> & node,
-  const std::string & topic,
-  const std::string & expected_type)
-{
-  return spinUntil(executor, [&]() {
-    const auto topics = node->get_topic_names_and_types();
-    for (const auto & entry : topics) {
-      if (entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type) {
-        return true;
-      }
-    }
-    return false;
-  });
-}
-
-class RecordingRoomSession final : public RoomSession
-{
-public:
-  void start(
-    RoomConnectionConfig,
-    std::shared_ptr<AccessTokenSource>,
-    RoomSessionCallbacks,
-    std::chrono::milliseconds,
-    std::chrono::milliseconds,
-    std::chrono::seconds) override
-  {}
-
-  void stop() override
-  {}
-
-  bool registerRpcMethod(const std::string &, RpcHandler) override
-  {
-    return true;
-  }
-
-  bool unregisterRpcMethod(const std::string &) override
-  {
-    return true;
-  }
-
-  void publishControlPacket(const OutgoingControlPacket &) override
-  {}
-
-  std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) override
-  {
-    publish_attempts.push_back(name);
-    if (throw_on_publish) {
-      throw std::runtime_error("simulated publish failure");
-    }
-
-    auto owner = std::make_shared<int>(next_track_id_++);
-    auto track =
-      std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
-    track_names_[track.get()] = name;
-    return track;
-  }
-
-  void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
-  {
-    const auto it = track_names_.find(track.get());
-    const std::string name = (it == track_names_.end()) ? "<unknown>" : it->second;
-    unpublish_attempts.push_back(name);
-
-    if (throw_on_unpublish_names.count(name) > 0U) {
-      throw std::runtime_error("simulated unpublish failure");
-    }
-
-    unpublished_track_names.push_back(name);
-  }
-
-  bool isVideoPublisherHealthy(const std::string &) const override
-  {
-    return false;
-  }
-
-  bool throw_on_publish = false;
-  std::vector<std::string> publish_attempts;
-  std::vector<std::string> unpublish_attempts;
-  std::vector<std::string> unpublished_track_names;
-  std::unordered_set<std::string> throw_on_unpublish_names;
-
-private:
-  int next_track_id_ = 1;
-  std::unordered_map<const livekit::LocalDataTrack *, std::string> track_names_;
-};
+using test_support::ScopedRclcppInit;
+using test_support::waitForTopicType;
 
 TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPublishError)
 {
@@ -179,8 +55,10 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
     [](const std::string &) {},
     nullptr);
 
-  RecordingRoomSession session;
-  session.throw_on_publish = true;
+  FakeRoomSession session;
+  session.state->publish_cdr_track_handler = [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    throw std::runtime_error("simulated publish failure");
+  };
   CdrTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
@@ -189,9 +67,9 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_EQ(response.track_name, publish_requests[0]);
 
   EXPECT_NO_THROW(publisher.publishTrack(publish_requests[0], 0, registry));
-  ASSERT_EQ(session.publish_attempts.size(), 1U);
-  EXPECT_EQ(session.publish_attempts[0], publish_requests[0]);
-  EXPECT_TRUE(session.unpublish_attempts.empty());
+  ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_cdr_track_names[0], publish_requests[0]);
+  EXPECT_TRUE(session.state->attempted_cdr_track_unpublish_names.empty());
 
   const auto retry_response = registry.renewSubscription("alice", topic, 0, expiry);
   ASSERT_EQ(publish_requests.size(), 2U);
@@ -199,7 +77,7 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_EQ(publish_requests[1], publish_requests[0]);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_TRUE(session.unpublish_attempts.empty());
+  EXPECT_TRUE(session.state->attempted_cdr_track_unpublish_names.empty());
 }
 
 TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrack)
@@ -221,7 +99,7 @@ TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrac
     [](const std::string &) {},
     nullptr);
 
-  RecordingRoomSession session;
+  FakeRoomSession session;
   CdrTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
@@ -233,15 +111,15 @@ TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrac
 
   publisher.publishTrack(response.track_name, 0, registry);
 
-  ASSERT_EQ(session.publish_attempts.size(), 1U);
-  EXPECT_EQ(session.publish_attempts[0], response.track_name);
-  ASSERT_EQ(session.unpublish_attempts.size(), 1U);
-  EXPECT_EQ(session.unpublish_attempts[0], response.track_name);
-  ASSERT_EQ(session.unpublished_track_names.size(), 1U);
-  EXPECT_EQ(session.unpublished_track_names[0], response.track_name);
+  ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_cdr_track_names[0], response.track_name);
+  ASSERT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
+  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names[0], response.track_name);
+  ASSERT_EQ(session.state->unpublished_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.unpublish_attempts.size(), 1U);
+  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
 }
 
 TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
@@ -263,22 +141,22 @@ TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
     [](const std::string &) {},
     nullptr);
 
-  RecordingRoomSession session;
+  FakeRoomSession session;
   CdrTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
   const auto response = registry.renewSubscription("alice", topic, 0, expiry);
   publisher.publishTrack(response.track_name, 0, registry);
 
-  session.throw_on_unpublish_names.insert(response.track_name);
+  session.state->rejected_cdr_track_unpublish_names.push_back(response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  ASSERT_EQ(session.unpublish_attempts.size(), 1U);
-  EXPECT_EQ(session.unpublish_attempts[0], response.track_name);
-  EXPECT_TRUE(session.unpublished_track_names.empty());
+  ASSERT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
+  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names[0], response.track_name);
+  EXPECT_TRUE(session.state->unpublished_cdr_track_names.empty());
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  EXPECT_EQ(session.unpublish_attempts.size(), 1U);
+  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
 }
 
 TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
@@ -304,7 +182,7 @@ TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
     [](const std::string &) {},
     nullptr);
 
-  RecordingRoomSession session;
+  FakeRoomSession session;
   CdrTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
@@ -313,21 +191,21 @@ TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
   publisher.publishTrack(response_a.track_name, 0, registry);
   publisher.publishTrack(response_b.track_name, 0, registry);
 
-  session.throw_on_unpublish_names.insert(response_b.track_name);
+  session.state->rejected_cdr_track_unpublish_names.push_back(response_b.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
 
-  auto attempts = session.unpublish_attempts;
+  auto attempts = session.state->attempted_cdr_track_unpublish_names;
   std::sort(attempts.begin(), attempts.end());
   ASSERT_EQ(attempts.size(), 2U);
   EXPECT_EQ(attempts[0], response_a.track_name);
   EXPECT_EQ(attempts[1], response_b.track_name);
 
-  ASSERT_EQ(session.unpublished_track_names.size(), 1U);
-  EXPECT_EQ(session.unpublished_track_names[0], response_a.track_name);
+  ASSERT_EQ(session.state->unpublished_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response_a.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.unpublish_attempts.size(), 2U);
+  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 2U);
 }
 
 }  // namespace

@@ -23,9 +23,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "rclcpp/executors/single_threaded_executor.hpp"
-#include "rclcpp/rclcpp.hpp"
 #include "rclcpp/serialization.hpp"
+#include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "topic_publisher.hpp"
@@ -77,57 +76,9 @@ public:
 
 namespace
 {
-
-class ScopedRclcppInit
-{
-public:
-  ScopedRclcppInit()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  ~ScopedRclcppInit()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-};
-
-bool spinUntil(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(2))
-{
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    executor.spin_some();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  }
-  return predicate();
-}
-
-bool waitForTopicType(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::shared_ptr<rclcpp::Node> & node,
-  const std::string & topic,
-  const std::string & expected_type)
-{
-  return spinUntil(executor, [&]() {
-    const auto topics = node->get_topic_names_and_types();
-    for (const auto & entry : topics) {
-      if (entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type) {
-        return true;
-      }
-    }
-    return false;
-  });
-}
+using test_support::ScopedRclcppInit;
+using test_support::spinUntil;
+using test_support::waitForTopicType;
 
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
