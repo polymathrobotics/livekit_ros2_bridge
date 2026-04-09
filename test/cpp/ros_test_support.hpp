@@ -80,7 +80,7 @@ inline bool waitForTopicType(
   const std::string & expected_type,
   std::chrono::milliseconds timeout = std::chrono::seconds(2))
 {
-  return spinUntil(
+  const bool found = spinUntil(
     executor,
     [&node, &topic, &expected_type]() {
       const auto topics = node->get_topic_names_and_types();
@@ -92,6 +92,17 @@ inline bool waitForTopicType(
       return false;
     },
     timeout);
+
+  if (!found) {
+    RCLCPP_WARN(
+      node->get_logger(),
+      "event=wait_for_topic_type_timeout topic=%s expected_type=%s timeout_ms=%lld",
+      topic.c_str(),
+      expected_type.c_str(),
+      static_cast<long long>(timeout.count()));
+  }
+
+  return found;
 }
 
 }  // namespace livekit_ros2_bridge::test_support
