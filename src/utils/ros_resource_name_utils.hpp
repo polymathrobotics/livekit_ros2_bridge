@@ -48,9 +48,6 @@ inline std::string normalizeRosResourceName(std::string_view name)
     previous_was_slash = false;
   }
 
-  if (normalized.empty()) {
-    return "";
-  }
   if (normalized.front() != '/') {
     normalized.insert(normalized.begin(), '/');
   }
