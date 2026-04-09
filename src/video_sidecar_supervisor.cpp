@@ -123,12 +123,13 @@ std::string VideoSidecarSupervisor::ensureSidecar(const SidecarLaunchSpec & spec
   if (is_shutdown_.load()) {
     throw std::runtime_error("Video sidecar supervisor is shut down.");
   }
-  const std::string publisher_identity = derivePublisherIdentity(config_.bridge_identity, spec);
-
   reapExitedSidecars();
 
-  auto [it, inserted] = ensureSidecarRecord(spec);
-  it->second.publisher_identity = publisher_identity;
+  auto [it, inserted] = sidecars_.try_emplace(spec.sidecar_key);
+  it->second.spec = spec;
+  if (it->second.publisher_identity.empty()) {
+    it->second.publisher_identity = derivePublisherIdentity(config_.bridge_identity, spec);
+  }
   if (it->second.pid <= 0) {
     try {
       restartSidecar(it->first, it->second);
@@ -139,7 +140,7 @@ std::string VideoSidecarSupervisor::ensureSidecar(const SidecarLaunchSpec & spec
       throw;
     }
   }
-  return publisher_identity;
+  return it->second.publisher_identity;
 }
 
 void VideoSidecarSupervisor::stopSidecar(const std::string & sidecar_key)
@@ -150,12 +151,6 @@ void VideoSidecarSupervisor::stopSidecar(const std::string & sidecar_key)
   }
   killSidecar(it->first, it->second);
   sidecars_.erase(it);
-}
-
-bool VideoSidecarSupervisor::isSidecarRunning(const std::string & sidecar_key) const
-{
-  const auto it = sidecars_.find(sidecar_key);
-  return it != sidecars_.end() && it->second.pid > 0;
 }
 
 void VideoSidecarSupervisor::shutdown()
@@ -197,25 +192,15 @@ std::string VideoSidecarSupervisor::keyToSlug(const std::string & key)
   return slug;
 }
 
-std::pair<VideoSidecarSupervisor::SidecarMap::iterator, bool> VideoSidecarSupervisor::ensureSidecarRecord(
-  const SidecarLaunchSpec & spec)
-{
-  auto [it, inserted] = sidecars_.try_emplace(spec.sidecar_key);
-  it->second.spec = spec;
-  return {it, inserted};
-}
-
 VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSidecarLaunch(
   const SidecarRecord & sidecar) const
 {
   PreparedSidecarLaunch launch;
-  launch.publisher_identity = derivePublisherIdentity(config_.bridge_identity, sidecar.spec);
-
   const auto now = std::chrono::system_clock::now();
   const std::string token = mintLiveKitAccessToken(
     config_.api_key,
     config_.api_secret,
-    launch.publisher_identity,
+    sidecar.publisher_identity,
     LiveKitRoomGrant{config_.livekit_room, true, true, false, false},
     now,
     config_.token_ttl);
@@ -351,20 +336,19 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
         kLogger,
         "startup handshake returned an invalid exec status for sidecar_key=%s identity=%s",
         sidecar_key.c_str(),
-        launch.publisher_identity.c_str());
+        sidecar.publisher_identity.c_str());
       throw std::runtime_error("Invalid video sidecar startup handshake response.");
     }
     RCLCPP_ERROR(
       kLogger,
       "execvp() failed for sidecar_key=%s identity=%s: %s",
       sidecar_key.c_str(),
-      launch.publisher_identity.c_str(),
+      sidecar.publisher_identity.c_str(),
       strerror(exec_error));
     throw std::runtime_error("Failed to exec video sidecar process: " + std::string(strerror(exec_error)) + ".");
   }
 
   sidecar.pid = pid;
-  sidecar.publisher_identity = launch.publisher_identity;
   sidecar.token_expires_at = launch.token_expires_at;
   sidecar.spawned_at = SteadyClock::now();
   sidecar.consecutive_unhealthy_checks = 0;
@@ -372,7 +356,7 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
     kLogger,
     "event=video_sidecar_spawned sidecar_key=%s publisher_identity=%s pid=%d",
     sidecar_key.c_str(),
-    launch.publisher_identity.c_str(),
+    sidecar.publisher_identity.c_str(),
     static_cast<int>(pid));
 }
 
@@ -563,6 +547,13 @@ void VideoSidecarSupervisor::restartExpiring()
 
     tryRestartSidecar(entry.first, sidecar, "token_expiring");
   }
+}
+
+void VideoSidecarSupervisor::maintainSidecars()
+{
+  reapExitedSidecars();
+  restartUnhealthy();
+  restartExpiring();
 }
 
 }  // namespace livekit_ros2_bridge

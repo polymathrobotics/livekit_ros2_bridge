@@ -392,10 +392,6 @@ void SubscriptionRegistry::sweepExpiredLeases()
   if (is_shutdown_.load()) {
     return;
   }
-  if (video_sidecar_supervisor_ != nullptr) {
-    video_sidecar_supervisor_->reapExitedSidecars();
-  }
-
   const auto now = Clock::now();
   removeRequesterLeasesIf(
     [now](const std::string &, const RequesterLease & requester_lease) { return now >= requester_lease.expiry; },
@@ -403,8 +399,7 @@ void SubscriptionRegistry::sweepExpiredLeases()
     now);
 
   if (video_sidecar_supervisor_ != nullptr) {
-    video_sidecar_supervisor_->restartUnhealthy();
-    video_sidecar_supervisor_->restartExpiring();
+    video_sidecar_supervisor_->maintainSidecars();
   }
 }
 

@@ -39,7 +39,7 @@ using SidecarCommandBuilder = std::function<std::vector<std::string>(
 using PublisherHealthCheck = std::function<bool(const std::string & publisher_identity)>;
 
 // Owns the managed video sidecar child process for each sidecar_key.
-// Callers drive maintenance by invoking reap/restart methods; the supervisor does not poll in the background.
+// Callers drive maintenance by invoking one maintenance cycle; the supervisor does not poll in the background.
 class VideoSidecarSupervisor final
 {
 public:
@@ -50,9 +50,9 @@ public:
     std::string api_key;
     std::string api_secret;
     std::chrono::seconds token_ttl{3600};
-    // restartExpiring() clamps this to at most half of token_ttl to avoid immediate refresh churn.
+    // maintainSidecars() clamps this to at most half of token_ttl to avoid immediate refresh churn.
     std::chrono::seconds token_refresh_margin{300};
-    // restartUnhealthy() ignores missing publications until a fresh sidecar has had time to join the room.
+    // maintainSidecars() ignores missing publications until a fresh sidecar has had time to join the room.
     std::chrono::milliseconds health_check_startup_grace{std::chrono::seconds(5)};
     // Consecutive failed health checks required before the managed sidecar is restarted.
     std::size_t unhealthy_restart_threshold{5};
@@ -68,10 +68,7 @@ public:
   std::string ensureSidecar(const SidecarLaunchSpec & spec);
 
   void stopSidecar(const std::string & sidecar_key);
-  bool isSidecarRunning(const std::string & sidecar_key) const;
-  void reapExitedSidecars();
-  void restartUnhealthy();
-  void restartExpiring();
+  void maintainSidecars();
   void shutdown();
 
 private:
@@ -94,7 +91,6 @@ private:
 
   struct PreparedSidecarLaunch
   {
-    std::string publisher_identity;
     std::vector<std::string> argv;
     // Token lifetime for the replacement child prepared before any running child is killed.
     std::chrono::system_clock::time_point token_expires_at;
@@ -103,7 +99,9 @@ private:
   static std::string derivePublisherIdentity(const std::string & bridge_identity, const SidecarLaunchSpec & spec);
   static std::string keyToSlug(const std::string & key);
 
-  std::pair<SidecarMap::iterator, bool> ensureSidecarRecord(const SidecarLaunchSpec & spec);
+  void reapExitedSidecars();
+  void restartUnhealthy();
+  void restartExpiring();
   void restartSidecar(const std::string & sidecar_key, SidecarRecord & sidecar);
   void tryRestartSidecar(const std::string & sidecar_key, SidecarRecord & sidecar, const char * reason);
   PreparedSidecarLaunch prepareSidecarLaunch(const SidecarRecord & sidecar) const;

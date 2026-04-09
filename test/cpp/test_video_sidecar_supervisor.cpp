@@ -166,7 +166,6 @@ TEST(VideoSidecarSupervisorTest, EnsureSidecarSpawnsOnceAndReusesRunningSidecar)
 
   EXPECT_EQ(first, "bridge-test-video-camera-front");
   EXPECT_EQ(first, second);
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   EXPECT_EQ(spawn_count, 1);
 
   supervisor.shutdown();
@@ -180,15 +179,12 @@ TEST(VideoSidecarSupervisorTest, EnsureSidecarRespawnsStoppedTopicAndKeepsIdenti
 
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
   const std::string first = supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
 
   supervisor.stopSidecar(spec.sidecar_key);
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
 
   const std::string second = supervisor.ensureSidecar(spec);
 
   EXPECT_EQ(first, second);
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   EXPECT_EQ(spawn_count, 2);
 
   supervisor.shutdown();
@@ -201,16 +197,12 @@ TEST(VideoSidecarSupervisorTest, ConfiguredSourceUsesCanonicalSidecarKeyForStopA
   const auto configured_spec = makeConfiguredSpec("/sources/front");
   const std::string first = supervisor.ensureSidecar(configured_spec);
 
-  ASSERT_TRUE(supervisor.isSidecarRunning(configured_spec.sidecar_key));
-
   supervisor.stopSidecar(configured_spec.sidecar_key);
-  ASSERT_FALSE(supervisor.isSidecarRunning(configured_spec.sidecar_key));
 
   const std::string second = supervisor.ensureSidecar(configured_spec);
 
   EXPECT_EQ(first, "bridge-test-video-source-sources-front");
   EXPECT_EQ(second, first);
-  EXPECT_TRUE(supervisor.isSidecarRunning(configured_spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, RejectsInvalidSidecarLaunchSpecSidecarKey)
@@ -236,7 +228,6 @@ TEST(VideoSidecarSupervisorTest, EnsureSidecarThrowsWhenSidecarCommandBuilderRet
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   EXPECT_THROW(supervisor.ensureSidecar(spec), std::runtime_error);
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, EnsureSidecarThrowsWhenExecFailsAfterFork)
@@ -249,7 +240,6 @@ TEST(VideoSidecarSupervisorTest, EnsureSidecarThrowsWhenExecFailsAfterFork)
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   EXPECT_THROW(supervisor.ensureSidecar(spec), std::runtime_error);
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, DistinctSpecsSpawnDistinctSidecarsAndShutdownStopsThem)
@@ -264,14 +254,9 @@ TEST(VideoSidecarSupervisorTest, DistinctSpecsSpawnDistinctSidecarsAndShutdownSt
   const std::string rear_identity = supervisor.ensureSidecar(rear_spec);
 
   EXPECT_NE(front_identity, rear_identity);
-  EXPECT_TRUE(supervisor.isSidecarRunning(front_spec.sidecar_key));
-  EXPECT_TRUE(supervisor.isSidecarRunning(rear_spec.sidecar_key));
   EXPECT_EQ(spawn_count, 2);
 
   supervisor.shutdown();
-
-  EXPECT_FALSE(supervisor.isSidecarRunning(front_spec.sidecar_key));
-  EXPECT_FALSE(supervisor.isSidecarRunning(rear_spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, ShutdownKillsShellScriptGrandchildren)
@@ -345,7 +330,6 @@ TEST(VideoSidecarSupervisorTest, EnsureSidecarRejectsRespawnAfterShutdown)
 
   EXPECT_THROW(supervisor.ensureSidecar(spec), std::runtime_error);
   EXPECT_EQ(spawn_count, 1);
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, RestartExpiringRestartsSidecarWithExpiredToken)
@@ -358,14 +342,12 @@ TEST(VideoSidecarSupervisorTest, RestartExpiringRestartsSidecarWithExpiredToken)
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   ASSERT_EQ(spawn_count, 1);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(700));
 
-  supervisor.restartExpiring();
+  supervisor.maintainSidecars();
 
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   EXPECT_EQ(spawn_count, 2);
 
   supervisor.shutdown();
@@ -385,10 +367,9 @@ TEST(VideoSidecarSupervisorTest, RestartExpiringDoesNotRespawnAfterShutdown)
 
   supervisor.shutdown();
   std::this_thread::sleep_for(std::chrono::milliseconds(700));
-  supervisor.restartExpiring();
+  supervisor.maintainSidecars();
 
   EXPECT_EQ(spawn_count, 1);
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
 }
 
 TEST(VideoSidecarSupervisorTest, RestartUnhealthyRespawnsAfterConfiguredMissThreshold)
@@ -403,16 +384,14 @@ TEST(VideoSidecarSupervisorTest, RestartUnhealthyRespawnsAfterConfiguredMissThre
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   ASSERT_EQ(spawn_count, 1);
 
   healthy = false;
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 1);
 
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 2);
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
 
   supervisor.shutdown();
 }
@@ -428,12 +407,10 @@ TEST(VideoSidecarSupervisorTest, RestartUnhealthyHonorsStartupGrace)
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
 
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
 
   EXPECT_EQ(spawn_count, 1);
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
 
   supervisor.shutdown();
 }
@@ -450,21 +427,20 @@ TEST(VideoSidecarSupervisorTest, RestartUnhealthyResetsMissCountAfterHealthyChec
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
 
   healthy = false;
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 1);
 
   healthy = true;
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 1);
 
   healthy = false;
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 1);
 
-  supervisor.restartUnhealthy();
+  supervisor.maintainSidecars();
   EXPECT_EQ(spawn_count, 2);
 
   supervisor.shutdown();
@@ -491,15 +467,17 @@ TEST(VideoSidecarSupervisorTest, RestartExpiringKeepsRunningSidecarWhenReplaceme
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
-  ASSERT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
   ASSERT_EQ(spawn_count, 1);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(700));
 
   fail_refresh = true;
-  EXPECT_NO_THROW(supervisor.restartExpiring());
+  EXPECT_NO_THROW(supervisor.maintainSidecars());
 
-  EXPECT_TRUE(supervisor.isSidecarRunning(spec.sidecar_key));
+  EXPECT_EQ(spawn_count, 2);
+
+  fail_refresh = false;
+  EXPECT_EQ(supervisor.ensureSidecar(spec), "bridge-test-video-camera-front");
   EXPECT_EQ(spawn_count, 2);
 
   supervisor.shutdown();
@@ -507,14 +485,17 @@ TEST(VideoSidecarSupervisorTest, RestartExpiringKeepsRunningSidecarWhenReplaceme
 
 TEST(VideoSidecarSupervisorTest, ReapChildrenLeavesUnmanagedChildWaitable)
 {
+  int spawn_count = 0;
   auto config = makeTestConfig();
   VideoSidecarSupervisor supervisor(
-    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
+    std::move(config), [&spawn_count](const SidecarLaunchSpec &, const std::string &, const std::string &) {
+      ++spawn_count;
       return std::vector<std::string>{"/bin/sh", "-c", "exit 0"};
     });
   const auto spec = makeRosSpec("/camera/front", "sensor_msgs/msg/Image");
 
   supervisor.ensureSidecar(spec);
+  ASSERT_EQ(spawn_count, 1);
 
   const pid_t unrelated_pid = fork();
   ASSERT_NE(unrelated_pid, -1);
@@ -524,9 +505,9 @@ TEST(VideoSidecarSupervisorTest, ReapChildrenLeavesUnmanagedChildWaitable)
 
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-  supervisor.reapExitedSidecars();
-
-  EXPECT_FALSE(supervisor.isSidecarRunning(spec.sidecar_key));
+  supervisor.maintainSidecars();
+  EXPECT_EQ(supervisor.ensureSidecar(spec), "bridge-test-video-camera-front");
+  EXPECT_EQ(spawn_count, 2);
 
   int unrelated_status = 0;
   ASSERT_EQ(waitpid(unrelated_pid, &unrelated_status, 0), unrelated_pid);

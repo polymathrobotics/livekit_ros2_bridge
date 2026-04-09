@@ -144,14 +144,28 @@ std::vector<std::string> fakeSidecarCommandBuilder(
   return {"sleep", "3600"};
 }
 
+SidecarCommandBuilder makeCountingSidecarCommandBuilder(int & spawn_count)
+{
+  return
+    [&spawn_count](const SidecarLaunchSpec &, const std::string &, const std::string &) -> std::vector<std::string> {
+      ++spawn_count;
+      return {"sleep", "3600"};
+    };
+}
+
 std::string makeRosSidecarKey(const std::string & topic, const std::string & interface_type)
 {
   return resolveRosVideoLaunchSpec(makeDefaultVideoConfig(), topic, interface_type).sidecar_key;
 }
 
-std::string makeConfiguredSidecarKey(const VideoConfig & config, const std::string & external_name)
+SidecarLaunchSpec makeRosSidecarSpec(const std::string & topic, const std::string & interface_type)
 {
-  return resolvePipelineVideoLaunchSpec(config, external_name).sidecar_key;
+  return resolveRosVideoLaunchSpec(makeDefaultVideoConfig(), topic, interface_type);
+}
+
+SidecarLaunchSpec makeConfiguredSidecarSpec(const VideoConfig & config, const std::string & external_name)
+{
+  return resolvePipelineVideoLaunchSpec(config, external_name);
 }
 
 SendCdrMessageFn noopCdrSend()
@@ -382,9 +396,9 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_configured_source_test");
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  const std::string sidecar_key = makeConfiguredSidecarKey(video_config, "/sources/front");
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor, &video_config);
 
@@ -398,7 +412,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   EXPECT_EQ(response.publisher_identity, "bridge-test-video-source-sources-front");
   EXPECT_TRUE(response.track_name.empty());
   EXPECT_TRUE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::External));
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 1);
 }
 
 TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHeartbeatSubscriptions)
@@ -407,10 +421,10 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHea
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_raw_configured_source_test");
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
   const VideoConfig video_config = makeConfiguredVideoConfig();
   const std::string external_name = "/sources/front";
-  const std::string sidecar_key = makeConfiguredSidecarKey(video_config, external_name);
   const SubscriptionRequest raw_subscription{{SubscriptionTargetKind::External, "  //sources//front/  "}, std::nullopt};
   const SubscriptionRequest canonical_subscription{{SubscriptionTargetKind::External, external_name}, std::nullopt};
 
@@ -423,17 +437,20 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHea
   EXPECT_EQ(canonical_response.target.name, external_name);
   EXPECT_EQ(raw_response.publisher_identity, canonical_response.publisher_identity);
   EXPECT_TRUE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 1);
 
   registry.removeRequesterLeases("bob");
 
   EXPECT_TRUE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 1);
 
   registry.removeRequesterLeases("alice");
 
   EXPECT_FALSE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(
+    supervisor.ensureSidecar(makeConfiguredSidecarSpec(video_config, external_name)),
+    "bridge-test-video-source-sources-front");
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatch)
@@ -449,9 +466,9 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   ASSERT_TRUE(waitForTopicType(executor, node, shared_name, "sensor_msgs/msg/BatteryState"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  const std::string sidecar_key = makeConfiguredSidecarKey(video_config, shared_name);
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor, &video_config);
 
@@ -467,7 +484,7 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   EXPECT_EQ(source_response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::Topic));
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::External));
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 1);
 }
 
 TEST(SubscriptionRegistryTest, FailedVideoRestartRenewalDoesNotExtendTopicLifetime)
@@ -493,21 +510,17 @@ TEST(SubscriptionRegistryTest, FailedVideoRestartRenewalDoesNotExtendTopicLifeti
 
   auto config = makeTestConfig();
   VideoSidecarSupervisor supervisor(std::move(config), flaky_sidecar_command_builder);
-  const std::string sidecar_key = makeRosSidecarKey(topic, "sensor_msgs/msg/Image");
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor);
 
   const auto short_lease = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
   registry.renewSubscription("alice", topic, 0, short_lease);
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
   ASSERT_TRUE(registry.hasSubscription(topic));
 
-  supervisor.stopSidecar(sidecar_key);
-  ASSERT_FALSE(supervisor.isSidecarRunning(sidecar_key));
+  supervisor.stopSidecar(makeRosSidecarKey(topic, "sensor_msgs/msg/Image"));
 
   fail_restart = true;
   EXPECT_THROW(registry.renewSubscription("bob", topic, 0, kFarFuture), StreamUnavailableError);
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
   EXPECT_TRUE(registry.hasSubscription(topic));
 
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -515,7 +528,6 @@ TEST(SubscriptionRegistryTest, FailedVideoRestartRenewalDoesNotExtendTopicLifeti
   registry.sweepExpiredLeases();
 
   EXPECT_FALSE(registry.hasSubscription(topic));
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
 }
 
 TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoSidecarSupervisor)
@@ -548,19 +560,21 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesStopsVideoProcess)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
-  const std::string sidecar_key = makeRosSidecarKey(topic, "sensor_msgs/msg/Image");
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor);
 
   const auto past = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   registry.renewSubscription("alice", topic, 0, past);
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   registry.sweepExpiredLeases();
 
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
   EXPECT_FALSE(registry.hasSubscription(topic));
+  EXPECT_EQ(
+    supervisor.ensureSidecar(makeRosSidecarSpec(topic, "sensor_msgs/msg/Image")), "bridge-test-video-camera-front");
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, SweepExpiredLeasesRestartsUnhealthyVideoSidecar)
@@ -588,18 +602,15 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesRestartsUnhealthyVideoSidecar)
   config.unhealthy_restart_threshold = 1U;
   VideoSidecarSupervisor supervisor(
     std::move(config), counting_builder, [&healthy](const std::string &) { return healthy; });
-  const std::string sidecar_key = makeRosSidecarKey(topic, "sensor_msgs/msg/Image");
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
   ASSERT_EQ(spawn_count, 1);
 
   healthy = false;
   registry.sweepExpiredLeases();
 
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
   EXPECT_TRUE(registry.hasSubscription(topic));
   EXPECT_EQ(spawn_count, 2);
 }
@@ -618,8 +629,11 @@ TEST(SubscriptionRegistryTest, FailedUnhealthyVideoRestartKeepsSubscriptionAndSi
 
   bool healthy = true;
   bool fail_restart = false;
+  int spawn_count = 0;
   auto flaky_builder =
-    [&fail_restart](const SidecarLaunchSpec &, const std::string &, const std::string &) -> std::vector<std::string> {
+    [&spawn_count, &fail_restart](
+      const SidecarLaunchSpec &, const std::string &, const std::string &) -> std::vector<std::string> {
+    ++spawn_count;
     if (fail_restart) {
       return {};
     }
@@ -631,26 +645,29 @@ TEST(SubscriptionRegistryTest, FailedUnhealthyVideoRestartKeepsSubscriptionAndSi
   config.unhealthy_restart_threshold = 1U;
   VideoSidecarSupervisor supervisor(
     std::move(config), flaky_builder, [&healthy](const std::string &) { return healthy; });
-  const std::string sidecar_key = makeRosSidecarKey(topic, "sensor_msgs/msg/Image");
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor);
 
   const auto short_lease = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
   registry.renewSubscription("alice", topic, 0, short_lease);
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
   ASSERT_TRUE(registry.hasSubscription(topic));
 
   healthy = false;
   fail_restart = true;
   registry.sweepExpiredLeases();
 
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 2);
   EXPECT_TRUE(registry.hasSubscription(topic));
+
+  healthy = true;
+  fail_restart = false;
+  (void)registry.renewSubscription("bob", topic, 0, kFarFuture);
+  EXPECT_EQ(spawn_count, 2);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   registry.sweepExpiredLeases();
 
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
   EXPECT_FALSE(registry.hasSubscription(topic));
 }
 
@@ -676,8 +693,8 @@ TEST(SubscriptionRegistryTest, RemoveRequesterLeasesPreservesSharedSubscriptions
   ASSERT_TRUE(waitForTopicType(executor, node, shared_video_topic, "sensor_msgs/msg/Image"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
-  const std::string shared_video_sidecar_key = makeRosSidecarKey(shared_video_topic, "sensor_msgs/msg/Image");
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
 
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
@@ -694,14 +711,14 @@ TEST(SubscriptionRegistryTest, RemoveRequesterLeasesPreservesSharedSubscriptions
   registry.renewSubscription("bob", shared_video_topic, 0, kFarFuture);
   ASSERT_TRUE(registry.onCdrTrackPublished(alice_only.track_name, 0));
   ASSERT_TRUE(registry.onCdrTrackPublished(shared_data.track_name, 0));
-  ASSERT_TRUE(supervisor.isSidecarRunning(shared_video_sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   registry.removeRequesterLeases("alice");
 
   EXPECT_FALSE(registry.hasSubscription(alice_only_topic));
   EXPECT_TRUE(registry.hasSubscription(shared_data_topic));
   EXPECT_TRUE(registry.hasSubscription(shared_video_topic));
-  EXPECT_TRUE(supervisor.isSidecarRunning(shared_video_sidecar_key));
+  EXPECT_EQ(spawn_count, 1);
   ASSERT_EQ(unpublished_names.size(), 1U);
   EXPECT_EQ(unpublished_names[0], alice_only.track_name);
 
@@ -726,19 +743,22 @@ TEST(SubscriptionRegistryTest, RemoveRequesterLeasesStopsRequesterOwnedVideoSide
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
-  const std::string sidecar_key = makeRosSidecarKey(topic, "sensor_msgs/msg/Image");
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &supervisor);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
   ASSERT_TRUE(registry.hasSubscription(topic));
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   registry.removeRequesterLeases("alice");
 
   EXPECT_FALSE(registry.hasSubscription(topic));
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(
+    supervisor.ensureSidecar(makeRosSidecarSpec(topic, "sensor_msgs/msg/Image")),
+    "bridge-test-video-camera-remove_requester");
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, ParticipantRefreshReplaysPublishedCdrTrackWithoutDroppingLease)
@@ -871,9 +891,11 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesKeepsRunningVideoProcessOnRefre
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   bool fail_video_refresh = false;
+  int spawn_count = 0;
   auto flaky_sidecar_command_builder =
-    [&fail_video_refresh](
+    [&spawn_count, &fail_video_refresh](
       const SidecarLaunchSpec &, const std::string &, const std::string &) -> std::vector<std::string> {
+    ++spawn_count;
     if (fail_video_refresh) {
       throw std::runtime_error("refresh failed");
     }
@@ -884,7 +906,6 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesKeepsRunningVideoProcessOnRefre
   config.token_ttl = std::chrono::seconds(2);
   config.token_refresh_margin = std::chrono::seconds(1);
   VideoSidecarSupervisor supervisor(std::move(config), flaky_sidecar_command_builder);
-  const std::string sidecar_key = makeRosSidecarKey(video_topic, "sensor_msgs/msg/Image");
 
   std::vector<std::string> published_names;
   std::vector<std::string> unpublished_names;
@@ -901,7 +922,7 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesKeepsRunningVideoProcessOnRefre
   registry.onCdrTrackPublished(published_names[0], 0);
 
   registry.renewSubscription("alice", video_topic, 0, kFarFuture);
-  ASSERT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   fail_video_refresh = true;
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -912,7 +933,11 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesKeepsRunningVideoProcessOnRefre
   ASSERT_EQ(unpublished_names.size(), 1U);
   EXPECT_EQ(unpublished_names[0], published_names[0]);
   EXPECT_TRUE(registry.hasSubscription(video_topic));
-  EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));
+  EXPECT_EQ(spawn_count, 2);
+
+  fail_video_refresh = false;
+  (void)registry.renewSubscription("alice", video_topic, 0, kFarFuture);
+  EXPECT_EQ(spawn_count, 2);
 
   registry.shutdown();
 }
@@ -934,8 +959,8 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
-  const std::string video_sidecar_key = makeRosSidecarKey(video_topic, "sensor_msgs/msg/Image");
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
 
   std::vector<std::string> published_track_names;
   std::vector<std::string> unpublished_track_names;
@@ -953,15 +978,18 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   EXPECT_TRUE(registry.onCdrTrackPublished(published_track_names[0], 0));
   ASSERT_TRUE(registry.hasSubscription(data_topic));
   ASSERT_TRUE(registry.hasSubscription(video_topic));
-  ASSERT_TRUE(supervisor.isSidecarRunning(video_sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   registry.resetSessionState();
 
   EXPECT_FALSE(registry.hasSubscription(data_topic));
   EXPECT_FALSE(registry.hasSubscription(video_topic));
-  EXPECT_FALSE(supervisor.isSidecarRunning(video_sidecar_key));
   ASSERT_EQ(unpublished_track_names.size(), 1U);
   EXPECT_EQ(unpublished_track_names[0], published_track_names[0]);
+  EXPECT_EQ(
+    supervisor.ensureSidecar(makeRosSidecarSpec(video_topic, "sensor_msgs/msg/Image")),
+    "bridge-test-video-camera-front");
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, UnpublishesDataTrackWhenLastRequesterExpires)
@@ -1128,7 +1156,6 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
   auto config = makeTestConfig();
   VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  const std::string sidecar_key = makeConfiguredSidecarKey(video_config, "/sources/front");
 
   SubscriptionRegistry registry(
     *node,
@@ -1153,7 +1180,6 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
 
   EXPECT_TRUE(published_track_names.empty());
   EXPECT_FALSE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::External));
-  EXPECT_FALSE(supervisor.isSidecarRunning(sidecar_key));
 }
 
 TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPublishedDataTracks)
@@ -1177,8 +1203,8 @@ TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPub
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   auto config = makeTestConfig();
-  VideoSidecarSupervisor supervisor(std::move(config), fakeSidecarCommandBuilder);
-  const std::string video_sidecar_key = makeRosSidecarKey(video_topic, "sensor_msgs/msg/Image");
+  int spawn_count = 0;
+  VideoSidecarSupervisor supervisor(std::move(config), makeCountingSidecarCommandBuilder(spawn_count));
 
   std::vector<std::string> published_names;
   std::vector<std::string> unpublished_names;
@@ -1200,16 +1226,19 @@ TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPub
   ASSERT_TRUE(registry.hasSubscription(published_topic));
   ASSERT_TRUE(registry.hasSubscription(pending_topic));
   ASSERT_TRUE(registry.hasSubscription(video_topic));
-  ASSERT_TRUE(supervisor.isSidecarRunning(video_sidecar_key));
+  ASSERT_EQ(spawn_count, 1);
 
   registry.shutdown();
 
   EXPECT_FALSE(registry.hasSubscription(published_topic));
   EXPECT_FALSE(registry.hasSubscription(pending_topic));
   EXPECT_FALSE(registry.hasSubscription(video_topic));
-  EXPECT_FALSE(supervisor.isSidecarRunning(video_sidecar_key));
   ASSERT_EQ(unpublished_names.size(), 1U);
   EXPECT_EQ(unpublished_names[0], published_names[0]);
+  EXPECT_EQ(
+    supervisor.ensureSidecar(makeRosSidecarSpec(video_topic, "sensor_msgs/msg/Image")),
+    "bridge-test-video-camera-shutdown_video");
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, ShutdownPreventsLeaseRecreation)
