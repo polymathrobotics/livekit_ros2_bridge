@@ -53,11 +53,12 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
   return [method_name, handler](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
     const char * caller_identity =
       invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
+    const char * request_id = invocation.request_id.empty() ? "<unknown>" : invocation.request_id.c_str();
     RCLCPP_INFO(
       kRoomSessionLogger,
       "Received LiveKit RPC method=%s request_id=%s caller_identity=%s payload_bytes=%zu",
       method_name.c_str(),
-      invocation.request_id.c_str(),
+      request_id,
       caller_identity,
       invocation.payload.size());
 
@@ -65,15 +66,28 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
       return handler(
         RpcInvocation{
           invocation.caller_identity,
+          invocation.request_id,
           invocation.payload,
         });
     } catch (const RpcHandlerError & exc) {
       throw livekit::RpcError(exc.code(), exc.what());
     } catch (const std::exception & exc) {
-      RCLCPP_ERROR(kRoomSessionLogger, "RPC method %s failed: %s", method_name.c_str(), exc.what());
+      RCLCPP_ERROR(
+        kRoomSessionLogger,
+        "event=rpc_request_failed reason=internal method=%s request_id=%s requester_identity=%s error=%s",
+        method_name.c_str(),
+        request_id,
+        caller_identity,
+        exc.what());
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     } catch (...) {
-      RCLCPP_ERROR(kRoomSessionLogger, "RPC method %s failed with unknown exception", method_name.c_str());
+      RCLCPP_ERROR(
+        kRoomSessionLogger,
+        "event=rpc_request_failed reason=internal method=%s request_id=%s requester_identity=%s "
+        "error=unknown_exception",
+        method_name.c_str(),
+        request_id,
+        caller_identity);
       throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
     }
   };

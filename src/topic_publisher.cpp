@@ -63,7 +63,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   if (is_shutdown_.load()) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
-      "event=publish_ignored reason=shutdown topic=%s requester_identity=%s",
+      "event=publish_request_rejected reason=shutdown topic=%s requester_identity=%s",
       topic.c_str(),
       requester_identity.c_str());
     return;
@@ -72,7 +72,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
     RCLCPP_WARN(
       kTopicPublisherLogger,
-      "Ignoring publish command for denied topic: %s requester_identity=%s",
+      "event=publish_request_rejected reason=forbidden topic=%s requester_identity=%s",
       topic.c_str(),
       requester_identity.c_str());
     return;
@@ -82,7 +82,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
   } catch (const std::exception & exc) {
-    RCLCPP_WARN(kTopicPublisherLogger, "Rejecting publish command for topic=%s: %s", topic.c_str(), exc.what());
+    RCLCPP_WARN(
+      kTopicPublisherLogger,
+      "event=publish_request_rejected reason=invalid_request topic=%s requester_identity=%s interface_type=%s "
+      "error=%s",
+      topic.c_str(),
+      requester_identity.c_str(),
+      command.interface_type.c_str(),
+      exc.what());
     return;
   }
 
@@ -93,8 +100,9 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     RCLCPP_ERROR(
       kTopicPublisherLogger,
-      "Failed publishing ROS message to topic=%s type=%s: %s",
+      "event=publish_request_failed reason=internal topic=%s requester_identity=%s interface_type=%s error=%s",
       topic.c_str(),
+      requester_identity.c_str(),
       interface_type.c_str(),
       exc.what());
     return;

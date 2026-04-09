@@ -83,7 +83,23 @@ private:
 
 struct RpcInvocation
 {
+  RpcInvocation() = default;
+
+  // Preserve the historical two-argument construction shape used by tests and
+  // internal call sites that only provide caller identity plus payload.
+  RpcInvocation(std::string caller_identity_in, std::string payload_in)
+  : caller_identity(std::move(caller_identity_in))
+  , payload(std::move(payload_in))
+  {}
+
+  RpcInvocation(std::string caller_identity_in, std::string request_id_in, std::string payload_in)
+  : caller_identity(std::move(caller_identity_in))
+  , request_id(std::move(request_id_in))
+  , payload(std::move(payload_in))
+  {}
+
   std::string caller_identity;
+  std::string request_id;
   std::string payload;
 };
 

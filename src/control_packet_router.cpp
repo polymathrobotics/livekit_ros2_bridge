@@ -50,7 +50,9 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     } catch (const std::exception & exc) {
       RCLCPP_WARN(
         logger_,
-        "Ignoring malformed heartbeat from requester_identity=%s: %s",
+        "event=control_packet_rejected reason=malformed_heartbeat control_topic=%s requester_identity=%s "
+        "error=%s",
+        packet.control_topic.c_str(),
         packet.requester_identity.c_str(),
         exc.what());
       return;
@@ -61,7 +63,9 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     } catch (const std::exception & exc) {
       RCLCPP_WARN(
         logger_,
-        "Ignoring invalid heartbeat from requester_identity=%s: %s",
+        "event=control_packet_rejected reason=invalid_heartbeat control_topic=%s requester_identity=%s "
+        "error=%s",
+        packet.control_topic.c_str(),
         packet.requester_identity.c_str(),
         exc.what());
     }
@@ -70,7 +74,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 
   if (packet.control_topic == protocol::kControlTopicPublish) {
     if (packet.requester_identity.empty()) {
-      RCLCPP_WARN(logger_, "Ignoring %s packet without requester identity", packet.control_topic.c_str());
+      RCLCPP_WARN(
+        logger_,
+        "event=control_packet_rejected reason=missing_requester_identity control_topic=%s",
+        packet.control_topic.c_str());
       return;
     }
 
@@ -79,7 +86,9 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     } catch (const std::exception & exc) {
       RCLCPP_WARN(
         logger_,
-        "Ignoring invalid publish command from requester_identity=%s: %s",
+        "event=control_packet_rejected reason=invalid_publish_command control_topic=%s requester_identity=%s "
+        "error=%s",
+        packet.control_topic.c_str(),
         packet.requester_identity.c_str(),
         exc.what());
     }
