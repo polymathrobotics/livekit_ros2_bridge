@@ -52,35 +52,33 @@ public:
   bool allows(AccessOperation op, std::string_view name) const;
 
 private:
-  struct ParsedAllowlist
+  struct ParsedRuleEntries
   {
-    // True when the configured allowlist contained `"*"`.
-    bool allow_all = false;
-    // Normalized exact or subtree patterns. `"*"` is represented only by `allow_all`.
+    // True when the configured entries contained `"*"`.
+    bool matches_all = false;
+    // Normalized exact or subtree patterns. `"*"` is represented only by `matches_all`.
     std::set<std::string> patterns;
   };
 
-  static ParsedAllowlist parseAllowlist(const std::vector<std::string> & entries);
-  static std::set<std::string> parseDenylist(const std::vector<std::string> & entries);
-  static bool matchesAny(std::string_view name, const std::set<std::string> & entries);
-  static bool isAllowed(
-    std::string_view name,
-    bool allow_all,
-    const std::set<std::string> & allowlist,
-    const std::set<std::string> & denylist);
+  struct ParsedRuleset
+  {
+    ParsedRuleEntries allow;
+    ParsedRuleEntries deny;
+  };
 
-  // Normalized publish allow rules plus the allow-all sentinel.
-  ParsedAllowlist publish_allow_;
-  // Normalized publish deny rules. Denies always override allows.
-  std::set<std::string> publish_deny_;
-  // Normalized subscribe allow rules plus the allow-all sentinel.
-  ParsedAllowlist subscribe_allow_;
-  // Normalized subscribe deny rules. Denies always override allows.
-  std::set<std::string> subscribe_deny_;
-  // Normalized service-call allow rules plus the allow-all sentinel.
-  ParsedAllowlist service_allow_;
-  // Normalized service-call deny rules. Denies always override allows.
-  std::set<std::string> service_deny_;
+  static ParsedRuleEntries parseRuleEntries(const std::vector<std::string> & entries);
+  static ParsedRuleset parseRuleset(
+    const std::vector<std::string> & allow_entries,
+    const std::vector<std::string> & deny_entries);
+  static bool matchesAny(std::string_view name, const std::set<std::string> & entries);
+  static bool isAllowed(std::string_view name, const ParsedRuleset & ruleset);
+
+  // Normalized publish rules. Denies always override allows.
+  ParsedRuleset publish_rules_;
+  // Normalized subscribe rules. Denies always override allows.
+  ParsedRuleset subscribe_rules_;
+  // Normalized service-call rules. Denies always override allows.
+  ParsedRuleset service_rules_;
 };
 
 }  // namespace livekit_ros2_bridge

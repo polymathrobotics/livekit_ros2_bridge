@@ -60,6 +60,8 @@ TEST(AccessPolicyTest, AllowAllStillHonorsDenylistEntries)
 
   EXPECT_TRUE(exact_deny_policy.allows(AccessOperation::Subscribe, "/ok"));
   EXPECT_FALSE(exact_deny_policy.allows(AccessOperation::Subscribe, "/blocked"));
+  EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/"));
+  EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/camera"));
   EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
@@ -72,6 +74,16 @@ TEST(AccessPolicyTest, TrimsAndNormalizesConfiguredEntries)
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/stream"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/front/blocked"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/blocked/tree/leaf"));
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/other"));
+}
+
+TEST(AccessPolicyTest, IgnoresBlankConfiguredEntriesWithoutChangingPolicySemantics)
+{
+  const AccessPolicy policy = makeSubscribePolicy(
+    {"   ", "\t", "/camera/image"}, {"   ", "\n", "  /camera/blocked  "});
+
+  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/image"));
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/blocked"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/other"));
 }
 

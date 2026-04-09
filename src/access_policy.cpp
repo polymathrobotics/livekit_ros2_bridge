@@ -21,33 +21,6 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
-{
-
-template <typename WildcardHandler, typename NormalizedEntryHandler>
-void parseAccessEntries(
-  const std::vector<std::string> & entries,
-  WildcardHandler && wildcard_handler,
-  NormalizedEntryHandler && normalized_entry_handler)
-{
-  for (const auto & entry : entries) {
-    const std::string token = trim(entry);
-    if (token.empty()) {
-      continue;
-    }
-    if (token == "*") {
-      wildcard_handler();
-      continue;
-    }
-    const std::string normalized = normalizeRosResourceName(token);
-    if (!normalized.empty()) {
-      normalized_entry_handler(normalized);
-    }
-  }
-}
-
-}  // namespace
-
 AccessPolicy::AccessPolicy(
   const std::vector<std::string> & publish_allow,
   const std::vector<std::string> & publish_deny,
@@ -55,12 +28,9 @@ AccessPolicy::AccessPolicy(
   const std::vector<std::string> & subscribe_deny,
   const std::vector<std::string> & service_allow,
   const std::vector<std::string> & service_deny)
-: publish_allow_(parseAllowlist(publish_allow))
-, publish_deny_(parseDenylist(publish_deny))
-, subscribe_allow_(parseAllowlist(subscribe_allow))
-, subscribe_deny_(parseDenylist(subscribe_deny))
-, service_allow_(parseAllowlist(service_allow))
-, service_deny_(parseDenylist(service_deny))
+: publish_rules_(parseRuleset(publish_allow, publish_deny))
+, subscribe_rules_(parseRuleset(subscribe_allow, subscribe_deny))
+, service_rules_(parseRuleset(service_allow, service_deny))
 {}
 
 bool AccessPolicy::allows(AccessOperation op, std::string_view name) const
@@ -72,34 +42,45 @@ bool AccessPolicy::allows(AccessOperation op, std::string_view name) const
 
   switch (op) {
     case AccessOperation::Publish:
-      return isAllowed(normalized, publish_allow_.allow_all, publish_allow_.patterns, publish_deny_);
+      return isAllowed(normalized, publish_rules_);
     case AccessOperation::Subscribe:
-      return isAllowed(normalized, subscribe_allow_.allow_all, subscribe_allow_.patterns, subscribe_deny_);
+      return isAllowed(normalized, subscribe_rules_);
     case AccessOperation::CallService:
-      return isAllowed(normalized, service_allow_.allow_all, service_allow_.patterns, service_deny_);
+      return isAllowed(normalized, service_rules_);
   }
 
   return false;
 }
 
-AccessPolicy::ParsedAllowlist AccessPolicy::parseAllowlist(const std::vector<std::string> & entries)
+AccessPolicy::ParsedRuleEntries AccessPolicy::parseRuleEntries(const std::vector<std::string> & entries)
 {
-  ParsedAllowlist parsed;
-  parseAccessEntries(
-    entries,
-    [&parsed]() { parsed.allow_all = true; },
-    [&parsed](const std::string & normalized) { parsed.patterns.insert(normalized); });
+  ParsedRuleEntries parsed;
+  for (const auto & entry : entries) {
+    const std::string token = trim(entry);
+    if (token.empty()) {
+      continue;
+    }
+    if (token == "*") {
+      parsed.matches_all = true;
+      continue;
+    }
+
+    const std::string normalized = normalizeRosResourceName(token);
+    if (!normalized.empty()) {
+      parsed.patterns.insert(normalized);
+    }
+  }
+
   return parsed;
 }
 
-std::set<std::string> AccessPolicy::parseDenylist(const std::vector<std::string> & entries)
+AccessPolicy::ParsedRuleset AccessPolicy::parseRuleset(
+  const std::vector<std::string> & allow_entries,
+  const std::vector<std::string> & deny_entries)
 {
-  std::set<std::string> parsed;
-  parseAccessEntries(
-    entries,
-    // Represent deny-all with the same subtree matcher used for explicit `.../*` entries.
-    [&parsed]() { parsed.insert("/*"); },
-    [&parsed](const std::string & normalized) { parsed.insert(normalized); });
+  ParsedRuleset parsed;
+  parsed.allow = parseRuleEntries(allow_entries);
+  parsed.deny = parseRuleEntries(deny_entries);
   return parsed;
 }
 
@@ -110,22 +91,18 @@ bool AccessPolicy::matchesAny(std::string_view name, const std::set<std::string>
   });
 }
 
-bool AccessPolicy::isAllowed(
-  std::string_view name,
-  bool allow_all,
-  const std::set<std::string> & allowlist,
-  const std::set<std::string> & denylist)
+bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & ruleset)
 {
-  if (allow_all) {
-    return !matchesAny(name, denylist);
-  }
-  if (allowlist.empty()) {
+  if (ruleset.deny.matches_all || matchesAny(name, ruleset.deny.patterns)) {
     return false;
   }
-  if (matchesAny(name, denylist)) {
+  if (ruleset.allow.matches_all) {
+    return true;
+  }
+  if (ruleset.allow.patterns.empty()) {
     return false;
   }
-  return matchesAny(name, allowlist);
+  return matchesAny(name, ruleset.allow.patterns);
 }
 
 }  // namespace livekit_ros2_bridge
