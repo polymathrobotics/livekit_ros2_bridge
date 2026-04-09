@@ -53,38 +53,6 @@ const std::set<std::string> kPrimitiveTypes = {
   "octet",
 };
 
-struct ParsedInterfaceType
-{
-  std::string package;
-  std::string kind;
-  std::string name;
-};
-
-/// Parse "sensor_msgs/msg/BatteryState" into {package, kind, name}.
-ParsedInterfaceType parseInterfaceType(const std::string & interface_type)
-{
-  // Expected: "package/kind/Name" where kind is msg, srv, or action
-  const auto first_slash = interface_type.find('/');
-  if (first_slash == std::string::npos) {
-    throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': expected package/kind/Name");
-  }
-  const auto second_slash = interface_type.find('/', first_slash + 1);
-  if (second_slash == std::string::npos) {
-    throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': expected package/kind/Name");
-  }
-
-  ParsedInterfaceType result;
-  result.package = interface_type.substr(0, first_slash);
-  result.kind = interface_type.substr(first_slash + 1, second_slash - first_slash - 1);
-  result.name = interface_type.substr(second_slash + 1);
-
-  if (result.package.empty() || result.kind.empty() || result.name.empty()) {
-    throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': empty component");
-  }
-
-  return result;
-}
-
 std::string readInterfaceDefinitionFile(const std::string & path)
 {
   std::ifstream file(path);
@@ -96,15 +64,37 @@ std::string readInterfaceDefinitionFile(const std::string & path)
   return contents.str();
 }
 
-std::string resolveInterfaceDefinitionPath(const ParsedInterfaceType & parsed)
+[[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
 {
+  throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);
+}
+
+std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
+{
+  // Expected: "package/kind/Name" where kind is msg, srv, or action
+  const auto first_slash = interface_type.find('/');
+  if (first_slash == std::string::npos) {
+    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+  }
+  const auto second_slash = interface_type.find('/', first_slash + 1);
+  if (second_slash == std::string::npos) {
+    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+  }
+
+  const std::string package = interface_type.substr(0, first_slash);
+  const std::string kind = interface_type.substr(first_slash + 1, second_slash - first_slash - 1);
+  const std::string name = interface_type.substr(second_slash + 1);
+  if (package.empty() || kind.empty() || name.empty()) {
+    throwInvalidInterfaceType(interface_type, "empty component");
+  }
+
   std::string share_dir;
   try {
-    share_dir = ament_index_cpp::get_package_share_directory(parsed.package);
+    share_dir = ament_index_cpp::get_package_share_directory(package);
   } catch (const std::exception &) {
-    throw std::runtime_error("Package '" + parsed.package + "' not found in ament index");
+    throw std::runtime_error("Package '" + package + "' not found in ament index");
   }
-  return share_dir + "/" + parsed.kind + "/" + parsed.name + "." + parsed.kind;
+  return share_dir + "/" + kind + "/" + name + "." + kind;
 }
 
 /// Extract the base type from a field type string, stripping array suffixes.
@@ -197,8 +187,7 @@ void collectDependencies(
   }
   visited.insert(interface_type);
 
-  const auto parsed = parseInterfaceType(interface_type);
-  const std::string path = resolveInterfaceDefinitionPath(parsed);
+  const std::string path = resolveInterfaceDefinitionPath(interface_type);
   const std::string definition = readInterfaceDefinitionFile(path);
 
   // Record each schema before recursing so callers can keep the requested type first and the

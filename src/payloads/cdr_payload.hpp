@@ -31,8 +31,6 @@ std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const cha
 
 /// Serialize raw ROS 2 CDR bytes as `{ "content_type", "payload_base64" }`.
 nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload);
-/// Serialize a serialized ROS message using the same stable JSON schema as the byte overload.
-nlohmann::json serializeCdrPayload(const rclcpp::SerializedMessage & payload);
 
 /// Copy raw CDR bytes into an owning `rclcpp::SerializedMessage` with `buffer_length == payload.size()`.
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload);

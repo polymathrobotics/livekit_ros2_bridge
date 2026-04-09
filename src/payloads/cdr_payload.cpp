@@ -118,11 +118,6 @@ nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload)
   };
 }
 
-nlohmann::json serializeCdrPayload(const rclcpp::SerializedMessage & payload)
-{
-  return serializeCdrPayload(serializedMessageBytes(payload));
-}
-
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
 {
   rclcpp::SerializedMessage serialized(payload.size());

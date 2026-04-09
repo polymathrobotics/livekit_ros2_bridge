@@ -27,20 +27,15 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-ServiceCallRequest parseServiceCallRequestJson(const nlohmann::json & payload)
-{
-  return parseServiceCallRequest(payload.dump());
-}
-
 TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 {
-  const auto request = parseServiceCallRequestJson(
+  const auto request = parseServiceCallRequest(
     nlohmann::json{
       {"service", "  set_bool  "},
       {"interface_type", "  std_srvs/srv/SetBool  "},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
       {"timeout_ms", 500},
-    });
+    }.dump());
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
@@ -50,11 +45,11 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 
 TEST(ServiceCallPayloadsTest, ParsesRequestWithoutOptionalFields)
 {
-  const auto request = parseServiceCallRequestJson(
+  const auto request = parseServiceCallRequest(
     nlohmann::json{
       {"service", "/trigger"},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    });
+    }.dump());
 
   EXPECT_EQ(request.service, "/trigger");
   EXPECT_TRUE(request.interface_type.empty());
@@ -65,11 +60,11 @@ TEST(ServiceCallPayloadsTest, ParsesRequestWithoutOptionalFields)
 TEST(ServiceCallPayloadsTest, RejectsEmptyRequestPayload)
 {
   EXPECT_THROW(
-    parseServiceCallRequestJson(
+    parseServiceCallRequest(
       nlohmann::json{
         {"service", "/foo"},
         {"request", {{"content_type", "application/x-ros-cdr"}, {"payload_base64", ""}}},
-      }),
+      }.dump()),
     std::invalid_argument);
 }
 
@@ -92,7 +87,7 @@ TEST(ServiceCallPayloadsTest, RejectsMissingOrBlankService)
     }};
 
   for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequestJson(payload), std::invalid_argument);
+    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
   }
 }
 
@@ -103,7 +98,7 @@ TEST(ServiceCallPayloadsTest, RejectsMissingOrMalformedRequest)
     nlohmann::json{{"service", "/foo"}, {"request", nlohmann::json::array({1, 2})}}};
 
   for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequestJson(payload), std::invalid_argument);
+    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
   }
 }
 
@@ -133,18 +128,18 @@ TEST(ServiceCallPayloadsTest, RejectsMistypedOptionalFields)
     }};
 
   for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequestJson(payload), std::invalid_argument);
+    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
   }
 }
 
 TEST(ServiceCallPayloadsTest, IgnoresEmptyTypeString)
 {
-  const auto request = parseServiceCallRequestJson(
+  const auto request = parseServiceCallRequest(
     nlohmann::json{
       {"service", "/foo"},
       {"interface_type", ""},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    });
+    }.dump());
 
   EXPECT_TRUE(request.interface_type.empty());
 }

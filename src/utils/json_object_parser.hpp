@@ -24,6 +24,31 @@
 namespace livekit_ros2_bridge
 {
 
+namespace detail
+{
+
+/// Parse a JSON string value, trim surrounding whitespace, and return `std::nullopt` when the
+/// trimmed result is empty. When `null_is_absent` is true, JSON null is also treated as absent.
+inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringValue(
+  const nlohmann::json & value, const char * invalid_message, bool null_is_absent = false)
+{
+  if (null_is_absent && value.is_null()) {
+    return std::nullopt;
+  }
+  if (!value.is_string()) {
+    throw std::invalid_argument(invalid_message);
+  }
+
+  const auto trimmed = trim(value.get_ref<const std::string &>());
+  if (trimmed.empty()) {
+    return std::nullopt;
+  }
+
+  return trimmed;
+}
+
+}  // namespace detail
+
 /// Parse `payload` as JSON and require the top-level value to be an object.
 /// The supplied error strings are forwarded unchanged when parsing fails or the root is not an object.
 inline nlohmann::json parseJsonObject(
@@ -53,12 +78,11 @@ inline std::string parseRequiredNonEmptyTrimmedStringField(
     throw std::invalid_argument(required_message);
   }
 
-  const auto value = trim(field_it->get_ref<const std::string &>());
-  if (value.empty()) {
-    throw std::invalid_argument(required_message);
+  if (const auto value = detail::parseOptionalNonEmptyTrimmedStringValue(*field_it, required_message)) {
+    return *value;
   }
 
-  return value;
+  throw std::invalid_argument(required_message);
 }
 
 /// Read an optional string field and return the trimmed value when non-empty.
@@ -68,19 +92,10 @@ inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringField(
   const nlohmann::json & json, const char * field_name, const char * invalid_message, bool null_is_absent = false)
 {
   const auto field_it = json.find(field_name);
-  if (field_it == json.end() || (null_is_absent && field_it->is_null())) {
+  if (field_it == json.end()) {
     return std::nullopt;
   }
-  if (!field_it->is_string()) {
-    throw std::invalid_argument(invalid_message);
-  }
-
-  const auto value = trim(field_it->get_ref<const std::string &>());
-  if (value.empty()) {
-    return std::nullopt;
-  }
-
-  return value;
+  return detail::parseOptionalNonEmptyTrimmedStringValue(*field_it, invalid_message, null_is_absent);
 }
 
 }  // namespace livekit_ros2_bridge

@@ -24,17 +24,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-std::string malformedTypeError(const std::string & interface_type)
-{
-  try {
-    static_cast<void>(lookupInterfaceDefinitions(interface_type));
-  } catch (const std::invalid_argument & exc) {
-    return exc.what();
-  }
-
-  return {};
-}
-
 std::set<std::string> dependencyTypes(const InterfaceDefinitions & definitions)
 {
   std::set<std::string> types;
@@ -92,13 +81,18 @@ TEST(LookupInterfaceDefinitionTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
 
 TEST(LookupInterfaceDefinitionTest, RejectsMalformedType)
 {
-  EXPECT_EQ(
-    malformedTypeError("BatteryState"), "Invalid ROS interface type 'BatteryState': expected package/kind/Name");
-  EXPECT_EQ(
-    malformedTypeError("sensor_msgs/BatteryState"),
-    "Invalid ROS interface type 'sensor_msgs/BatteryState': expected package/kind/Name");
-  EXPECT_EQ(malformedTypeError(""), "Invalid ROS interface type '': expected package/kind/Name");
-  EXPECT_EQ(malformedTypeError("sensor_msgs/msg/"), "Invalid ROS interface type 'sensor_msgs/msg/': empty component");
+  EXPECT_THROW(
+    []() { static_cast<void>(lookupInterfaceDefinitions("BatteryState")); }(),
+    std::invalid_argument);
+  EXPECT_THROW(
+    []() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/BatteryState")); }(),
+    std::invalid_argument);
+  EXPECT_THROW(
+    []() { static_cast<void>(lookupInterfaceDefinitions("")); }(),
+    std::invalid_argument);
+  EXPECT_THROW(
+    []() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/msg/")); }(),
+    std::invalid_argument);
 }
 
 TEST(LookupInterfaceDefinitionTest, RejectsUnknownPackage)

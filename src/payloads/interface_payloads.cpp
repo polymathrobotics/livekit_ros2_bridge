@@ -44,17 +44,13 @@ std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payloa
     if (!element.is_string()) {
       throw std::invalid_argument("interface_types entries must be strings");
     }
-    auto trimmed = element.get<std::string>();
-    const auto start = trimmed.find_first_not_of(" \t\n\r");
-    const auto end = trimmed.find_last_not_of(" \t\n\r");
-    if (start == std::string::npos) {
+
+    const auto trimmed =
+      detail::parseOptionalNonEmptyTrimmedStringValue(element, "interface_types entries must be strings");
+    if (!trimmed.has_value()) {
       throw std::invalid_argument("interface_types entries must not be empty");
     }
-    trimmed = trimmed.substr(start, end - start + 1);
-    if (trimmed.empty()) {
-      throw std::invalid_argument("interface_types entries must not be empty");
-    }
-    types.push_back(std::move(trimmed));
+    types.push_back(*trimmed);
   }
 
   if (types.empty()) {
