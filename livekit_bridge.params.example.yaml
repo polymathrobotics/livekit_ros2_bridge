@@ -1,9 +1,14 @@
 # Example starter config for `livekit_ros2_bridge_node`.
 # See `parameters.yaml` for the full parameter list and default values.
 #
-# Copy this file, fill in the values for your environment, then run:
+# Copy this file to `livekit_bridge.params.yaml` (gitignored), fill in the
+# values for your environment, then run:
 #   ros2 run livekit_ros2_bridge livekit_ros2_bridge_node --ros-args \
-#     --params-file /path/to/your_livekit_bridge.params.yaml
+#     --params-file $(pwd)/livekit_bridge.params.yaml
+#
+# The runtime Docker image also expects a local params file instead of building
+# one from env vars. Mount your local file to `/config/livekit_bridge.params.yaml`
+# or set `LIVEKIT_BRIDGE_PARAMS_FILE` to a different in-container path.
 #
 # The bridge will not start until you set:
 # - `livekit.url`: your LiveKit server URL

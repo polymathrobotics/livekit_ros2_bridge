@@ -20,3 +20,6 @@ log/
 
 # Generated parameter module (created by pre-commit)
 livekit_ros2_bridge/parameters.py
+
+# Local bridge config
+livekit_bridge.params.yaml

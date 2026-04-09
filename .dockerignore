@@ -13,3 +13,4 @@ log/
 coverage.xml
 htmlcov/
 livekit_ros2_bridge/parameters.py
+livekit_bridge.params.yaml
