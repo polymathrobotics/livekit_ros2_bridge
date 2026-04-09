@@ -22,7 +22,7 @@ fi
 ros_distro="$1"
 
 case "${ros_distro}" in
-  jazzy|rolling)
+  jazzy|kilted|rolling)
     ;;
   *)
     exit 0

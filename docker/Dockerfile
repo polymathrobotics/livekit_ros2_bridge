@@ -39,7 +39,7 @@ WORKDIR /opt/dev-bootstrap
 
 COPY package.xml /opt/dev-bootstrap/src/livekit_ros2_bridge/package.xml
 
-# Jazzy and Rolling still lag on packages.ros.org main for the
+# Jazzy, Kilted, and Rolling still lag on packages.ros.org main for the
 # generate_parameter_library family. Add ros2-testing, but pin only those
 # packages so the rest of ROS continues to come from the stable main repo.
 RUN /usr/local/bin/configure-parameter-library-apt-pin "${ROS_DISTRO}" \
@@ -86,7 +86,7 @@ WORKDIR /opt/ros_ws
 
 COPY package.xml src/livekit_ros2_bridge/package.xml
 
-# Jazzy and Rolling still lag on packages.ros.org main for the
+# Jazzy, Kilted, and Rolling still lag on packages.ros.org main for the
 # generate_parameter_library family. Add ros2-testing, but pin only those
 # packages so the rest of ROS continues to come from the stable main repo.
 RUN /usr/local/bin/configure-parameter-library-apt-pin "${ROS_DISTRO}" \
