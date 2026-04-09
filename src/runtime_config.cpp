@@ -313,13 +313,14 @@ namespace
 
 AccessPolicy loadAccessPolicy(const Params & params)
 {
-  return AccessPolicy(
-    params.access.rules.publish.allow,
-    params.access.rules.publish.deny,
-    params.access.rules.subscribe.allow,
-    params.access.rules.subscribe.deny,
-    params.access.rules.service.allow,
-    params.access.rules.service.deny);
+  AccessPolicyConfig config;
+  config.publish.allow = params.access.rules.publish.allow;
+  config.publish.deny = params.access.rules.publish.deny;
+  config.subscribe.allow = params.access.rules.subscribe.allow;
+  config.subscribe.deny = params.access.rules.subscribe.deny;
+  config.service.allow = params.access.rules.service.allow;
+  config.service.deny = params.access.rules.service.deny;
+  return AccessPolicy(config);
 }
 
 std::optional<VideoSidecarSupervisor::Config> loadVideoSidecarConfig(

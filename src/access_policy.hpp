@@ -24,6 +24,19 @@
 namespace livekit_ros2_bridge
 {
 
+struct AccessRuleConfig
+{
+  std::vector<std::string> allow;
+  std::vector<std::string> deny;
+};
+
+struct AccessPolicyConfig
+{
+  AccessRuleConfig publish;
+  AccessRuleConfig subscribe;
+  AccessRuleConfig service;
+};
+
 /// Resource access categories enforced by the bridge.
 enum class AccessOperation
 {
@@ -40,13 +53,7 @@ class AccessPolicy
 {
 public:
   AccessPolicy() = default;
-  AccessPolicy(
-    const std::vector<std::string> & publish_allow,
-    const std::vector<std::string> & publish_deny,
-    const std::vector<std::string> & subscribe_allow,
-    const std::vector<std::string> & subscribe_deny,
-    const std::vector<std::string> & service_allow,
-    const std::vector<std::string> & service_deny);
+  explicit AccessPolicy(const AccessPolicyConfig & config);
 
   /// Return whether `name` is allowed after normalization. Empty or whitespace-only names are denied.
   bool allows(AccessOperation op, std::string_view name) const;
@@ -69,7 +76,6 @@ private:
   static ParsedRuleEntries parseRuleEntries(const std::vector<std::string> & entries);
   static ParsedRuleset parseRuleset(
     const std::vector<std::string> & allow_entries, const std::vector<std::string> & deny_entries);
-  static bool matchesAny(std::string_view name, const std::set<std::string> & entries);
   static bool isAllowed(std::string_view name, const ParsedRuleset & ruleset);
 
   // Normalized publish rules. Denies always override allows.

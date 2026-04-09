@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "access_policy.hpp"
@@ -78,6 +79,14 @@ void ignoreTrackReservation(const std::string &, std::size_t)
 void ignoreTrackRelease(const std::string &)
 {}
 
+AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
+{
+  AccessPolicyConfig config;
+  config.subscribe.allow = std::move(allow);
+  config.subscribe.deny = std::move(deny);
+  return AccessPolicy(config);
+}
+
 nlohmann::json extractSinglePublishedStatusEnvelope(
   const FakeRoomSessionState & state, const std::string & requester_identity)
 {
@@ -122,7 +131,7 @@ protected:
     node_ = std::make_shared<rclcpp::Node>("test_hb_node");
     fake_session_ = std::make_unique<FakeRoomSession>();
     state_ = fake_session_->state;
-    access_policy_ = AccessPolicy({}, {}, {"*"}, {}, {}, {});
+    access_policy_ = makeSubscribePolicy({"*"});
   }
 
   SubscriptionRegistry makeRegistry(
@@ -152,7 +161,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, EmptyHeartbeatDoesNotBroadcast)
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 {
-  AccessPolicy deny_all({}, {}, {}, {"*"}, {}, {});
+  const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
@@ -213,7 +222,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, VideoSidecarStartupFailureReturnsUnav
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
-  AccessPolicy deny_all({}, {}, {}, {"*"}, {}, {});
+  const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
 
   auto config = makeTestVideoSidecarConfig();
   VideoSidecarSupervisor supervisor(
@@ -361,12 +370,12 @@ TEST_F(SubscriptionHeartbeatProcessorTest, SessionConflictDoesNotRebindRequester
 
 TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 {
-  AccessPolicy policy({}, {}, {}, {"*"}, {}, {});
+  AccessPolicy policy = makeSubscribePolicy({}, {"*"});
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, policy, node_->get_clock());
 
-  policy = AccessPolicy({}, {}, {"*"}, {}, {}, {});
+  policy = makeSubscribePolicy({"*"});
 
   const nlohmann::json body = {
     {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};

@@ -21,16 +21,10 @@
 namespace livekit_ros2_bridge
 {
 
-AccessPolicy::AccessPolicy(
-  const std::vector<std::string> & publish_allow,
-  const std::vector<std::string> & publish_deny,
-  const std::vector<std::string> & subscribe_allow,
-  const std::vector<std::string> & subscribe_deny,
-  const std::vector<std::string> & service_allow,
-  const std::vector<std::string> & service_deny)
-: publish_rules_(parseRuleset(publish_allow, publish_deny))
-, subscribe_rules_(parseRuleset(subscribe_allow, subscribe_deny))
-, service_rules_(parseRuleset(service_allow, service_deny))
+AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
+: publish_rules_(parseRuleset(config.publish.allow, config.publish.deny))
+, subscribe_rules_(parseRuleset(config.subscribe.allow, config.subscribe.deny))
+, service_rules_(parseRuleset(config.service.allow, config.service.deny))
 {}
 
 bool AccessPolicy::allows(AccessOperation op, std::string_view name) const
@@ -83,16 +77,15 @@ AccessPolicy::ParsedRuleset AccessPolicy::parseRuleset(
   return parsed;
 }
 
-bool AccessPolicy::matchesAny(std::string_view name, const std::set<std::string> & entries)
-{
-  return std::any_of(entries.begin(), entries.end(), [name](const std::string & entry) {
-    return rosResourceMatchesPattern(name, entry);
-  });
-}
-
 bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & ruleset)
 {
-  if (ruleset.deny.matches_all || matchesAny(name, ruleset.deny.patterns)) {
+  const auto matches = [name](const ParsedRuleEntries & entries) {
+    return std::any_of(entries.patterns.begin(), entries.patterns.end(), [name](const std::string & entry) {
+      return rosResourceMatchesPattern(name, entry);
+    });
+  };
+
+  if (ruleset.deny.matches_all || matches(ruleset.deny)) {
     return false;
   }
   if (ruleset.allow.matches_all) {
@@ -101,7 +94,7 @@ bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & rulese
   if (ruleset.allow.patterns.empty()) {
     return false;
   }
-  return matchesAny(name, ruleset.allow.patterns);
+  return matches(ruleset.allow);
 }
 
 }  // namespace livekit_ros2_bridge

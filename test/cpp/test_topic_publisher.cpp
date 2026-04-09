@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -55,6 +56,14 @@ TopicPublishCommand makePublishCommand(
   command.interface_type = interface_type;
   command.cdr_payload = std::move(cdr_payload);
   return command;
+}
+
+AccessPolicy makePublishPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
+{
+  AccessPolicyConfig config;
+  config.publish.allow = std::move(allow);
+  config.publish.deny = std::move(deny);
+  return AccessPolicy(config);
 }
 
 class TopicPublisherHarness final
@@ -205,7 +214,7 @@ TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -222,7 +231,7 @@ TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
 TEST(TopicPublisherTest, ConstructorRejectsNegativeMaxTopicsAndAcceptsUnlimitedZero)
 {
   TopicPublisherHarness harness;
-  const auto empty_access_policy = AccessPolicy({}, {}, {}, {}, {}, {});
+  const auto empty_access_policy = AccessPolicy(AccessPolicyConfig{});
 
   EXPECT_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, -1), std::invalid_argument);
   EXPECT_NO_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, 0));
@@ -242,7 +251,7 @@ TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({"/battery/allowed"}, {}, {}, {}, {}, {}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/allowed"}), 50);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -275,7 +284,7 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   ASSERT_TRUE(harness.waitForTopicType(first_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(harness.waitForTopicType(second_topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({"/battery/*"}, {}, {}, {}, {}, {}), 1);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/*"}), 1);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -340,7 +349,7 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
 
     bool shutdown_requested = false;
     {
-      RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+      RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
       auto publish_task =
         std::async(std::launch::async, [&publisher, &command]() { publisher.publish("alice", command); });
 
@@ -374,7 +383,7 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
     harness.recreatePublisherSide("topic_publish_failure_recovery");
     ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState", std::chrono::seconds(5)));
 
-    RosTopicPublisher recovery_publisher(harness.publisherNode(), AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+    RosTopicPublisher recovery_publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
     recovery_publisher.publish("alice", command);
 
     ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
@@ -399,7 +408,7 @@ TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
 
   std_msgs::msg::String wrong_message;
   wrong_message.data = "not a BatteryState";
@@ -424,7 +433,7 @@ TEST(TopicPublisherTest, ShutdownPreventsPublisherRecreationAndRepeatedShutdownI
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;

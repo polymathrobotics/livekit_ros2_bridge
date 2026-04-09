@@ -138,6 +138,22 @@ std::string makeServiceCallRequest(
   return body.dump();
 }
 
+AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
+{
+  AccessPolicyConfig config;
+  config.subscribe.allow = std::move(allow);
+  config.subscribe.deny = std::move(deny);
+  return AccessPolicy(config);
+}
+
+AccessPolicy makeServicePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
+{
+  AccessPolicyConfig config;
+  config.service.allow = std::move(allow);
+  config.service.deny = std::move(deny);
+  return AccessPolicy(config);
+}
+
 class RpcRouterHarness
 {
 public:
@@ -217,7 +233,7 @@ TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
 
 TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {}, {}, {"*"}, {}));
+  RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   expectRpcHandlerError(
     [&]() {
@@ -233,7 +249,7 @@ TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
 
 TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {}, {}, {"/allowed_service"}, {}));
+  RpcRouterHarness harness(makeServicePolicy({"/allowed_service"}));
   std_srvs::srv::SetBool::Request request_message;
 
   expectRpcHandlerError(
@@ -287,7 +303,7 @@ TEST_F(RpcRouterTest, InterfacesGetRpcReturnsSchemaForKnownType)
 
 TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {}, {}, {"*"}, {}));
+  RpcRouterHarness harness(makeServicePolicy({"*"}));
   auto server_node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_service_server"));
   auto service = server_node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/set_bool",
@@ -334,7 +350,7 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
 
 TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {}, {}, {"*"}, {}));
+  RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -357,7 +373,7 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 
 TEST_F(RpcRouterTest, ServiceListRpcFiltersAllowedServicesOnRosExecutorThread)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {}, {}, {"/rpc_router/allowed_service"}, {}));
+  RpcRouterHarness harness(makeServicePolicy({"/rpc_router/allowed_service"}));
   auto allowed_service = harness.node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/allowed_service",
     [](const std_srvs::srv::SetBool::Request::SharedPtr, std_srvs::srv::SetBool::Response::SharedPtr response) {
@@ -400,7 +416,7 @@ TEST_F(RpcRouterTest, ServiceListRpcFiltersAllowedServicesOnRosExecutorThread)
 
 TEST_F(RpcRouterTest, TopicListRpcFiltersAllowedTopicsOnRosExecutorThread)
 {
-  RpcRouterHarness harness(AccessPolicy({}, {}, {"/rpc_router/allowed_topic"}, {}, {}, {}));
+  RpcRouterHarness harness(makeSubscribePolicy({"/rpc_router/allowed_topic"}));
   auto allowed_topic =
     harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/allowed_topic", rclcpp::QoS(10));
   auto blocked_topic =

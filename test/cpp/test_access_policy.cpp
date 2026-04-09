@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <utility>
 #include <vector>
 
 #include "access_policy.hpp"
@@ -25,7 +26,10 @@ namespace
 
 AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
 {
-  return AccessPolicy({}, {}, allow, deny, {}, {});
+  AccessPolicyConfig config;
+  config.subscribe.allow = std::move(allow);
+  config.subscribe.deny = std::move(deny);
+  return AccessPolicy(config);
 }
 
 }  // namespace
@@ -41,8 +45,13 @@ TEST(AccessPolicyTest, DefaultPolicyDeniesEveryOperation)
 
 TEST(AccessPolicyTest, UsesOperationSpecificRulesAndDenylistPrecedence)
 {
-  const AccessPolicy policy(
-    {"/cmd/*"}, {"/cmd/blocked"}, {"/camera/image"}, {}, {"/example/service"}, {"/example/service"});
+  AccessPolicyConfig config;
+  config.publish.allow = {"/cmd/*"};
+  config.publish.deny = {"/cmd/blocked"};
+  config.subscribe.allow = {"/camera/image"};
+  config.service.allow = {"/example/service"};
+  config.service.deny = {"/example/service"};
+  const AccessPolicy policy(config);
 
   EXPECT_TRUE(policy.allows(AccessOperation::Publish, "/cmd/allowed"));
   EXPECT_FALSE(policy.allows(AccessOperation::Publish, "/cmd/blocked"));
