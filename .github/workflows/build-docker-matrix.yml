@@ -27,8 +27,8 @@ jobs:
 
           if docker buildx imagetools inspect "${jammy_image}" >/dev/null 2>&1; then
             echo "Using prebuilt Jammy gstreamer-publisher image: ${jammy_image}"
-            bake_args+=(--set "dev-humble.args.GSTREAMER_PUBLISHER_SOURCE=${jammy_image}")
-            bake_args+=(--set "runtime-humble.args.GSTREAMER_PUBLISHER_SOURCE=${jammy_image}")
+            bake_args+=(--set "dev-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}")
+            bake_args+=(--set "runtime-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}")
           else
             echo "Jammy gstreamer-publisher image not published yet; falling back to source build."
           fi
@@ -36,7 +36,7 @@ jobs:
           if docker buildx imagetools inspect "${noble_image}" >/dev/null 2>&1; then
             echo "Using prebuilt Noble gstreamer-publisher image: ${noble_image}"
             for target in dev-jazzy dev-kilted dev-rolling runtime-jazzy runtime-kilted runtime-rolling; do
-              bake_args+=(--set "${target}.args.GSTREAMER_PUBLISHER_SOURCE=${noble_image}")
+              bake_args+=(--set "${target}.args.GSTREAMER_PUBLISHER_IMAGE=${noble_image}")
             done
           else
             echo "Noble gstreamer-publisher image not published yet; falling back to source build."
