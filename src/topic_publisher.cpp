@@ -14,10 +14,10 @@
 
 #include "topic_publisher.hpp"
 
+#include <cstring>
 #include <stdexcept>
 #include <utility>
 
-#include "payloads/cdr_payload.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
 #include "utils/interface_types.hpp"
@@ -30,6 +30,17 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
+
+rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
+{
+  rclcpp::SerializedMessage serialized(payload.size());
+  auto & rcl_msg = serialized.get_rcl_serialized_message();
+  if (!payload.empty()) {
+    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
+  }
+  rcl_msg.buffer_length = payload.size();
+  return serialized;
+}
 
 }  // namespace
 

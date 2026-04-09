@@ -16,9 +16,7 @@
 
 #include <openssl/evp.h>
 
-#include <algorithm>
 #include <cstdint>
-#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -116,26 +114,6 @@ nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload)
     {"content_type", protocol::kDataContentTypeCdr},
     {"payload_base64", base64Encode(payload.data(), payload.size())},
   };
-}
-
-rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
-{
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  if (!payload.empty()) {
-    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
-  }
-  rcl_msg.buffer_length = payload.size();
-  return serialized;
-}
-
-std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & payload)
-{
-  const auto & rcl_msg = payload.get_rcl_serialized_message();
-  if (rcl_msg.buffer == nullptr || rcl_msg.buffer_length == 0U) {
-    return {};
-  }
-  return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
 }
 
 }  // namespace livekit_ros2_bridge

@@ -24,12 +24,9 @@
 namespace livekit_ros2_bridge
 {
 
-namespace detail
-{
-
 /// Parse a JSON string value, trim surrounding whitespace, and return `std::nullopt` when the
 /// trimmed result is empty. When `null_is_absent` is true, JSON null is also treated as absent.
-inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringValue(
+inline std::optional<std::string> parseOptionalNonEmptyTrimmedString(
   const nlohmann::json & value, const char * invalid_message, bool null_is_absent = false)
 {
   if (null_is_absent && value.is_null()) {
@@ -47,7 +44,17 @@ inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringValue(
   return trimmed;
 }
 
-}  // namespace detail
+/// Parse a JSON string value, trim surrounding whitespace, and require the trimmed result to stay
+/// non-empty.
+inline std::string parseRequiredNonEmptyTrimmedString(
+  const nlohmann::json & value, const char * invalid_message, const char * empty_message = nullptr)
+{
+  if (const auto trimmed = parseOptionalNonEmptyTrimmedString(value, invalid_message)) {
+    return *trimmed;
+  }
+
+  throw std::invalid_argument(empty_message == nullptr ? invalid_message : empty_message);
+}
 
 /// Parse `payload` as JSON and require the top-level value to be an object.
 /// The supplied error strings are forwarded unchanged when parsing fails or the root is not an object.
@@ -74,15 +81,10 @@ inline std::string parseRequiredNonEmptyTrimmedStringField(
   const nlohmann::json & json, const char * field_name, const char * required_message)
 {
   const auto field_it = json.find(field_name);
-  if (field_it == json.end() || !field_it->is_string()) {
+  if (field_it == json.end()) {
     throw std::invalid_argument(required_message);
   }
-
-  if (const auto value = detail::parseOptionalNonEmptyTrimmedStringValue(*field_it, required_message)) {
-    return *value;
-  }
-
-  throw std::invalid_argument(required_message);
+  return parseRequiredNonEmptyTrimmedString(*field_it, required_message);
 }
 
 /// Read an optional string field and return the trimmed value when non-empty.
@@ -95,7 +97,7 @@ inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringField(
   if (field_it == json.end()) {
     return std::nullopt;
   }
-  return detail::parseOptionalNonEmptyTrimmedStringValue(*field_it, invalid_message, null_is_absent);
+  return parseOptionalNonEmptyTrimmedString(*field_it, invalid_message, null_is_absent);
 }
 
 }  // namespace livekit_ros2_bridge

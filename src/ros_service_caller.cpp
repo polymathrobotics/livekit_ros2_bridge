@@ -19,6 +19,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -31,7 +32,6 @@
 #include <utility>
 #include <vector>
 
-#include "payloads/cdr_payload.hpp"
 #include "payloads/service_call_payloads.hpp"
 #include "rcl/client.h"
 #include "rclcpp/node.hpp"
@@ -69,6 +69,26 @@ using MessageMembers = rosidl_typesupport_introspection_cpp::MessageMembers;
 constexpr char kSerializationTsId[] = "rosidl_typesupport_cpp";
 constexpr char kIntrospectionTsId[] = "rosidl_typesupport_introspection_cpp";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
+
+rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
+{
+  rclcpp::SerializedMessage serialized(payload.size());
+  auto & rcl_msg = serialized.get_rcl_serialized_message();
+  if (!payload.empty()) {
+    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
+  }
+  rcl_msg.buffer_length = payload.size();
+  return serialized;
+}
+
+std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & payload)
+{
+  const auto & rcl_msg = payload.get_rcl_serialized_message();
+  if (rcl_msg.buffer == nullptr || rcl_msg.buffer_length == 0U) {
+    return {};
+  }
+  return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
+}
 
 int effectiveTimeoutMs(int timeout_ms)
 {

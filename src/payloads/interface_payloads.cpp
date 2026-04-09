@@ -41,16 +41,8 @@ std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payloa
 
   std::vector<std::string> types;
   for (const auto & element : *types_it) {
-    if (!element.is_string()) {
-      throw std::invalid_argument("interface_types entries must be strings");
-    }
-
-    const auto trimmed =
-      detail::parseOptionalNonEmptyTrimmedStringValue(element, "interface_types entries must be strings");
-    if (!trimmed.has_value()) {
-      throw std::invalid_argument("interface_types entries must not be empty");
-    }
-    types.push_back(*trimmed);
+    types.push_back(parseRequiredNonEmptyTrimmedString(
+      element, "interface_types entries must be strings", "interface_types entries must not be empty"));
   }
 
   if (types.empty()) {

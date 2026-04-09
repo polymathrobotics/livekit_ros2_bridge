@@ -18,7 +18,6 @@
 #include <vector>
 
 #include "nlohmann/json_fwd.hpp"
-#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -31,10 +30,5 @@ std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const cha
 
 /// Serialize raw ROS 2 CDR bytes as `{ "content_type", "payload_base64" }`.
 nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload);
-
-/// Copy raw CDR bytes into an owning `rclcpp::SerializedMessage` with `buffer_length == payload.size()`.
-rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload);
-/// Return the current serialized byte span, or an empty vector when the message has no buffer.
-std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & payload);
 
 }  // namespace livekit_ros2_bridge

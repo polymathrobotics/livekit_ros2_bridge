@@ -14,7 +14,6 @@
 
 #include "interface_definition_lookup.hpp"
 
-#include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <set>
@@ -201,16 +200,12 @@ void collectDependencies(
 
 }  // namespace
 
-InterfaceDefinitions lookupInterfaceDefinitions(const std::string & interface_type)
+std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type)
 {
   std::set<std::string> visited;
   std::vector<InterfaceDefinition> entries;
   collectDependencies(interface_type, visited, entries);
-
-  InterfaceDefinitions result;
-  result.requested = std::move(entries.front());
-  result.dependencies.assign(std::make_move_iterator(entries.begin() + 1), std::make_move_iterator(entries.end()));
-  return result;
+  return entries;
 }
 
 }  // namespace livekit_ros2_bridge
