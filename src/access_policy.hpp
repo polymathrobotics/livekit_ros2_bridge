@@ -68,8 +68,7 @@ private:
 
   static ParsedRuleEntries parseRuleEntries(const std::vector<std::string> & entries);
   static ParsedRuleset parseRuleset(
-    const std::vector<std::string> & allow_entries,
-    const std::vector<std::string> & deny_entries);
+    const std::vector<std::string> & allow_entries, const std::vector<std::string> & deny_entries);
   static bool matchesAny(std::string_view name, const std::set<std::string> & entries);
   static bool isAllowed(std::string_view name, const ParsedRuleset & ruleset);
 

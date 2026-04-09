@@ -79,8 +79,7 @@ TEST(AccessPolicyTest, TrimsAndNormalizesConfiguredEntries)
 
 TEST(AccessPolicyTest, IgnoresBlankConfiguredEntriesWithoutChangingPolicySemantics)
 {
-  const AccessPolicy policy = makeSubscribePolicy(
-    {"   ", "\t", "/camera/image"}, {"   ", "\n", "  /camera/blocked  "});
+  const AccessPolicy policy = makeSubscribePolicy({"   ", "\t", "/camera/image"}, {"   ", "\n", "  /camera/blocked  "});
 
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/image"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/blocked"));

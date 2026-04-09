@@ -35,7 +35,8 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
       {"interface_type", "  std_srvs/srv/SetBool  "},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
       {"timeout_ms", 500},
-    }.dump());
+    }
+      .dump());
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
@@ -49,7 +50,8 @@ TEST(ServiceCallPayloadsTest, ParsesRequestWithoutOptionalFields)
     nlohmann::json{
       {"service", "/trigger"},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }.dump());
+    }
+      .dump());
 
   EXPECT_EQ(request.service, "/trigger");
   EXPECT_TRUE(request.interface_type.empty());
@@ -64,7 +66,8 @@ TEST(ServiceCallPayloadsTest, RejectsEmptyRequestPayload)
       nlohmann::json{
         {"service", "/foo"},
         {"request", {{"content_type", "application/x-ros-cdr"}, {"payload_base64", ""}}},
-      }.dump()),
+      }
+        .dump()),
     std::invalid_argument);
 }
 
@@ -139,7 +142,8 @@ TEST(ServiceCallPayloadsTest, IgnoresEmptyTypeString)
       {"service", "/foo"},
       {"interface_type", ""},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }.dump());
+    }
+      .dump());
 
   EXPECT_TRUE(request.interface_type.empty());
 }

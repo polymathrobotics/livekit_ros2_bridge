@@ -154,8 +154,7 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
 {
   const std::array<std::pair<const char *, RpcHandler>, 4> methods{{
     {protocol::kRpcServiceCall, [this](const RpcInvocation & invocation) { return handleServiceCall(invocation); }},
-    {protocol::kRpcInterfacesGet,
-     [this](const RpcInvocation & invocation) { return handleInterfacesGet(invocation); }},
+    {protocol::kRpcInterfacesGet, [this](const RpcInvocation & invocation) { return handleInterfacesGet(invocation); }},
     {protocol::kRpcServicesList, [this](const RpcInvocation & invocation) { return handleServiceList(invocation); }},
     {protocol::kRpcTopicsList, [this](const RpcInvocation & invocation) { return handleTopicList(invocation); }},
   }};
@@ -174,7 +173,7 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
 void RpcRouter::unregisterRpcMethods(RoomSession & session)
 {
   for (const char * method_name :
-    {protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList})
+       {protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList})
   {
     if (!session.unregisterRpcMethod(method_name)) {
       RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method_name);

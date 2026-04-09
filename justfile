@@ -272,6 +272,12 @@ build-force-configure *colcon_args:
     set -euo pipefail
     exec just build --force-configure "$@"
 
+format:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ justfile_directory() }}"
+    pre-commit run --all-files
+
 test *colcon_args:
     #!/usr/bin/env bash
     set -euo pipefail

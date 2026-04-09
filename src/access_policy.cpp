@@ -75,8 +75,7 @@ AccessPolicy::ParsedRuleEntries AccessPolicy::parseRuleEntries(const std::vector
 }
 
 AccessPolicy::ParsedRuleset AccessPolicy::parseRuleset(
-  const std::vector<std::string> & allow_entries,
-  const std::vector<std::string> & deny_entries)
+  const std::vector<std::string> & allow_entries, const std::vector<std::string> & deny_entries)
 {
   ParsedRuleset parsed;
   parsed.allow = parseRuleEntries(allow_entries);

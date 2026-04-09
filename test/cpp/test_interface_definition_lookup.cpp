@@ -81,18 +81,11 @@ TEST(LookupInterfaceDefinitionTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
 
 TEST(LookupInterfaceDefinitionTest, RejectsMalformedType)
 {
+  EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("BatteryState")); }(), std::invalid_argument);
   EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("BatteryState")); }(),
-    std::invalid_argument);
-  EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/BatteryState")); }(),
-    std::invalid_argument);
-  EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("")); }(),
-    std::invalid_argument);
-  EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/msg/")); }(),
-    std::invalid_argument);
+    []() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/BatteryState")); }(), std::invalid_argument);
+  EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("")); }(), std::invalid_argument);
+  EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/msg/")); }(), std::invalid_argument);
 }
 
 TEST(LookupInterfaceDefinitionTest, RejectsUnknownPackage)
