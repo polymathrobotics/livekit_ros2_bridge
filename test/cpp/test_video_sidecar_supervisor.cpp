@@ -69,7 +69,6 @@ SidecarLaunchSpec makeConfiguredSpec(const std::string & external_name)
   config.pipeline_sources.emplace(
     normalizeExternalName(external_name),
     ConfiguredPipelineSource{
-      normalizeExternalName(external_name),
       "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"});
   return resolvePipelineVideoLaunchSpec(config, external_name);
 }
@@ -551,8 +550,7 @@ TEST(BuildGstreamerSidecarCommandTest, PipelineSourceWithBangSeparators)
 {
   VideoConfig config = makeDefaultVideoConfig();
   config.pipeline_sources.emplace(
-    "/sources/test",
-    ConfiguredPipelineSource{"/sources/test", "videotestsrc pattern=ball ! video/x-raw,width=640,height=480 ! vp8enc"});
+    "/sources/test", ConfiguredPipelineSource{"videotestsrc pattern=ball ! video/x-raw,width=640,height=480 ! vp8enc"});
   const auto spec = resolvePipelineVideoLaunchSpec(config, "/sources/test");
 
   const auto cmd = buildGstreamerSidecarCommand(spec, "wss://lk.example.com", "t");

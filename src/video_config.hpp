@@ -23,6 +23,15 @@
 namespace livekit_ros2_bridge
 {
 
+inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
+inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
+inline constexpr char kImagePipelineAlias[] = "image";
+inline constexpr char kCompressedImagePipelineAlias[] = "compressed_image";
+inline constexpr char kDefaultPipelineAlias[] = "default";
+inline constexpr char kRawImageIngestMode[] = "raw_image";
+inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
+inline constexpr char kPipelineIngestMode[] = "pipeline";
+
 namespace video_defaults
 {
 
@@ -50,6 +59,12 @@ inline constexpr char kDefaultCompressedImagePipeline[] =
 /// Alias keys: "image", "compressed_image", "default".
 using PipelineMap = std::unordered_map<std::string, std::string>;
 
+struct RosVideoSourceClassification
+{
+  std::string_view pipeline_alias;
+  std::string_view ingest_mode;
+};
+
 enum class VideoSourceKind
 {
   RosTopic,
@@ -65,15 +80,13 @@ struct RosTopicRule
 
 struct ConfiguredPipelineSource
 {
-  // Canonical normalized external name used for lookup and selected_config_key.
-  std::string external_name;
   std::string pipeline;
 };
 
 struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
-  // Keyed by normalizeExternalName(...); the stored external_name repeats that canonical key.
+  // Keyed by normalizeExternalName(...).
   std::unordered_map<std::string, ConfiguredPipelineSource> pipeline_sources;
 };
 
@@ -83,7 +96,7 @@ struct SidecarLaunchSpec
   std::string sidecar_key;
   // Set only for ROS-topic sources after ROS resource normalization.
   std::string ros_topic;
-  // Set only for ROS-topic sources and must pass isSupportedVideoInterfaceType().
+  // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
   std::string interface_type;
   // Set only for configured pipeline sources after external-name normalization.
   std::string external_name;
@@ -98,6 +111,8 @@ struct SidecarLaunchSpec
 
 VideoConfig makeDefaultVideoConfig();
 
+// Returns the alias/ingest contract for supported ROS video types and std::nullopt for non-video types.
+std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
 // Canonicalizes configured source names so equivalent spellings share one config key and track name.
 std::string normalizeExternalName(std::string_view external_name);
 std::string videoSourceKindToString(VideoSourceKind kind);

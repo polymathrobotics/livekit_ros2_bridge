@@ -152,12 +152,12 @@ std::string normalizeVideoRulePattern(std::string_view raw_pattern)
 
 bool isSupportedRosPipelineAlias(std::string_view alias)
 {
-  return alias == "image" || alias == "compressed_image" || alias == "default";
+  return alias == kImagePipelineAlias || alias == kCompressedImagePipelineAlias || alias == kDefaultPipelineAlias;
 }
 
 bool isSupportedConfiguredSourcePipelineAlias(std::string_view alias)
 {
-  return alias == "default";
+  return alias == kDefaultPipelineAlias;
 }
 
 PipelineMap parsePipelineEntries(const std::string & entry_id, const std::vector<std::string> & raw_entries)
@@ -220,7 +220,7 @@ void validateConfiguredSourcePipelines(const std::string & entry_id, const Pipel
     }
   }
 
-  if (pipelines.find("default") == pipelines.end()) {
+  if (pipelines.find(kDefaultPipelineAlias) == pipelines.end()) {
     throw std::runtime_error("video entry '" + entry_id + "' (pipeline kind) requires a 'default' pipeline key");
   }
 }
@@ -291,9 +291,8 @@ VideoConfig loadVideoConfig(const Params & params)
       requireUniqueEntryKey(seen_external_names, normalized_external_name, "configured video external name");
 
       ConfiguredPipelineSource source;
-      source.external_name = normalized_external_name;
-      source.pipeline = pipelines.at("default");
-      config.pipeline_sources.emplace(source.external_name, std::move(source));
+      source.pipeline = pipelines.at(kDefaultPipelineAlias);
+      config.pipeline_sources.emplace(normalized_external_name, std::move(source));
     } else {
       throw std::runtime_error("video entry '" + entry_id + "' has unsupported kind '" + entry.kind + "'");
     }

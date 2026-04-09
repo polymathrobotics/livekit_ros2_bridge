@@ -17,7 +17,6 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "utils/interface_types.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
@@ -30,18 +29,6 @@ namespace
 std::string makeVideoSidecarKey(std::string_view prefix, const std::string & resource)
 {
   return std::string(prefix) + ":" + resource;
-}
-
-/// Map a ROS interface type to the pipeline alias used in PipelineMap keys.
-std::string interfaceTypeToAlias(std::string_view interface_type)
-{
-  if (interface_type == kImageInterfaceType) {
-    return "image";
-  }
-  if (interface_type == kCompressedImageInterfaceType) {
-    return "compressed_image";
-  }
-  return "default";
 }
 
 /// Replace all occurrences of `{topic}` in the template with the given topic.
@@ -80,12 +67,23 @@ VideoConfig makeDefaultVideoConfig()
   default_rule.pattern = "/*";
   default_rule.id = video_defaults::kDefaultRosProfileId;
   default_rule.pipelines = {
-    {"image", video_defaults::kDefaultImagePipeline},
-    {"compressed_image", video_defaults::kDefaultCompressedImagePipeline},
+    {kImagePipelineAlias, video_defaults::kDefaultImagePipeline},
+    {kCompressedImagePipelineAlias, video_defaults::kDefaultCompressedImagePipeline},
   };
   config.ros_topic_rules.push_back(std::move(default_rule));
 
   return config;
+}
+
+std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type)
+{
+  if (interface_type == kImageInterfaceType) {
+    return RosVideoSourceClassification{kImagePipelineAlias, kRawImageIngestMode};
+  }
+  if (interface_type == kCompressedImageInterfaceType) {
+    return RosVideoSourceClassification{kCompressedImagePipelineAlias, kCompressedImageIngestMode};
+  }
+  return std::nullopt;
 }
 
 std::string normalizeExternalName(std::string_view external_name)
@@ -108,7 +106,8 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
   if (normalized.empty()) {
     throw std::invalid_argument("Invalid ROS topic.");
   }
-  if (!isSupportedVideoInterfaceType(interface_type)) {
+  const auto source_classification = classifyRosVideoInterfaceType(interface_type);
+  if (!source_classification.has_value()) {
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 
@@ -128,10 +127,10 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
     throw std::runtime_error("no matching video rule for topic '" + normalized + "'");
   }
 
-  const std::string alias = interfaceTypeToAlias(interface_type);
+  const std::string alias(source_classification->pipeline_alias);
   auto pipeline_it = matched_rule->pipelines.find(alias);
   if (pipeline_it == matched_rule->pipelines.end()) {
-    pipeline_it = matched_rule->pipelines.find("default");
+    pipeline_it = matched_rule->pipelines.find(kDefaultPipelineAlias);
   }
   if (pipeline_it == matched_rule->pipelines.end()) {
     throw std::runtime_error("no pipeline for alias '" + alias + "' in video rule '" + matched_rule->pattern + "'");
@@ -144,7 +143,7 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
   spec.source_kind = VideoSourceKind::RosTopic;
-  spec.ingest_mode = interface_type == kCompressedImageInterfaceType ? "compressed_image" : "raw_image";
+  spec.ingest_mode = std::string(source_classification->ingest_mode);
   spec.selected_config_key = matched_rule->id;
   spec.source_pipeline = tokenizePipeline(resolved);
   return spec;
@@ -169,9 +168,9 @@ SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, con
   spec.sidecar_key = makeVideoSidecarKey("external", normalized);
   spec.external_name = normalized;
   spec.source_kind = VideoSourceKind::Pipeline;
-  spec.selected_config_key = source.external_name;
+  spec.selected_config_key = normalized;
   spec.source_pipeline = tokenizePipeline(source.pipeline);
-  spec.ingest_mode = "pipeline";
+  spec.ingest_mode = kPipelineIngestMode;
 
   return spec;
 }

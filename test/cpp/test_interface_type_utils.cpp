@@ -19,6 +19,7 @@
 
 #include "gtest/gtest.h"
 #include "utils/interface_types.hpp"
+#include "video_config.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -56,40 +57,46 @@ TEST(RequireUniqueInterfaceTypeTest, ThrowsWhenTypesVectorEmpty)
   EXPECT_THROW(requireUniqueInterfaceType(names, "/foo", "service"), std::invalid_argument);
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, RawImageTypeIsVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, RawImageTypeIsVideo)
 {
-  EXPECT_TRUE(isSupportedVideoInterfaceType("sensor_msgs/msg/Image"));
+  const auto classification = classifyRosVideoInterfaceType(kImageInterfaceType);
+  ASSERT_TRUE(classification.has_value());
+  EXPECT_EQ(classification->pipeline_alias, kImagePipelineAlias);
+  EXPECT_EQ(classification->ingest_mode, kRawImageIngestMode);
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, CompressedImageTypeIsVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, CompressedImageTypeIsVideo)
 {
-  EXPECT_TRUE(isSupportedVideoInterfaceType("sensor_msgs/msg/CompressedImage"));
+  const auto classification = classifyRosVideoInterfaceType(kCompressedImageInterfaceType);
+  ASSERT_TRUE(classification.has_value());
+  EXPECT_EQ(classification->pipeline_alias, kCompressedImagePipelineAlias);
+  EXPECT_EQ(classification->ingest_mode, kCompressedImageIngestMode);
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, StringTypeIsNotVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, StringTypeIsNotVideo)
 {
-  EXPECT_FALSE(isSupportedVideoInterfaceType("std_msgs/msg/String"));
+  EXPECT_FALSE(classifyRosVideoInterfaceType("std_msgs/msg/String").has_value());
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, EmptyStringIsNotVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, EmptyStringIsNotVideo)
 {
-  EXPECT_FALSE(isSupportedVideoInterfaceType(""));
+  EXPECT_FALSE(classifyRosVideoInterfaceType("").has_value());
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, PartialImageTypeIsNotVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, PartialImageTypeIsNotVideo)
 {
-  EXPECT_FALSE(isSupportedVideoInterfaceType("sensor_msgs/msg/Imag"));
+  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/Imag").has_value());
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, CaseVariantIsNotVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, CaseVariantIsNotVideo)
 {
-  EXPECT_FALSE(isSupportedVideoInterfaceType("sensor_msgs/msg/image"));
+  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/image").has_value());
 }
 
-TEST(IsSupportedVideoInterfaceTypeTest, ExtraWhitespaceIsNotVideo)
+TEST(ClassifyRosVideoInterfaceTypeTest, ExtraWhitespaceIsNotVideo)
 {
-  EXPECT_FALSE(isSupportedVideoInterfaceType(" sensor_msgs/msg/Image"));
-  EXPECT_FALSE(isSupportedVideoInterfaceType("sensor_msgs/msg/Image "));
+  EXPECT_FALSE(classifyRosVideoInterfaceType(" sensor_msgs/msg/Image").has_value());
+  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/Image ").has_value());
 }
 
 }  // namespace

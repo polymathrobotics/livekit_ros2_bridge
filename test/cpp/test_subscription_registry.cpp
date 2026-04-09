@@ -131,7 +131,6 @@ VideoConfig makeConfiguredVideoConfig()
   config.pipeline_sources.emplace(
     "/sources/front",
     ConfiguredPipelineSource{
-      "/sources/front",
       "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"});
   return config;
 }

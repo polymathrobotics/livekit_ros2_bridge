@@ -139,7 +139,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   } else {
     const std::string interface_type =
       requireUniqueInterfaceType(node_.get_topic_names_and_types(), target.name, "topic");
-    if (isSupportedVideoInterfaceType(interface_type)) {
+    if (classifyRosVideoInterfaceType(interface_type).has_value()) {
       sub = createVideoSubscription(normalized, interface_type, requester_identity, requester_lease);
     } else {
       sub = createDataSubscription(normalized, interface_type, subscription_key, requester_identity, requester_lease);
