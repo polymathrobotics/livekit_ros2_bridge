@@ -206,6 +206,11 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
         qos.reliable();
       }
       self->sub = self->node_runner->node()->create_subscription<sensor_msgs::msg::Image>(self->ros_topic, qos, cb);
+      GST_INFO_OBJECT(
+        self,
+        "event=source_started topic=%s kind=raw_image reliable=%s resource=subscription",
+        self->ros_topic,
+        self->ros_reliable ? "true" : "false");
       break;
     }
 
@@ -221,6 +226,14 @@ static GstStateChangeReturn rosrawimagesrc_change_state(GstElement * element, Gs
   switch (transition) {
     case GST_STATE_CHANGE_PAUSED_TO_READY:
     case GST_STATE_CHANGE_READY_TO_NULL:
+      if (self->sub || self->node_runner) {
+        GST_INFO_OBJECT(
+          self,
+          "event=source_stopped topic=%s kind=raw_image reliable=%s resource=subscription reason=%s",
+          self->ros_topic,
+          self->ros_reliable ? "true" : "false",
+          transition == GST_STATE_CHANGE_PAUSED_TO_READY ? "paused_to_ready" : "ready_to_null");
+      }
       self->sub.reset();
       self->node_runner.reset();
       self->caps_set = FALSE;
@@ -273,6 +286,13 @@ static GstFlowReturn rosrawimagesrc_create(GstPushSrc * push_src, GstBuffer ** b
   gsize length = msg->data.size();
   *buf = gst_buffer_new_allocate(NULL, length, NULL);
   if (*buf == NULL) {
+    GST_ERROR_OBJECT(
+      self,
+      "event=buffer_allocate_failed topic=%s kind=raw_image reliable=%s resource=buffer "
+      "reason=allocation_returned_null requested_bytes=%" G_GSIZE_FORMAT,
+      self->ros_topic,
+      self->ros_reliable ? "true" : "false",
+      length);
     return GST_FLOW_ERROR;
   }
 
