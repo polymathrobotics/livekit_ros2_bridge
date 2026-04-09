@@ -2,14 +2,6 @@ variable "DEFAULT_PLATFORM" {
   default = "linux/amd64"
 }
 
-variable "GSTREAMER_PUBLISHER_REF_JAMMY" {
-  default = "8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
-}
-
-variable "GSTREAMER_PUBLISHER_REF_NOBLE" {
-  default = "407891dbdca2ad3113270fbeb350ab9f47615917"
-}
-
 variable "GSTREAMER_PUBLISHER_IMAGE_JAMMY" {
   default = "docker.io/polymathrobotics/gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
 }

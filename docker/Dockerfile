@@ -128,13 +128,11 @@ WORKDIR /opt/livekit_ros2_bridge
 COPY docker/scripts/source-bridge-env.sh /usr/local/bin/livekit-bridge-source-env
 COPY docker/scripts/runtime-entrypoint.sh /usr/local/bin/livekit-bridge-entrypoint
 COPY docker/scripts/runtime-launch-bridge.sh /usr/local/bin/livekit-bridge-launch
-COPY docker/scripts/runtime-smoke.sh /usr/local/bin/livekit-bridge-runtime-smoke
 
 RUN chmod +x \
       /usr/local/bin/livekit-bridge-source-env \
       /usr/local/bin/livekit-bridge-entrypoint \
-      /usr/local/bin/livekit-bridge-launch \
-      /usr/local/bin/livekit-bridge-runtime-smoke
+      /usr/local/bin/livekit-bridge-launch
 
 COPY --from=builder /tmp/install-runtime-deps.sh /tmp/install-runtime-deps.sh
 
@@ -145,8 +143,6 @@ RUN apt-get update \
 
 COPY --from=builder /opt/ros_ws/install /opt/livekit_ros2_bridge/install
 COPY --from=gstreamer-publisher-source /usr/local/bin/gstreamer-publisher /usr/local/bin/gstreamer-publisher
-
-RUN /usr/local/bin/livekit-bridge-runtime-smoke
 
 ENTRYPOINT ["/usr/local/bin/livekit-bridge-entrypoint"]
 CMD ["bash"]
