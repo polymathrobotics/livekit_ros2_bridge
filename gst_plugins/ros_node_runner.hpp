@@ -41,6 +41,8 @@ public:
   }
 
 private:
+  std::string node_name_;
+
   // These members share one isolated ROS graph that is torn down with this
   // runner and never shared across plugin instances.
   rclcpp::Context::SharedPtr context_;
