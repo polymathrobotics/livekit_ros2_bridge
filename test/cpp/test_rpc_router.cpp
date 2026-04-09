@@ -20,6 +20,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -145,7 +146,6 @@ public:
   , ros_executor_queue(*node)
   , ros_service_caller(*node)
   , rpc_router(*node, access_policy, ros_executor_queue, ros_service_caller)
-  , session_state(session.state)
   {
     rpc_router.registerRpcMethods(session);
   }
@@ -157,9 +157,13 @@ public:
     ros_executor_queue.shutdown();
   }
 
-  RpcHandler & rpcHandler(const std::string & method_name)
+  std::optional<std::string> invokeRpc(const std::string & method_name, const RpcInvocation & invocation)
   {
-    return session_state->rpc_handlers.at(method_name);
+    const auto handler_it = session.state->rpc_handlers.find(method_name);
+    if (handler_it == session.state->rpc_handlers.end()) {
+      throw std::runtime_error("RPC method not registered in harness: " + method_name);
+    }
+    return handler_it->second(invocation);
   }
 
   std::shared_ptr<rclcpp::Node> node;
@@ -167,7 +171,6 @@ public:
   RosServiceCaller ros_service_caller;
   FakeRoomSession session;
   RpcRouter rpc_router;
-  std::shared_ptr<FakeRoomSessionState> session_state;
 };
 
 class RpcRouterTest : public ::testing::Test
@@ -201,10 +204,12 @@ TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
   for (const auto & method : methods) {
     expectRpcHandlerError(
       [&]() {
-        harness.rpcHandler(method)(RpcInvocation{
-          "",
-          R"({not-json})",
-        });
+        harness.invokeRpc(
+          method,
+          RpcInvocation{
+            "",
+            R"({not-json})",
+          });
       },
       protocol::kRpcErrorUnauthorized);
   }
@@ -216,10 +221,12 @@ TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
 
   expectRpcHandlerError(
     [&]() {
-      harness.rpcHandler(protocol::kRpcServiceCall)(RpcInvocation{
-        "participant-1",
-        R"({"service":"/rpc_router/set_bool"})",
-      });
+      harness.invokeRpc(
+        protocol::kRpcServiceCall,
+        RpcInvocation{
+          "participant-1",
+          R"({"service":"/rpc_router/set_bool"})",
+        });
     },
     protocol::kRpcErrorInvalidRequest);
 }
@@ -231,10 +238,12 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
 
   expectRpcHandlerError(
     [&]() {
-      harness.rpcHandler(protocol::kRpcServiceCall)(RpcInvocation{
-        "participant-1",
-        makeServiceCallRequest("/denied_service", "std_srvs/srv/SetBool", serializeMessage(request_message)),
-      });
+      harness.invokeRpc(
+        protocol::kRpcServiceCall,
+        RpcInvocation{
+          "participant-1",
+          makeServiceCallRequest("/denied_service", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+        });
     },
     protocol::kRpcErrorForbidden,
     "ROS service '/denied_service' not permitted.");
@@ -246,10 +255,12 @@ TEST_F(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
 
   expectRpcHandlerError(
     [&]() {
-      harness.rpcHandler(protocol::kRpcInterfacesGet)(RpcInvocation{
-        "participant-1",
-        R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
-      });
+      harness.invokeRpc(
+        protocol::kRpcInterfacesGet,
+        RpcInvocation{
+          "participant-1",
+          R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
+        });
     },
     protocol::kRpcErrorInternal);
 }
@@ -258,10 +269,12 @@ TEST_F(RpcRouterTest, InterfacesGetRpcReturnsSchemaForKnownType)
 {
   RpcRouterHarness harness;
 
-  const auto response = harness.rpcHandler(protocol::kRpcInterfacesGet)(RpcInvocation{
-    "participant-1",
-    R"({"interface_types":["std_msgs/msg/String"]})",
-  });
+  const auto response = harness.invokeRpc(
+    protocol::kRpcInterfacesGet,
+    RpcInvocation{
+      "participant-1",
+      R"({"interface_types":["std_msgs/msg/String"]})",
+    });
 
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
@@ -294,10 +307,12 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   auto handler_future = std::async(std::launch::async, [&]() {
     std_srvs::srv::SetBool::Request request_message;
     request_message.data = true;
-    return harness.rpcHandler(protocol::kRpcServiceCall)(RpcInvocation{
-      "participant-1",
-      makeServiceCallRequest("/rpc_router/set_bool", "std_srvs/srv/SetBool", serializeMessage(request_message)),
-    });
+    return harness.invokeRpc(
+      protocol::kRpcServiceCall,
+      RpcInvocation{
+        "participant-1",
+        makeServiceCallRequest("/rpc_router/set_bool", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+      });
   });
 
   ASSERT_TRUE(waitForFutureReady(executor, handler_future));
@@ -327,10 +342,12 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
   auto handler_future = std::async(std::launch::async, [&]() {
     std_srvs::srv::SetBool::Request request_message;
     request_message.data = true;
-    return harness.rpcHandler(protocol::kRpcServiceCall)(RpcInvocation{
-      "participant-1",
-      makeServiceCallRequest("/no_such_service", "std_srvs/srv/SetBool", serializeMessage(request_message), 200),
-    });
+    return harness.invokeRpc(
+      protocol::kRpcServiceCall,
+      RpcInvocation{
+        "participant-1",
+        makeServiceCallRequest("/no_such_service", "std_srvs/srv/SetBool", serializeMessage(request_message), 200),
+      });
   });
 
   ASSERT_TRUE(waitForFutureReady(executor, handler_future));
@@ -363,10 +380,12 @@ TEST_F(RpcRouterTest, ServiceListRpcFiltersAllowedServicesOnRosExecutorThread)
   }));
 
   auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.rpcHandler(protocol::kRpcServicesList)(RpcInvocation{
-      "participant-1",
-      R"({"query":"rpc_router"})",
-    });
+    return harness.invokeRpc(
+      protocol::kRpcServicesList,
+      RpcInvocation{
+        "participant-1",
+        R"({"query":"rpc_router"})",
+      });
   });
 
   ASSERT_TRUE(waitForFutureReady(executor, handler_future));
@@ -398,10 +417,12 @@ TEST_F(RpcRouterTest, TopicListRpcFiltersAllowedTopicsOnRosExecutorThread)
   }));
 
   auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.rpcHandler(protocol::kRpcTopicsList)(RpcInvocation{
-      "participant-1",
-      R"({"query":"rpc_router"})",
-    });
+    return harness.invokeRpc(
+      protocol::kRpcTopicsList,
+      RpcInvocation{
+        "participant-1",
+        R"({"query":"rpc_router"})",
+      });
   });
 
   ASSERT_TRUE(waitForFutureReady(executor, handler_future));

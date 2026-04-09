@@ -150,16 +150,20 @@ RpcRouter::RpcRouter(
 , ros_service_caller_(ros_service_caller)
 {}
 
-bool RpcRouter::registerRpcMethods(RoomSession & session)
+std::array<std::pair<const char *, RpcHandler>, 4> RpcRouter::rpcMethodCatalog()
 {
-  const std::array<std::pair<const char *, RpcHandler>, 4> methods{{
+  return {{
     {protocol::kRpcServiceCall, [this](const RpcInvocation & invocation) { return handleServiceCall(invocation); }},
     {protocol::kRpcInterfacesGet, [this](const RpcInvocation & invocation) { return handleInterfacesGet(invocation); }},
     {protocol::kRpcServicesList, [this](const RpcInvocation & invocation) { return handleServiceList(invocation); }},
     {protocol::kRpcTopicsList, [this](const RpcInvocation & invocation) { return handleTopicList(invocation); }},
   }};
+}
+
+bool RpcRouter::registerRpcMethods(RoomSession & session)
+{
   bool all_registered = true;
-  for (const auto & method : methods) {
+  for (const auto & method : rpcMethodCatalog()) {
     if (!session.registerRpcMethod(method.first, method.second)) {
       RCLCPP_ERROR(kRpcRouterLogger, "event=rpc_method_registration_failed method=%s", method.first);
       // Registration is best-effort rather than transactional so one failure
@@ -172,11 +176,9 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
 
 void RpcRouter::unregisterRpcMethods(RoomSession & session)
 {
-  for (const char * method_name :
-       {protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList})
-  {
-    if (!session.unregisterRpcMethod(method_name)) {
-      RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method_name);
+  for (const auto & method : rpcMethodCatalog()) {
+    if (!session.unregisterRpcMethod(method.first)) {
+      RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method.first);
     }
   }
 }

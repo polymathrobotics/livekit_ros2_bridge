@@ -14,8 +14,10 @@
 
 #pragma once
 
+#include <array>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "access_policy.hpp"
 #include "rclcpp/node.hpp"
@@ -46,6 +48,7 @@ public:
   void unregisterRpcMethods(RoomSession & session);
 
 private:
+  std::array<std::pair<const char *, RpcHandler>, 4> rpcMethodCatalog();
   std::optional<std::string> handleServiceCall(const RpcInvocation & invocation);
   std::optional<std::string> handleInterfacesGet(const RpcInvocation & invocation);
   std::optional<std::string> handleServiceList(const RpcInvocation & invocation);
