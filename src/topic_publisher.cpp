@@ -120,6 +120,12 @@ void RosTopicPublisher::shutdown()
     return;
   }
 
+  const std::size_t cached_publishers = publishers_.size();
+  RCLCPP_INFO(
+    kTopicPublisherLogger,
+    "event=topic_publisher_state_changed reason=shutdown action=clear_cached_publishers cached_publishers=%zu",
+    cached_publishers);
+
   auto publishers = std::move(publishers_);
   publishers_.clear();
   lru_topics_.clear();

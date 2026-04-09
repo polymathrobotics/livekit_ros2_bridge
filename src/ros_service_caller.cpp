@@ -34,6 +34,7 @@
 
 #include "payloads/service_call_payloads.hpp"
 #include "rcl/client.h"
+#include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialization.hpp"
 #include "rclcpp/timer.hpp"
@@ -71,6 +72,7 @@ constexpr char kIntrospectionTsId[] = "rosidl_typesupport_introspection_cpp";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
 constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
+const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
 {
@@ -327,10 +329,20 @@ struct RosServiceCaller::Impl
   void onPollTimer();
   void drainResponses();
   void checkTimeouts();
+  void logPendingSettlementSummary(
+    rclcpp::Logger logger,
+    bool warn,
+    const char * reason,
+    const char * action,
+    const char * service,
+    const char * interface_type,
+    const char * requester_identity,
+    std::size_t count) const;
 
   template <typename ShouldSettleFn, typename MakeExceptionFn>
-  void settlePendingCallsIf(ShouldSettleFn should_settle, MakeExceptionFn make_exception)
+  std::size_t settlePendingCallsIf(ShouldSettleFn should_settle, MakeExceptionFn make_exception)
   {
+    std::size_t settled_count = 0U;
     for (auto it = pending_calls.begin(); it != pending_calls.end();) {
       if (!should_settle(it->second)) {
         ++it;
@@ -338,13 +350,15 @@ struct RosServiceCaller::Impl
       }
 
       it = settlePendingCall(it, [&](PendingCall & call) { call.promise.set_exception(make_exception(call)); });
+      ++settled_count;
     }
+    return settled_count;
   }
 
   template <typename ShouldSettleFn>
-  void settlePendingCallsIf(ShouldSettleFn should_settle, const char * message)
+  std::size_t settlePendingCallsIf(ShouldSettleFn should_settle, const char * message)
   {
-    settlePendingCallsIf(std::move(should_settle), [message](const PendingCall &) {
+    return settlePendingCallsIf(std::move(should_settle), [message](const PendingCall &) {
       return std::make_exception_ptr(std::runtime_error(message));
     });
   }
@@ -483,6 +497,46 @@ void RosServiceCaller::Impl::setPollCallbackHooks(std::function<void()> on_enter
   poll_callback_exit_hook = std::move(on_exit);
 }
 
+void RosServiceCaller::Impl::logPendingSettlementSummary(
+  rclcpp::Logger logger,
+  bool warn,
+  const char * reason,
+  const char * action,
+  const char * service,
+  const char * interface_type,
+  const char * requester_identity,
+  std::size_t count) const
+{
+  if (count == 0U) {
+    return;
+  }
+
+  if (warn) {
+    RCLCPP_WARN(
+      logger,
+      "event=service_calls_settled reason=%s action=%s service=%s interface_type=%s requester_identity=%s "
+      "count=%zu",
+      reason,
+      action,
+      service,
+      interface_type,
+      requester_identity,
+      count);
+    return;
+  }
+
+  RCLCPP_INFO(
+    logger,
+    "event=service_calls_settled reason=%s action=%s service=%s interface_type=%s requester_identity=%s "
+    "count=%zu",
+    reason,
+    action,
+    service,
+    interface_type,
+    requester_identity,
+    count);
+}
+
 void RosServiceCaller::Impl::onPollTimer()
 {
   std::function<void()> on_enter;
@@ -541,7 +595,9 @@ void RosServiceCaller::Impl::drainResponses()
 void RosServiceCaller::Impl::checkTimeouts()
 {
   const auto now = std::chrono::steady_clock::now();
-  settlePendingCallsIf([now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.");
+  const std::size_t timed_out_count =
+    settlePendingCallsIf([now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.");
+  logPendingSettlementSummary(kRosServiceCallerLogger, true, "timeout", "fail_futures", "*", "*", "*", timed_out_count);
 }
 
 RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
@@ -599,13 +655,30 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
     if (ret != RCL_RET_OK) {
       throw std::runtime_error("Failed to send service request.");
     }
-  } catch (const std::exception &) {
+  } catch (const std::exception & exc) {
+    if (inflight.has_value()) {
+      RCLCPP_ERROR(
+        kRosServiceCallerLogger,
+        "event=service_call_failed reason=start_failed service=%s interface_type=%s requester_identity=%s "
+        "action=fail_future error=%s",
+        request.service.c_str(),
+        interface_type.c_str(),
+        requester_identity.c_str(),
+        exc.what());
+    }
     result_promise.set_exception(std::current_exception());
     return result_future;
   }
 
   const PendingCallKey key{cached, sequence_number};
   if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
+    RCLCPP_ERROR(
+      kRosServiceCallerLogger,
+      "event=service_call_failed reason=duplicate_pending_key service=%s interface_type=%s requester_identity=%s "
+      "action=fail_future",
+      request.service.c_str(),
+      interface_type.c_str(),
+      requester_identity.c_str());
     result_promise.set_exception(std::make_exception_ptr(std::runtime_error("Duplicate pending service call key.")));
     return result_future;
   }
@@ -633,14 +706,26 @@ void RosServiceCaller::cancelCallsForRequester(const std::string & requester_ide
   if (requester_identity.empty()) {
     return;
   }
-  impl_->settlePendingCallsIf(
+  const std::size_t canceled_count = impl_->settlePendingCallsIf(
     [&requester_identity](const Impl::PendingCall & call) { return call.requester_identity == requester_identity; },
     "Requester identity disconnected.");
+  impl_->logPendingSettlementSummary(
+    kRosServiceCallerLogger,
+    false,
+    "requester_disconnected",
+    "fail_futures",
+    "*",
+    "*",
+    requester_identity.c_str(),
+    canceled_count);
 }
 
 void RosServiceCaller::resetSessionState()
 {
-  impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.");
+  const std::size_t canceled_count =
+    impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.");
+  impl_->logPendingSettlementSummary(
+    kRosServiceCallerLogger, false, "session_reset", "fail_futures", "*", "*", "*", canceled_count);
 }
 
 void RosServiceCaller::shutdown()
@@ -654,7 +739,10 @@ void RosServiceCaller::shutdown()
     impl_->poll_timer.reset();
   }
 
-  impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "Service caller shut down.");
+  const std::size_t canceled_count =
+    impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "Service caller shut down.");
+  impl_->logPendingSettlementSummary(
+    kRosServiceCallerLogger, false, "shutdown", "fail_futures", "*", "*", "*", canceled_count);
   impl_->clients.clear();
 }
 

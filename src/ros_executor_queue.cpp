@@ -203,10 +203,11 @@ void RosExecutorQueue::wake_executor()
   try {
     waitable->wake_executor();
   } catch (const std::exception & exc) {
-    RCLCPP_ERROR(kRosExecutorQueueLogger, "ROS executor queue wakeup failed: %s", exc.what());
+    RCLCPP_ERROR(
+      kRosExecutorQueueLogger, "event=executor_wake_failed reason=exception action=shutdown error=%s", exc.what());
     shutdown();
   } catch (...) {
-    RCLCPP_ERROR(kRosExecutorQueueLogger, "ROS executor queue wakeup failed with unknown error");
+    RCLCPP_ERROR(kRosExecutorQueueLogger, "event=executor_wake_failed reason=unknown_error action=shutdown");
     shutdown();
   }
 }
@@ -214,6 +215,7 @@ void RosExecutorQueue::wake_executor()
 void RosExecutorQueue::shutdown()
 {
   std::queue<PendingTask> pending;
+  std::size_t canceled_count = 0U;
   std::shared_ptr<ExecutorWakeWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_interface;
   rclcpp::CallbackGroup::SharedPtr callback_group;
@@ -230,6 +232,7 @@ void RosExecutorQueue::shutdown()
     }
     shutdown_ = true;
     pending = std::move(tasks_);
+    canceled_count = pending.size();
     waitable = std::move(waitable_);
     waitables_interface = std::move(waitables_interface_);
     callback_group = std::move(callback_group_);
@@ -237,6 +240,13 @@ void RosExecutorQueue::shutdown()
 
   if (waitables_interface && callback_group && waitable) {
     waitables_interface->remove_waitable(waitable, callback_group);
+  }
+
+  if (canceled_count > 0U) {
+    RCLCPP_WARN(
+      kRosExecutorQueueLogger,
+      "event=executor_queue_settled reason=shutdown action=cancel_pending count=%zu",
+      canceled_count);
   }
 
   while (!pending.empty()) {
