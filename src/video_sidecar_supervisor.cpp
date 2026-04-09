@@ -41,6 +41,34 @@ namespace
 
 const rclcpp::Logger kLogger = rclcpp::get_logger("video_sidecar_supervisor");
 
+pid_t waitpidNoIntr(pid_t pid, int * status, int options)
+{
+  pid_t result = -1;
+  do {
+    result = waitpid(pid, status, options);
+  } while (result < 0 && errno == EINTR);
+  return result;
+}
+
+void logSidecarSubprocessFailure(
+  const std::string & sidecar_key,
+  const std::string & publisher_identity,
+  const char * phase,
+  const char * reason,
+  const char * error,
+  pid_t pid)
+{
+  RCLCPP_ERROR(
+    kLogger,
+    "event=video_sidecar_subprocess_failed sidecar_key=%s publisher_identity=%s phase=%s reason=%s error=%s pid=%d",
+    sidecar_key.c_str(),
+    publisher_identity.c_str(),
+    phase,
+    reason,
+    error,
+    static_cast<int>(pid));
+}
+
 void signalSidecarProcessGroup(pid_t pid, int signal_number)
 {
   if (pid <= 0) {
@@ -207,8 +235,13 @@ VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSid
 
   launch.argv = build_sidecar_command_(sidecar.spec, config_.livekit_url, token);
   if (launch.argv.empty()) {
-    RCLCPP_ERROR(
-      kLogger, "event=video_sidecar_command_error sidecar_key=%s reason=empty_argv", sidecar.spec.sidecar_key.c_str());
+    logSidecarSubprocessFailure(
+      sidecar.spec.sidecar_key,
+      sidecar.publisher_identity,
+      "prepare",
+      "empty_argv",
+      "command_builder_returned_empty_argv",
+      -1);
     throw std::runtime_error("Failed to build video sidecar command.");
   }
 
@@ -261,7 +294,9 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   // closes the write end during exec and the parent observes EOF instead.
   int exec_status_pipe[2] = {-1, -1};
   if (pipe(exec_status_pipe) != 0) {
-    RCLCPP_ERROR(kLogger, "pipe() failed for sidecar_key=%s: %s", sidecar_key.c_str(), strerror(errno));
+    const int error_code = errno;
+    logSidecarSubprocessFailure(
+      sidecar_key, sidecar.publisher_identity, "spawn", "pipe_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to create video sidecar startup pipe.");
   }
 
@@ -270,15 +305,18 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
     const int error_code = errno;
     close(exec_status_pipe[0]);
     close(exec_status_pipe[1]);
-    RCLCPP_ERROR(kLogger, "fcntl(FD_CLOEXEC) failed for sidecar_key=%s: %s", sidecar_key.c_str(), strerror(error_code));
+    logSidecarSubprocessFailure(
+      sidecar_key, sidecar.publisher_identity, "spawn", "startup_pipe_cloexec_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to configure video sidecar startup pipe.");
   }
 
   const pid_t pid = fork();
   if (pid < 0) {
+    const int error_code = errno;
     close(exec_status_pipe[0]);
     close(exec_status_pipe[1]);
-    RCLCPP_ERROR(kLogger, "fork() failed for sidecar_key=%s: %s", sidecar_key.c_str(), strerror(errno));
+    logSidecarSubprocessFailure(
+      sidecar_key, sidecar.publisher_identity, "spawn", "fork_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to fork video sidecar process.");
   }
 
@@ -322,29 +360,27 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   if (read_size < 0) {
     kill(pid, SIGKILL);
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    RCLCPP_ERROR(
-      kLogger, "read() failed while waiting for sidecar_key=%s startup: %s", sidecar_key.c_str(), strerror(read_error));
+    (void)waitpidNoIntr(pid, &status, 0);
+    logSidecarSubprocessFailure(
+      sidecar_key, sidecar.publisher_identity, "spawn", "startup_handshake_read_failed", strerror(read_error), pid);
     throw std::runtime_error("Failed waiting for video sidecar startup handshake.");
   }
 
   if (read_size != 0) {
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    (void)waitpidNoIntr(pid, &status, 0);
     if (read_size != static_cast<ssize_t>(sizeof(exec_error))) {
-      RCLCPP_ERROR(
-        kLogger,
-        "startup handshake returned an invalid exec status for sidecar_key=%s identity=%s",
-        sidecar_key.c_str(),
-        sidecar.publisher_identity.c_str());
+      logSidecarSubprocessFailure(
+        sidecar_key,
+        sidecar.publisher_identity,
+        "spawn",
+        "startup_handshake_invalid",
+        "unexpected_exec_status_size",
+        pid);
       throw std::runtime_error("Invalid video sidecar startup handshake response.");
     }
-    RCLCPP_ERROR(
-      kLogger,
-      "execvp() failed for sidecar_key=%s identity=%s: %s",
-      sidecar_key.c_str(),
-      sidecar.publisher_identity.c_str(),
-      strerror(exec_error));
+    logSidecarSubprocessFailure(
+      sidecar_key, sidecar.publisher_identity, "spawn", "exec_failed", strerror(exec_error), pid);
     throw std::runtime_error("Failed to exec video sidecar process: " + std::string(strerror(exec_error)) + ".");
   }
 
@@ -370,13 +406,67 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
   signalSidecarProcessGroup(pid, SIGTERM);
 
   int status = 0;
-  pid_t result = waitpid(pid, &status, WNOHANG);
+  pid_t result = waitpidNoIntr(pid, &status, WNOHANG);
+  if (result < 0) {
+    const int error_code = errno;
+    RCLCPP_ERROR(
+      kLogger,
+      "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait reason=sigterm_waitpid_failed "
+      "error=%s pid=%d",
+      sidecar_key.c_str(),
+      sidecar.publisher_identity.c_str(),
+      strerror(error_code),
+      static_cast<int>(pid));
+    sidecar.pid = -1;
+    sidecar.consecutive_unhealthy_checks = 0;
+    return;
+  }
+
   if (result == 0) {
     usleep(500000);
-    result = waitpid(pid, &status, WNOHANG);
+    result = waitpidNoIntr(pid, &status, WNOHANG);
+    if (result < 0) {
+      const int error_code = errno;
+      RCLCPP_ERROR(
+        kLogger,
+        "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait reason=sigterm_waitpid_failed "
+        "error=%s pid=%d",
+        sidecar_key.c_str(),
+        sidecar.publisher_identity.c_str(),
+        strerror(error_code),
+        static_cast<int>(pid));
+      sidecar.pid = -1;
+      sidecar.consecutive_unhealthy_checks = 0;
+      return;
+    }
+
     if (result == 0) {
       signalSidecarProcessGroup(pid, SIGKILL);
-      waitpid(pid, &status, 0);
+      result = waitpidNoIntr(pid, &status, 0);
+      if (result < 0) {
+        const int error_code = errno;
+        RCLCPP_ERROR(
+          kLogger,
+          "event=video_sidecar_stop_failed sidecar_key=%s publisher_identity=%s phase=wait "
+          "reason=sigkill_waitpid_failed error=%s pid=%d",
+          sidecar_key.c_str(),
+          sidecar.publisher_identity.c_str(),
+          strerror(error_code),
+          static_cast<int>(pid));
+        sidecar.pid = -1;
+        sidecar.consecutive_unhealthy_checks = 0;
+        return;
+      }
+
+      RCLCPP_WARN(
+        kLogger,
+        "event=video_sidecar_killed sidecar_key=%s publisher_identity=%s reason=sigterm_timeout pid=%d",
+        sidecar_key.c_str(),
+        sidecar.publisher_identity.c_str(),
+        static_cast<int>(pid));
+      sidecar.pid = -1;
+      sidecar.consecutive_unhealthy_checks = 0;
+      return;
     }
   }
 
