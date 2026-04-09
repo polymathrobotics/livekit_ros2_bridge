@@ -16,6 +16,7 @@
 #define LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_
 
 #include <functional>
+#include <stdexcept>
 #include <utility>
 
 namespace livekit_ros2_bridge
@@ -26,13 +27,15 @@ class ScopeExit final
 public:
   explicit ScopeExit(std::function<void()> callback)
   : callback_(std::move(callback))
-  {}
+  {
+    if (!callback_) {
+      throw std::invalid_argument("ScopeExit callback must not be empty.");
+    }
+  }
 
   ~ScopeExit()
   {
-    if (callback_) {
-      callback_();
-    }
+    callback_();
   }
 
   ScopeExit(const ScopeExit &) = delete;

@@ -40,7 +40,11 @@ public:
   ExecutorWakeWaitable(const rclcpp::Context::SharedPtr & context, std::function<void()> execute_callback)
   : guard_condition_(std::make_shared<rclcpp::GuardCondition>(context))
   , execute_callback_(std::move(execute_callback))
-  {}
+  {
+    if (!execute_callback_) {
+      throw std::invalid_argument("Executor wake callback must not be empty.");
+    }
+  }
 
 #if RCLCPP_VERSION_GTE(28, 0, 0)
   void add_to_wait_set(rcl_wait_set_t & wait_set) override
@@ -56,9 +60,7 @@ public:
   void execute(const std::shared_ptr<void> & data) override
   {
     (void)data;
-    if (execute_callback_) {
-      execute_callback_();
-    }
+    execute_impl();
   }
 #else
   void add_to_wait_set(rcl_wait_set_t * wait_set) override
@@ -77,9 +79,7 @@ public:
   void execute(std::shared_ptr<void> & data) override
   {
     (void)data;
-    if (execute_callback_) {
-      execute_callback_();
-    }
+    execute_impl();
   }
 #endif
 
@@ -150,6 +150,11 @@ public:
   }
 
 private:
+  void execute_impl()
+  {
+    execute_callback_();
+  }
+
   bool is_ready_impl(const rcl_wait_set_t & wait_set) const
   {
     const auto * target = &guard_condition_->get_rcl_guard_condition();
@@ -237,9 +242,7 @@ void RosExecutorQueue::shutdown()
   while (!pending.empty()) {
     PendingTask task = std::move(pending.front());
     pending.pop();
-    if (task.cancel) {
-      task.cancel();
-    }
+    task.cancel();
   }
 
   std::unique_lock<std::mutex> lock(mutex_);
@@ -278,9 +281,7 @@ void RosExecutorQueue::drain()
     try {
       // drain() always runs on the executor thread that consumed the waitable,
       // so queued work observes the same callback-group affinity as ROS callbacks.
-      if (task.run) {
-        task.run();
-      }
+      task.run();
     } catch (const std::exception & exc) {
       RCLCPP_ERROR(kRosExecutorQueueLogger, "ROS executor queue task failed: %s", exc.what());
     } catch (...) {

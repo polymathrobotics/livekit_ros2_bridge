@@ -28,12 +28,9 @@ TEST(ScopeExitTest, CallbackRunsOnDestruction)
   EXPECT_TRUE(called);
 }
 
-TEST(ScopeExitTest, EmptyCallbackDoesNothing)
+TEST(ScopeExitTest, EmptyCallbackThrows)
 {
-  // A default-constructed std::function is empty; ScopeExit should not crash.
-  {
-    ScopeExit guard(std::function<void()>{});
-  }
+  EXPECT_THROW({ ScopeExit guard(std::function<void()>{}); }, std::invalid_argument);
 }
 
 }  // namespace livekit_ros2_bridge
