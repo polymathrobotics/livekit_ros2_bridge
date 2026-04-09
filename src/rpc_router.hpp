@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <array>
 #include <optional>
 #include <string>
 
@@ -47,16 +46,6 @@ public:
   void unregisterRpcMethods(RoomSession & session);
 
 private:
-  using RegisteredRpcHandler = std::optional<std::string> (RpcRouter::*)(const RpcInvocation &);
-
-  struct RpcMethodBinding
-  {
-    const char * name;
-    RegisteredRpcHandler handler;
-  };
-
-  static const std::array<RpcMethodBinding, 4> & rpcMethodBindings();
-
   std::optional<std::string> handleServiceCall(const RpcInvocation & invocation);
   std::optional<std::string> handleInterfacesGet(const RpcInvocation & invocation);
   std::optional<std::string> handleServiceList(const RpcInvocation & invocation);

@@ -42,14 +42,6 @@ const auto kRpcRouterLogger = rclcpp::get_logger("rpc_router");
 
 using GraphResourceMap = std::map<std::string, std::vector<std::string>>;
 
-void requireCallerIdentity(const RpcInvocation & invocation)
-{
-  if (!invocation.caller_identity.empty()) {
-    return;
-  }
-  throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
-}
-
 std::vector<ResourceListEntry> filterResourceListEntries(
   const GraphResourceMap & all_graph_resources,
   const AccessPolicy & access_policy,
@@ -106,7 +98,9 @@ std::optional<std::string> handleRpcWithCallerIdentity(const RpcInvocation & inv
 {
   // Caller identity is part of the authorization model, so reject anonymous
   // invocations before parsing payloads or touching bridge state.
-  requireCallerIdentity(invocation);
+  if (invocation.caller_identity.empty()) {
+    throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
+  }
 
   try {
     return handle_rpc();
@@ -156,28 +150,19 @@ RpcRouter::RpcRouter(
 , ros_service_caller_(ros_service_caller)
 {}
 
-const std::array<RpcRouter::RpcMethodBinding, 4> & RpcRouter::rpcMethodBindings()
-{
-  static const std::array<RpcMethodBinding, 4> methods{{
-    {protocol::kRpcServiceCall, &RpcRouter::handleServiceCall},
-    {protocol::kRpcInterfacesGet, &RpcRouter::handleInterfacesGet},
-    {protocol::kRpcServicesList, &RpcRouter::handleServiceList},
-    {protocol::kRpcTopicsList, &RpcRouter::handleTopicList},
-  }};
-  return methods;
-}
-
 bool RpcRouter::registerRpcMethods(RoomSession & session)
 {
+  const std::array<std::pair<const char *, RpcHandler>, 4> methods{{
+    {protocol::kRpcServiceCall, [this](const RpcInvocation & invocation) { return handleServiceCall(invocation); }},
+    {protocol::kRpcInterfacesGet,
+     [this](const RpcInvocation & invocation) { return handleInterfacesGet(invocation); }},
+    {protocol::kRpcServicesList, [this](const RpcInvocation & invocation) { return handleServiceList(invocation); }},
+    {protocol::kRpcTopicsList, [this](const RpcInvocation & invocation) { return handleTopicList(invocation); }},
+  }};
   bool all_registered = true;
-  for (const auto & method : rpcMethodBindings()) {
-    // RoomSession keeps the callable after registration, so bind the member
-    // function once here and remove it later with unregisterRpcMethods().
-    const auto handler = [this, member_handler = method.handler](const RpcInvocation & invocation) {
-      return (this->*member_handler)(invocation);
-    };
-    if (!session.registerRpcMethod(method.name, handler)) {
-      RCLCPP_ERROR(kRpcRouterLogger, "event=rpc_method_registration_failed method=%s", method.name);
+  for (const auto & method : methods) {
+    if (!session.registerRpcMethod(method.first, method.second)) {
+      RCLCPP_ERROR(kRpcRouterLogger, "event=rpc_method_registration_failed method=%s", method.first);
       // Registration is best-effort rather than transactional so one failure
       // does not hide other methods that can still be served on this session.
       all_registered = false;
@@ -188,9 +173,11 @@ bool RpcRouter::registerRpcMethods(RoomSession & session)
 
 void RpcRouter::unregisterRpcMethods(RoomSession & session)
 {
-  for (const auto & method : rpcMethodBindings()) {
-    if (!session.unregisterRpcMethod(method.name)) {
-      RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method.name);
+  for (const char * method_name :
+    {protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList})
+  {
+    if (!session.unregisterRpcMethod(method_name)) {
+      RCLCPP_ERROR(kRpcRouterLogger, "Failed to unregister RPC method %s", method_name);
     }
   }
 }

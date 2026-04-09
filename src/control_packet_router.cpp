@@ -15,8 +15,6 @@
 #include "control_packet_router.hpp"
 
 #include <exception>
-#include <functional>
-#include <optional>
 #include <utility>
 
 #include "nlohmann/json.hpp"
@@ -25,78 +23,6 @@
 
 namespace livekit_ros2_bridge
 {
-namespace
-{
-
-template <typename Request, typename ParseRequest>
-void parseAndRouteControlPacket(
-  const rclcpp::Logger & logger,
-  const IncomingControlPacket & packet,
-  ParseRequest && parse_request,
-  const std::function<void(std::string requester_identity, Request request)> & handler,
-  bool require_requester_identity = true)
-{
-  if (require_requester_identity && packet.requester_identity.empty()) {
-    RCLCPP_WARN(logger, "Ignoring %s packet without requester identity", packet.control_topic.c_str());
-    return;
-  }
-
-  if (!handler) {
-    return;
-  }
-
-  std::optional<Request> request = parse_request();
-  if (!request) {
-    return;
-  }
-
-  handler(packet.requester_identity, std::move(*request));
-}
-
-std::optional<SubscriptionHeartbeat> parseHeartbeatPayload(
-  const rclcpp::Logger & logger, const IncomingControlPacket & packet)
-{
-  nlohmann::json body;
-  try {
-    body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-  } catch (const std::exception & exc) {
-    RCLCPP_WARN(
-      logger,
-      "Ignoring malformed heartbeat from requester_identity=%s: %s",
-      packet.requester_identity.c_str(),
-      exc.what());
-    return std::nullopt;
-  }
-
-  try {
-    return parseSubscriptionHeartbeat(body);
-  } catch (const std::exception & exc) {
-    RCLCPP_WARN(
-      logger,
-      "Ignoring invalid heartbeat from requester_identity=%s: %s",
-      packet.requester_identity.c_str(),
-      exc.what());
-    return std::nullopt;
-  }
-}
-
-std::optional<TopicPublishCommand> parseTopicPublishPayload(
-  const rclcpp::Logger & logger, const IncomingControlPacket & packet)
-{
-  try {
-    return parseTopicPublishCommand(packet.payload);
-  } catch (const std::exception & exc) {
-    RCLCPP_WARN(
-      logger,
-      "Ignoring invalid publish command from requester_identity=%s: %s",
-      packet.requester_identity.c_str(),
-      exc.what());
-    return std::nullopt;
-  }
-}
-
-}  // namespace
-
 ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, Handlers handlers)
 : logger_(std::move(logger))
 , handlers_(std::move(handlers))
@@ -109,21 +35,53 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
     // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
     // heartbeat processor can still recover that identity from a leased session_id.
-    parseAndRouteControlPacket<SubscriptionHeartbeat>(
-      logger_,
-      packet,
-      [this, &packet]() { return parseHeartbeatPayload(logger_, packet); },
-      handlers_.on_subscription_heartbeat,
-      false);
+    if (!handlers_.on_subscription_heartbeat) {
+      return;
+    }
+
+    nlohmann::json body;
+    try {
+      body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+    } catch (const std::exception & exc) {
+      RCLCPP_WARN(
+        logger_,
+        "Ignoring malformed heartbeat from requester_identity=%s: %s",
+        packet.requester_identity.c_str(),
+        exc.what());
+      return;
+    }
+
+    try {
+      handlers_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
+    } catch (const std::exception & exc) {
+      RCLCPP_WARN(
+        logger_,
+        "Ignoring invalid heartbeat from requester_identity=%s: %s",
+        packet.requester_identity.c_str(),
+        exc.what());
+    }
     return;
   }
 
   if (packet.control_topic == protocol::kControlTopicPublish) {
-    parseAndRouteControlPacket<TopicPublishCommand>(
-      logger_,
-      packet,
-      [this, &packet]() { return parseTopicPublishPayload(logger_, packet); },
-      handlers_.on_topic_publish_command);
+    if (packet.requester_identity.empty()) {
+      RCLCPP_WARN(logger_, "Ignoring %s packet without requester identity", packet.control_topic.c_str());
+      return;
+    }
+
+    if (!handlers_.on_topic_publish_command) {
+      return;
+    }
+
+    try {
+      handlers_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
+    } catch (const std::exception & exc) {
+      RCLCPP_WARN(
+        logger_,
+        "Ignoring invalid publish command from requester_identity=%s: %s",
+        packet.requester_identity.c_str(),
+        exc.what());
+    }
   }
 }
 
