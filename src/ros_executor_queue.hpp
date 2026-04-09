@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <condition_variable>
 #include <exception>
 #include <functional>
 #include <future>
@@ -22,13 +21,13 @@
 #include <mutex>
 #include <queue>
 #include <stdexcept>
-#include <thread>
 #include <type_traits>
 #include <utility>
 
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
+#include "utils/reentrant_quiesce_guard.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -102,7 +101,6 @@ private:
   void wake_executor();
 
   std::mutex mutex_;
-  std::condition_variable drain_finished_;
   std::queue<PendingTask> tasks_;
   std::shared_ptr<ExecutorWakeWaitable> waitable_;
   rclcpp::CallbackGroup::SharedPtr callback_group_;
@@ -110,8 +108,7 @@ private:
   bool shutdown_ = false;
   // Used so shutdown() can wait for an in-progress drain without deadlocking
   // when shutdown itself is called from the executor thread running drain().
-  bool drain_active_ = false;
-  std::thread::id drain_thread_id_;
+  ReentrantQuiesceGuard drain_guard_;
 };
 
 }  // namespace livekit_ros2_bridge

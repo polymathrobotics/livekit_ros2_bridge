@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -27,7 +26,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -47,6 +45,7 @@
 #include "utils/event_throttle.hpp"
 #include "utils/interface_types.hpp"
 #include "utils/log_event.hpp"
+#include "utils/reentrant_quiesce_guard.hpp"
 #include "utils/scope_exit.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
@@ -384,13 +383,10 @@ struct RosServiceCaller::Impl
   PendingCalls pending_calls;
   std::unordered_map<std::string, int> inflight;
   rclcpp::TimerBase::SharedPtr poll_timer;
-  std::mutex poll_callback_mutex;
-  std::condition_variable poll_callback_quiesced;
+  std::mutex poll_callback_hook_mutex;
   // shutdown() disables new poll callbacks, then waits for any callback already
   // running on another thread to finish before tearing down clients or timers.
-  bool poll_callbacks_enabled = true;
-  bool poll_callback_active = false;
-  std::thread::id poll_callback_thread_id;
+  ReentrantQuiesceGuard poll_callback_guard;
   std::function<void()> poll_callback_enter_hook;
   std::function<void()> poll_callback_exit_hook;
   bool shutdown_flag = false;
@@ -460,13 +456,11 @@ void RosServiceCaller::Impl::ensurePollTimer()
 
 bool RosServiceCaller::Impl::beginPollCallback(std::function<void()> & on_enter)
 {
-  std::lock_guard<std::mutex> lock(poll_callback_mutex);
-  if (!poll_callbacks_enabled) {
+  if (!poll_callback_guard.tryBeginWork()) {
     return false;
   }
 
-  poll_callback_active = true;
-  poll_callback_thread_id = std::this_thread::get_id();
+  std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
   on_enter = poll_callback_enter_hook;
   return true;
 }
@@ -475,32 +469,25 @@ void RosServiceCaller::Impl::endPollCallback()
 {
   std::function<void()> on_exit;
   {
-    std::lock_guard<std::mutex> lock(poll_callback_mutex);
-    poll_callback_active = false;
-    poll_callback_thread_id = std::thread::id{};
+    std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
     on_exit = poll_callback_exit_hook;
   }
 
   if (on_exit) {
     on_exit();
   }
-  poll_callback_quiesced.notify_all();
+  poll_callback_guard.endWork();
 }
 
 void RosServiceCaller::Impl::quiescePollCallbacks()
 {
-  const auto caller_thread_id = std::this_thread::get_id();
-  std::unique_lock<std::mutex> lock(poll_callback_mutex);
-  poll_callbacks_enabled = false;
-  // Allow shutdown from inside the active poll callback without self-deadlock,
-  // while still blocking external callers until the callback has exited.
-  poll_callback_quiesced.wait(
-    lock, [this, &caller_thread_id]() { return !poll_callback_active || poll_callback_thread_id == caller_thread_id; });
+  poll_callback_guard.disable();
+  poll_callback_guard.quiesce();
 }
 
 void RosServiceCaller::Impl::setPollCallbackHooks(std::function<void()> on_enter, std::function<void()> on_exit)
 {
-  std::lock_guard<std::mutex> lock(poll_callback_mutex);
+  std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
   poll_callback_enter_hook = std::move(on_enter);
   poll_callback_exit_hook = std::move(on_exit);
 }

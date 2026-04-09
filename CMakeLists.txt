@@ -155,6 +155,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_quiesce_guard test/cpp/test_quiesce_guard.cpp)
   target_link_libraries(test_quiesce_guard ${PROJECT_NAME})
 
+  ament_add_gtest(test_reentrant_quiesce_guard test/cpp/test_reentrant_quiesce_guard.cpp)
+  target_link_libraries(test_reentrant_quiesce_guard ${PROJECT_NAME})
+
   ament_add_gtest(test_resource_list_payloads test/cpp/test_resource_list_payloads.cpp)
   target_link_libraries(test_resource_list_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
@@ -226,6 +229,7 @@ if(BUILD_TESTING)
     test_log_event
     test_node
     test_quiesce_guard
+    test_reentrant_quiesce_guard
     test_resource_list_payloads
     test_ros_executor_queue
     test_ros_image_src_plugins

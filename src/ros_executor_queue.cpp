@@ -17,7 +17,6 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -226,15 +225,12 @@ void RosExecutorQueue::shutdown()
   std::shared_ptr<ExecutorWakeWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_interface;
   rclcpp::CallbackGroup::SharedPtr callback_group;
-  const auto caller_thread_id = std::this_thread::get_id();
 
   {
     std::unique_lock<std::mutex> lock(mutex_);
     if (shutdown_) {
-      // shutdown() may be called re-entrantly from a running task; in that case
-      // we only wait for drains owned by some other thread.
-      drain_finished_.wait(
-        lock, [this, &caller_thread_id]() { return !drain_active_ || drain_thread_id_ == caller_thread_id; });
+      lock.unlock();
+      drain_guard_.quiesce();
       return;
     }
     shutdown_ = true;
@@ -244,6 +240,7 @@ void RosExecutorQueue::shutdown()
     waitables_interface = std::move(waitables_interface_);
     callback_group = std::move(callback_group_);
   }
+  drain_guard_.disable();
 
   if (waitables_interface && callback_group && waitable) {
     waitables_interface->remove_waitable(waitable, callback_group);
@@ -263,26 +260,17 @@ void RosExecutorQueue::shutdown()
     task.cancel();
   }
 
-  std::unique_lock<std::mutex> lock(mutex_);
   // Already-started drain work runs to completion; only tasks still in the
   // pending queue above are canceled during shutdown.
-  drain_finished_.wait(
-    lock, [this, &caller_thread_id]() { return !drain_active_ || drain_thread_id_ == caller_thread_id; });
+  drain_guard_.quiesce();
 }
 
 void RosExecutorQueue::drain()
 {
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    drain_active_ = true;
-    drain_thread_id_ = std::this_thread::get_id();
+  if (!drain_guard_.tryBeginWork()) {
+    return;
   }
-  ScopeExit finish_drain([this]() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    drain_active_ = false;
-    drain_thread_id_ = std::thread::id{};
-    drain_finished_.notify_all();
-  });
+  ScopeExit finish_drain([this]() { drain_guard_.endWork(); });
 
   while (true) {
     PendingTask task;

@@ -617,6 +617,40 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   spin_thread.join();
 }
 
+TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
+{
+  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reentrant_shutdown_node");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(caller_node);
+
+  RosServiceCaller caller(*caller_node);
+
+  auto shutdown_completed = std::make_shared<std::promise<void>>();
+  auto shutdown_completed_future = shutdown_completed->get_future();
+  auto poll_exited = std::make_shared<std::promise<void>>();
+  auto poll_exited_future = poll_exited->get_future();
+
+  caller.setPollCallbackHooksForTest(
+    [&caller, shutdown_completed]() {
+      caller.shutdown();
+      shutdown_completed->set_value();
+    },
+    [poll_exited]() { poll_exited->set_value(); });
+
+  std::thread spin_thread([&executor]() { executor.spin(); });
+
+  auto pending_future = caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", 5000));
+
+  EXPECT_EQ(shutdown_completed_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(poll_exited_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(pending_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Service caller shut down.");
+
+  executor.cancel();
+  spin_thread.join();
+}
+
 TEST_F(RosServiceCallerTest, RejectsCallAfterShutdown)
 {
   // Cover the early-return path in RosServiceCaller::call when shutdown_flag
