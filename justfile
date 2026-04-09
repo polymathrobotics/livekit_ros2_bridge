@@ -252,9 +252,25 @@ build *colcon_args:
     fi
 
     dev_bash "
-      source /usr/local/bin/livekit-bridge-dev-env
       cd /workspace
       mkdir -p /workspace/build /workspace/install
+      nounset_was_enabled=0
+      case \$- in
+        *u*) nounset_was_enabled=1 ;;
+      esac
+      set +u
+      source \"/opt/ros/${ROS_DISTRO}/setup.bash\"
+      if [[ -f /opt/polymath/setup.bash ]]; then
+        source /opt/polymath/setup.bash
+      fi
+      if [[ -f /workspace/install/setup.bash ]]; then
+        source /workspace/install/setup.bash
+      fi
+      if (( nounset_was_enabled )); then
+        set -u
+      fi
+      export GST_PLUGIN_PATH=\"/workspace/install/lib/livekit_ros2_bridge\${GST_PLUGIN_PATH:+:\${GST_PLUGIN_PATH}}\"
+      export CCACHE_DIR=\"\${CCACHE_DIR:-/ccache}\"
       colcon \
         --log-base /workspace/log \
         build \
@@ -295,8 +311,24 @@ test *colcon_args:
     fi
 
     dev_bash "
-      source /usr/local/bin/livekit-bridge-dev-env
       cd /workspace
+      nounset_was_enabled=0
+      case \$- in
+        *u*) nounset_was_enabled=1 ;;
+      esac
+      set +u
+      source \"/opt/ros/${ROS_DISTRO}/setup.bash\"
+      if [[ -f /opt/polymath/setup.bash ]]; then
+        source /opt/polymath/setup.bash
+      fi
+      if [[ -f /workspace/install/setup.bash ]]; then
+        source /workspace/install/setup.bash
+      fi
+      if (( nounset_was_enabled )); then
+        set -u
+      fi
+      export GST_PLUGIN_PATH=\"/workspace/install/lib/livekit_ros2_bridge\${GST_PLUGIN_PATH:+:\${GST_PLUGIN_PATH}}\"
+      export CCACHE_DIR=\"\${CCACHE_DIR:-/ccache}\"
       rm -rf /workspace/build/livekit_ros2_bridge/test_results
       colcon \
         --log-base /workspace/log \
