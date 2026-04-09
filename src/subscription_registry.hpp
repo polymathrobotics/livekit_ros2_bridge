@@ -16,13 +16,11 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -34,6 +32,7 @@
 #include "rclcpp/generic_subscription.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialized_message.hpp"
+#include "utils/quiesce_guard.hpp"
 #include "video_config.hpp"
 
 namespace livekit_ros2_bridge
@@ -182,13 +181,6 @@ private:
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
   VideoSidecarSupervisor & videoSidecarSupervisor() const;
   const SidecarLaunchSpec & videoSidecarLaunchSpec(const SubscriptionState & sub) const;
-  bool beginMessageCallback(std::size_t callback_generation);
-  void endMessageCallback();
-  std::size_t currentMessageCallbackGeneration() const;
-  // Stops new serialized-message callbacks from entering, advances the callback generation seen by
-  // subscriptions, and waits for in-flight callbacks to leave before resources are torn down.
-  std::size_t quiesceMessageCallbacks();
-  void resumeMessageCallbacks(std::size_t callback_generation);
   void removeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
     RequesterLeaseRemovalReason reason,
@@ -208,13 +200,10 @@ private:
   VideoSidecarSupervisor * video_sidecar_supervisor_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
-  mutable std::mutex message_callback_mutex_;
-  std::condition_variable message_callback_quiesced_;
-  bool message_callbacks_enabled_ = true;
-  std::size_t active_message_callbacks_ = 0U;
-  // Subscriptions capture this value in their message callback. Reset/shutdown increments it
-  // before teardown so queued callbacks from the old session self-reject on entry.
-  std::size_t message_callback_generation_ = 0U;
+  // Subscriptions capture the guard's current generation in their message callback.
+  // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from
+  // the old session self-reject on entry.
+  QuiesceGuard message_callback_guard_;
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> registry_generation_{0};
   SubscriptionStateMap subscriptions_;

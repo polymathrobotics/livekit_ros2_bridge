@@ -366,7 +366,7 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   const rclcpp::QoS qos(kDataSubscriptionDepth);
 
   DataTrackResource data;
-  const std::size_t callback_generation = currentMessageCallbackGeneration();
+  const std::size_t callback_generation = message_callback_guard_.currentGeneration();
   data.track_name = deriveTrackName(topic);
   data.applied_interval_ms = computeAppliedIntervalMs(requesters);
   data.generation = registry_generation_.load();
@@ -382,10 +382,10 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
       if (message == nullptr) {
         return;
       }
-      if (!beginMessageCallback(callback_generation)) {
+      if (!message_callback_guard_.tryBeginWork(callback_generation)) {
         return;
       }
-      ScopeExit finish_delivery([this]() { endMessageCallback(); });
+      ScopeExit finish_delivery([this]() { message_callback_guard_.endWork(); });
       handleSerializedMessage(normalized_topic, *message);
     });
   return data;
@@ -473,10 +473,10 @@ void SubscriptionRegistry::resetSessionState()
     .kv("subscription_count", subscriptions_.size())
     .kv("pending_cdr_replays", requesters_needing_cdr_replay_.size())
     .info();
-  const std::size_t callback_generation = quiesceMessageCallbacks();
+  const std::size_t callback_generation = message_callback_guard_.quiesce();
   requesters_needing_cdr_replay_.clear();
   clearSubscriptions();
-  resumeMessageCallbacks(callback_generation);
+  message_callback_guard_.resume(callback_generation);
 }
 
 void SubscriptionRegistry::shutdown()
@@ -489,7 +489,7 @@ void SubscriptionRegistry::shutdown()
     .kv("subscription_count", subscriptions_.size())
     .kv("pending_cdr_replays", requesters_needing_cdr_replay_.size())
     .info();
-  (void)quiesceMessageCallbacks();
+  (void)message_callback_guard_.quiesce();
   clearSubscriptions();
 }
 
@@ -589,56 +589,6 @@ std::string SubscriptionRegistry::deriveTrackName(const std::string & normalized
 std::string SubscriptionRegistry::makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource)
 {
   return (target_kind == SubscriptionTargetKind::Topic ? "topic:" : "external:") + resource;
-}
-
-bool SubscriptionRegistry::beginMessageCallback(std::size_t callback_generation)
-{
-  std::lock_guard<std::mutex> lock(message_callback_mutex_);
-  if (!message_callbacks_enabled_ || callback_generation != message_callback_generation_) {
-    return false;
-  }
-
-  ++active_message_callbacks_;
-  return true;
-}
-
-void SubscriptionRegistry::endMessageCallback()
-{
-  {
-    std::lock_guard<std::mutex> lock(message_callback_mutex_);
-    if (active_message_callbacks_ == 0U) {
-      return;
-    }
-    --active_message_callbacks_;
-  }
-
-  message_callback_quiesced_.notify_all();
-}
-
-std::size_t SubscriptionRegistry::currentMessageCallbackGeneration() const
-{
-  std::lock_guard<std::mutex> lock(message_callback_mutex_);
-  return message_callback_generation_;
-}
-
-std::size_t SubscriptionRegistry::quiesceMessageCallbacks()
-{
-  std::unique_lock<std::mutex> lock(message_callback_mutex_);
-  message_callbacks_enabled_ = false;
-  // Force queued callbacks to compare against a new generation, then wait until every callback
-  // that already entered endMessageCallback() before reset/shutdown continues.
-  ++message_callback_generation_;
-  message_callback_quiesced_.wait(lock, [this]() { return active_message_callbacks_ == 0U; });
-  return message_callback_generation_;
-}
-
-void SubscriptionRegistry::resumeMessageCallbacks(std::size_t callback_generation)
-{
-  std::lock_guard<std::mutex> lock(message_callback_mutex_);
-  if (message_callback_generation_ != callback_generation) {
-    return;
-  }
-  message_callbacks_enabled_ = true;
 }
 
 void SubscriptionRegistry::removeRequesterLeasesIf(
