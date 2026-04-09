@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -31,6 +32,49 @@
 
 namespace livekit_ros2_bridge
 {
+
+class RosTopicPublisherTestPeer final
+{
+public:
+  static void setBeforePublishHook(RosTopicPublisher & publisher, std::function<void()> hook)
+  {
+    publisher.setBeforePublishHookForTest(std::move(hook));
+  }
+
+  static bool cacheAndLruAreAligned(const RosTopicPublisher & publisher)
+  {
+    if (publisher.publishers_.size() != publisher.lru_topics_.size()) {
+      return false;
+    }
+
+    for (auto lru_it = publisher.lru_topics_.begin(); lru_it != publisher.lru_topics_.end(); ++lru_it) {
+      const auto publisher_it = publisher.publishers_.find(*lru_it);
+      if (publisher_it == publisher.publishers_.end()) {
+        return false;
+      }
+      if (publisher_it->second.lru_position != lru_it) {
+        return false;
+      }
+    }
+
+    for (const auto & entry : publisher.publishers_) {
+      if (
+        std::find(publisher.lru_topics_.begin(), publisher.lru_topics_.end(), entry.first) ==
+        publisher.lru_topics_.end())
+      {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  static std::size_t cachedTopicCount(const RosTopicPublisher & publisher)
+  {
+    return publisher.publishers_.size();
+  }
+};
+
 namespace
 {
 
@@ -214,6 +258,7 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
     "alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
   ASSERT_TRUE(spinUntil(executor, [&]() { return first_topic_voltages.size() == 1U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 48.5F, 1e-6F);
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
 
   message.voltage = 49.0F;
   publisher.publish(
@@ -221,12 +266,14 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   ASSERT_TRUE(spinUntil(executor, [&]() { return first_topic_voltages.size() == 2U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 49.0F, 1e-6F);
   EXPECT_TRUE(second_topic_voltages.empty());
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
 
   message.voltage = 47.0F;
   publisher.publish(
     "alice", makePublishCommand(second_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
   ASSERT_TRUE(spinUntil(executor, [&]() { return second_topic_voltages.size() == 1U; }));
   EXPECT_NEAR(second_topic_voltages.back(), 47.0F, 1e-6F);
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
   ASSERT_TRUE(spinUntil(executor, [&]() {
     return observer_node->count_publishers(first_topic) == 0U && observer_node->count_publishers(second_topic) == 1U;
   }));
@@ -236,9 +283,54 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
     "alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
   ASSERT_TRUE(spinUntil(executor, [&]() { return first_topic_voltages.size() == 3U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 50.0F, 1e-6F);
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
   ASSERT_TRUE(spinUntil(executor, [&]() {
     return observer_node->count_publishers(first_topic) == 1U && observer_node->count_publishers(second_topic) == 0U;
   }));
+}
+
+TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePartialCacheEntryBehind)
+{
+  ScopedRclcppInit init;
+  auto publisher_node = std::make_shared<rclcpp::Node>("topic_publish_failure_publisher_node");
+  auto observer_node = std::make_shared<rclcpp::Node>("topic_publish_failure_observer_node");
+  const std::string topic = "/battery/failure_cleanup";
+
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  auto subscription = observer_node->create_subscription<sensor_msgs::msg::BatteryState>(
+    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+  (void)subscription;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(publisher_node);
+  executor.add_node(observer_node);
+  ASSERT_TRUE(waitForTopicType(executor, publisher_node, topic, "sensor_msgs/msg/BatteryState"));
+
+  RosTopicPublisher publisher(*publisher_node, AccessPolicy({topic}, {}, {}, {}, {}, {}), 50);
+
+  RosTopicPublisherTestPeer::setBeforePublishHook(
+    publisher, []() { throw std::runtime_error("simulated publish failure"); });
+  publisher.publish(
+    "alice",
+    makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(sensor_msgs::msg::BatteryState{})));
+
+  EXPECT_EQ(RosTopicPublisherTestPeer::cachedTopicCount(publisher), 0U);
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
+  EXPECT_TRUE(spinUntil(
+    executor, [&]() { return observer_node->count_publishers(topic) == 0U; }, std::chrono::milliseconds(200)));
+
+  sensor_msgs::msg::BatteryState message;
+  message.voltage = 48.5F;
+  RosTopicPublisherTestPeer::setBeforePublishHook(publisher, {});
+
+  publisher.publish("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+
+  ASSERT_TRUE(spinUntil(executor, [&]() { return received_message.has_value(); }));
+  EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
+  EXPECT_EQ(RosTopicPublisherTestPeer::cachedTopicCount(publisher), 1U);
+  EXPECT_TRUE(RosTopicPublisherTestPeer::cacheAndLruAreAligned(publisher));
 }
 
 TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)

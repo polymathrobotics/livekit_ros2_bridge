@@ -31,12 +31,6 @@ namespace
 constexpr std::size_t kPublisherDepth = 10U;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
-class TopicPublishFailure final : public std::runtime_error
-{
-public:
-  using std::runtime_error::runtime_error;
-};
-
 }  // namespace
 
 RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, int max_topics)
@@ -85,13 +79,10 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   try {
     publishWithPublisherCache(topic, interface_type, serialized);
-  } catch (const TopicPublishFailure & exc) {
-    RCLCPP_ERROR(kTopicPublisherLogger, "Failed publishing ROS message to topic=%s: %s", topic.c_str(), exc.what());
-    return;
   } catch (const std::exception & exc) {
     RCLCPP_ERROR(
       kTopicPublisherLogger,
-      "Failed creating generic publisher for topic=%s type=%s: %s",
+      "Failed publishing ROS message to topic=%s type=%s: %s",
       topic.c_str(),
       interface_type.c_str(),
       exc.what());
@@ -138,34 +129,50 @@ void RosTopicPublisher::publishWithPublisherCache(
   const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized)
 {
   auto publisher_it = publishers_.find(topic);
-  if (publisher_it == publishers_.end()) {
+  const bool was_cached = publisher_it != publishers_.end();
+  if (!was_cached) {
     const rclcpp::QoS qos(kPublisherDepth);
     auto publisher = node_.create_generic_publisher(topic, interface_type, qos);
-    publisher_it =
-      publishers_.emplace(topic, PublisherCacheEntry{interface_type, std::move(publisher), lru_topics_.end()}).first;
+    lru_topics_.push_back(topic);
+    try {
+      publisher_it =
+        publishers_
+          .emplace(topic, PublisherCacheEntry{interface_type, std::move(publisher), std::prev(lru_topics_.end())})
+          .first;
+    } catch (...) {
+      lru_topics_.pop_back();
+      throw;
+    }
   }
 
   try {
+    if (before_publish_hook_) {
+      before_publish_hook_();
+    }
     publisher_it->second.publisher_handle->publish(serialized);
-  } catch (const std::exception & exc) {
-    throw TopicPublishFailure(exc.what());
+  } catch (...) {
+    if (!was_cached) {
+      lru_topics_.erase(publisher_it->second.lru_position);
+      publisher_it->second.publisher_handle.reset();
+      publishers_.erase(publisher_it);
+    }
+    throw;
   }
 
   // Refresh recency only after a successful publish so failed attempts do not
-  // keep a topic resident in the bounded cache.
-  auto & cached_publisher = publisher_it->second;
-  if (cached_publisher.lru_position != lru_topics_.end()) {
-    lru_topics_.erase(cached_publisher.lru_position);
+  // change bounded-cache residency.
+  if (was_cached) {
+    lru_topics_.splice(lru_topics_.end(), lru_topics_, publisher_it->second.lru_position);
   }
-
-  lru_topics_.push_back(topic);
-  cached_publisher.lru_position = std::prev(lru_topics_.end());
 
   // Enforce the cap after serving the current command: the publish succeeds and
   // an older cached publisher is discarded to make room for future use.
-  while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_) && !lru_topics_.empty()) {
+  while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
-    evictPublisher(evicted_topic);
+    lru_topics_.pop_front();
+    const auto evicted_it = publishers_.find(evicted_topic);
+    evicted_it->second.publisher_handle.reset();
+    publishers_.erase(evicted_it);
     RCLCPP_WARN(
       kTopicPublisherLogger,
       "Publisher topic cap reached; evicted topic=%s to allow topic=%s",
@@ -174,18 +181,9 @@ void RosTopicPublisher::publishWithPublisherCache(
   }
 }
 
-void RosTopicPublisher::evictPublisher(const std::string & topic)
+void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
 {
-  const auto publisher_it = publishers_.find(topic);
-  if (publisher_it == publishers_.end()) {
-    return;
-  }
-
-  if (publisher_it->second.lru_position != lru_topics_.end()) {
-    lru_topics_.erase(publisher_it->second.lru_position);
-  }
-  publisher_it->second.publisher_handle.reset();
-  publishers_.erase(publisher_it);
+  before_publish_hook_ = std::move(hook);
 }
 
 }  // namespace livekit_ros2_bridge
