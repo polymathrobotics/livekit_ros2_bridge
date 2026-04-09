@@ -27,24 +27,19 @@
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/serialization.hpp"
+#define private public
 #include "ros_service_caller.hpp"
+#undef private
 #include "std_srvs/srv/set_bool.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RosServiceCallerTestPeer final
-{
-public:
-  static void setPollCallbackHooks(
-    RosServiceCaller & caller, std::function<void()> on_enter, std::function<void()> on_exit)
-  {
-    caller.setPollCallbackHooksForTest(std::move(on_enter), std::move(on_exit));
-  }
-};
-
 namespace
 {
+
+constexpr int kDefaultTimeoutMs = 2000;
+constexpr int kMaxInflightPerRequester = 4;
 
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
@@ -268,8 +263,8 @@ TEST_F(RosServiceCallerTest, UsesDefaultTimeoutWhenTimeoutNotProvided)
     std::chrono::seconds(4)));
 
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-  EXPECT_GE(elapsed.count(), RosServiceCaller::kDefaultTimeoutMs - 250);
-  EXPECT_LT(elapsed.count(), RosServiceCaller::kDefaultTimeoutMs + 2000);
+  EXPECT_GE(elapsed.count(), kDefaultTimeoutMs - 250);
+  EXPECT_LT(elapsed.count(), kDefaultTimeoutMs + 2000);
   EXPECT_EQ(expectRuntimeErrorMessage(future), "Service call timed out.");
 
   caller.shutdown();
@@ -306,7 +301,7 @@ TEST_F(RosServiceCallerTest, EnforcesRequesterIdentityInflightLimit)
 
   RosServiceCaller caller(*caller_node);
 
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     (void)caller.call("requester-1", makeSetBoolRequest("/blocked_service", 5000));
   }
 
@@ -325,7 +320,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
 
   const auto request = makeSetBoolRequest("/blocked_service", 5000);
 
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester - 1; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", request);
   }
 
@@ -365,7 +360,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallSettl
   RosServiceCaller caller(*caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_response_release", 5000);
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester - 1; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", holding_request);
   }
 
@@ -398,7 +393,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallTimes
   RosServiceCaller caller(*caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_timeout_release", 5000);
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester - 1; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", holding_request);
   }
 
@@ -428,7 +423,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequester
 
   const auto request = makeSetBoolRequest("/disconnect_release", 5000);
   std::vector<std::future<RosServiceCaller::ServiceCallResponse>> pending_futures;
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     pending_futures.push_back(caller.call("requester-1", request));
   }
 
@@ -438,7 +433,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequester
     EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Requester identity disconnected.");
   }
 
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     auto recovered_future = caller.call("requester-1", request);
     expectFuturePending(recovered_future);
   }
@@ -457,7 +452,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesPendingCallsAndReleasesRequest
 
   const auto request = makeSetBoolRequest("/session_reset_release", 5000);
   std::vector<std::future<RosServiceCaller::ServiceCallResponse>> pending_futures;
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     pending_futures.push_back(caller.call("requester-1", request));
   }
 
@@ -472,7 +467,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesPendingCallsAndReleasesRequest
     EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "LiveKit session reset.");
   }
 
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     auto recovered_future = caller.call("requester-1", request);
     expectFuturePending(recovered_future);
   }
@@ -495,7 +490,7 @@ TEST_F(RosServiceCallerTest, RejectsEmptyRequesterIdentityBeforeConsumingRequest
   ASSERT_EQ(anonymous_future.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
   EXPECT_EQ(expectInvalidArgumentMessage(anonymous_future), "requester_identity is required");
 
-  for (int i = 0; i < RosServiceCaller::kMaxInflightPerRequester; ++i) {
+  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     (void)caller.call("requester-1", request);
   }
 
@@ -574,8 +569,7 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   auto poll_exited = std::make_shared<std::promise<void>>();
   auto poll_exited_future = poll_exited->get_future();
 
-  RosServiceCallerTestPeer::setPollCallbackHooks(
-    caller,
+  caller.setPollCallbackHooksForTest(
     [poll_entered, release_poll_future]() {
       poll_entered->set_value();
       release_poll_future.wait();

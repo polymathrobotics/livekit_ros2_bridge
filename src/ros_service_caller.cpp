@@ -69,6 +69,8 @@ using MessageMembers = rosidl_typesupport_introspection_cpp::MessageMembers;
 constexpr char kSerializationTsId[] = "rosidl_typesupport_cpp";
 constexpr char kIntrospectionTsId[] = "rosidl_typesupport_introspection_cpp";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
+constexpr int kDefaultTimeoutMs = 2000;
+constexpr int kMaxInflightPerRequester = 4;
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
 {
@@ -88,14 +90,6 @@ std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage
     return {};
   }
   return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
-}
-
-int effectiveTimeoutMs(int timeout_ms)
-{
-  if (timeout_ms > 0) {
-    return timeout_ms;
-  }
-  return RosServiceCaller::kDefaultTimeoutMs;
 }
 
 std::string serviceRequestTypeName(const std::string & service_type)
@@ -318,19 +312,9 @@ struct RosServiceCaller::Impl
     std::chrono::steady_clock::time_point deadline;
   };
 
-  struct PendingCallRegistration
-  {
-    PendingCallKey key;
-    std::string interface_type;
-    std::chrono::steady_clock::time_point deadline;
-    InflightReservation inflight_reservation;
-  };
-
   using PendingCalls = std::unordered_map<PendingCallKey, PendingCall, PendingCallKeyHash>;
   using PendingCallIterator = PendingCalls::iterator;
 
-  PendingCallRegistration preparePendingCallRegistration(
-    const std::string & requester_identity, const ServiceCallRequest & request);
   std::string resolveServiceType(const std::string & service, const std::string & requested_interface_type) const;
   ServiceClientEntry & getOrCreateClient(const std::string & service, const std::string & service_type);
   void acquireInflight(const std::string & requester_identity);
@@ -418,11 +402,11 @@ ServiceClientEntry & RosServiceCaller::Impl::getOrCreateClient(
 
 void RosServiceCaller::Impl::acquireInflight(const std::string & requester_identity)
 {
-  if (requester_identity.empty() || RosServiceCaller::kMaxInflightPerRequester == 0) {
+  if (requester_identity.empty()) {
     return;
   }
   const int current = inflight[requester_identity];
-  if (current >= RosServiceCaller::kMaxInflightPerRequester) {
+  if (current >= kMaxInflightPerRequester) {
     throw std::runtime_error("Requester identity service call limit reached.");
   }
   inflight[requester_identity] = current + 1;
@@ -560,57 +544,6 @@ void RosServiceCaller::Impl::checkTimeouts()
   settlePendingCallsIf([now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.");
 }
 
-RosServiceCaller::Impl::PendingCallRegistration RosServiceCaller::Impl::preparePendingCallRegistration(
-  const std::string & requester_identity, const ServiceCallRequest & request)
-{
-  if (shutdown_flag) {
-    throw std::runtime_error("Service caller is shut down.");
-  }
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
-  }
-
-  const std::string interface_type = resolveServiceType(request.service, request.interface_type);
-  // Count the request against the requester before any expensive setup so the
-  // limit covers work that is already being assembled for rcl_send_request().
-  InflightReservation inflight(*this, requester_identity);
-
-  ServiceClientEntry * cached = nullptr;
-  try {
-    cached = &getOrCreateClient(request.service, interface_type);
-  } catch (const std::exception & exc) {
-    throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
-  }
-
-  std::unique_ptr<DynamicMessageStorage> request_storage;
-  try {
-    auto serialized = toSerializedMessage(request.request);
-    request_storage = std::make_unique<DynamicMessageStorage>(
-      cached->request_type.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
-    cached->request_type.serialization.deserialize_message(&serialized, request_storage->data());
-  } catch (const std::exception & exc) {
-    throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
-  }
-
-  std::int64_t sequence_number = 0;
-  const rcl_ret_t ret = rcl_send_request(&cached->client, request_storage->data(), &sequence_number);
-  if (ret != RCL_RET_OK) {
-    throw std::runtime_error("Failed to send service request.");
-  }
-
-  const PendingCallKey key{cached, sequence_number};
-  if (pending_calls.find(key) != pending_calls.end()) {
-    throw std::runtime_error("Duplicate pending service call key.");
-  }
-
-  return PendingCallRegistration{
-    key,
-    interface_type,
-    std::chrono::steady_clock::now() + std::chrono::milliseconds(effectiveTimeoutMs(request.timeout_ms)),
-    std::move(inflight),
-  };
-}
-
 RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
 : impl_(std::make_unique<Impl>(node))
 {}
@@ -628,26 +561,68 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
   std::promise<ServiceCallResponse> result_promise;
   auto result_future = result_promise.get_future();
 
-  std::optional<Impl::PendingCallRegistration> registration;
+  std::string interface_type;
+  ServiceClientEntry * cached = nullptr;
+  std::int64_t sequence_number = 0;
+  std::optional<Impl::InflightReservation> inflight;
+
   try {
-    registration.emplace(impl_->preparePendingCallRegistration(requester_identity, request));
+    if (impl_->shutdown_flag) {
+      throw std::runtime_error("Service caller is shut down.");
+    }
+    if (requester_identity.empty()) {
+      throw std::invalid_argument("requester_identity is required");
+    }
+
+    interface_type = impl_->resolveServiceType(request.service, request.interface_type);
+    // Count the request against the requester before any expensive setup so the
+    // limit covers work that is already being assembled for rcl_send_request().
+    inflight.emplace(*impl_, requester_identity);
+
+    try {
+      cached = &impl_->getOrCreateClient(request.service, interface_type);
+    } catch (const std::exception & exc) {
+      throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
+    }
+
+    std::unique_ptr<DynamicMessageStorage> request_storage;
+    try {
+      auto serialized = toSerializedMessage(request.request);
+      request_storage = std::make_unique<DynamicMessageStorage>(
+        cached->request_type.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
+      cached->request_type.serialization.deserialize_message(&serialized, request_storage->data());
+    } catch (const std::exception & exc) {
+      throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
+    }
+
+    const rcl_ret_t ret = rcl_send_request(&cached->client, request_storage->data(), &sequence_number);
+    if (ret != RCL_RET_OK) {
+      throw std::runtime_error("Failed to send service request.");
+    }
   } catch (const std::exception &) {
     result_promise.set_exception(std::current_exception());
     return result_future;
   }
 
+  const PendingCallKey key{cached, sequence_number};
+  if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
+    result_promise.set_exception(std::make_exception_ptr(std::runtime_error("Duplicate pending service call key.")));
+    return result_future;
+  }
+
+  const int timeout_ms = request.timeout_ms > 0 ? request.timeout_ms : kDefaultTimeoutMs;
   impl_->pending_calls.emplace(
-    registration->key,
+    key,
     Impl::PendingCall{
       request.service,
-      registration->interface_type,
+      interface_type,
       requester_identity,
       std::move(result_promise),
-      registration->deadline,
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
     });
   // From here on every settlement path goes through pending_calls, so ownership
   // of the inflight quota transfers from the local guard to that map entry.
-  registration->inflight_reservation.commit();
+  inflight->commit();
 
   impl_->ensurePollTimer();
   return result_future;

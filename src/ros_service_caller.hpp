@@ -30,7 +30,6 @@ namespace livekit_ros2_bridge
 {
 
 struct ServiceCallRequest;
-class RosServiceCallerTestPeer;
 
 // Owns dynamic ROS service clients and settles each request asynchronously from
 // a poll timer so RPC handlers can enqueue work without blocking the executor
@@ -38,9 +37,6 @@ class RosServiceCallerTestPeer;
 class RosServiceCaller final
 {
 public:
-  static constexpr int kDefaultTimeoutMs = 2000;
-  static constexpr int kMaxInflightPerRequester = 4;
-
   struct ServiceCallResponse
   {
     std::string service;
@@ -66,8 +62,6 @@ public:
   void shutdown();
 
 private:
-  friend class RosServiceCallerTestPeer;
-
   void setPollCallbackHooksForTest(std::function<void()> on_enter, std::function<void()> on_exit);
 
   class Impl;
