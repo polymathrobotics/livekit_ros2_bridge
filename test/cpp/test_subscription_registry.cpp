@@ -668,7 +668,8 @@ TEST(SubscriptionRegistryTest, FailedUnhealthyVideoRestartKeepsSubscriptionAndSi
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   registry.sweepExpiredLeases();
 
-  EXPECT_FALSE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_EQ(spawn_count, 2);
 }
 
 TEST(SubscriptionRegistryTest, RemoveRequesterLeasesPreservesSharedSubscriptionsOwnedByOthers)
