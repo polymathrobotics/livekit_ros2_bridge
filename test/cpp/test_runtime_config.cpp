@@ -107,6 +107,18 @@ void expectRuntimeConfigError(
   }
 }
 
+void expectRuntimeConfigErrorContains(
+  const std::string & node_name, const rclcpp::NodeOptions & options, const char * expected_error_fragment)
+{
+  try {
+    (void)loadRuntimeConfigForNode(node_name, options);
+    FAIL() << "Expected loadRuntimeConfig to throw an error containing '" << expected_error_fragment << "'";
+  } catch (const std::runtime_error & error) {
+    EXPECT_NE(std::string(error.what()).find(expected_error_fragment), std::string::npos)
+      << "actual error: " << error.what();
+  }
+}
+
 void expectSupervisorConfig(
   const RuntimeConfig & startup_config,
   const std::chrono::seconds token_ttl,
@@ -304,13 +316,13 @@ TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)
   expectRuntimeConfigError("startup_config_duplicate_video_entry_id", options, "duplicate video entry id 'front'");
 }
 
-TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersReportsSectionSpecificError)
+TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersAreRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
 
-  expectRuntimeConfigError(
-    "startup_config_missing_video_entry_params", options, "video entry 'front' is missing generated parameters");
+  expectRuntimeConfigErrorContains(
+    "startup_config_missing_video_entry_params", options, "parameter 'videos.front.kind' is not initialized");
 }
 
 TEST_F(RuntimeConfigTest, RosVideoEntryWithoutPipelinesIsRejected)
@@ -397,7 +409,7 @@ TEST_F(RuntimeConfigTest, PipelineVideoEntryRejectsMissingDefaultAlias)
     "video entry 'front' (pipeline kind) requires a 'default' pipeline key");
 }
 
-TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejected)
+TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
@@ -405,8 +417,10 @@ TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejected)
   options.append_parameter_override(
     "videos.front.pipelines", std::vector<std::string>{"default=videotestsrc pattern=ball ! vp8enc"});
 
-  expectRuntimeConfigError(
-    "startup_config_unsupported_video_kind", options, "video entry 'front' has unsupported kind 'gstream'");
+  expectRuntimeConfigErrorContains(
+    "startup_config_unsupported_video_kind",
+    options,
+    "Parameter 'videos.front.kind' with the value 'gstream' is not in the set '{ros, pipeline}'");
 }
 
 }  // namespace livekit_ros2_bridge
