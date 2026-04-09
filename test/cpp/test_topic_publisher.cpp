@@ -31,7 +31,9 @@
 #include "rclcpp/serialization.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_msgs/msg/string.hpp"
+#define private public
 #include "topic_publisher.hpp"
+#undef private
 
 namespace livekit_ros2_bridge
 {
@@ -328,70 +330,50 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
 TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLaterPublishStillSucceeds)
 {
   TopicPublisherHarness harness;
-  bool observed_failed_first_publish = false;
+  const std::string topic = "/battery/failure_cleanup";
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
+    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+  ASSERT_NE(subscription, nullptr);
 
-  for (int attempt = 0; attempt < 20 && !observed_failed_first_publish; ++attempt) {
-    const std::string topic = "/battery/failure_cleanup_" + std::to_string(attempt);
-    std::optional<sensor_msgs::msg::BatteryState> received_message;
-    auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
-      topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
-        received_message = message;
-      });
-    ASSERT_NE(subscription, nullptr);
+  ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState", std::chrono::seconds(5)));
 
-    harness.recreatePublisherSide("topic_publish_failure_publisher");
-    ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState", std::chrono::seconds(5)));
+  sensor_msgs::msg::BatteryState message;
+  message.voltage = 48.5F;
+  const TopicPublishCommand command =
+    makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message));
 
-    sensor_msgs::msg::BatteryState message;
-    message.voltage = 48.5F;
-    const TopicPublishCommand command =
-      makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message));
-
-    bool shutdown_requested = false;
-    {
-      RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
-      auto publish_task =
-        std::async(std::launch::async, [&publisher, &command]() { publisher.publish("alice", command); });
-
-      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-      while (std::chrono::steady_clock::now() < deadline) {
-        if (harness.publisherCount(topic) == 1U) {
-          shutdown_requested = true;
-          harness.shutdownPublisherContext();
-          break;
-        }
-        if (publish_task.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-          break;
-        }
-      }
-
-      ASSERT_EQ(publish_task.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-      publish_task.get();
+  bool force_first_publish_failure = true;
+  bool subscriber_ready_before_publish = false;
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
+  publisher.setBeforePublishHookForTest([&]() {
+    subscriber_ready_before_publish =
+      harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; });
+    if (force_first_publish_failure) {
+      force_first_publish_failure = false;
+      throw std::runtime_error("forced publish failure");
     }
+  });
 
-    if (!shutdown_requested || received_message.has_value()) {
-      continue;
-    }
+  publisher.publish("alice", command);
 
-    if (!harness.spinUntil([&]() { return harness.publisherCount(topic) == 0U; })) {
-      continue;
-    }
+  EXPECT_TRUE(subscriber_ready_before_publish);
+  EXPECT_FALSE(received_message.has_value());
+  EXPECT_TRUE(publisher.publishers_.empty());
+  EXPECT_TRUE(publisher.lru_topics_.empty());
 
-    observed_failed_first_publish = true;
-    EXPECT_EQ(harness.publisherCount(topic), 0U);
+  subscriber_ready_before_publish = false;
+  publisher.publish("alice", command);
 
-    harness.recreatePublisherSide("topic_publish_failure_recovery");
-    ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState", std::chrono::seconds(5)));
-
-    RosTopicPublisher recovery_publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
-    recovery_publisher.publish("alice", command);
-
-    ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
-    EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
-    EXPECT_EQ(harness.publisherCount(topic), 1U);
-  }
-
-  EXPECT_TRUE(observed_failed_first_publish);
+  EXPECT_TRUE(subscriber_ready_before_publish);
+  ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
+  EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
+  ASSERT_EQ(publisher.publishers_.size(), 1U);
+  EXPECT_EQ(publisher.publishers_.count(topic), 1U);
+  ASSERT_EQ(publisher.lru_topics_.size(), 1U);
+  EXPECT_EQ(publisher.lru_topics_.front(), topic);
 }
 
 TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)

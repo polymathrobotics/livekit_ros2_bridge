@@ -15,6 +15,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <list>
 #include <memory>
 #include <string>
@@ -44,6 +45,10 @@ public:
   void shutdown();
 
 private:
+  // Test-only hook that runs after cache setup and immediately before the
+  // underlying ROS publisher publishes the serialized message.
+  void setBeforePublishHookForTest(std::function<void()> hook);
+
   struct PublisherCacheEntry
   {
     std::string interface_type;
@@ -67,6 +72,7 @@ private:
   // handle.
   std::unordered_map<std::string, PublisherCacheEntry> publishers_;
   std::list<std::string> lru_topics_;
+  std::function<void()> before_publish_hook_for_test_;
 };
 
 }  // namespace livekit_ros2_bridge

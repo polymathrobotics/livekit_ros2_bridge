@@ -157,6 +157,9 @@ void RosTopicPublisher::publishWithPublisherCache(
   }
 
   try {
+    if (before_publish_hook_for_test_) {
+      before_publish_hook_for_test_();
+    }
     publisher_it->second.publisher_handle->publish(serialized);
   } catch (...) {
     if (!was_cached) {
@@ -182,6 +185,11 @@ void RosTopicPublisher::publishWithPublisherCache(
       evicted_topic.c_str(),
       topic.c_str());
   }
+}
+
+void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
+{
+  before_publish_hook_for_test_ = std::move(hook);
 }
 
 void RosTopicPublisher::eraseCachedPublisher(const std::string & topic)
