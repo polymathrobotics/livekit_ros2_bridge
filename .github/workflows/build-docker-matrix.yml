@@ -18,28 +18,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Reuse prebuilt publisher images when they exist. If the manual
-          # publisher workflow has not pushed them yet, fall back to building
-          # from source so this validation workflow still works.
-          jammy_image="ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
-          noble_image="ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:noble-407891dbdca2ad3113270fbeb350ab9f47615917"
-          bake_args=()
+          # Use the OCI-published publisher images directly.
+          jammy_image="docker.io/polymathrobotics/gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
+          noble_image="docker.io/polymathrobotics/gstreamer-publisher:noble-407891dbdca2ad3113270fbeb350ab9f47615917"
+          bake_args=(
+            --set "dev-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}"
+            --set "runtime-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}"
+          )
 
-          if docker buildx imagetools inspect "${jammy_image}" >/dev/null 2>&1; then
-            echo "Using prebuilt Jammy gstreamer-publisher image: ${jammy_image}"
-            bake_args+=(--set "dev-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}")
-            bake_args+=(--set "runtime-humble.args.GSTREAMER_PUBLISHER_IMAGE=${jammy_image}")
-          else
-            echo "Jammy gstreamer-publisher image not published yet; falling back to source build."
-          fi
-
-          if docker buildx imagetools inspect "${noble_image}" >/dev/null 2>&1; then
-            echo "Using prebuilt Noble gstreamer-publisher image: ${noble_image}"
-            for target in dev-jazzy dev-kilted dev-rolling runtime-jazzy runtime-kilted runtime-rolling; do
-              bake_args+=(--set "${target}.args.GSTREAMER_PUBLISHER_IMAGE=${noble_image}")
-            done
-          else
-            echo "Noble gstreamer-publisher image not published yet; falling back to source build."
-          fi
+          for target in dev-jazzy dev-kilted dev-rolling runtime-jazzy runtime-kilted runtime-rolling; do
+            bake_args+=(--set "${target}.args.GSTREAMER_PUBLISHER_IMAGE=${noble_image}")
+          done
 
           docker buildx bake --file docker-bake.hcl --progress=plain "${bake_args[@]}" runtime-all dev-humble dev-rolling
