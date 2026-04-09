@@ -14,24 +14,16 @@ variable "GSTREAMER_PUBLISHER_REF_NOBLE" {
   default = "407891dbdca2ad3113270fbeb350ab9f47615917"
 }
 
-variable "GSTREAMER_PUBLISHER_IMAGE_REPOSITORY" {
-  default = "ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher"
-}
-
 variable "GSTREAMER_PUBLISHER_IMAGE_JAMMY" {
-  default = "ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
+  default = "docker.io/polymathrobotics/gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e"
 }
 
 variable "GSTREAMER_PUBLISHER_IMAGE_NOBLE" {
-  default = "ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:noble-407891dbdca2ad3113270fbeb350ab9f47615917"
+  default = "docker.io/polymathrobotics/gstreamer-publisher:noble-407891dbdca2ad3113270fbeb350ab9f47615917"
 }
 
 group "default" {
   targets = ["dev-humble"]
-}
-
-group "publisher-all" {
-  targets = ["publisher-jammy", "publisher-noble"]
 }
 
 group "dev-all" {
@@ -71,30 +63,25 @@ target "_runtime-common" {
   target = "runtime"
 }
 
-target "_publisher-common" {
-  inherits = ["_common"]
-  target = "gstreamer-publisher"
-}
-
-# Humble uses Ubuntu Jammy, and Jammy cannot build our newer
-# gstreamer-publisher revision.
+# Humble uses the Jammy-compatible gstreamer-publisher image, while newer ROS
+# distros use the Noble-compatible one.
 #
-# There are two separate problems with that newer revision:
+# There are two separate reasons the Humble/Jammy image needs an older upstream
+# revision:
 # 1. It now requires Go 1.24.4 or newer.
 # 2. Even with a new enough Go toolchain, the build still fails on Jammy because
 #    the go-gst dependency calls gst_debug_message_get_id, and Jammy's GStreamer
 #    packages do not provide that symbol.
 #
-# The older gstreamer-publisher revision below still builds correctly for Humble,
-# including with Go 1.24. So Humble is pinned to an older publisher revision
-# because of Jammy compatibility, not because Humble needs an older Go version.
+# The older revision still builds correctly for Humble, so the bridge selects
+# the Jammy image there for compatibility rather than because Humble itself
+# requires an older Go toolchain.
 target "dev-humble" {
   inherits = ["_dev-common"]
   tags = ["livekit_ros2_bridge-builder:humble"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_JAMMY
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_JAMMY
     LIVEKIT_SDK_DISTRO = "jammy"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:humble-builder-ubuntu"
@@ -108,8 +95,7 @@ target "dev-jazzy" {
   tags = ["livekit_ros2_bridge-builder:jazzy"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:jazzy-builder-ubuntu"
@@ -123,8 +109,7 @@ target "dev-kilted" {
   tags = ["livekit_ros2_bridge-builder:kilted"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:kilted-builder-ubuntu"
@@ -138,8 +123,7 @@ target "dev-rolling" {
   tags = ["livekit_ros2_bridge-builder:rolling"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:rolling-builder-ubuntu"
@@ -153,8 +137,7 @@ target "runtime-humble" {
   tags = ["livekit_ros2_bridge:humble"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "0"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_JAMMY
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_JAMMY
     LIVEKIT_SDK_DISTRO = "jammy"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:humble-builder-ubuntu"
@@ -168,8 +151,7 @@ target "runtime-jazzy" {
   tags = ["livekit_ros2_bridge:jazzy"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:jazzy-builder-ubuntu"
@@ -183,8 +165,7 @@ target "runtime-kilted" {
   tags = ["livekit_ros2_bridge:kilted"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:kilted-builder-ubuntu"
@@ -198,40 +179,11 @@ target "runtime-rolling" {
   tags = ["livekit_ros2_bridge:rolling"]
   args = {
     ENABLE_PARAMETER_LIBRARY_OVERLAY = "1"
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
+    GSTREAMER_PUBLISHER_IMAGE = GSTREAMER_PUBLISHER_IMAGE_NOBLE
     LIVEKIT_SDK_DISTRO = "noble"
     PARAMETER_LIBRARY_OVERLAY_REF = PARAMETER_LIBRARY_OVERLAY_REF
     ROS_BUILDER_IMAGE = "polymathrobotics/ros:rolling-builder-ubuntu"
     ROS_DISTRO = "rolling"
     ROS_RUNTIME_IMAGE = "polymathrobotics/ros:rolling-ready-ubuntu"
-  }
-}
-
-target "publisher-jammy" {
-  inherits = ["_publisher-common"]
-  tags = [
-    "ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:jammy",
-    GSTREAMER_PUBLISHER_IMAGE_JAMMY,
-  ]
-  args = {
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_JAMMY
-    ROS_BUILDER_IMAGE = "polymathrobotics/ros:humble-builder-ubuntu"
-    ROS_DISTRO = "humble"
-  }
-}
-
-target "publisher-noble" {
-  inherits = ["_publisher-common"]
-  tags = [
-    "ghcr.io/polymathrobotics/livekit_ros2_bridge-gstreamer-publisher:noble",
-    GSTREAMER_PUBLISHER_IMAGE_NOBLE,
-  ]
-  args = {
-    GOLANG_IMAGE = "polymathrobotics/golang:1.24-noble"
-    GSTREAMER_PUBLISHER_REF = GSTREAMER_PUBLISHER_REF_NOBLE
-    ROS_BUILDER_IMAGE = "polymathrobotics/ros:rolling-builder-ubuntu"
-    ROS_DISTRO = "rolling"
   }
 }

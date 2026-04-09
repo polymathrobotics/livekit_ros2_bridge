@@ -3,51 +3,14 @@
 ARG ROS_DISTRO=humble
 ARG ROS_BUILDER_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-builder-ubuntu
 ARG ROS_RUNTIME_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-ready-ubuntu
-ARG GOLANG_IMAGE=polymathrobotics/golang:1.24-noble
-ARG GSTREAMER_PUBLISHER_REF=407891dbdca2ad3113270fbeb350ab9f47615917
-ARG GSTREAMER_PUBLISHER_SOURCE=gstreamer-publisher
+ARG GSTREAMER_PUBLISHER_IMAGE=docker.io/polymathrobotics/gstreamer-publisher:jammy-8825fee6f40ff51f2cf9347892f6fbc08eeb1f2e
 ARG ENABLE_PARAMETER_LIBRARY_OVERLAY=1
 ARG PARAMETER_LIBRARY_OVERLAY_REF=0.7.1
 ARG LIVEKIT_SDK_DISTRO=
 ARG LIVEKIT_SDK_URL_OVERRIDE=
 ARG LIVEKIT_SDK_SHA256_OVERRIDE=
 
-FROM ${GOLANG_IMAGE} AS golang-toolchain
-
-FROM ${ROS_BUILDER_IMAGE} AS gstreamer-publisher-builder
-
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-ARG GSTREAMER_PUBLISHER_REF
-
-ENV DEBIAN_FRONTEND=noninteractive
-ENV GOTOOLCHAIN=local
-ENV GOPATH=/go
-ENV PATH=/go/bin:/usr/local/go/bin:${PATH}
-
-WORKDIR /tmp
-
-COPY --from=golang-toolchain /usr/local/go /usr/local/go
-
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      git \
-      libgstreamer-plugins-base1.0-dev \
-      libgstreamer1.0-dev \
-      pkg-config \
- && rm -rf /var/lib/apt/lists/*
-
-RUN git init /tmp/gstreamer-publisher \
- && git -C /tmp/gstreamer-publisher remote add origin https://github.com/livekit/gstreamer-publisher \
- && git -C /tmp/gstreamer-publisher fetch --depth 1 origin "${GSTREAMER_PUBLISHER_REF}" \
- && git -C /tmp/gstreamer-publisher checkout FETCH_HEAD \
- && GOFLAGS='-p=1' go build -C /tmp/gstreamer-publisher -o /usr/local/bin/gstreamer-publisher .
-
-FROM scratch AS gstreamer-publisher
-
-COPY --from=gstreamer-publisher-builder /usr/local/bin/gstreamer-publisher /usr/local/bin/gstreamer-publisher
-
-FROM ${GSTREAMER_PUBLISHER_SOURCE} AS gstreamer-publisher-source
+FROM ${GSTREAMER_PUBLISHER_IMAGE} AS gstreamer-publisher-source
 
 FROM ${ROS_BUILDER_IMAGE} AS ros-builder-base
 
