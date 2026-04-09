@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 
+#include "nlohmann/json.hpp"
+
 namespace livekit_ros2_bridge
 {
 
@@ -87,6 +89,29 @@ std::optional<std::vector<std::uint8_t>> base64UrlDecode(const std::string & val
 std::int64_t toUnixSeconds(std::chrono::system_clock::time_point time_point)
 {
   return std::chrono::duration_cast<std::chrono::seconds>(time_point.time_since_epoch()).count();
+}
+
+std::optional<nlohmann::json> decodeJwtPayload(const std::string & token)
+{
+  const auto first_dot = token.find('.');
+  if (first_dot == std::string::npos) {
+    return std::nullopt;
+  }
+  const auto second_dot = token.find('.', first_dot + 1U);
+  if (second_dot == std::string::npos || second_dot <= first_dot + 1U) {
+    return std::nullopt;
+  }
+
+  const auto decoded = base64UrlDecode(token.substr(first_dot + 1U, second_dot - first_dot - 1U));
+  if (!decoded.has_value()) {
+    return std::nullopt;
+  }
+
+  try {
+    return nlohmann::json::parse(decoded->begin(), decoded->end());
+  } catch (const nlohmann::json::exception &) {
+    return std::nullopt;
+  }
 }
 
 }  // namespace
@@ -155,29 +180,6 @@ std::string mintLiveKitAccessToken(
   const std::string encoded_signature =
     base64UrlEncode(reinterpret_cast<const std::uint8_t *>(digest.data()), digest_size);
   return signing_input + "." + encoded_signature;
-}
-
-std::optional<nlohmann::json> decodeJwtPayload(const std::string & token)
-{
-  const auto first_dot = token.find('.');
-  if (first_dot == std::string::npos) {
-    return std::nullopt;
-  }
-  const auto second_dot = token.find('.', first_dot + 1U);
-  if (second_dot == std::string::npos || second_dot <= first_dot + 1U) {
-    return std::nullopt;
-  }
-
-  const auto decoded = base64UrlDecode(token.substr(first_dot + 1U, second_dot - first_dot - 1U));
-  if (!decoded.has_value()) {
-    return std::nullopt;
-  }
-
-  try {
-    return nlohmann::json::parse(decoded->begin(), decoded->end());
-  } catch (const nlohmann::json::exception &) {
-    return std::nullopt;
-  }
 }
 
 std::optional<std::chrono::system_clock::time_point> parseJwtExpiresAt(const std::string & token)

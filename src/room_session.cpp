@@ -250,30 +250,12 @@ public:
       return false;
     }
 
-    const auto state_it = remote_video_publishers_.find(publisher_identity);
-    if (state_it != remote_video_publishers_.end()) {
-      if (!state_it->second.connected || state_it->second.published_video_tracks == 0U) {
-        return false;
-      }
-      if (state_it->second.connection_quality == livekit::ConnectionQuality::Lost) {
-        return false;
-      }
-    }
-
     auto * participant = room_->remoteParticipant(publisher_identity);
     if (participant == nullptr) {
       return false;
     }
 
     return hasActiveVideoTrack(*participant);
-  }
-
-  void onParticipantConnected(livekit::Room &, const livekit::ParticipantConnectedEvent & event) override
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (event.participant != nullptr) {
-      syncRemoteParticipantStateLocked(*event.participant);
-    }
   }
 
   void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
@@ -288,28 +270,11 @@ public:
       callback = callbacks_.on_participant_disconnected;
       if (event.participant != nullptr) {
         identity = event.participant->identity();
-        remote_video_publishers_.erase(identity);
       }
     }
 
     if (!identity.empty() && callback) {
       callback(identity);
-    }
-  }
-
-  void onTrackPublished(livekit::Room &, const livekit::TrackPublishedEvent & event) override
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (event.participant != nullptr) {
-      syncRemoteParticipantStateLocked(*event.participant);
-    }
-  }
-
-  void onTrackUnpublished(livekit::Room &, const livekit::TrackUnpublishedEvent & event) override
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (event.participant != nullptr) {
-      syncRemoteParticipantStateLocked(*event.participant);
     }
   }
 
@@ -334,18 +299,6 @@ public:
     callback(packet);
   }
 
-  void onConnectionQualityChanged(livekit::Room &, const livekit::ConnectionQualityChangedEvent & event) override
-  {
-    if (event.participant == nullptr) {
-      return;
-    }
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = remote_video_publishers_.find(event.participant->identity());
-    if (it != remote_video_publishers_.end()) {
-      it->second.connection_quality = event.quality;
-    }
-  }
-
   void onConnectionStateChanged(livekit::Room &, const livekit::ConnectionStateChangedEvent & event) override
   {
     {
@@ -353,11 +306,6 @@ public:
       // LiveKit can report participant disconnects as part of a transport loss. Suppress those
       // until the room is fully connected again so runtime state survives reconnects and refreshes.
       participant_disconnects_enabled_ = event.state == livekit::ConnectionState::Connected;
-      if (event.state == livekit::ConnectionState::Connected) {
-        rebuildRemotePublisherStateLocked();
-      } else {
-        remote_video_publishers_.clear();
-      }
     }
 
     if (event.state == livekit::ConnectionState::Disconnected) {
@@ -370,31 +318,17 @@ public:
     resetAndReconnect();
   }
 
-  void onReconnected(livekit::Room &, const livekit::ReconnectedEvent &) override
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    rebuildRemotePublisherStateLocked();
-  }
-
   void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
   {
     resetAndReconnect();
   }
 
 private:
-  struct RemoteParticipantVideoState
-  {
-    bool connected = false;
-    std::size_t published_video_tracks = 0;
-    livekit::ConnectionQuality connection_quality = livekit::ConnectionQuality::Good;
-  };
-
   void resetAndReconnect()
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
-      remote_video_publishers_.clear();
     }
     requestReconnect();
   }
@@ -518,7 +452,6 @@ private:
       reconnect_requested_ = false;
       static_expiry_warned_ = false;
       participant_disconnects_enabled_ = true;
-      rebuildRemotePublisherStateLocked();
       rpc_methods_registered = registerAllRpcMethodsLocked();
     }
 
@@ -596,7 +529,6 @@ private:
       room = std::move(room_);
       current_token_ = AccessToken{};
       reconnect_requested_ = false;
-      remote_video_publishers_.clear();
       callback = callbacks_.on_session_reset;
     }
 
@@ -661,18 +593,6 @@ private:
     return room_->localParticipant();
   }
 
-  static std::size_t countPublishedVideoTracks(const livekit::RemoteParticipant & participant)
-  {
-    std::size_t published_video_tracks = 0U;
-    for (const auto & [publication_sid, publication] : participant.trackPublications()) {
-      (void)publication_sid;
-      if (publication != nullptr && publication->kind() == livekit::TrackKind::KIND_VIDEO) {
-        ++published_video_tracks;
-      }
-    }
-    return published_video_tracks;
-  }
-
   static bool hasActiveVideoTrack(const livekit::RemoteParticipant & participant)
   {
     for (const auto & [publication_sid, publication] : participant.trackPublications()) {
@@ -689,28 +609,6 @@ private:
       }
     }
     return false;
-  }
-
-  void syncRemoteParticipantStateLocked(const livekit::RemoteParticipant & participant)
-  {
-    RemoteParticipantVideoState state;
-    state.connected = true;
-    state.published_video_tracks = countPublishedVideoTracks(participant);
-    remote_video_publishers_[participant.identity()] = state;
-  }
-
-  void rebuildRemotePublisherStateLocked()
-  {
-    remote_video_publishers_.clear();
-    if (room_ == nullptr) {
-      return;
-    }
-
-    for (const auto & participant : room_->remoteParticipants()) {
-      if (participant != nullptr) {
-        syncRemoteParticipantStateLocked(*participant);
-      }
-    }
   }
 
   livekit::RoomInfoData roomInfoSnapshot() const
@@ -773,7 +671,6 @@ private:
   std::shared_ptr<AccessTokenSource> token_source_;
   RoomSessionCallbacks callbacks_;
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
-  std::unordered_map<std::string, RemoteParticipantVideoState> remote_video_publishers_;
   AccessToken current_token_;
   std::chrono::milliseconds initial_backoff_{500};
   std::chrono::milliseconds max_backoff_{10000};

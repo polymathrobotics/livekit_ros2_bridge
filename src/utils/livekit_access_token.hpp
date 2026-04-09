@@ -18,8 +18,6 @@
 #include <optional>
 #include <string>
 
-#include "nlohmann/json.hpp"
-
 namespace livekit_ros2_bridge
 {
 
@@ -44,11 +42,8 @@ std::string mintLiveKitAccessToken(
   std::chrono::system_clock::time_point issued_at,
   std::chrono::seconds ttl);
 
-// Decodes the JWT payload without verifying the signature. Use only for local metadata extraction
-// from tokens you already trust, never as an authentication decision.
-std::optional<nlohmann::json> decodeJwtPayload(const std::string & token);
-
-// Reads the exp claim via decodeJwtPayload(). Returns nullopt for malformed tokens or missing exp
+// Reads the exp claim from the JWT payload without verifying the signature. Returns nullopt for
+// malformed tokens or missing exp
 // and inherits the same "parse only, no signature verification" trust boundary.
 std::optional<std::chrono::system_clock::time_point> parseJwtExpiresAt(const std::string & token);
 
