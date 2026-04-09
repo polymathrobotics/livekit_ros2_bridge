@@ -26,7 +26,6 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "protocol.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
@@ -211,12 +210,12 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDataTrackForNonVideoTopic
 
   EXPECT_EQ(response.target.name, topic);
   EXPECT_EQ(response.interface_type, "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(response.delivery_kind, protocol::kDeliveryKindDataTrack);
+  EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kDataTrack);
   ASSERT_EQ(published_track_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_track_names[0]);
   EXPECT_EQ(second_response.target.name, topic);
   EXPECT_EQ(second_response.interface_type, "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(second_response.delivery_kind, protocol::kDeliveryKindDataTrack);
+  EXPECT_EQ(second_response.delivery_kind, StreamDeliveryKind::kDataTrack);
   EXPECT_EQ(second_response.track_name, published_track_names[0]);
 }
 
@@ -247,7 +246,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawHeartbeatTopicSubsc
     "bob", SubscriptionRequest{{SubscriptionTargetKind::Topic, topic}, std::nullopt}, kFarFuture);
 
   EXPECT_EQ(raw_response.target.name, topic);
-  EXPECT_EQ(raw_response.delivery_kind, protocol::kDeliveryKindDataTrack);
+  EXPECT_EQ(raw_response.delivery_kind, StreamDeliveryKind::kDataTrack);
   EXPECT_EQ(canonical_response.target.name, topic);
   ASSERT_EQ(published_track_names.size(), 1U);
   EXPECT_EQ(raw_response.track_name, published_track_names[0]);
@@ -368,13 +367,13 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesVideoSubscription)
 
   EXPECT_EQ(response.target.name, topic);
   EXPECT_EQ(response.interface_type, "sensor_msgs/msg/Image");
-  EXPECT_EQ(response.delivery_kind, protocol::kDeliveryKindVideo);
+  EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_EQ(response.publisher_identity, "bridge-test-video-camera-front");
   EXPECT_TRUE(response.track_name.empty());
   EXPECT_EQ(response.applied_interval_ms, 0);
   EXPECT_EQ(second_response.target.name, topic);
   EXPECT_EQ(second_response.interface_type, "sensor_msgs/msg/Image");
-  EXPECT_EQ(second_response.delivery_kind, protocol::kDeliveryKindVideo);
+  EXPECT_EQ(second_response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_EQ(second_response.publisher_identity, "bridge-test-video-camera-front");
 }
 
@@ -396,7 +395,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   EXPECT_EQ(response.target.kind, SubscriptionTargetKind::External);
   EXPECT_EQ(response.target.name, "/sources/front");
   EXPECT_EQ(response.interface_type, "");
-  EXPECT_EQ(response.delivery_kind, protocol::kDeliveryKindVideo);
+  EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_EQ(response.publisher_identity, "bridge-test-video-source-sources-front");
   EXPECT_TRUE(response.track_name.empty());
   EXPECT_TRUE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::External));
@@ -463,10 +462,10 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
 
   EXPECT_EQ(topic_response.target.kind, SubscriptionTargetKind::Topic);
   EXPECT_EQ(topic_response.target.name, shared_name);
-  EXPECT_EQ(topic_response.delivery_kind, protocol::kDeliveryKindDataTrack);
+  EXPECT_EQ(topic_response.delivery_kind, StreamDeliveryKind::kDataTrack);
   EXPECT_EQ(source_response.target.kind, SubscriptionTargetKind::External);
   EXPECT_EQ(source_response.target.name, shared_name);
-  EXPECT_EQ(source_response.delivery_kind, protocol::kDeliveryKindVideo);
+  EXPECT_EQ(source_response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::Topic));
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::External));
   EXPECT_TRUE(supervisor.isSidecarRunning(sidecar_key));

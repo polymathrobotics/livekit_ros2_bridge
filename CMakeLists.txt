@@ -132,9 +132,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_subscription_heartbeat_processor test/cpp/test_subscription_heartbeat_processor.cpp)
   target_link_libraries(test_subscription_heartbeat_processor ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
-  ament_add_gtest(test_subscription_target_naming test/cpp/test_subscription_target_naming.cpp)
-  target_link_libraries(test_subscription_target_naming ${PROJECT_NAME})
-
   ament_add_gtest(test_interface_definition_lookup test/cpp/test_interface_definition_lookup.cpp)
   target_link_libraries(test_interface_definition_lookup ${PROJECT_NAME})
 
@@ -228,7 +225,6 @@ if(BUILD_TESTING)
     test_stream_control_payloads
     test_subscription_heartbeat_processor
     test_subscription_registry
-    test_subscription_target_naming
     test_topic_publish_command
     test_topic_publisher
     test_video_config

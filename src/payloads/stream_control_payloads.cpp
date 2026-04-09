@@ -25,7 +25,6 @@
 #include "protocol.hpp"
 #include "utils/json_object_parser.hpp"
 #include "utils/ros_resource_name_utils.hpp"
-#include "utils/subscription_target_naming.hpp"
 #include "video_config.hpp"
 
 namespace livekit_ros2_bridge
@@ -33,6 +32,35 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+
+const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
+{
+  switch (kind) {
+    case SubscriptionTargetKind::Topic:
+      return "topic";
+    case SubscriptionTargetKind::External:
+      return "external";
+  }
+
+  throw std::invalid_argument("stream status target kind is invalid");
+}
+
+std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
+{
+  return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
+}
+
+const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
+{
+  switch (delivery_kind) {
+    case StreamDeliveryKind::kDataTrack:
+      return protocol::kDeliveryKindDataTrack;
+    case StreamDeliveryKind::kVideo:
+      return protocol::kDeliveryKindVideo;
+  }
+
+  throw std::invalid_argument("stream status delivery kind is invalid");
+}
 
 int parseIntervalMs(const nlohmann::json & prefs)
 {
@@ -179,21 +207,24 @@ nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
     entry["interface_type"] = stream_status.interface_type;
   }
 
-  if (stream_status.delivery_kind == protocol::kDeliveryKindVideo) {
-    // Video publishers choose the track name internally today, so the bridge cannot report one yet.
-    entry["delivery"] = {
-      {"kind", protocol::kDeliveryKindVideo},
-      {"publisher_identity", stream_status.publisher_identity},
-      {"track_name", stream_status.track_name}};
-  } else {
-    entry["delivery"] = {
-      {"kind", protocol::kDeliveryKindDataTrack},
-      {"track_name", stream_status.track_name},
-      {"content_type", protocol::kDataContentTypeCdr}};
-    entry["applied_preferences"] = {{"interval_ms", stream_status.applied_interval_ms}};
+  switch (stream_status.delivery_kind) {
+    case StreamDeliveryKind::kVideo:
+      // Video publishers choose the track name internally today, so the bridge cannot report one yet.
+      entry["delivery"] = {
+        {"kind", streamDeliveryKindString(stream_status.delivery_kind)},
+        {"publisher_identity", stream_status.publisher_identity},
+        {"track_name", stream_status.track_name}};
+      return entry;
+    case StreamDeliveryKind::kDataTrack:
+      entry["delivery"] = {
+        {"kind", streamDeliveryKindString(stream_status.delivery_kind)},
+        {"track_name", stream_status.track_name},
+        {"content_type", protocol::kDataContentTypeCdr}};
+      entry["applied_preferences"] = {{"interval_ms", stream_status.applied_interval_ms}};
+      return entry;
   }
 
-  return entry;
+  throw std::invalid_argument("stream status delivery kind is invalid");
 }
 
 }  // namespace livekit_ros2_bridge

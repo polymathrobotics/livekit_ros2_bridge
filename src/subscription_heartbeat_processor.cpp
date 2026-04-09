@@ -28,7 +28,6 @@
 #include "rclcpp/logging.hpp"
 #include "room_session.hpp"
 #include "subscription_registry.hpp"
-#include "utils/subscription_target_naming.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -36,6 +35,18 @@ namespace livekit_ros2_bridge
 namespace
 {
 constexpr auto kLeaseExpiry = std::chrono::seconds(45);
+
+const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
+{
+  switch (kind) {
+    case SubscriptionTargetKind::Topic:
+      return "topic";
+    case SubscriptionTargetKind::External:
+      return "external";
+  }
+
+  throw std::invalid_argument("heartbeat target kind is invalid");
+}
 
 nlohmann::json makeFlatTargetEntry(const SubscriptionTarget & target)
 {

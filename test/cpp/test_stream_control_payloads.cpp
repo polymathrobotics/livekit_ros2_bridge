@@ -22,7 +22,6 @@
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "payloads/stream_control_payloads.hpp"
-#include "utils/subscription_target_naming.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -159,7 +158,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
   StreamStatus stream_status;
   stream_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
   stream_status.interface_type = "sensor_msgs/msg/Image";
-  stream_status.delivery_kind = "video";
+  stream_status.delivery_kind = StreamDeliveryKind::kVideo;
   stream_status.publisher_identity = "bridge-video-camera-image";
 
   const auto entry = serializeStreamStatus(stream_status);
@@ -184,7 +183,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
 {
   StreamStatus stream_status;
   stream_status.target = {SubscriptionTargetKind::External, "/sources/front"};
-  stream_status.delivery_kind = "video";
+  stream_status.delivery_kind = StreamDeliveryKind::kVideo;
   stream_status.publisher_identity = "bridge-video-source-sources-front";
 
   const auto entry = serializeStreamStatus(stream_status);
@@ -210,7 +209,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
   stream_status.target = {SubscriptionTargetKind::Topic, "/lidar/points"};
   stream_status.interface_type = "sensor_msgs/msg/PointCloud2";
   stream_status.applied_interval_ms = 0;
-  stream_status.delivery_kind = "data_track";
+  stream_status.delivery_kind = StreamDeliveryKind::kDataTrack;
   stream_status.track_name = "ros.cdr.lidar.points";
 
   const auto entry = serializeStreamStatus(stream_status);
@@ -232,25 +231,13 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
     }));
 }
 
-TEST(StreamControlPayloadsTest, DeriveVideoTrackNameUsesExpectedPrefixes)
+TEST(StreamControlPayloadsTest, SerializeStreamStatusRejectsUnknownDeliveryKind)
 {
-  struct TestCase
-  {
-    SubscriptionTargetKind kind;
-    const char * name;
-    const char * expected_track_name;
-  };
+  StreamStatus stream_status;
+  stream_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
+  stream_status.delivery_kind = static_cast<StreamDeliveryKind>(99);
 
-  const std::array<TestCase, 4> test_cases{{
-    {SubscriptionTargetKind::Topic, "/camera/front/image", "ros.video.camera.front.image"},
-    {SubscriptionTargetKind::Topic, "/battery", "ros.video.battery"},
-    {SubscriptionTargetKind::External, "/sources/dev/x", "ros.video.external.sources.dev.x"},
-    {SubscriptionTargetKind::External, "/sources/front", "ros.video.external.sources.front"},
-  }};
-
-  for (const auto & test_case : test_cases) {
-    EXPECT_EQ(deriveVideoTrackName(test_case.kind, test_case.name), test_case.expected_track_name);
-  }
+  EXPECT_THROW((void)serializeStreamStatus(stream_status), std::invalid_argument);
 }
 
 }  // namespace

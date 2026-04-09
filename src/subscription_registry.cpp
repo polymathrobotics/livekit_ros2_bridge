@@ -24,7 +24,6 @@
 #include "utils/interface_types.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/scope_exit.hpp"
-#include "utils/subscription_target_naming.hpp"
 #include "video_sidecar_supervisor.hpp"
 
 namespace livekit_ros2_bridge
@@ -35,6 +34,18 @@ namespace
 
 constexpr std::size_t kDataSubscriptionDepth = 10U;
 const auto kSubscriptionRegistryLogger = rclcpp::get_logger("subscription_registry");
+
+const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
+{
+  switch (delivery_kind) {
+    case StreamDeliveryKind::kDataTrack:
+      return protocol::kDeliveryKindDataTrack;
+    case StreamDeliveryKind::kVideo:
+      return protocol::kDeliveryKindVideo;
+  }
+
+  throw std::invalid_argument("stream delivery kind is invalid");
+}
 
 int sanitizePreferredIntervalMs(int preferred_interval_ms)
 {
@@ -141,7 +152,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     "event=subscription_created resource=%s kind=%s delivery=%s requester=%s",
     sub.resource.c_str(),
     subscriptionKindToString(sub.target_kind),
-    stream_status.delivery_kind.c_str(),
+    streamDeliveryKindString(stream_status.delivery_kind),
     requester_identity.c_str());
   subscriptions_.emplace(subscription_key, std::move(sub));
   return stream_status;
@@ -475,13 +486,13 @@ StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & su
 
   const auto * data = sub.data_track_ptr();
   if (data != nullptr) {
-    stream_status.delivery_kind = protocol::kDeliveryKindDataTrack;
+    stream_status.delivery_kind = StreamDeliveryKind::kDataTrack;
     if (data->cdr_track_state == CdrTrackState::kPending || data->cdr_track_state == CdrTrackState::kPublished) {
       stream_status.track_name = data->track_name;
     }
     stream_status.applied_interval_ms = data->applied_interval_ms;
   } else {
-    stream_status.delivery_kind = protocol::kDeliveryKindVideo;
+    stream_status.delivery_kind = StreamDeliveryKind::kVideo;
     stream_status.publisher_identity = sub.video_publisher_identity;
   }
 

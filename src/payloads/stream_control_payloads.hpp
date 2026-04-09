@@ -53,6 +53,12 @@ struct SubscriptionHeartbeat
   std::vector<SubscriptionRequest> subscriptions;
 };
 
+enum class StreamDeliveryKind
+{
+  kDataTrack,
+  kVideo,
+};
+
 /// Stream status entry serialized onto `ros.subscriptions.status`.
 struct StreamStatus
 {
@@ -63,8 +69,7 @@ struct StreamStatus
   std::string interface_type;
   /// Serialized only for `data_track` delivery as `applied_preferences.interval_ms`.
   int applied_interval_ms = 0;
-  /// One of the stable delivery.kind literals from `protocol.hpp`.
-  std::string delivery_kind;
+  StreamDeliveryKind delivery_kind = StreamDeliveryKind::kDataTrack;
   /// Serialized only for `video` delivery.
   std::string publisher_identity;
   /// Serialized for both delivery modes. Video currently leaves this empty
