@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,17 +89,6 @@ struct RouterProbe final
   }
 };
 
-void expectPacketDropped(const IncomingControlPacket & packet)
-{
-  RouterProbe probe;
-  auto router = probe.makeRouter();
-
-  router.route(packet);
-
-  EXPECT_FALSE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
-}
-
 }  // namespace
 
 TEST(ControlPacketRouterTest, RoutesHeartbeatPayloads)
@@ -151,22 +141,70 @@ TEST(ControlPacketRouterTest, RoutesHeartbeatWithoutRequesterIdentity)
 
 TEST(ControlPacketRouterTest, DoesNotRouteHeartbeatParseFailures)
 {
-  expectPacketDropped(makePacket("{", protocol::kControlSubscriptionsHeartbeat));
+  RouterProbe probe;
+  auto router = probe.makeRouter();
+
+  router.route(makePacket("{", protocol::kControlSubscriptionsHeartbeat));
+
+  EXPECT_FALSE(probe.heartbeat_call.has_value());
+  EXPECT_FALSE(probe.publish_call.has_value());
 }
 
 TEST(ControlPacketRouterTest, DropsPublishWithoutRequesterIdentity)
 {
-  expectPacketDropped(makePacket(makePublishPayload(), protocol::kControlTopicPublish, ""));
+  RouterProbe probe;
+  auto router = probe.makeRouter();
+
+  router.route(makePacket(makePublishPayload(), protocol::kControlTopicPublish, ""));
+
+  EXPECT_FALSE(probe.heartbeat_call.has_value());
+  EXPECT_FALSE(probe.publish_call.has_value());
 }
 
 TEST(ControlPacketRouterTest, DoesNotRoutePublishParseFailures)
 {
-  expectPacketDropped(makePacket("{", protocol::kControlTopicPublish));
+  RouterProbe probe;
+  auto router = probe.makeRouter();
+
+  router.route(makePacket("{", protocol::kControlTopicPublish));
+
+  EXPECT_FALSE(probe.heartbeat_call.has_value());
+  EXPECT_FALSE(probe.publish_call.has_value());
 }
 
 TEST(ControlPacketRouterTest, IgnoresUnknownTopics)
 {
-  expectPacketDropped(IncomingControlPacket{{'x'}, "custom.topic", "participant-1"});
+  RouterProbe probe;
+  auto router = probe.makeRouter();
+
+  router.route(IncomingControlPacket{{'x'}, "custom.topic", "participant-1"});
+
+  EXPECT_FALSE(probe.heartbeat_call.has_value());
+  EXPECT_FALSE(probe.publish_call.has_value());
+}
+
+TEST(ControlPacketRouterTest, RequiresHeartbeatHandler)
+{
+  EXPECT_THROW(
+    ControlPacketRouter(
+      rclcpp::get_logger("control_packet_router_test"),
+      ControlPacketRouter::Handlers{
+        {},
+        [](std::string, TopicPublishCommand) {},
+      }),
+    std::invalid_argument);
+}
+
+TEST(ControlPacketRouterTest, RequiresPublishHandler)
+{
+  EXPECT_THROW(
+    ControlPacketRouter(
+      rclcpp::get_logger("control_packet_router_test"),
+      ControlPacketRouter::Handlers{
+        [](std::string, SubscriptionHeartbeat) {},
+        {},
+      }),
+    std::invalid_argument);
 }
 
 }  // namespace livekit_ros2_bridge

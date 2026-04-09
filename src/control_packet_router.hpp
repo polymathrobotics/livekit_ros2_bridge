@@ -30,11 +30,11 @@ class ControlPacketRouter final
 public:
   struct Handlers
   {
-    // Empty handlers intentionally disable that control topic after validation.
     std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)> on_subscription_heartbeat;
     std::function<void(std::string requester_identity, TopicPublishCommand command)> on_topic_publish_command;
   };
 
+  // Both handlers are required; construction fails if either callback is empty.
   ControlPacketRouter(rclcpp::Logger logger, Handlers handlers);
 
   // Routes only the control topics this bridge understands. Unknown topics, malformed payloads,

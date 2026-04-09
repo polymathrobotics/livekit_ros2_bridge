@@ -15,6 +15,7 @@
 #include "control_packet_router.hpp"
 
 #include <exception>
+#include <stdexcept>
 #include <utility>
 
 #include "nlohmann/json.hpp"
@@ -26,7 +27,15 @@ namespace livekit_ros2_bridge
 ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, Handlers handlers)
 : logger_(std::move(logger))
 , handlers_(std::move(handlers))
-{}
+{
+  if (!handlers_.on_subscription_heartbeat) {
+    throw std::invalid_argument("ControlPacketRouter requires an on_subscription_heartbeat handler.");
+  }
+
+  if (!handlers_.on_topic_publish_command) {
+    throw std::invalid_argument("ControlPacketRouter requires an on_topic_publish_command handler.");
+  }
+}
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
@@ -35,10 +44,6 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
     // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
     // heartbeat processor can still recover that identity from a leased session_id.
-    if (!handlers_.on_subscription_heartbeat) {
-      return;
-    }
-
     nlohmann::json body;
     try {
       body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
@@ -66,10 +71,6 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
   if (packet.control_topic == protocol::kControlTopicPublish) {
     if (packet.requester_identity.empty()) {
       RCLCPP_WARN(logger_, "Ignoring %s packet without requester identity", packet.control_topic.c_str());
-      return;
-    }
-
-    if (!handlers_.on_topic_publish_command) {
       return;
     }
 

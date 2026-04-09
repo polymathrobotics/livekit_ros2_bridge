@@ -30,20 +30,6 @@ namespace
 
 using Json = nlohmann::json;
 
-std::string parseRequiredTopic(const Json & body)
-{
-  const auto it = body.find("topic");
-  if (it == body.end() || !it->is_string()) {
-    throw std::invalid_argument("Publish command requires a string 'topic' field.");
-  }
-
-  const std::string topic = normalizeRosResourceName(it->get_ref<const std::string &>());
-  if (topic.empty()) {
-    throw std::invalid_argument("Publish command requires a non-empty 'topic' field.");
-  }
-  return topic;
-}
-
 }  // namespace
 
 TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload)
@@ -64,7 +50,16 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & c
     throw std::invalid_argument("Publish command requires a non-empty message.payload_base64 field.");
   }
 
-  const std::string topic = parseRequiredTopic(body);
+  const auto topic_it = body.find("topic");
+  if (topic_it == body.end() || !topic_it->is_string()) {
+    throw std::invalid_argument("Publish command requires a string 'topic' field.");
+  }
+
+  std::string topic = normalizeRosResourceName(topic_it->get_ref<const std::string &>());
+  if (topic.empty()) {
+    throw std::invalid_argument("Publish command requires a non-empty 'topic' field.");
+  }
+
   const std::string interface_type = parseRequiredNonEmptyTrimmedStringField(
     body, "interface_type", "Publish command requires a non-empty 'interface_type' field.");
   return TopicPublishCommand{
