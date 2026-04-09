@@ -169,7 +169,6 @@ private:
   SubscriptionState createDataSubscription(
     const SubscriptionRequest & entry,
     const std::string & interface_type,
-    const std::string & subscription_key,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
   void assignVideoMetadata(
@@ -177,11 +176,12 @@ private:
   DataTrackResource createPendingDataTrackResource(
     const std::string & topic,
     const std::string & interface_type,
-    const std::string & subscription_key,
     const std::map<std::string, RequesterLease> & requesters,
     const std::string & requester_identity);
   void publishPendingCdrTrack(
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
+  VideoSidecarSupervisor & videoSidecarSupervisor() const;
+  const SidecarLaunchSpec & videoSidecarLaunchSpec(const SubscriptionState & sub) const;
   bool beginMessageCallback(std::size_t callback_generation);
   void endMessageCallback();
   std::size_t currentMessageCallbackGeneration() const;

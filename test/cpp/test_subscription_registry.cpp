@@ -1094,6 +1094,20 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionThrowsOnEmptyRequesterIdentity)
     "requester_identity is required");
 }
 
+TEST(SubscriptionRegistryTest, RequesterSpecificMethodsThrowOnEmptyRequesterIdentity)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_methods_test");
+
+  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+
+  expectInvalidArgumentMessage(
+    [&registry]() { registry.markRequesterForCdrReplay("", 0); }, "requester_identity is required");
+  expectInvalidArgumentMessage(
+    [&registry]() { registry.replayCdrTracksForRequester(""); }, "requester_identity is required");
+  expectInvalidArgumentMessage([&registry]() { registry.removeRequesterLeases(""); }, "requester_identity is required");
+}
+
 TEST(SubscriptionRegistryTest, RenewSubscriptionThrowsOnInvalidTopic)
 {
   ScopedRclcppInit init;

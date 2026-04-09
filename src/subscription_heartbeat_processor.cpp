@@ -55,6 +55,15 @@ nlohmann::json makeFlatTargetEntry(const SubscriptionTarget & target)
   return {{"kind", kind_str}, {name_key, target.name}};
 }
 
+void appendStreamError(
+  nlohmann::json & streams, const SubscriptionTarget & target, const char * reason, const std::string & message)
+{
+  auto error_entry = makeFlatTargetEntry(target);
+  error_entry["status"] = "error";
+  error_entry["error"] = {{"reason", reason}, {"message", message}};
+  streams.push_back(std::move(error_entry));
+}
+
 const auto kHeartbeatProcessorLogger = rclcpp::get_logger("heartbeat_processor");
 }  // namespace
 
@@ -86,10 +95,7 @@ void SubscriptionHeartbeatProcessor::process(
 
     if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
     {
-      auto error_entry = makeFlatTargetEntry(target);
-      error_entry["status"] = "error";
-      error_entry["error"] = {{"reason", "forbidden"}, {"message", "ROS topic '" + target.name + "' not permitted."}};
-      streams.push_back(std::move(error_entry));
+      appendStreamError(streams, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
       continue;
     }
 
@@ -97,15 +103,9 @@ void SubscriptionHeartbeatProcessor::process(
       auto stream_status = subscription_registry_.renewSubscription(*resolved_requester_identity, entry, expiry);
       streams.push_back(serializeStreamStatus(stream_status));
     } catch (const StreamUnavailableError & exc) {
-      auto error_entry = makeFlatTargetEntry(target);
-      error_entry["status"] = "error";
-      error_entry["error"] = {{"reason", "unavailable"}, {"message", exc.what()}};
-      streams.push_back(std::move(error_entry));
+      appendStreamError(streams, target, "unavailable", exc.what());
     } catch (const std::exception & exc) {
-      auto error_entry = makeFlatTargetEntry(target);
-      error_entry["status"] = "error";
-      error_entry["error"] = {{"reason", "not_found"}, {"message", exc.what()}};
-      streams.push_back(std::move(error_entry));
+      appendStreamError(streams, target, "not_found", exc.what());
     }
   }
 
@@ -213,11 +213,6 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   std::chrono::steady_clock::time_point expiry,
   const nlohmann::json & streams)
 {
-  if (requester_identity.empty()) {
-    RCLCPP_WARN(kHeartbeatProcessorLogger, "event=stream_status_dropped reason=anonymous_requester");
-    return;
-  }
-
   if (streams.empty()) {
     return;
   }

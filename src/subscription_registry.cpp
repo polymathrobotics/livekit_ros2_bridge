@@ -47,6 +47,15 @@ const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
   throw std::invalid_argument("stream delivery kind is invalid");
 }
 
+const std::string & requireRequesterIdentity(const std::string & requester_identity)
+{
+  if (requester_identity.empty()) {
+    throw std::invalid_argument("requester_identity is required");
+  }
+
+  return requester_identity;
+}
+
 int sanitizePreferredIntervalMs(int preferred_interval_ms)
 {
   return std::max(preferred_interval_ms, 0);
@@ -114,9 +123,7 @@ SubscriptionRegistry::SubscriptionRegistry(
 StreamStatus SubscriptionRegistry::renewSubscription(
   const std::string & requester_identity, const SubscriptionRequest & entry, Clock::time_point expiry)
 {
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
-  }
+  requireRequesterIdentity(requester_identity);
   const SubscriptionRequest normalized = normalizeSubscriptionRequest(entry);
   const auto & target = normalized.target;
   if (is_shutdown_.load()) {
@@ -142,7 +149,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     if (classifyRosVideoInterfaceType(interface_type).has_value()) {
       sub = createVideoSubscription(normalized, interface_type, requester_identity, requester_lease);
     } else {
-      sub = createDataSubscription(normalized, interface_type, subscription_key, requester_identity, requester_lease);
+      sub = createDataSubscription(normalized, interface_type, requester_identity, requester_lease);
     }
   }
 
@@ -170,9 +177,10 @@ StreamStatus SubscriptionRegistry::renewSubscription(
 
 void SubscriptionRegistry::markRequesterForCdrReplay(const std::string & requester_identity, std::size_t generation)
 {
-  if (is_shutdown_.load() || requester_identity.empty()) {
+  if (is_shutdown_.load()) {
     return;
   }
+  requireRequesterIdentity(requester_identity);
   if (generation != registry_generation_.load()) {
     return;
   }
@@ -194,9 +202,10 @@ void SubscriptionRegistry::markRequesterForCdrReplay(const std::string & request
 
 void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & requester_identity)
 {
-  if (is_shutdown_.load() || requester_identity.empty()) {
+  if (is_shutdown_.load()) {
     return;
   }
+  requireRequesterIdentity(requester_identity);
   if (requesters_needing_cdr_replay_.erase(requester_identity) == 0U) {
     return;
   }
@@ -245,14 +254,9 @@ void SubscriptionRegistry::refreshExistingLease(
     return;
   }
 
-  if (video_sidecar_supervisor_ != nullptr && sub.sidecar_launch_spec.has_value()) {
-    const std::string publisher_identity = ensureVideoSidecar(*video_sidecar_supervisor_, *sub.sidecar_launch_spec);
-    sub.requesters = std::move(updated_requesters);
-    sub.video_publisher_identity = publisher_identity;
-    return;
-  }
-
+  const std::string publisher_identity = ensureVideoSidecar(videoSidecarSupervisor(), videoSidecarLaunchSpec(sub));
   sub.requesters = std::move(updated_requesters);
+  sub.video_publisher_identity = publisher_identity;
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscription(
@@ -262,13 +266,6 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   const RequesterLease & requester_lease)
 {
   const auto & target = entry.target;
-  if (video_sidecar_supervisor_ == nullptr) {
-    throw StreamUnavailableError("Video sidecars require livekit.api_key and livekit.api_secret.");
-  }
-  if (video_config_ == nullptr) {
-    throw StreamUnavailableError("Video config is not available.");
-  }
-
   SubscriptionState sub;
   sub.target_kind = target.kind;
   sub.resource = target.name;
@@ -279,14 +276,13 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
     target.kind == SubscriptionTargetKind::External
       ? resolvePipelineVideoLaunchSpec(*video_config_, target.name)
       : resolveRosVideoLaunchSpec(*video_config_, target.name, interface_type);
-  assignVideoMetadata(sub, sidecar_launch_spec, ensureVideoSidecar(*video_sidecar_supervisor_, sidecar_launch_spec));
+  assignVideoMetadata(sub, sidecar_launch_spec, ensureVideoSidecar(videoSidecarSupervisor(), sidecar_launch_spec));
   return sub;
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscription(
   const SubscriptionRequest & entry,
   const std::string & interface_type,
-  const std::string & subscription_key,
   const std::string & requester_identity,
   const RequesterLease & requester_lease)
 {
@@ -297,7 +293,7 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
   sub.data_track_resource =
-    createPendingDataTrackResource(target.name, interface_type, subscription_key, sub.requesters, requester_identity);
+    createPendingDataTrackResource(target.name, interface_type, sub.requesters, requester_identity);
   return sub;
 }
 
@@ -314,7 +310,6 @@ void SubscriptionRegistry::assignVideoMetadata(
 SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataTrackResource(
   const std::string & topic,
   const std::string & interface_type,
-  const std::string & subscription_key,
   const std::map<std::string, RequesterLease> & requesters,
   const std::string & requester_identity)
 {
@@ -331,14 +326,12 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
     topic,
     interface_type,
     qos,
-    [this, callback_generation, topic_key = subscription_key, normalized_topic = topic](
-      std::shared_ptr<rclcpp::SerializedMessage> message) {
+    [this, callback_generation, normalized_topic = topic](std::shared_ptr<rclcpp::SerializedMessage> message) {
       // Reset/shutdown bumps callback_generation before tearing down subscriptions. Any queued
       // callback from the old generation exits before touching cleared subscription state.
       if (message == nullptr) {
         return;
       }
-      (void)topic_key;
       if (!beginMessageCallback(callback_generation)) {
         return;
       }
@@ -361,14 +354,30 @@ void SubscriptionRegistry::publishPendingCdrTrack(
   publish_cdr_track_fn_(data.track_name, data.generation);
 }
 
+VideoSidecarSupervisor & SubscriptionRegistry::videoSidecarSupervisor() const
+{
+  if (video_sidecar_supervisor_ == nullptr) {
+    throw StreamUnavailableError("Video sidecars require livekit.api_key and livekit.api_secret.");
+  }
+
+  return *video_sidecar_supervisor_;
+}
+
+const SidecarLaunchSpec & SubscriptionRegistry::videoSidecarLaunchSpec(const SubscriptionState & sub) const
+{
+  if (!sub.sidecar_launch_spec.has_value()) {
+    throw std::logic_error("video subscription invariant violated: sidecar launch spec is required");
+  }
+
+  return *sub.sidecar_launch_spec;
+}
+
 void SubscriptionRegistry::removeRequesterLeases(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
     return;
   }
-  if (requester_identity.empty()) {
-    return;
-  }
+  requireRequesterIdentity(requester_identity);
 
   removeRequesterLeasesIf(
     [&requester_identity](const std::string & candidate_requester_identity, const RequesterLease &) {
@@ -740,8 +749,8 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
     // Track names are deterministic per topic, so destroying a data subscription must advance the
     // generation before any delayed publish/disconnect callback can target the replacement entry.
     registry_generation_.fetch_add(1);
-  } else if (video_sidecar_supervisor_ != nullptr && sub.sidecar_launch_spec.has_value()) {
-    video_sidecar_supervisor_->stopSidecar(sub.sidecar_launch_spec->sidecar_key);
+  } else {
+    videoSidecarSupervisor().stopSidecar(videoSidecarLaunchSpec(sub).sidecar_key);
   }
 }
 
