@@ -178,7 +178,7 @@ if(BUILD_TESTING)
   target_link_libraries(test_subscription_registry ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
 
   ament_add_gtest(test_livekit_access_token test/cpp/test_livekit_access_token.cpp)
-  target_link_libraries(test_livekit_access_token ${PROJECT_NAME})
+  target_link_libraries(test_livekit_access_token ${PROJECT_NAME} OpenSSL::Crypto)
 
   ament_add_gtest(test_topic_publish_command test/cpp/test_topic_publish_command.cpp)
   target_link_libraries(test_topic_publish_command ${PROJECT_NAME} nlohmann_json::nlohmann_json)
