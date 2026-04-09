@@ -241,8 +241,9 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
       kHeartbeatProcessorLogger,
       *clock_,
       5000,
-      "Failed to send stream status to %s: %s",
+      "event=subscription_status_publish_failed requester_identity=%s control_topic=%s error=%s",
       requester_identity.c_str(),
+      packet.control_topic.c_str(),
       exc.what());
   }
 }

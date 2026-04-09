@@ -66,12 +66,18 @@ void CdrTrackPublisher::pushMessage(const std::string & track_name, const std::u
       // CDR forwarding is intentionally best-effort. Dropping here keeps the ROS subscription
       // callback non-blocking even when the participant is not draining the LiveKit queue.
       RCLCPP_WARN_THROTTLE(
-        kCdrTrackPublisherLogger, *clock_, 5000, "CDR data track queue full, dropping frame: %s", track_name.c_str());
+        kCdrTrackPublisherLogger,
+        *clock_,
+        5000,
+        "event=cdr_track_delivery_dropped track_name=%s reason=queue_full",
+        track_name.c_str());
       return;
     }
-    RCLCPP_WARN(
+    RCLCPP_WARN_THROTTLE(
       kCdrTrackPublisherLogger,
-      "Failed to push CDR frame to %s: %s",
+      *clock_,
+      5000,
+      "event=cdr_track_push_failed track_name=%s error=%s",
       track_name.c_str(),
       result.error().message.c_str());
   }
@@ -86,18 +92,35 @@ void CdrTrackPublisher::publishTrack(
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
     if (!subscription_registry.onCdrTrackPublished(track_name, generation)) {
+      RCLCPP_INFO(
+        kCdrTrackPublisherLogger,
+        "event=cdr_track_publish_reclaimed track_name=%s generation=%zu reason=stale_registry_state",
+        track_name.c_str(),
+        generation);
       unpublishTrackSafely(session_, track_name, track);
       return;
     }
     published_tracks_[track_name] = std::move(track);
-    RCLCPP_INFO(kCdrTrackPublisherLogger, "event=cdr_track_ready track_name=%s", track_name.c_str());
+    RCLCPP_INFO(
+      kCdrTrackPublisherLogger,
+      "event=cdr_track_publish_completed track_name=%s generation=%zu",
+      track_name.c_str(),
+      generation);
   } catch (const std::exception & exc) {
     subscription_registry.onCdrTrackFailed(track_name);
     RCLCPP_WARN(
-      kCdrTrackPublisherLogger, "event=cdr_track_error track_name=%s error=%s", track_name.c_str(), exc.what());
+      kCdrTrackPublisherLogger,
+      "event=cdr_track_publish_error track_name=%s generation=%zu error=%s",
+      track_name.c_str(),
+      generation,
+      exc.what());
   } catch (...) {
     subscription_registry.onCdrTrackFailed(track_name);
-    RCLCPP_WARN(kCdrTrackPublisherLogger, "event=cdr_track_error track_name=%s", track_name.c_str());
+    RCLCPP_WARN(
+      kCdrTrackPublisherLogger,
+      "event=cdr_track_publish_error track_name=%s generation=%zu",
+      track_name.c_str(),
+      generation);
   }
 }
 
