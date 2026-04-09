@@ -15,7 +15,7 @@ build *args:
         command+=" $(printf '%q' "${arg}")"
       done
     fi
-    "${repo_root}/scripts/dev-container.sh" exec "${command}"
+    "${repo_root}/docker/dev-container.sh" exec "${command}"
 
 test *args:
     #!/usr/bin/env bash
@@ -30,7 +30,7 @@ test *args:
       done
     fi
     command+=' && colcon --log-base /workspace/log test-result --verbose'
-    "${repo_root}/scripts/dev-container.sh" exec "${command}"
+    "${repo_root}/docker/dev-container.sh" exec "${command}"
 
 format:
     #!/usr/bin/env bash
@@ -41,4 +41,4 @@ format:
 clean:
     #!/usr/bin/env bash
     set -euo pipefail
-    "{{ justfile_directory() }}/scripts/dev-container.sh" clean
+    "{{ justfile_directory() }}/docker/dev-container.sh" clean

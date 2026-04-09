@@ -19,12 +19,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly REPO_ROOT
-BAKE_FILE="${REPO_ROOT}/docker-bake.hcl"
+BAKE_FILE="${REPO_ROOT}/docker/bake.hcl"
 readonly BAKE_FILE
 
 usage() {
   cat <<'EOF'
-usage: scripts/dev-container.sh <ensure|exec|clean> [command]
+usage: docker/dev-container.sh <ensure|exec|clean> [command]
 
 ensure  Ensure the dev image, volumes, and container exist and are running.
 exec    Run a command string inside the dev container workspace.
