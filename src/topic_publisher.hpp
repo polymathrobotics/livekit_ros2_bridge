@@ -15,7 +15,6 @@
 #pragma once
 
 #include <atomic>
-#include <functional>
 #include <list>
 #include <memory>
 #include <string>
@@ -29,8 +28,6 @@
 
 namespace livekit_ros2_bridge
 {
-
-class RosTopicPublisherTestPeer;
 
 // Publishes serialized ROS messages for authorized LiveKit requesters while
 // caching generic publishers per topic. Failures are logged and dropped rather
@@ -47,8 +44,6 @@ public:
   void shutdown();
 
 private:
-  friend class RosTopicPublisherTestPeer;
-
   struct PublisherCacheEntry
   {
     std::string interface_type;
@@ -61,14 +56,12 @@ private:
   std::string resolveTopicTypeOrThrow(const std::string & topic, const std::string & requested_interface_type) const;
   void publishWithPublisherCache(
     const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized);
-  // Test-only hook to simulate failures after cache insertion and before publish.
-  void setBeforePublishHookForTest(std::function<void()> hook);
+  void eraseCachedPublisher(const std::string & topic);
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
   int max_topics_ = 0;
   std::atomic<bool> is_shutdown_{false};
-  std::function<void()> before_publish_hook_;
   // publishers_ and lru_topics_ are updated together so the list contains each
   // cached topic at most once and eviction can remove the least-recently used
   // handle.

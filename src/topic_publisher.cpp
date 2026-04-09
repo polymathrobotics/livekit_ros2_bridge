@@ -146,15 +146,10 @@ void RosTopicPublisher::publishWithPublisherCache(
   }
 
   try {
-    if (before_publish_hook_) {
-      before_publish_hook_();
-    }
     publisher_it->second.publisher_handle->publish(serialized);
   } catch (...) {
     if (!was_cached) {
-      lru_topics_.erase(publisher_it->second.lru_position);
-      publisher_it->second.publisher_handle.reset();
-      publishers_.erase(publisher_it);
+      eraseCachedPublisher(topic);
     }
     throw;
   }
@@ -169,10 +164,7 @@ void RosTopicPublisher::publishWithPublisherCache(
   // an older cached publisher is discarded to make room for future use.
   while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
-    lru_topics_.pop_front();
-    const auto evicted_it = publishers_.find(evicted_topic);
-    evicted_it->second.publisher_handle.reset();
-    publishers_.erase(evicted_it);
+    eraseCachedPublisher(evicted_topic);
     RCLCPP_WARN(
       kTopicPublisherLogger,
       "Publisher topic cap reached; evicted topic=%s to allow topic=%s",
@@ -181,9 +173,16 @@ void RosTopicPublisher::publishWithPublisherCache(
   }
 }
 
-void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
+void RosTopicPublisher::eraseCachedPublisher(const std::string & topic)
 {
-  before_publish_hook_ = std::move(hook);
+  const auto publisher_it = publishers_.find(topic);
+  if (publisher_it == publishers_.end()) {
+    return;
+  }
+
+  lru_topics_.erase(publisher_it->second.lru_position);
+  publisher_it->second.publisher_handle.reset();
+  publishers_.erase(publisher_it);
 }
 
 }  // namespace livekit_ros2_bridge
