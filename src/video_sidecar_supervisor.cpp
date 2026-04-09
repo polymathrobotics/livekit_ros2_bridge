@@ -33,6 +33,7 @@
 #include "rclcpp/logging.hpp"
 #include "utils/livekit_access_token.hpp"
 #include "utils/log_event.hpp"
+#include "utils/process_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -42,15 +43,6 @@ namespace
 
 const rclcpp::Logger kLogger = rclcpp::get_logger("video_sidecar_supervisor");
 constexpr auto kUnhealthyLogThrottlePeriod = std::chrono::seconds(5);
-
-pid_t waitpidNoIntr(pid_t pid, int * status, int options)
-{
-  pid_t result = -1;
-  do {
-    result = waitpid(pid, status, options);
-  } while (result < 0 && errno == EINTR);
-  return result;
-}
 
 void logSidecarSubprocessFailure(
   const std::string & sidecar_key,
@@ -291,19 +283,16 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
 {
   // The child writes errno only when execvp() fails. On success, FD_CLOEXEC
   // closes the write end during exec and the parent observes EOF instead.
-  int exec_status_pipe[2] = {-1, -1};
-  if (pipe(exec_status_pipe) != 0) {
+  PipePair exec_status_pipe;
+  if (!createPipePair(exec_status_pipe)) {
     const int error_code = errno;
     logSidecarSubprocessFailure(
       sidecar_key, sidecar.publisher_identity, "spawn", "pipe_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to create video sidecar startup pipe.");
   }
 
-  const int pipe_flags = fcntl(exec_status_pipe[1], F_GETFD);
-  if (pipe_flags < 0 || fcntl(exec_status_pipe[1], F_SETFD, pipe_flags | FD_CLOEXEC) != 0) {
+  if (!setCloseOnExec(exec_status_pipe.write_end.get())) {
     const int error_code = errno;
-    close(exec_status_pipe[0]);
-    close(exec_status_pipe[1]);
     logSidecarSubprocessFailure(
       sidecar_key, sidecar.publisher_identity, "spawn", "startup_pipe_cloexec_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to configure video sidecar startup pipe.");
@@ -312,15 +301,13 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   const pid_t pid = fork();
   if (pid < 0) {
     const int error_code = errno;
-    close(exec_status_pipe[0]);
-    close(exec_status_pipe[1]);
     logSidecarSubprocessFailure(
       sidecar_key, sidecar.publisher_identity, "spawn", "fork_failed", strerror(error_code), -1);
     throw std::runtime_error("Failed to fork video sidecar process.");
   }
 
   if (pid == 0) {
-    close(exec_status_pipe[0]);
+    exec_status_pipe.read_end.reset();
 #ifdef __linux__
     prctl(PR_SET_PDEATHSIG, SIGTERM);
 #endif
@@ -338,23 +325,18 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
     execvp(c_argv[0], c_argv.data());
 
     const int exec_error = errno;
-    ssize_t ignored = 0;
-    do {
-      ignored = write(exec_status_pipe[1], &exec_error, sizeof(exec_error));
-    } while (ignored < 0 && errno == EINTR);
-    close(exec_status_pipe[1]);
+    const ssize_t ignored = writeNoIntr(exec_status_pipe.write_end.get(), &exec_error, sizeof(exec_error));
+    (void)ignored;
+    exec_status_pipe.write_end.reset();
     _exit(127);
   }
 
-  close(exec_status_pipe[1]);
+  exec_status_pipe.write_end.reset();
 
   int exec_error = 0;
-  ssize_t read_size = 0;
-  do {
-    read_size = read(exec_status_pipe[0], &exec_error, sizeof(exec_error));
-  } while (read_size < 0 && errno == EINTR);
+  const ssize_t read_size = readNoIntr(exec_status_pipe.read_end.get(), &exec_error, sizeof(exec_error));
   const int read_error = errno;
-  close(exec_status_pipe[0]);
+  exec_status_pipe.read_end.reset();
 
   if (read_size < 0) {
     kill(pid, SIGKILL);
@@ -496,7 +478,7 @@ void VideoSidecarSupervisor::reapExitedSidecars()
 
     int status = 0;
     // Reap only known sidecar pids so unrelated children remain waitable by their owner.
-    const pid_t result = waitpid(sidecar.pid, &status, WNOHANG);
+    const pid_t result = waitpidNoIntr(sidecar.pid, &status, WNOHANG);
     if (result == 0) {
       continue;
     }
