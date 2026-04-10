@@ -84,7 +84,10 @@ public:
   {
     const auto caller_thread_id = std::this_thread::get_id();
     std::unique_lock<std::mutex> lock(mutex_);
-    quiesced_.wait(lock, [this, &caller_thread_id]() { return !active_ || owner_thread_id_ == caller_thread_id; });
+    quiesced_.wait(lock, [this, &caller_thread_id]() {
+      const bool caller_owns_active_section = owner_thread_id_ == caller_thread_id;
+      return !active_ || caller_owns_active_section;
+    });
   }
 
 private:

@@ -158,10 +158,10 @@ std::vector<ResourceListEntry> filterResourceListEntries(
       continue;
     }
     const auto & interface_type = interface_types.front();
-    if (
-      request.query.has_value() && resource_name.find(*request.query) == std::string::npos &&
-      interface_type.find(*request.query) == std::string::npos)
-    {
+    const bool query_matches_resource = !request.query.has_value() ||
+                                        resource_name.find(*request.query) != std::string::npos ||
+                                        interface_type.find(*request.query) != std::string::npos;
+    if (!query_matches_resource) {
       continue;
     }
 

@@ -111,7 +111,8 @@ std::optional<Clock::time_point> computeRefreshDeadline(const AccessToken & toke
   auto effective_margin = std::max(refresh_margin, std::chrono::seconds(0));
   if (token.issued_at.has_value() && *token.expires_at > *token.issued_at) {
     const auto ttl = std::chrono::duration_cast<std::chrono::seconds>(*token.expires_at - *token.issued_at);
-    effective_margin = std::min(effective_margin, ttl / 2);
+    const auto half_ttl = ttl / 2;
+    effective_margin = std::min(effective_margin, half_ttl);
   }
 
   return *token.expires_at - effective_margin;

@@ -86,7 +86,8 @@ void CdrTrackPublisher::publishTrack(
     // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
-    if (!subscription_registry.onCdrTrackPublished(track_name, generation)) {
+    const bool publish_still_current = subscription_registry.onCdrTrackPublished(track_name, generation);
+    if (!publish_still_current) {
       LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_reclaimed")
         .kv("track_name", track_name)
         .kv("generation", generation)

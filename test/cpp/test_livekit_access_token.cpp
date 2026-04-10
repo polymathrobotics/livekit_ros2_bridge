@@ -100,15 +100,16 @@ TEST(LiveKitAccessTokenTest, MintedTokenIncludesExpectedClaims)
 
   const auto payload = decodeJwtPayloadForTest(token);
   ASSERT_TRUE(payload.has_value());
+  const auto & video_claims = (*payload)["video"];
   EXPECT_EQ((*payload)["iss"], "api-key");
   EXPECT_EQ((*payload)["sub"], "bridge-id");
   EXPECT_EQ((*payload)["nbf"], 1700000000);
   EXPECT_EQ((*payload)["exp"], 1700000600);
-  EXPECT_EQ((*payload)["video"]["room"], "robot-room");
-  EXPECT_TRUE((*payload)["video"]["roomJoin"].get<bool>());
-  EXPECT_TRUE((*payload)["video"]["canPublish"].get<bool>());
-  EXPECT_TRUE((*payload)["video"]["canSubscribe"].get<bool>());
-  EXPECT_TRUE((*payload)["video"]["canPublishData"].get<bool>());
+  EXPECT_EQ(video_claims["room"], "robot-room");
+  EXPECT_TRUE(video_claims["roomJoin"].get<bool>());
+  EXPECT_TRUE(video_claims["canPublish"].get<bool>());
+  EXPECT_TRUE(video_claims["canSubscribe"].get<bool>());
+  EXPECT_TRUE(video_claims["canPublishData"].get<bool>());
 }
 
 TEST(LiveKitAccessTokenTest, ParseJwtExpiresAtReturnsNullForMissingOrMalformedExp)
@@ -160,9 +161,10 @@ TEST(LiveKitAccessTokenTest, ApiKeyAccessTokenSourceMarksTokensRefreshable)
 
   const auto payload = decodeJwtPayloadForTest(token.value);
   ASSERT_TRUE(payload.has_value());
+  const auto & video_claims = (*payload)["video"];
   EXPECT_EQ((*payload)["iss"], "api-key");
   EXPECT_EQ((*payload)["sub"], "bridge-id");
-  EXPECT_EQ((*payload)["video"]["room"], "robot-room");
+  EXPECT_EQ(video_claims["room"], "robot-room");
 }
 
 TEST(LiveKitAccessTokenTest, MintRejectsEmptyApiKey)

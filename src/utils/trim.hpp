@@ -25,10 +25,9 @@ namespace livekit_ros2_bridge
 
 inline std::string trim(std::string_view value)
 {
-  const auto begin =
-    std::find_if_not(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; });
-  const auto end =
-    std::find_if_not(value.rbegin(), value.rend(), [](unsigned char ch) { return std::isspace(ch) != 0; }).base();
+  const auto is_not_whitespace = [](unsigned char ch) { return std::isspace(ch) == 0; };
+  const auto begin = std::find_if(value.begin(), value.end(), is_not_whitespace);
+  const auto end = std::find_if(value.rbegin(), value.rend(), is_not_whitespace).base();
   if (begin >= end) {
     return "";
   }

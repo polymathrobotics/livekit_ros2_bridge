@@ -27,7 +27,8 @@ namespace
 std::set<std::string> dependencyTypes(const std::vector<InterfaceDefinition> & definitions)
 {
   std::set<std::string> types;
-  for (auto it = definitions.begin() + 1; it != definitions.end(); ++it) {
+  const auto first_dependency = definitions.begin() + 1;
+  for (auto it = first_dependency; it != definitions.end(); ++it) {
     types.insert(it->interface_type);
   }
   return types;

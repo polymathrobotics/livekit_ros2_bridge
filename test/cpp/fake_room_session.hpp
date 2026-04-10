@@ -79,10 +79,10 @@ public:
   bool registerRpcMethod(const std::string & method_name, RpcHandler handler) override
   {
     state->registered_rpc_methods.push_back(method_name);
-    if (
+    const bool registration_rejected =
       std::find(state->rejected_rpc_methods.begin(), state->rejected_rpc_methods.end(), method_name) !=
-      state->rejected_rpc_methods.end())
-    {
+      state->rejected_rpc_methods.end();
+    if (registration_rejected) {
       return false;
     }
     state->rpc_handlers[method_name] = std::move(handler);
@@ -122,11 +122,11 @@ public:
   {
     const std::string name = lookupTrackName(track);
     state->attempted_cdr_track_unpublish_names.push_back(name);
-    if (
+    const bool unpublish_rejected =
       std::find(
         state->rejected_cdr_track_unpublish_names.begin(), state->rejected_cdr_track_unpublish_names.end(), name) !=
-      state->rejected_cdr_track_unpublish_names.end())
-    {
+      state->rejected_cdr_track_unpublish_names.end();
+    if (unpublish_rejected) {
       throw std::runtime_error("simulated unpublish failure");
     }
     state->event_log.push_back("unpublish_cdr_track");

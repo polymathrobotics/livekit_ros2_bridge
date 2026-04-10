@@ -729,9 +729,9 @@ bool SubscriptionRegistry::shouldSkipDueToInterval(DataTrackResource & resource)
   }
 
   const auto now = Clock::now();
-  if (
-    resource.last_sent_time && now - *resource.last_sent_time < std::chrono::milliseconds(resource.applied_interval_ms))
-  {
+  const auto suppression_window = std::chrono::milliseconds(resource.applied_interval_ms);
+  const bool within_suppression_window = resource.last_sent_time && now - *resource.last_sent_time < suppression_window;
+  if (within_suppression_window) {
     return true;
   }
 

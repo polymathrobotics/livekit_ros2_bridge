@@ -114,10 +114,11 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidIntervalTypes)
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOversizedIntervals)
 {
+  const auto oversized_interval_ms = std::numeric_limits<std::int64_t>::max();
+  const auto expected_clamped_interval_ms = std::numeric_limits<int>::max();
   const nlohmann::json body = {
-    {"subscriptions",
-     {{{"topic", "/lidar"}, {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::int64_t>::max()}}}}}}};
-  expectSingleSubscription(body, SubscriptionTargetKind::Topic, "/lidar", std::numeric_limits<int>::max());
+    {"subscriptions", {{{"topic", "/lidar"}, {"delivery_preferences", {{"interval_ms", oversized_interval_ms}}}}}}};
+  expectSingleSubscription(body, SubscriptionTargetKind::Topic, "/lidar", expected_clamped_interval_ms);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)

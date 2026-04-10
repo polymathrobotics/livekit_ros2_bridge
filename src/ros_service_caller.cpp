@@ -562,7 +562,8 @@ void RosServiceCaller::Impl::drainResponses()
 
       // Match on both the client instance and sequence number so concurrent
       // callers to different services cannot steal each other's responses.
-      auto call_it = pending_calls.find(PendingCallKey{cached.get(), header.sequence_number});
+      const PendingCallKey pending_call_key{cached.get(), header.sequence_number};
+      auto call_it = pending_calls.find(pending_call_key);
       if (call_it == pending_calls.end()) {
         if (const std::size_t count = late_response_drop_throttle.recordAndCheck(); count > 0U) {
           LogEvent(kRosServiceCallerLogger, "service_response_dropped")
@@ -670,8 +671,8 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
     return result_future;
   }
 
-  const PendingCallKey key{cached, sequence_number};
-  if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
+  const PendingCallKey pending_call_key{cached, sequence_number};
+  if (impl_->pending_calls.find(pending_call_key) != impl_->pending_calls.end()) {
     LogEvent(kRosServiceCallerLogger, "service_call_failed")
       .kv("reason", "duplicate_pending_key")
       .kv("service", request.service)
@@ -685,7 +686,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   const int timeout_ms = request.timeout_ms > 0 ? request.timeout_ms : kDefaultTimeoutMs;
   impl_->pending_calls.emplace(
-    key,
+    pending_call_key,
     Impl::PendingCall{
       request.service,
       interface_type,

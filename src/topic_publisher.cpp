@@ -168,11 +168,10 @@ void RosTopicPublisher::publishWithPublisherCache(
     const rclcpp::QoS qos(kPublisherDepth);
     auto publisher = node_.create_generic_publisher(topic, interface_type, qos);
     lru_topics_.push_back(topic);
+    const auto new_lru_position = std::prev(lru_topics_.end());
     try {
       publisher_it =
-        publishers_
-          .emplace(topic, PublisherCacheEntry{interface_type, std::move(publisher), std::prev(lru_topics_.end())})
-          .first;
+        publishers_.emplace(topic, PublisherCacheEntry{interface_type, std::move(publisher), new_lru_position}).first;
     } catch (...) {
       lru_topics_.pop_back();
       throw;

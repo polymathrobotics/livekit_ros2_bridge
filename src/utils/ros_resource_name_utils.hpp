@@ -62,7 +62,8 @@ inline std::string normalizeRosResourceName(std::string_view name)
 /// that prefix, with `/*` acting as the root-subtree wildcard.
 inline bool rosResourceMatchesPattern(std::string_view name, std::string_view pattern)
 {
-  if (pattern.size() >= 2 && pattern.substr(pattern.size() - 2) == "/*") {
+  const bool is_subtree_pattern = pattern.size() >= 2 && pattern.substr(pattern.size() - 2) == "/*";
+  if (is_subtree_pattern) {
     const std::string prefix(pattern.substr(0, pattern.size() - 2));
     return name.rfind(prefix + "/", 0) == 0;
   }

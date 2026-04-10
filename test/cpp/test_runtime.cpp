@@ -431,7 +431,8 @@ TEST_F(RuntimeTest, VideoWatchdogRestartsUnhealthyPublisherWithoutSessionReset)
   const auto status = extractSinglePublishedStatusEnvelope(*state, "participant-1");
   ASSERT_TRUE(status.contains("streams"));
   ASSERT_EQ(status["streams"].size(), 1U);
-  const std::string publisher_identity = status["streams"][0]["delivery"]["publisher_identity"].get<std::string>();
+  const auto & delivery = status["streams"][0]["delivery"];
+  const std::string publisher_identity = delivery["publisher_identity"].get<std::string>();
   fake_session->setVideoPublisherHealthy(publisher_identity, true);
 
   const auto stable_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);

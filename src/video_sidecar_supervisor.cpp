@@ -124,8 +124,8 @@ std::chrono::system_clock::duration clampedTokenRefreshMargin(const VideoSidecar
 {
   const auto refresh_margin =
     std::chrono::duration_cast<std::chrono::system_clock::duration>(config.token_refresh_margin);
-  const auto half_ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(config.token_ttl) / 2;
-  return std::min(refresh_margin, half_ttl);
+  const auto half_token_ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(config.token_ttl) / 2;
+  return std::min(refresh_margin, half_token_ttl);
 }
 
 VideoSidecarSupervisor::Config validateConfig(VideoSidecarSupervisor::Config config)
@@ -361,7 +361,8 @@ void VideoSidecarSupervisor::restartExpiring()
     if (sidecar.pid <= 0) {
       continue;
     }
-    if (now < sidecar.token_expires_at - margin) {
+    const auto proactive_restart_deadline = sidecar.token_expires_at - margin;
+    if (now < proactive_restart_deadline) {
       continue;
     }
 
@@ -414,13 +415,9 @@ VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSid
 {
   PreparedSidecarLaunch launch;
   const auto now = std::chrono::system_clock::now();
+  const LiveKitRoomGrant sidecar_publish_grant{config_.livekit_room, true, true, false, false};
   const std::string token = mintLiveKitAccessToken(
-    config_.api_key,
-    config_.api_secret,
-    sidecar.publisher_identity,
-    LiveKitRoomGrant{config_.livekit_room, true, true, false, false},
-    now,
-    config_.token_ttl);
+    config_.api_key, config_.api_secret, sidecar.publisher_identity, sidecar_publish_grant, now, config_.token_ttl);
 
   launch.argv = build_sidecar_command_(sidecar.spec, config_.livekit_url, token);
   if (launch.argv.empty()) {

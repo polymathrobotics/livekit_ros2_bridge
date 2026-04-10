@@ -49,7 +49,8 @@ ResourceListRequest parseResourceListRequest(const std::string & payload)
   request.query = parseOptionalNonEmptyTrimmedStringField(json, "query", "query must be a string", true);
 
   const auto limit_it = json.find("limit");
-  if (limit_it != json.end() && !limit_it->is_null()) {
+  const bool has_limit = limit_it != json.end() && !limit_it->is_null();
+  if (has_limit) {
     if (!limit_it->is_number_integer()) {
       throw std::invalid_argument("limit must be a positive integer");
     }

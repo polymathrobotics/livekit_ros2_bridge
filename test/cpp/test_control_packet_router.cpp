@@ -103,7 +103,8 @@ TEST(ControlPacketRouterTest, RoutesHeartbeatPayloads)
   RouterProbe probe;
   auto router = probe.makeRouter();
 
-  router.route(makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat));
+  const auto heartbeat_packet = makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat);
+  router.route(heartbeat_packet);
 
   ASSERT_TRUE(probe.heartbeat_call.has_value());
   EXPECT_FALSE(probe.publish_call.has_value());
@@ -137,7 +138,9 @@ TEST(ControlPacketRouterTest, RoutesHeartbeatWithoutRequesterIdentity)
   RouterProbe probe;
   auto router = probe.makeRouter();
 
-  router.route(makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat, ""));
+  const auto anonymous_heartbeat_packet =
+    makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat, "");
+  router.route(anonymous_heartbeat_packet);
 
   ASSERT_TRUE(probe.heartbeat_call.has_value());
   EXPECT_FALSE(probe.publish_call.has_value());

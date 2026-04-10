@@ -115,10 +115,8 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
   std::size_t best_len = 0;
   // Update only on a strictly longer pattern so same-length matches stay first-declared.
   for (const auto & rule : config.ros_topic_rules) {
-    if (
-      rosResourceMatchesPattern(normalized, rule.pattern) &&
-      (matched_rule == nullptr || rule.pattern.size() > best_len))
-    {
+    const bool is_better_match = matched_rule == nullptr || rule.pattern.size() > best_len;
+    if (rosResourceMatchesPattern(normalized, rule.pattern) && is_better_match) {
       matched_rule = &rule;
       best_len = rule.pattern.size();
     }

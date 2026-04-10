@@ -117,6 +117,8 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     });
   });
 
+  const auto token_refresh_margin =
+    std::chrono::seconds(runtime_config.loaded_params.livekit.token_refresh_margin_seconds);
   room_session_->start(
     runtime_config.connect_config,
     runtime_config.token_source,
@@ -142,7 +144,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     },
     kReconnectInitialBackoff,
     kReconnectMaxBackoff,
-    std::chrono::seconds(runtime_config.loaded_params.livekit.token_refresh_margin_seconds));
+    token_refresh_margin);
   if (!rpc_router_->registerRpcMethods(*room_session_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .kv("phase", "startup")

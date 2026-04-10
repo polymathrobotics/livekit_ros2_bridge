@@ -85,7 +85,9 @@ inline bool waitForTopicType(
     [&node, &topic, &expected_type]() {
       const auto topics = node->get_topic_names_and_types();
       for (const auto & entry : topics) {
-        if (entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type) {
+        const bool is_single_type_match =
+          entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type;
+        if (is_single_type_match) {
           return true;
         }
       }

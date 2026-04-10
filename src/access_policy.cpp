@@ -110,7 +110,8 @@ bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & rulese
     });
   };
 
-  if (ruleset.deny.matches_all || matches(ruleset.deny)) {
+  const bool deny_rule_matched = ruleset.deny.matches_all || matches(ruleset.deny);
+  if (deny_rule_matched) {
     return false;
   }
   if (ruleset.allow.matches_all) {

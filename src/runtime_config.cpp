@@ -157,7 +157,8 @@ std::string normalizeVideoRulePattern(std::string_view raw_pattern)
   if (trimmed == "*") {
     return "/*";
   }
-  if (trimmed.size() >= 2 && trimmed.substr(trimmed.size() - 2) == "/*") {
+  const bool is_subtree_rule = trimmed.size() >= 2 && trimmed.substr(trimmed.size() - 2) == "/*";
+  if (is_subtree_rule) {
     const std::string normalized = normalizeRosResourceName(trimmed.substr(0, trimmed.size() - 2));
     if (normalized.empty()) {
       throw std::runtime_error("video topic rule pattern must normalize to a valid ROS resource");

@@ -223,9 +223,10 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
     {"streams", streams},
   };
   if (session_id.has_value()) {
-    envelope["session_id"] = *session_id;
-    envelope["lease_expires_in_ms"] =
+    const auto lease_expires_in_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(expiry - std::chrono::steady_clock::now()).count();
+    envelope["session_id"] = *session_id;
+    envelope["lease_expires_in_ms"] = lease_expires_in_ms;
   }
 
   const std::string serialized = envelope.dump();

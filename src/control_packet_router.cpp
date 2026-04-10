@@ -52,6 +52,7 @@ ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::S
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
+  const auto rejection_log_interval = std::chrono::milliseconds(kControlPacketLogThrottleMs);
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
     // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
     // heartbeat processor can still recover that identity from a leased session_id.
@@ -64,7 +65,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         .kv("control_topic", packet.control_topic)
         .kvOr("requester_identity", packet.requester_identity)
         .kv("error", exc.what())
-        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
+        .warnThrottle(*clock_, rejection_log_interval);
       return;
     }
 
@@ -76,7 +77,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         .kv("control_topic", packet.control_topic)
         .kvOr("requester_identity", packet.requester_identity)
         .kv("error", exc.what())
-        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
+        .warnThrottle(*clock_, rejection_log_interval);
     }
     return;
   }
@@ -87,7 +88,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         .kv("reason", "missing_requester_identity")
         .kv("control_topic", packet.control_topic)
         .kvOr("requester_identity", packet.requester_identity)
-        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
+        .warnThrottle(*clock_, rejection_log_interval);
       return;
     }
 
@@ -99,7 +100,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         .kv("control_topic", packet.control_topic)
         .kvOr("requester_identity", packet.requester_identity)
         .kv("error", exc.what())
-        .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
+        .warnThrottle(*clock_, rejection_log_interval);
     }
     return;
   }

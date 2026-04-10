@@ -103,9 +103,9 @@ public:
   void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
   {
     const std::string message = str();
-    const auto interval_ms =
-      std::max<std::int64_t>(0, std::chrono::duration_cast<std::chrono::milliseconds>(interval).count());
-    RCLCPP_WARN_THROTTLE(logger_, clock, interval_ms, "%s", message.c_str());
+    const auto requested_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
+    const auto throttle_interval_ms = std::max<std::int64_t>(0, requested_interval_ms);
+    RCLCPP_WARN_THROTTLE(logger_, clock, throttle_interval_ms, "%s", message.c_str());
   }
 
 private:

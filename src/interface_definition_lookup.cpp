@@ -93,7 +93,8 @@ std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
   } catch (const std::exception &) {
     throw std::runtime_error("Package '" + package + "' not found in ament index");
   }
-  return share_dir + "/" + kind + "/" + name + "." + kind;
+  const std::string relative_schema_path = kind + "/" + name + "." + kind;
+  return share_dir + "/" + relative_schema_path;
 }
 
 /// Extract the base type from a field type string, stripping array suffixes.

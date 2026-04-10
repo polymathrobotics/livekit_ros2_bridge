@@ -139,19 +139,19 @@ std::string mintLiveKitAccessToken(
     {"alg", "HS256"},
     {"typ", "JWT"},
   };
+  const nlohmann::json video_grant = {
+    {"roomJoin", grant.room_join},
+    {"room", grant.room},
+    {"canPublish", grant.can_publish},
+    {"canSubscribe", grant.can_subscribe},
+    {"canPublishData", grant.can_publish_data},
+  };
   const nlohmann::json payload = {
     {"sub", identity},
     {"iss", api_key},
     {"nbf", toUnixSeconds(issued_at)},
     {"exp", toUnixSeconds(exp)},
-    {"video",
-     {
-       {"roomJoin", grant.room_join},
-       {"room", grant.room},
-       {"canPublish", grant.can_publish},
-       {"canSubscribe", grant.can_subscribe},
-       {"canPublishData", grant.can_publish_data},
-     }},
+    {"video", video_grant},
   };
   const std::string header_json = header.dump();
   const std::string payload_json = payload.dump();

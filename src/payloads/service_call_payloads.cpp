@@ -36,8 +36,9 @@ ServiceCallRequest parseServiceCallRequest(const std::string & payload)
 
   ServiceCallRequest result;
 
-  result.service =
+  const std::string normalized_service =
     normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(json, "service", "service is required"));
+  result.service = normalized_service;
 
   result.request = parseCdrPayload(json, "request");
   if (result.request.empty()) {
@@ -46,11 +47,10 @@ ServiceCallRequest parseServiceCallRequest(const std::string & payload)
     throw std::invalid_argument("request.payload_base64 must not be empty");
   }
 
-  if (
-    const auto interface_type =
-      parseOptionalNonEmptyTrimmedStringField(json, "interface_type", "interface_type must be a string"))
-  {
-    result.interface_type = *interface_type;
+  const auto requested_interface_type =
+    parseOptionalNonEmptyTrimmedStringField(json, "interface_type", "interface_type must be a string");
+  if (requested_interface_type) {
+    result.interface_type = *requested_interface_type;
   }
 
   const auto timeout_it = json.find("timeout_ms");
@@ -70,9 +70,10 @@ std::string serializeServiceCallResponse(
   const std::vector<std::uint8_t> & response,
   int elapsed_ms)
 {
+  const Json service_descriptor = {{"name", service}, {"interface_type", interface_type}};
   const Json body = {
     {"ok", true},
-    {"service", {{"name", service}, {"interface_type", interface_type}}},
+    {"service", service_descriptor},
     {"response", serializeCdrPayload(response)},
     {"elapsed_ms", elapsed_ms},
   };

@@ -36,7 +36,8 @@ std::string base64Encode(const std::uint8_t * data, std::size_t size)
     return "";
   }
 
-  std::string encoded(((size + 2U) / 3U) * 4U, '\0');
+  const std::size_t encoded_size = ((size + 2U) / 3U) * 4U;
+  std::string encoded(encoded_size, '\0');
   const int written = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(encoded.data()), data, static_cast<int>(size));
   if (written < 0) {
     throw std::runtime_error("Failed base64 encoding.");
@@ -56,7 +57,8 @@ std::vector<std::uint8_t> base64Decode(const std::string & value)
     throw std::invalid_argument("payload_base64 must be padded standard base64.");
   }
 
-  std::vector<std::uint8_t> decoded((value.size() / 4U) * 3U, 0);
+  const std::size_t max_decoded_size = (value.size() / 4U) * 3U;
+  std::vector<std::uint8_t> decoded(max_decoded_size, 0);
   const int written = EVP_DecodeBlock(
     reinterpret_cast<unsigned char *>(decoded.data()),
     reinterpret_cast<const unsigned char *>(value.data()),
@@ -105,7 +107,8 @@ std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const cha
     throw std::invalid_argument(std::string(field_name) + ".content_type must be application/x-ros-cdr.");
   }
 
-  return base64Decode(requireStringField(field, "payload_base64"));
+  const std::string & encoded_payload = requireStringField(field, "payload_base64");
+  return base64Decode(encoded_payload);
 }
 
 nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload)
