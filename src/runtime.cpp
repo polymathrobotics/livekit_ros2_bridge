@@ -28,7 +28,7 @@
 #include "topic_publish_command.hpp"
 #include "topic_publisher.hpp"
 #include "utils/log_event.hpp"
-#include "video_sidecar_supervisor.hpp"
+#include "video_stream_manager.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -47,7 +47,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
 , video_config_(std::move(runtime_config.video_config))
 , room_(runtime_config.connect_config.room)
 , identity_(runtime_config.connect_config.identity)
-, sidecar_enabled_(runtime_config.video_sidecar_config.has_value())
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
@@ -57,22 +56,13 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     .kv("phase", "startup")
     .kvOr("room", room_, "<unset>")
     .kvOr("identity", identity_, "<unset>")
-    .kv("sidecar_enabled", sidecar_enabled_)
     .info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(
     node_, runtime_config.access_policy, runtime_config.loaded_params.publish.max_topics);
-
-  if (runtime_config.video_sidecar_config.has_value()) {
-    video_sidecar_supervisor_ = std::make_unique<VideoSidecarSupervisor>(
-      *runtime_config.video_sidecar_config,
-      buildGstreamerSidecarCommand,
-      [this](const std::string & publisher_identity) {
-        return room_session_ != nullptr && room_session_->isVideoPublisherHealthy(publisher_identity);
-      });
-  }
+  video_stream_manager_ = std::make_unique<VideoStreamManager>(node_, *room_session_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
     node_,
@@ -85,7 +75,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
       });
     },
     [this](const std::string & track_name) { cdr_track_publisher_->unpublishTrack(track_name); },
-    video_sidecar_supervisor_.get(),
+    video_stream_manager_.get(),
     &video_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
@@ -151,7 +141,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
       .kv("reason", "required_rpc_registration_failed")
       .kvOr("room", room_, "<unset>")
       .kvOr("identity", identity_, "<unset>")
-      .kv("sidecar_enabled", sidecar_enabled_)
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
@@ -161,7 +150,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     .kv("phase", "startup")
     .kvOr("room", room_, "<unset>")
     .kvOr("identity", identity_, "<unset>")
-    .kv("sidecar_enabled", sidecar_enabled_)
     .info();
 }
 
@@ -180,7 +168,6 @@ void Runtime::shutdown()
     .kv("phase", "shutdown")
     .kvOr("room", room_, "<unset>")
     .kvOr("identity", identity_, "<unset>")
-    .kv("sidecar_enabled", sidecar_enabled_)
     .info();
 
   lease_gc_timer_.reset();
@@ -202,8 +189,8 @@ void Runtime::shutdown()
   if (cdr_track_publisher_ != nullptr) {
     cdr_track_publisher_->unpublishAll();
   }
-  if (video_sidecar_supervisor_ != nullptr) {
-    video_sidecar_supervisor_->shutdown();
+  if (video_stream_manager_ != nullptr) {
+    video_stream_manager_->shutdown();
   }
   if (ros_service_caller_ != nullptr) {
     ros_service_caller_->shutdown();
@@ -216,7 +203,6 @@ void Runtime::shutdown()
     .kv("phase", "shutdown")
     .kvOr("room", room_, "<unset>")
     .kvOr("identity", identity_, "<unset>")
-    .kv("sidecar_enabled", sidecar_enabled_)
     .info();
 }
 

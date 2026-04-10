@@ -35,9 +35,10 @@ class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionRegistry;
 class RosTopicPublisher;
-class VideoSidecarSupervisor;
+class VideoStreamManager;
 
-// Wires one RoomSession to the ROS-facing publishers, RPC handlers, and sidecars for a node.
+// Wires one RoomSession to the ROS-facing publishers, RPC handlers, and in-process video streams
+// for a node.
 // Construction performs eager startup; destruction shuts the room session down before the ROS
 // ingress pipeline is torn down.
 class Runtime final
@@ -66,7 +67,7 @@ private:
   std::unique_ptr<RpcRouter> rpc_router_;
   std::unique_ptr<CdrTrackPublisher> cdr_track_publisher_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
-  std::unique_ptr<VideoSidecarSupervisor> video_sidecar_supervisor_;
+  std::unique_ptr<VideoStreamManager> video_stream_manager_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
@@ -75,7 +76,6 @@ private:
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
   std::string room_;
   std::string identity_;
-  bool sidecar_enabled_ = false;
   std::atomic<bool> shutting_down_{false};
   EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};

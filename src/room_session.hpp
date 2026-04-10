@@ -27,6 +27,7 @@
 namespace livekit
 {
 class LocalDataTrack;
+class VideoSource;
 }  // namespace livekit
 
 namespace livekit_ros2_bridge
@@ -136,6 +137,11 @@ struct OutgoingControlPacket
   std::string control_topic;
 };
 
+struct PublishedVideoTrack
+{
+  std::string track_name;
+};
+
 struct RoomSessionCallbacks
 {
   // Called after a connected session has been torn down and any per-connection room state should
@@ -172,7 +178,9 @@ public:
   virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) = 0;
   virtual void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
-  virtual bool isVideoPublisherHealthy(const std::string & publisher_identity) const = 0;
+  virtual std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
+    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) = 0;
+  virtual void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) = 0;
 };
 
 std::unique_ptr<RoomSession> makeRoomSession();

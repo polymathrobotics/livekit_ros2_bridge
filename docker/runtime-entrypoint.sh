@@ -15,10 +15,9 @@
 # limitations under the License.
 # Default entrypoint for the packaged runtime image.
 #
-# With no arguments, it sources the ROS and package environments, exposes the
-# installed GStreamer plugin path for child sidecars, and launches the bridge
-# against the mounted params file. If a command is provided, it runs that
-# command inside the same prepared runtime environment instead.
+# With no arguments, it sources the ROS and package environments and launches
+# the bridge against the mounted params file. If a command is provided, it runs
+# that command inside the same prepared runtime environment instead.
 
 set -euo pipefail
 
@@ -51,9 +50,6 @@ source_bridge_env() {
   fi
   restore_nounset "${nounset_was_enabled}"
 
-  if [[ -n "${install_prefix}" ]]; then
-    export GST_PLUGIN_PATH="${install_prefix}/lib/livekit_ros2_bridge${GST_PLUGIN_PATH:+:${GST_PLUGIN_PATH}}"
-  fi
 }
 
 if (($#)); then

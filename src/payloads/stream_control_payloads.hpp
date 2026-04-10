@@ -70,10 +70,7 @@ struct StreamStatus
   /// Serialized only for `data_track` delivery as `applied_preferences.interval_ms`.
   int applied_interval_ms = 0;
   StreamDeliveryKind delivery_kind = StreamDeliveryKind::kDataTrack;
-  /// Serialized only for `video` delivery.
-  std::string publisher_identity;
-  /// Serialized for both delivery modes. Video currently leaves this empty
-  /// because gstreamer-publisher can't set track name.
+  /// Serialized for both delivery modes.
   std::string track_name;
 };
 
@@ -84,8 +81,7 @@ struct StreamStatus
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
 /// Serialize one active stream-status entry. Data-track deliveries include
-/// `content_type="application/x-ros-cdr"` and `applied_preferences.interval_ms`;
-/// video deliveries include `publisher_identity`.
+/// `content_type="application/x-ros-cdr"` and `applied_preferences.interval_ms`.
 nlohmann::json serializeStreamStatus(const StreamStatus & stream_status);
 
 }  // namespace livekit_ros2_bridge

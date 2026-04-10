@@ -35,7 +35,7 @@ livekit_ros2_bridge:
       description: >-
         TTL for LiveKit tokens minted from livekit.api_key/livekit.api_secret in
         seconds. Must be greater than 0 when those credentials are used for
-        bridge auth or video sidecar token minting.
+        bridge auth.
       validation:
         gt_eq<>: [0]
     token_refresh_margin_seconds:

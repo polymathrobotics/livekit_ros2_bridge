@@ -41,34 +41,15 @@ generate_parameter_library(livekit_ros2_bridge_parameters
 set(livekit_ros2_bridge_public_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(livekit_ros2_bridge_private_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
-# --- GStreamer source plugin (rosrawimagesrc + roscompressedimagesrc) ---
 pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0)
-pkg_search_module(gstreamer-base REQUIRED IMPORTED_TARGET gstreamer-base-1.0)
+pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
 pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
-
-add_library(gstrosbridge SHARED
-  gst_plugins/plugin.cpp
-  gst_plugins/ros_node_runner.cpp
-  gst_plugins/encoding_utils.cpp
-  gst_plugins/rosrawimagesrc.cpp
-  gst_plugins/roscompressedimagesrc.cpp
-)
-target_include_directories(gstrosbridge PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}/gst_plugins
-)
-target_link_libraries(gstrosbridge PRIVATE
-  rclcpp::rclcpp
-  ${sensor_msgs_TARGETS}
-  PkgConfig::gstreamer
-  PkgConfig::gstreamer-base
-  PkgConfig::gstreamer-video
-)
-install(TARGETS gstrosbridge DESTINATION lib/${PROJECT_NAME})
 
 add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
   src/cdr_track_publisher.cpp
   src/control_packet_router.cpp
+  src/encoding_utils.cpp
   src/interface_definition_lookup.cpp
   src/node.cpp
   src/payloads/cdr_payload.cpp
@@ -88,7 +69,7 @@ add_library(${PROJECT_NAME} SHARED
   src/topic_publisher.cpp
   src/utils/livekit_access_token.cpp
   src/video_config.cpp
-  src/video_sidecar_supervisor.cpp
+  src/video_stream_manager.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"
@@ -104,6 +85,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   LiveKit::livekit
   nlohmann_json::nlohmann_json
   OpenSSL::Crypto
+  PkgConfig::gstreamer
+  PkgConfig::gstreamer-app
+  PkgConfig::gstreamer-video
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
@@ -206,19 +190,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_video_config test/cpp/test_video_config.cpp)
   target_link_libraries(test_video_config ${PROJECT_NAME})
 
-  ament_add_gtest(test_video_sidecar_supervisor test/cpp/test_video_sidecar_supervisor.cpp)
-  target_link_libraries(test_video_sidecar_supervisor ${PROJECT_NAME})
-
-  ament_add_gtest(test_ros_image_src_plugins test/cpp/test_ros_image_src_plugins.cpp)
-  target_include_directories(test_ros_image_src_plugins PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gst_plugins)
-  target_link_libraries(test_ros_image_src_plugins
-    ${sensor_msgs_TARGETS}
-    gstrosbridge
-    PkgConfig::gstreamer
-    PkgConfig::gstreamer-base
-    PkgConfig::gstreamer-video
-    rclcpp::rclcpp
-  )
+  ament_add_gtest(test_video_stream_manager test/cpp/test_video_stream_manager.cpp)
+  target_link_libraries(test_video_stream_manager ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
   set(livekit_ros2_bridge_test_targets
     test_access_policy
@@ -236,7 +209,6 @@ if(BUILD_TESTING)
     test_reentrant_quiesce_guard
     test_resource_list_payloads
     test_ros_executor_queue
-    test_ros_image_src_plugins
     test_ros_resource_name_utils
     test_ros_service_caller
     test_rpc_router
@@ -250,7 +222,7 @@ if(BUILD_TESTING)
     test_topic_publish_command
     test_topic_publisher
     test_video_config
-    test_video_sidecar_supervisor
+    test_video_stream_manager
   )
   foreach(test_target IN LISTS livekit_ros2_bridge_test_targets)
     target_include_directories(${test_target} PRIVATE

@@ -24,7 +24,7 @@
   <!-- CMake uses PkgConfig to resolve the GStreamer development packages. -->
   <build_depend>pkg-config</build_depend>
 
-  <!-- gstreamer-publisher needs the system CA bundle for TLS when connecting to LiveKit. -->
+  <!-- LiveKit and optional external video sources may need the system CA bundle for TLS. -->
   <exec_depend>ca-certificates</exec_depend>
   <exec_depend>gstreamer1.0-plugins-base</exec_depend>
   <exec_depend>gstreamer1.0-plugins-good</exec_depend>

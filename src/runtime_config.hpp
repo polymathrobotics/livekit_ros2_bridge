@@ -23,13 +23,12 @@
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "room_session.hpp"
 #include "video_config.hpp"
-#include "video_sidecar_supervisor.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 // Immutable startup configuration derived once from ROS parameters and then shared across the
-// runtime, reconnect loop, and optional video sidecar.
+// runtime and reconnect loop.
 struct RuntimeConfig
 {
   Params loaded_params;
@@ -37,12 +36,11 @@ struct RuntimeConfig
   std::shared_ptr<AccessTokenSource> token_source;
   AccessPolicy access_policy;
   VideoConfig video_config;
-  std::optional<VideoSidecarSupervisor::Config> video_sidecar_config;
 };
 
 // Loads and validates the bridge's startup-only configuration from parameters, deriving the
-// bridge identity, connection settings, refresh-capable token source, access policy, and optional
-// sidecar auth inputs in one pass before Runtime starts.
+// bridge identity, connection settings, refresh-capable token source, access policy, and video
+// source rules in one pass before Runtime starts.
 RuntimeConfig loadRuntimeConfig(
   const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
   const std::string & node_name);

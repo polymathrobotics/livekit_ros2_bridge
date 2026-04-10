@@ -30,11 +30,13 @@
 #include "livekit/data_track_error.h"
 #include "livekit/livekit.h"
 #include "livekit/local_data_track.h"
+#include "livekit/local_video_track.h"
 #include "livekit/remote_participant.h"
 #include "livekit/remote_track_publication.h"
 #include "livekit/room_delegate.h"
 #include "livekit/rpc_error.h"
 #include "livekit/track.h"
+#include "livekit/video_source.h"
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/livekit_access_token.hpp"
@@ -275,23 +277,84 @@ public:
     participant->unpublishDataTrack(track);
   }
 
-  bool isVideoPublisherHealthy(const std::string & publisher_identity) const override
+  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
+    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) override
   {
-    if (publisher_identity.empty()) {
-      return false;
+    if (track_name.empty()) {
+      throw std::invalid_argument("Video track name is required.");
     }
+    if (source == nullptr) {
+      throw std::invalid_argument("Video source is required.");
+    }
+
+    std::shared_ptr<livekit::Room> room;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      room = room_;
+    }
+
+    if (room == nullptr) {
+      throw std::runtime_error("LiveKit local participant unavailable.");
+    }
+
+    auto * participant = room->localParticipant();
+    if (participant == nullptr) {
+      throw std::runtime_error("LiveKit local participant unavailable.");
+    }
+
+    auto published_track = std::make_shared<PublishedVideoTrack>();
+    published_track->track_name = track_name;
+
+    auto local_track = participant->publishVideoTrack(track_name, source, livekit::TrackSource::SOURCE_CAMERA);
+    if (local_track == nullptr || local_track->publication() == nullptr) {
+      throw std::runtime_error("Failed to publish video track '" + track_name + "'.");
+    }
+    LogEvent(kRoomSessionLogger, "video_track_published")
+      .kv("track_name", track_name)
+      .kv("track_sid", local_track->publication()->sid())
+      .info();
 
     std::lock_guard<std::mutex> lock(mutex_);
-    if (room_ == nullptr) {
-      return false;
+    published_video_tracks_[published_track.get()] = std::move(local_track);
+    return published_track;
+  }
+
+  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  {
+    std::shared_ptr<livekit::LocalVideoTrack> local_track;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (track == nullptr) {
+        return;
+      }
+
+      const auto it = published_video_tracks_.find(track.get());
+      if (it == published_video_tracks_.end()) {
+        return;
+      }
+      local_track = std::move(it->second);
+      published_video_tracks_.erase(it);
     }
 
-    auto * participant = room_->remoteParticipant(publisher_identity);
+    if (local_track == nullptr) {
+      return;
+    }
+
+    const auto publication = local_track->publication();
+    if (publication == nullptr) {
+      return;
+    }
+    LogEvent(kRoomSessionLogger, "video_track_unpublishing")
+      .kv("track_name", track->track_name)
+      .kv("track_sid", publication->sid())
+      .info();
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto * participant = localParticipantLocked();
     if (participant == nullptr) {
-      return false;
+      return;
     }
-
-    return hasActiveVideoTrack(*participant);
+    participant->unpublishTrack(publication->sid());
   }
 
   void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
@@ -626,6 +689,7 @@ private:
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
       room = std::move(room_);
+      published_video_tracks_.clear();
       current_token_ = AccessToken{};
       reconnect_requested_ = false;
       reconnect_reason = last_reconnect_reason_;
@@ -816,6 +880,7 @@ private:
   std::shared_ptr<AccessTokenSource> token_source_;
   RoomSessionCallbacks callbacks_;
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
+  std::unordered_map<const PublishedVideoTrack *, std::shared_ptr<livekit::LocalVideoTrack>> published_video_tracks_;
   AccessToken current_token_;
   std::chrono::milliseconds initial_backoff_{500};
   std::chrono::milliseconds max_backoff_{10000};

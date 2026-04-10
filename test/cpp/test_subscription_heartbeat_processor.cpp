@@ -32,7 +32,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "subscription_registry.hpp"
-#include "video_sidecar_supervisor.hpp"
+#include "video_stream_manager.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -41,26 +41,12 @@ namespace
 using test_support::ScopedRclcppInit;
 using test_support::waitForTopicType;
 
-VideoSidecarSupervisor::Config makeTestVideoSidecarConfig()
-{
-  VideoSidecarSupervisor::Config config;
-  config.livekit_url = "ws://localhost:7880";
-  config.livekit_room = "test-room";
-  config.api_key = "test-api-key";
-  config.api_secret = "test-api-secret";
-  config.token_ttl = std::chrono::seconds(600);
-  config.bridge_identity = "bridge-test";
-  return config;
-}
-
 VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
 
   config.pipeline_sources.emplace(
-    "/sources/front",
-    ConfiguredPipelineSource{
-      "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"});
+    "/sources/front", ConfiguredPipelineSource{"videotestsrc is-live=true pattern=black"});
   return config;
 }
 
@@ -134,10 +120,10 @@ protected:
   }
 
   SubscriptionRegistry makeRegistry(
-    VideoSidecarSupervisor * supervisor = nullptr, const VideoConfig * video_config = nullptr)
+    VideoStreamManager * video_stream_manager = nullptr, const VideoConfig * video_config = nullptr)
   {
     return SubscriptionRegistry(
-      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, supervisor, video_config);
+      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, video_stream_manager, video_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
@@ -192,7 +178,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
   EXPECT_EQ(stream["error"]["reason"], "not_found");
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, VideoSidecarStartupFailureReturnsUnavailable)
+TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamManagerReturnsUnavailable)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
@@ -200,12 +186,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, VideoSidecarStartupFailureReturnsUnav
   auto publisher = node_->create_publisher<sensor_msgs::msg::Image>("/camera/front", 1);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/camera/front", "sensor_msgs/msg/Image"));
 
-  auto config = makeTestVideoSidecarConfig();
-  VideoSidecarSupervisor supervisor(
-    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
-      return std::vector<std::string>{"/definitely/missing/gstreamer-publisher"};
-    });
-  auto registry = makeRegistry(&supervisor);
+  auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"topic", "/camera/front"}}}}};
@@ -222,15 +203,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, VideoSidecarStartupFailureReturnsUnav
 TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-
-  auto config = makeTestVideoSidecarConfig();
-  VideoSidecarSupervisor supervisor(
-    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
-      return std::vector<std::string>{"sleep", "3600"};
-    });
   const VideoConfig video_config = makeConfiguredVideoConfig();
+  VideoStreamManager video_stream_manager(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&supervisor, &video_config);
+  auto registry = makeRegistry(&video_stream_manager, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/front"}}}}};
@@ -240,19 +216,17 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   EXPECT_EQ(stream["kind"], "external");
   EXPECT_EQ(stream["external"], "/sources/front");
   EXPECT_EQ(stream["status"], "active");
+  EXPECT_EQ(stream["delivery"]["kind"], protocol::kDeliveryKindVideo);
+  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.external.sources.front");
   EXPECT_FALSE(stream.contains("error"));
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
 {
-  auto config = makeTestVideoSidecarConfig();
-  VideoSidecarSupervisor supervisor(
-    std::move(config), [](const SidecarLaunchSpec &, const std::string &, const std::string &) {
-      return std::vector<std::string>{"sleep", "3600"};
-    });
   const VideoConfig video_config = makeConfiguredVideoConfig();
+  VideoStreamManager video_stream_manager(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&supervisor, &video_config);
+  auto registry = makeRegistry(&video_stream_manager, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/missing"}}}}};

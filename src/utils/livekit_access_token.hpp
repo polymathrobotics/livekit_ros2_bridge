@@ -23,7 +23,7 @@ namespace livekit_ros2_bridge
 
 struct LiveKitRoomGrant
 {
-  // Room-scoped grant encoded into bridge- or sidecar-minted LiveKit JWTs.
+  // Room-scoped grant encoded into bridge-minted LiveKit JWTs.
   std::string room;
   bool room_join = true;
   bool can_publish = true;

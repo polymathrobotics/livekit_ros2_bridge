@@ -154,7 +154,6 @@ exec_in_dev_container() {
         source /workspace/install/setup.bash
       fi
       set -u
-      export GST_PLUGIN_PATH="/workspace/install/lib/livekit_ros2_bridge${GST_PLUGIN_PATH:+:${GST_PLUGIN_PATH}}"
       export CCACHE_DIR="${CCACHE_DIR:-/ccache}"
       eval "$1"
     ' bash "${command}"

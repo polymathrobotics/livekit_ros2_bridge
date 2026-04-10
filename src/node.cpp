@@ -53,7 +53,6 @@ Node::Node(const rclcpp::NodeOptions & options)
 
   const std::string room = runtime_config.connect_config.room;
   const std::string identity = runtime_config.connect_config.identity;
-  const bool sidecar_enabled = runtime_config.video_sidecar_config.has_value();
 
   try {
     runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
@@ -63,7 +62,6 @@ Node::Node(const rclcpp::NodeOptions & options)
       .kv("reason", "runtime_initialization_failed")
       .kvOr("room", room, "<unset>")
       .kvOr("identity", identity, "<unset>")
-      .kv("sidecar_enabled", sidecar_enabled)
       .kv("error", exc.what())
       .error();
     throw;
@@ -73,7 +71,6 @@ Node::Node(const rclcpp::NodeOptions & options)
       .kv("reason", "runtime_initialization_failed")
       .kvOr("room", room, "<unset>")
       .kvOr("identity", identity, "<unset>")
-      .kv("sidecar_enabled", sidecar_enabled)
       .kv("error", "unknown_exception")
       .error();
     throw;
@@ -83,7 +80,6 @@ Node::Node(const rclcpp::NodeOptions & options)
     .kv("phase", "startup")
     .kvOr("room", room, "<unset>")
     .kvOr("identity", identity, "<unset>")
-    .kv("sidecar_enabled", sidecar_enabled)
     .info();
 }
 

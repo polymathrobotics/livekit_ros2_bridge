@@ -42,34 +42,28 @@ livekit_ros2_bridge:
 
     # Optional video sources.
     # Add entries here if you want the bridge to publish video into LiveKit.
-    # If you use video sidecars, set `livekit.api_key` and `livekit.api_secret` above.
     # Each source must have a `kind`:
     # - `ros` matches one or more ROS topics by pattern
-    # - `pipeline` runs a full GStreamer pipeline that you provide
+    # - `pipeline` runs an in-process GStreamer source pipeline that you provide
     # Set `videos.ids` to the source names you want to enable.
     # Each `pipelines` entry is written as `alias=pipeline`.
     # ROS sources can use the aliases `image`, `compressed_image`, or `default`.
-    # In ROS pipelines, `{topic}` is replaced with the matched topic name.
-    # Pipeline sources should use the `default` alias.
+    # For ROS sources, the bridge owns ingress and egress, so the pipeline should
+    # only describe optional transform stages.
+    # Pipeline sources should use the `default` alias and must resolve to one raw video output.
     #
     # videos.ids: ["front_camera", "back_rtsp", "usb_cam"]
     #
     # videos.front_camera.kind: "ros"
     # videos.front_camera.pattern: "/camera/front/*"
     # videos.front_camera.pipelines:
-    #   - "image=rosrawimagesrc ros-topic={topic} ros-reliable=true
-    #      ! queue max-size-buffers=2 leaky=downstream
-    #      ! videorate drop-only=true ! video/x-raw,framerate=30/1
-    #      ! videoconvert
-    #      ! vp8enc deadline=1 keyframe-max-dist=16 target-bitrate=2000000"
-    #   - "compressed_image=roscompressedimagesrc ros-topic={topic}
-    #      ros-reliable=true ! jpegdec
-    #      ! queue max-size-buffers=2 leaky=downstream
-    #      ! videoconvert
-    #      ! vp8enc deadline=1 keyframe-max-dist=16"
+    #   - "image=videoscale ! video/x-raw,width=1280,height=720"
+    #   - "compressed_image=videoscale ! video/x-raw,width=1280,height=720"
     #
     # videos.back_rtsp.kind: "pipeline"
-    # videos.back_rtsp.pipelines: ["default=uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0 ! videoconvert ! vp8enc deadline=1"]
+    # videos.back_rtsp.pipelines:
+    #   - "default=uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
     #
     # videos.usb_cam.kind: "pipeline"
-    # videos.usb_cam.pipelines: ["default=v4l2src device=/dev/video0 do-timestamp=true ! videoconvert ! vp8enc deadline=1"]
+    # videos.usb_cam.pipelines:
+    #   - "default=v4l2src device=/dev/video0 do-timestamp=true"

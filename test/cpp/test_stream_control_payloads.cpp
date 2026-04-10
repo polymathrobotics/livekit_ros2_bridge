@@ -160,7 +160,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
   stream_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
   stream_status.interface_type = "sensor_msgs/msg/Image";
   stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.publisher_identity = "bridge-video-camera-image";
+  stream_status.track_name = "ros.video.camera.image";
 
   const auto entry = serializeStreamStatus(stream_status);
 
@@ -174,8 +174,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
       {"delivery",
        {
          {"kind", "video"},
-         {"publisher_identity", "bridge-video-camera-image"},
-         {"track_name", ""},
+         {"track_name", "ros.video.camera.image"},
        }},
     }));
 }
@@ -185,7 +184,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
   StreamStatus stream_status;
   stream_status.target = {SubscriptionTargetKind::External, "/sources/front"};
   stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.publisher_identity = "bridge-video-source-sources-front";
+  stream_status.track_name = "ros.video.external.sources.front";
 
   const auto entry = serializeStreamStatus(stream_status);
 
@@ -198,8 +197,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
       {"delivery",
        {
          {"kind", "video"},
-         {"publisher_identity", "bridge-video-source-sources-front"},
-         {"track_name", ""},
+         {"track_name", "ros.video.external.sources.front"},
        }},
     }));
 }

@@ -38,7 +38,7 @@
 namespace livekit_ros2_bridge
 {
 
-class VideoSidecarSupervisor;
+class VideoStreamManager;
 
 using SendCdrMessageFn =
   std::function<void(const std::string & track_name, const std::uint8_t * data, std::size_t size)>;
@@ -68,7 +68,7 @@ public:
     SendCdrMessageFn send_cdr_fn,
     PublishCdrTrackFn publish_cdr_track_fn,
     UnpublishCdrTrackFn unpublish_cdr_track_fn,
-    VideoSidecarSupervisor * video_sidecar_supervisor,
+    VideoStreamManager * video_stream_manager,
     const VideoConfig * video_config = nullptr);
 
   StreamStatus renewSubscription(
@@ -133,8 +133,8 @@ private:
     std::string ingest_mode;
     std::string selected_config_key;
     std::string degraded_reason;
-    std::string video_publisher_identity;
-    std::optional<SidecarLaunchSpec> sidecar_launch_spec;
+    std::string video_track_name;
+    std::optional<SidecarLaunchSpec> video_stream_spec;
     std::map<std::string, RequesterLease> requesters;
     std::optional<DataTrackResource> data_track_resource;
 
@@ -171,7 +171,7 @@ private:
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
   void assignVideoMetadata(
-    SubscriptionState & sub, const SidecarLaunchSpec & sidecar_launch_spec, std::string publisher_identity);
+    SubscriptionState & sub, const SidecarLaunchSpec & video_stream_spec, std::string track_name);
   DataTrackResource createPendingDataTrackResource(
     const std::string & topic,
     const std::string & interface_type,
@@ -179,8 +179,8 @@ private:
     const std::string & requester_identity);
   void publishPendingCdrTrack(
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
-  VideoSidecarSupervisor & videoSidecarSupervisor() const;
-  const SidecarLaunchSpec & videoSidecarLaunchSpec(const SubscriptionState & sub) const;
+  VideoStreamManager & videoStreamManager() const;
+  const SidecarLaunchSpec & videoStreamSpec(const SubscriptionState & sub) const;
   void removeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
     RequesterLeaseRemovalReason reason,
@@ -197,7 +197,7 @@ private:
   SendCdrMessageFn send_cdr_fn_;
   PublishCdrTrackFn publish_cdr_track_fn_;
   UnpublishCdrTrackFn unpublish_cdr_track_fn_;
-  VideoSidecarSupervisor * video_sidecar_supervisor_;
+  VideoStreamManager * video_stream_manager_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
   // Subscriptions capture the guard's current generation in their message callback.

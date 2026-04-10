@@ -42,8 +42,6 @@ You need:
 - either a pre-minted `livekit.token`, or both `livekit.api_key` and `livekit.api_secret`
 - at least one allowed topic or service in `access.rules.*.allow`
 
-If you want bridge-managed video sidecars, you also need `livekit.api_key` and `livekit.api_secret`. Static bridge tokens alone are not enough for that path.
-
 ## Build the package
 
 If you have not built the package yet, run this from the workspace root:
@@ -87,7 +85,7 @@ If you use this repository's dev-container workflow, `just build` runs the packa
 
    For the full parameter model, read [docs/runtime-configuration.md](./docs/runtime-configuration.md). For rule matching and deny precedence, read [docs/access-control.md](./docs/access-control.md).
 
-3. If you want video, add `videos.*` entries in the same file. For `kind: pipeline` entries, the configured id becomes the external name clients request after normalization. For example, `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
+3. If you want video, add `videos.*` entries in the same file. `kind: ros` entries match ROS image topics and provide optional transform stages. `kind: pipeline` entries define configured external sources that must resolve to one raw video stream; the configured id becomes the external name clients request after normalization. For example, `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
 
 4. Run the node.
 

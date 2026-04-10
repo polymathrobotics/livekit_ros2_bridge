@@ -14,7 +14,6 @@
 
 #include "video_config.hpp"
 
-#include <sstream>
 #include <stdexcept>
 
 #include "utils/ros_resource_name_utils.hpp"
@@ -28,10 +27,41 @@ namespace
 
 constexpr char kTopicSidecarKeyPrefix[] = "topic";
 constexpr char kExternalSidecarKeyPrefix[] = "external";
+constexpr char kTopicTrackNamePrefix[] = "ros.video.";
+constexpr char kExternalTrackNamePrefix[] = "ros.video.external.";
 
-std::string makeVideoSidecarKey(std::string_view prefix, const std::string & resource)
+std::string makeVideoStreamKey(std::string_view prefix, const std::string & resource)
 {
   return std::string(prefix) + ":" + resource;
+}
+
+std::string makeTrackSuffix(const std::string & resource)
+{
+  std::string suffix;
+  suffix.reserve(resource.size());
+  for (char ch : resource) {
+    if (ch == '/' || ch == ':') {
+      if (!suffix.empty() && suffix.back() != '.') {
+        suffix.push_back('.');
+      }
+      continue;
+    }
+    suffix.push_back(ch);
+  }
+
+  while (!suffix.empty() && suffix.front() == '.') {
+    suffix.erase(suffix.begin());
+  }
+  while (!suffix.empty() && suffix.back() == '.') {
+    suffix.pop_back();
+  }
+  return suffix;
+}
+
+std::string makeVideoTrackName(std::string_view prefix, const std::string & resource)
+{
+  const std::string suffix = makeTrackSuffix(resource);
+  return suffix.empty() ? std::string(prefix) + "unnamed" : std::string(prefix) + suffix;
 }
 
 /// Replace all occurrences of `{topic}` in the template with the given topic.
@@ -46,18 +76,6 @@ std::string interpolateTopic(const std::string & tmpl, const std::string & topic
     pos += topic.size();
   }
   return result;
-}
-
-/// Tokenize a pipeline string by whitespace.
-std::vector<std::string> tokenizePipeline(const std::string & pipeline)
-{
-  std::vector<std::string> tokens;
-  std::istringstream stream(pipeline);
-  std::string token;
-  while (stream >> token) {
-    tokens.push_back(std::move(token));
-  }
-  return tokens;
 }
 
 }  // namespace
@@ -140,13 +158,14 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
   const std::string resolved = interpolateTopic(pipeline_it->second, normalized);
 
   SidecarLaunchSpec spec;
-  spec.sidecar_key = makeVideoSidecarKey(kTopicSidecarKeyPrefix, normalized);
+  spec.stream_key = makeVideoStreamKey(kTopicSidecarKeyPrefix, normalized);
+  spec.track_name = makeVideoTrackName(kTopicTrackNamePrefix, normalized);
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
   spec.source_kind = VideoSourceKind::RosTopic;
   spec.ingest_mode = std::string(source_classification->ingest_mode);
   spec.selected_config_key = matched_rule->id;
-  spec.source_pipeline = tokenizePipeline(resolved);
+  spec.pipeline_description = resolved;
   return spec;
 }
 
@@ -165,12 +184,13 @@ SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, con
   const auto & source = source_it->second;
 
   SidecarLaunchSpec spec;
-  // sidecar_key, external_name, and selected_config_key all use the same canonical configured-source name.
-  spec.sidecar_key = makeVideoSidecarKey(kExternalSidecarKeyPrefix, normalized);
+  // stream_key, external_name, and selected_config_key all use the same canonical configured-source name.
+  spec.stream_key = makeVideoStreamKey(kExternalSidecarKeyPrefix, normalized);
+  spec.track_name = makeVideoTrackName(kExternalTrackNamePrefix, normalized);
   spec.external_name = normalized;
   spec.source_kind = VideoSourceKind::Pipeline;
   spec.selected_config_key = normalized;
-  spec.source_pipeline = tokenizePipeline(source.pipeline);
+  spec.pipeline_description = source.pipeline;
   spec.ingest_mode = kPipelineIngestMode;
 
   return spec;

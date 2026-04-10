@@ -128,8 +128,7 @@ void validateTokenTtl(const Params & params, const LiveKitAuthMode auth_mode)
 {
   if (enablesApiMintedTokens(auth_mode) && params.livekit.token_ttl_seconds <= 0) {
     throw std::runtime_error(
-      "livekit.token_ttl_seconds must be > 0 when livekit.api_key/livekit.api_secret mint bridge or "
-      "video sidecar tokens");
+      "livekit.token_ttl_seconds must be > 0 when livekit.api_key/livekit.api_secret mint bridge tokens");
   }
 }
 
@@ -307,7 +306,7 @@ VideoConfig loadVideoConfig(const Params & params)
       validateConfiguredSourcePipelines(entry_id, pipelines);
 
       // Configured sources are keyed by the canonical normalized external name,
-      // so spelling variants collapse to one lookup key and one sidecar contract.
+      // so spelling variants collapse to one lookup key and one shared stream contract.
       const std::string normalized_external_name = normalizeExternalName(entry_id);
       if (normalized_external_name.empty()) {
         throw std::runtime_error("video entry '" + entry_id + "' must normalize to a valid external name");
@@ -346,28 +345,6 @@ AccessPolicy loadAccessPolicy(const Params & params)
   return AccessPolicy(config);
 }
 
-std::optional<VideoSidecarSupervisor::Config> loadVideoSidecarConfig(
-  const Params & params, const RoomConnectionConfig & connect_config, const LiveKitAuthMode auth_mode)
-{
-  validateLiveKitApiCredentialPair(auth_mode);
-
-  // Sidecars need API credentials whenever they mint their own publisher token.
-  // A static bridge token can coexist with that, but without minting there is no sidecar config to build.
-  if (!enablesApiMintedTokens(auth_mode)) {
-    return std::nullopt;
-  }
-
-  VideoSidecarSupervisor::Config config;
-  config.livekit_url = connect_config.url;
-  config.livekit_room = connect_config.room;
-  config.api_key = params.livekit.api_key;
-  config.api_secret = params.livekit.api_secret;
-  config.token_ttl = std::chrono::seconds(params.livekit.token_ttl_seconds);
-  config.token_refresh_margin = std::chrono::seconds(params.livekit.token_refresh_margin_seconds);
-  config.bridge_identity = connect_config.identity;
-  return config;
-}
-
 }  // namespace
 
 RuntimeConfig loadRuntimeConfig(
@@ -377,7 +354,6 @@ RuntimeConfig loadRuntimeConfig(
   std::string room = kUnsetLogValue;
   std::string identity = kUnsetLogValue;
   const char * auth_mode_name = "unknown";
-  bool sidecar_enabled = false;
 
   try {
     if (parameters_interface == nullptr) {
@@ -401,16 +377,12 @@ RuntimeConfig loadRuntimeConfig(
     runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
     runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
-    runtime_config.video_sidecar_config =
-      loadVideoSidecarConfig(runtime_config.loaded_params, runtime_config.connect_config, auth_mode);
-    sidecar_enabled = runtime_config.video_sidecar_config.has_value();
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .kv("phase", "startup")
       .kvOr("room", runtime_config.connect_config.room, kUnsetLogValue)
       .kvOr("identity", runtime_config.connect_config.identity, kUnsetLogValue)
       .kv("auth_mode", auth_mode_name)
-      .kv("sidecar_enabled", sidecar_enabled)
       .info();
 
     return runtime_config;
@@ -421,7 +393,6 @@ RuntimeConfig loadRuntimeConfig(
       .kv("room", room)
       .kv("identity", identity)
       .kv("auth_mode", auth_mode_name)
-      .kv("sidecar_enabled", sidecar_enabled)
       .kv("error", exc.what())
       .error();
     throw;
@@ -432,7 +403,6 @@ RuntimeConfig loadRuntimeConfig(
       .kv("room", room)
       .kv("identity", identity)
       .kv("auth_mode", auth_mode_name)
-      .kv("sidecar_enabled", sidecar_enabled)
       .kv("error", "unknown_exception")
       .error();
     throw;

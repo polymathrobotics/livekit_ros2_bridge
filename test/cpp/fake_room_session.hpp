@@ -42,14 +42,14 @@ struct FakeRoomSessionState
   std::vector<OutgoingControlPacket> published_outgoing_control_packets;
   std::vector<std::string> published_cdr_track_names;
   std::vector<std::string> unpublished_cdr_track_names;
+  std::vector<std::string> published_video_track_names;
+  std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> attempted_cdr_track_unpublish_names;
   std::vector<std::string> rejected_cdr_track_unpublish_names;
   std::vector<std::string> rejected_rpc_methods;
-  std::map<std::string, bool> healthy_video_publishers;
   std::map<std::string, RpcHandler> rpc_handlers;
   std::function<void(const RoomSessionCallbacks & callbacks)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_cdr_track_handler;
-  std::function<bool(const std::string & publisher_identity)> is_video_publisher_healthy_handler;
   bool throw_on_publish_control_packet = false;
   int publish_control_packet_call_count = 0;
 };
@@ -136,13 +136,24 @@ public:
     cdr_track_names_.erase(track.get());
   }
 
-  bool isVideoPublisherHealthy(const std::string & publisher_identity) const override
+  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
+    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) override
   {
-    if (state->is_video_publisher_healthy_handler) {
-      return state->is_video_publisher_healthy_handler(publisher_identity);
+    (void)source;
+    state->event_log.push_back("publish_video_track:" + track_name);
+    state->published_video_track_names.push_back(track_name);
+    auto track = std::make_shared<PublishedVideoTrack>();
+    track->track_name = track_name;
+    return track;
+  }
+
+  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  {
+    if (track == nullptr) {
+      return;
     }
-    const auto it = state->healthy_video_publishers.find(publisher_identity);
-    return it != state->healthy_video_publishers.end() && it->second;
+    state->event_log.push_back("unpublish_video_track:" + track->track_name);
+    state->unpublished_video_track_names.push_back(track->track_name);
   }
 
   void stop() override
@@ -173,11 +184,6 @@ public:
     if (state->callbacks.on_incoming_control_packet_received) {
       state->callbacks.on_incoming_control_packet_received(packet);
     }
-  }
-
-  void setVideoPublisherHealthy(const std::string & publisher_identity, bool healthy) const
-  {
-    state->healthy_video_publishers[publisher_identity] = healthy;
   }
 
   std::shared_ptr<FakeRoomSessionState> state;

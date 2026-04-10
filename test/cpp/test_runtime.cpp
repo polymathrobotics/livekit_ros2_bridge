@@ -374,83 +374,61 @@ TEST_F(RuntimeTest, NewParticipantReplaysPublishedCdrTrackOnFirstHeartbeat)
     harness.state->event_log.end());
 }
 
-TEST_F(RuntimeTest, VideoWatchdogRestartsUnhealthyPublisherWithoutSessionReset)
+TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
 {
-  const auto temp_dir = std::filesystem::temp_directory_path() / nextNodeName("runtime_fake_gstreamer_publisher");
-  std::filesystem::remove_all(temp_dir);
-  ASSERT_TRUE(std::filesystem::create_directories(temp_dir));
-  const auto invocation_log = temp_dir / "invocations.log";
-  const auto fake_publisher = temp_dir / "gstreamer-publisher";
-
-  {
-    std::ofstream script(fake_publisher);
-    ASSERT_TRUE(script.is_open());
-    script << "#!/bin/sh\n";
-    script << "echo invoked >> '" << invocation_log.string() << "'\n";
-    script << "sleep 3600\n";
-  }
-  std::filesystem::permissions(
-    fake_publisher,
-    std::filesystem::perms::owner_exec | std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
-    std::filesystem::perm_options::replace);
-  ScopedPathEnvPrepend scoped_path_override(temp_dir);
-
-  auto options = makeBaseOptions();
-  options.append_parameter_override("livekit.api_key", "test-api-key");
-  options.append_parameter_override("livekit.api_secret", "test-api-secret");
+  auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/camera/front"});
-
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_video_watchdog_node"), options);
-  auto session = std::make_unique<FakeRoomSession>();
-  auto * fake_session = session.get();
-  auto state = session->state;
-
-  RuntimeConfig startup_config = loadRuntimeConfig(node->get_node_parameters_interface(), node->get_name());
-  ASSERT_TRUE(startup_config.video_sidecar_config.has_value());
-  startup_config.video_sidecar_config->health_check_startup_grace = std::chrono::milliseconds(100);
-  startup_config.video_sidecar_config->unhealthy_restart_threshold = 2U;
-  auto runtime = std::make_unique<Runtime>(*node, std::move(session), std::move(startup_config));
+  auto harness = makeRuntimeHarness(options);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_video_watchdog_observer"));
   auto publisher = observer->create_publisher<sensor_msgs::msg::Image>("/camera/front", rclcpp::QoS(10));
   ASSERT_NE(publisher, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
+  executor.add_node(harness.node);
   executor.add_node(observer);
-  ASSERT_TRUE(waitForTopicType(executor, node, "/camera/front", "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
 
   const std::string heartbeat = R"({"subscriptions":[{"topic":"/camera/front"}]})";
-  fake_session->emitIncomingControlPacket(
+  harness.fake_session->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
       "participant-1",
     });
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return state->published_outgoing_control_packets.size() == 1U; }));
-  ASSERT_TRUE(waitUntil([&invocation_log]() { return countFileLines(invocation_log) == 1U; }));
-
-  const auto status = extractSinglePublishedStatusEnvelope(*state, "participant-1");
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_outgoing_control_packets.size() == 1U; }));
+  const auto status = extractSinglePublishedStatusEnvelope(*harness.state, "participant-1");
   ASSERT_TRUE(status.contains("streams"));
   ASSERT_EQ(status["streams"].size(), 1U);
   const auto & delivery = status["streams"][0]["delivery"];
-  const std::string publisher_identity = delivery["publisher_identity"].get<std::string>();
-  fake_session->setVideoPublisherHealthy(publisher_identity, true);
+  EXPECT_EQ(delivery["kind"], protocol::kDeliveryKindVideo);
+  EXPECT_EQ(delivery["track_name"], "ros.video.camera.front");
 
-  const auto stable_deadline = std::chrono::steady_clock::now() + kHealthyPublisherObservationWindow;
-  while (std::chrono::steady_clock::now() < stable_deadline) {
-    executor.spin_some();
-    EXPECT_EQ(countFileLines(invocation_log), 1U);
-    std::this_thread::sleep_for(kRuntimeTestPollInterval);
-  }
+  sensor_msgs::msg::Image image;
+  image.header.stamp.sec = 1;
+  image.width = 2;
+  image.height = 2;
+  image.step = 6;
+  image.encoding = "rgb8";
+  image.data = {
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+  };
+  publisher->publish(image);
 
-  fake_session->setVideoPublisherHealthy(publisher_identity, false);
-  ASSERT_TRUE(
-    spinUntil(executor, [&invocation_log]() { return countFileLines(invocation_log) == 2U; }, std::chrono::seconds(5)));
-
-  runtime.reset();
-  std::filesystem::remove_all(temp_dir);
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_video_track_names.size() == 1U; }));
+  EXPECT_EQ(harness.state->published_video_track_names[0], "ros.video.camera.front");
 }
 
 TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)

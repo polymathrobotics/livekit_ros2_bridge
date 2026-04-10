@@ -215,11 +215,8 @@ nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
 
   switch (stream_status.delivery_kind) {
     case StreamDeliveryKind::kVideo:
-      // Video publishers choose the track name internally today, so the bridge cannot report one yet.
       entry["delivery"] = {
-        {"kind", streamDeliveryKindString(stream_status.delivery_kind)},
-        {"publisher_identity", stream_status.publisher_identity},
-        {"track_name", stream_status.track_name}};
+        {"kind", streamDeliveryKindString(stream_status.delivery_kind)}, {"track_name", stream_status.track_name}};
       return entry;
     case StreamDeliveryKind::kDataTrack:
       entry["delivery"] = {

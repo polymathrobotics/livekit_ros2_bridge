@@ -39,23 +39,15 @@ inline constexpr char kDefaultRosProfileId[] = "default_ros";
 
 // clang-format off
 inline constexpr char kDefaultImagePipeline[] =
-  "rosrawimagesrc ros-topic={topic} ros-reliable=true"
-  " ! queue max-size-buffers=2 leaky=downstream"
-  " ! videorate drop-only=true ! video/x-raw,framerate=12/1"
-  " ! videoconvert"
-  " ! vp8enc deadline=1 keyframe-max-dist=16 target-bitrate=900000";
+  "queue max-size-buffers=2 leaky=downstream";
 
 inline constexpr char kDefaultCompressedImagePipeline[] =
-  "roscompressedimagesrc ros-topic={topic} ros-reliable=true ! jpegdec"
-  " ! queue max-size-buffers=2 leaky=downstream"
-  " ! videorate drop-only=true ! video/x-raw,framerate=12/1"
-  " ! videoconvert"
-  " ! vp8enc deadline=1 keyframe-max-dist=16 target-bitrate=900000";
+  "queue max-size-buffers=2 leaky=downstream";
 // clang-format on
 
 }  // namespace video_defaults
 
-/// Pipeline alias → full GStreamer pipeline template string.
+/// Pipeline alias → GStreamer pipeline snippet.
 /// Alias keys: "image", "compressed_image", "default".
 using PipelineMap = std::unordered_map<std::string, std::string>;
 
@@ -92,8 +84,10 @@ struct VideoConfig
 
 struct SidecarLaunchSpec
 {
-  // Stable supervisor key: "topic:<normalized topic>" or "external:<normalized external name>".
-  std::string sidecar_key;
+  // Stable video runtime key: "topic:<normalized topic>" or "external:<normalized external name>".
+  std::string stream_key;
+  // Stable LiveKit track name exposed to subscribers.
+  std::string track_name;
   // Set only for ROS-topic sources after ROS resource normalization.
   std::string ros_topic;
   // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
@@ -105,8 +99,8 @@ struct SidecarLaunchSpec
   // ROS sources store the matched rule id; pipeline sources store the canonical external name.
   std::string selected_config_key;
   std::optional<std::string> degraded_reason;
-  // Tokenized argv appended after `gstreamer-publisher --`.
-  std::vector<std::string> source_pipeline;
+  // Resolved GStreamer pipeline snippet used by the in-process video runtime.
+  std::string pipeline_description;
 };
 
 VideoConfig makeDefaultVideoConfig();

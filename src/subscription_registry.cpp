@@ -25,7 +25,7 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/scope_exit.hpp"
-#include "video_sidecar_supervisor.hpp"
+#include "video_stream_manager.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -65,14 +65,14 @@ int sanitizePreferredIntervalMs(int preferred_interval_ms)
   return std::max(preferred_interval_ms, 0);
 }
 
-std::optional<std::string> tryResolveVideoSidecarKey(
+std::optional<std::string> tryResolveVideoStreamKey(
   const VideoConfig & video_config, const SubscriptionTarget & target, const std::string & interface_type)
 {
   try {
     if (target.kind == SubscriptionTargetKind::External) {
-      return resolvePipelineVideoLaunchSpec(video_config, target.name).sidecar_key;
+      return resolvePipelineVideoLaunchSpec(video_config, target.name).stream_key;
     }
-    return resolveRosVideoLaunchSpec(video_config, target.name, interface_type).sidecar_key;
+    return resolveRosVideoLaunchSpec(video_config, target.name, interface_type).stream_key;
   } catch (...) {
     return std::nullopt;
   }
@@ -110,10 +110,10 @@ SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & ent
   return SubscriptionRequest{{target.kind, normalized}, entry.preferred_interval_ms};
 }
 
-std::string ensureVideoSidecar(VideoSidecarSupervisor & video_sidecar_supervisor, const SidecarLaunchSpec & spec)
+std::string ensureVideoStream(VideoStreamManager & video_stream_manager, const SidecarLaunchSpec & spec)
 {
   try {
-    return video_sidecar_supervisor.ensureSidecar(spec);
+    return video_stream_manager.ensureStream(spec);
   } catch (const std::exception & exc) {
     throw StreamUnavailableError(exc.what());
   }
@@ -126,13 +126,13 @@ SubscriptionRegistry::SubscriptionRegistry(
   SendCdrMessageFn send_cdr_fn,
   PublishCdrTrackFn publish_cdr_track_fn,
   UnpublishCdrTrackFn unpublish_cdr_track_fn,
-  VideoSidecarSupervisor * video_sidecar_supervisor,
+  VideoStreamManager * video_stream_manager,
   const VideoConfig * video_config)
 : node_(node)
 , send_cdr_fn_(std::move(send_cdr_fn))
 , publish_cdr_track_fn_(std::move(publish_cdr_track_fn))
 , unpublish_cdr_track_fn_(std::move(unpublish_cdr_track_fn))
-, video_sidecar_supervisor_(video_sidecar_supervisor)
+, video_stream_manager_(video_stream_manager)
 , default_video_config_(makeDefaultVideoConfig())
 , video_config_(video_config == nullptr ? &default_video_config_ : video_config)
 {}
@@ -161,9 +161,8 @@ StreamStatus SubscriptionRegistry::renewSubscription(
       event.kv("resource", sub.resource)
         .kv("kind", subscriptionKindToString(sub.target_kind))
         .kv("requester_identity", requester_identity);
-      if (sub.sidecar_launch_spec.has_value()) {
-        event.kv("sidecar_key", sub.sidecar_launch_spec->sidecar_key)
-          .kv("publisher_identity", sub.video_publisher_identity);
+      if (sub.video_stream_spec.has_value()) {
+        event.kv("stream_key", sub.video_stream_spec->stream_key).kv("track_name", sub.video_track_name);
       }
       event.kv("error", exc.what()).warn();
       throw;
@@ -187,14 +186,14 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   } catch (const std::exception & exc) {
     const bool is_video_target = target.kind == SubscriptionTargetKind::External ||
                                  (!interface_type.empty() && classifyRosVideoInterfaceType(interface_type).has_value());
-    const std::optional<std::string> sidecar_key =
-      is_video_target ? tryResolveVideoSidecarKey(*video_config_, target, interface_type) : std::nullopt;
+    const std::optional<std::string> stream_key =
+      is_video_target ? tryResolveVideoStreamKey(*video_config_, target, interface_type) : std::nullopt;
     LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
     event.kv("resource", target.name)
       .kv("kind", subscriptionKindToString(target.kind))
       .kv("requester_identity", requester_identity);
-    if (sidecar_key.has_value()) {
-      event.kv("sidecar_key", *sidecar_key);
+    if (stream_key.has_value()) {
+      event.kv("stream_key", *stream_key);
     }
     event.kv("error", exc.what()).warn();
     throw;
@@ -206,9 +205,8 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     .kv("kind", subscriptionKindToString(sub.target_kind))
     .kv("delivery", streamDeliveryKindString(stream_status.delivery_kind))
     .kv("requester_identity", requester_identity);
-  if (sub.sidecar_launch_spec.has_value()) {
-    event.kv("sidecar_key", sub.sidecar_launch_spec->sidecar_key)
-      .kv("publisher_identity", sub.video_publisher_identity);
+  if (sub.video_stream_spec.has_value()) {
+    event.kv("stream_key", sub.video_stream_spec->stream_key).kv("track_name", sub.video_track_name);
   } else {
     const auto * data = sub.data_track_ptr();
     event.kv("track_name", data == nullptr ? "" : data->track_name);
@@ -307,9 +305,9 @@ void SubscriptionRegistry::refreshExistingLease(
     return;
   }
 
-  const std::string publisher_identity = ensureVideoSidecar(videoSidecarSupervisor(), videoSidecarLaunchSpec(sub));
+  const std::string track_name = ensureVideoStream(videoStreamManager(), videoStreamSpec(sub));
   sub.requesters = std::move(updated_requesters);
-  sub.video_publisher_identity = publisher_identity;
+  sub.video_track_name = track_name;
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscription(
@@ -325,11 +323,11 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
 
-  const SidecarLaunchSpec sidecar_launch_spec =
+  const SidecarLaunchSpec video_stream_spec =
     target.kind == SubscriptionTargetKind::External
       ? resolvePipelineVideoLaunchSpec(*video_config_, target.name)
       : resolveRosVideoLaunchSpec(*video_config_, target.name, interface_type);
-  assignVideoMetadata(sub, sidecar_launch_spec, ensureVideoSidecar(videoSidecarSupervisor(), sidecar_launch_spec));
+  assignVideoMetadata(sub, video_stream_spec, ensureVideoStream(videoStreamManager(), video_stream_spec));
   return sub;
 }
 
@@ -351,13 +349,13 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
 }
 
 void SubscriptionRegistry::assignVideoMetadata(
-  SubscriptionState & sub, const SidecarLaunchSpec & sidecar_launch_spec, std::string publisher_identity)
+  SubscriptionState & sub, const SidecarLaunchSpec & video_stream_spec, std::string track_name)
 {
-  sub.source_kind = videoSourceKindToString(sidecar_launch_spec.source_kind);
-  sub.ingest_mode = sidecar_launch_spec.ingest_mode;
-  sub.selected_config_key = sidecar_launch_spec.selected_config_key;
-  sub.video_publisher_identity = std::move(publisher_identity);
-  sub.sidecar_launch_spec = sidecar_launch_spec;
+  sub.source_kind = videoSourceKindToString(video_stream_spec.source_kind);
+  sub.ingest_mode = video_stream_spec.ingest_mode;
+  sub.selected_config_key = video_stream_spec.selected_config_key;
+  sub.video_track_name = std::move(track_name);
+  sub.video_stream_spec = video_stream_spec;
 }
 
 SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataTrackResource(
@@ -407,22 +405,22 @@ void SubscriptionRegistry::publishPendingCdrTrack(
   publish_cdr_track_fn_(data.track_name, data.generation);
 }
 
-VideoSidecarSupervisor & SubscriptionRegistry::videoSidecarSupervisor() const
+VideoStreamManager & SubscriptionRegistry::videoStreamManager() const
 {
-  if (video_sidecar_supervisor_ == nullptr) {
-    throw StreamUnavailableError("Video sidecars require livekit.api_key and livekit.api_secret.");
+  if (video_stream_manager_ == nullptr) {
+    throw StreamUnavailableError("Video stream manager is unavailable.");
   }
 
-  return *video_sidecar_supervisor_;
+  return *video_stream_manager_;
 }
 
-const SidecarLaunchSpec & SubscriptionRegistry::videoSidecarLaunchSpec(const SubscriptionState & sub) const
+const SidecarLaunchSpec & SubscriptionRegistry::videoStreamSpec(const SubscriptionState & sub) const
 {
-  if (!sub.sidecar_launch_spec.has_value()) {
-    throw std::logic_error("video subscription invariant violated: sidecar launch spec is required");
+  if (!sub.video_stream_spec.has_value()) {
+    throw std::logic_error("video subscription invariant violated: video stream spec is required");
   }
 
-  return *sub.sidecar_launch_spec;
+  return *sub.video_stream_spec;
 }
 
 void SubscriptionRegistry::removeRequesterLeases(const std::string & requester_identity)
@@ -450,10 +448,6 @@ void SubscriptionRegistry::sweepExpiredLeases()
     [now](const std::string &, const RequesterLease & requester_lease) { return now >= requester_lease.expiry; },
     RequesterLeaseRemovalReason::kLeaseExpired,
     now);
-
-  if (video_sidecar_supervisor_ != nullptr) {
-    video_sidecar_supervisor_->maintainSidecars();
-  }
 }
 
 bool SubscriptionRegistry::hasSubscription(const std::string & resource, SubscriptionTargetKind target_kind) const
@@ -560,7 +554,7 @@ StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & su
     stream_status.applied_interval_ms = data->applied_interval_ms;
   } else {
     stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-    stream_status.publisher_identity = sub.video_publisher_identity;
+    stream_status.track_name = sub.video_track_name;
   }
 
   return stream_status;
@@ -673,8 +667,8 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
         .kv("resource", sub.resource)
         .kv("kind", subscriptionKindToString(sub.target_kind))
         .kv("reason", requesterRemovalReasonToString(reason))
-        .kv("sidecar_key", videoSidecarLaunchSpec(sub).sidecar_key)
-        .kv("publisher_identity", sub.video_publisher_identity)
+        .kv("stream_key", videoStreamSpec(sub).stream_key)
+        .kv("track_name", sub.video_track_name)
         .info();
     }
     destroyResource(sub);
@@ -771,10 +765,10 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
       .kv("resource", sub.resource)
       .kv("kind", subscriptionKindToString(sub.target_kind))
       .kv("interface_type", sub.interface_type)
-      .kv("sidecar_key", videoSidecarLaunchSpec(sub).sidecar_key)
-      .kv("publisher_identity", sub.video_publisher_identity)
+      .kv("stream_key", videoStreamSpec(sub).stream_key)
+      .kv("track_name", sub.video_track_name)
       .info();
-    videoSidecarSupervisor().stopSidecar(videoSidecarLaunchSpec(sub).sidecar_key);
+    videoStreamManager().stopStream(videoStreamSpec(sub).stream_key);
   }
 }
 
