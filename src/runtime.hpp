@@ -73,6 +73,7 @@ private:
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<ControlPacketRouter> control_packet_router_;
   VideoConfig video_config_;
+  SubscriptionQosConfig subscription_qos_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
   std::string room_;
   std::string identity_;

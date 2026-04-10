@@ -45,6 +45,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
 : node_(node)
 , room_session_(std::move(session))
 , video_config_(std::move(runtime_config.video_config))
+, subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
 , room_(runtime_config.connect_config.room)
 , identity_(runtime_config.connect_config.identity)
 {
@@ -62,7 +63,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(
     node_, runtime_config.access_policy, runtime_config.loaded_params.publish.max_topics);
-  video_stream_manager_ = std::make_unique<VideoStreamManager>(node_, *room_session_);
+  video_stream_manager_ = std::make_unique<VideoStreamManager>(node_, *room_session_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
     node_,
@@ -76,7 +77,8 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     },
     [this](const std::string & track_name) { cdr_track_publisher_->unpublishTrack(track_name); },
     video_stream_manager_.get(),
-    &video_config_);
+    &video_config_,
+    &subscription_qos_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_session_, runtime_config.access_policy, node_.get_clock());

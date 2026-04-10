@@ -73,6 +73,29 @@ livekit_ros2_bridge:
           type: string_array
           default_value: []
           description: "Denylist patterns for service targets."
+  subscribe:
+    qos_overrides:
+      ids:
+        type: string_array
+        default_value: []
+        description: "QoS override ids defined under subscribe.qos_overrides.<id>."
+      __map_ids:
+        pattern:
+          type: string
+          default_value: ""
+          description: "ROS topic pattern to match for this subscriber QoS override."
+        reliability:
+          type: string
+          default_value: "auto"
+          description: "Subscriber reliability override: auto, reliable, or best_effort."
+          validation:
+            one_of<>: [["auto", "reliable", "best_effort"]]
+        durability:
+          type: string
+          default_value: "auto"
+          description: "Subscriber durability override: auto, volatile, or transient_local."
+          validation:
+            one_of<>: [["auto", "volatile", "transient_local"]]
   publish:
     max_topics:
       type: int

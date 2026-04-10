@@ -261,6 +261,72 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromUnifiedParams)
     startup_config.video_config.pipeline_sources.at("/front_rtsp").pipeline, "videotestsrc is-live=true pattern=ball");
 }
 
+TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera", "front"});
+  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "best_effort");
+  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscribe.qos_overrides.front.pattern", " //camera/front/ ");
+  options.append_parameter_override("subscribe.qos_overrides.front.reliability", "auto");
+  options.append_parameter_override("subscribe.qos_overrides.front.durability", "transient_local");
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_subscription_qos_params", options);
+
+  ASSERT_EQ(startup_config.subscription_qos_config.topic_overrides.size(), 2U);
+  EXPECT_EQ(startup_config.subscription_qos_config.topic_overrides[0].id, "camera");
+  EXPECT_EQ(startup_config.subscription_qos_config.topic_overrides[0].pattern, "/camera/*");
+  EXPECT_EQ(
+    startup_config.subscription_qos_config.topic_overrides[0].reliability, SubscriptionQosReliabilityMode::kBestEffort);
+  EXPECT_EQ(startup_config.subscription_qos_config.topic_overrides[0].durability, SubscriptionQosDurabilityMode::kAuto);
+  EXPECT_EQ(startup_config.subscription_qos_config.topic_overrides[1].id, "front");
+  EXPECT_EQ(startup_config.subscription_qos_config.topic_overrides[1].pattern, "/camera/front");
+  EXPECT_EQ(
+    startup_config.subscription_qos_config.topic_overrides[1].reliability, SubscriptionQosReliabilityMode::kAuto);
+  EXPECT_EQ(
+    startup_config.subscription_qos_config.topic_overrides[1].durability,
+    SubscriptionQosDurabilityMode::kTransientLocal);
+}
+
+TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecificError)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera", "camera"});
+  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
+  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+
+  expectRuntimeConfigError(
+    "startup_config_duplicate_subscription_qos_override_id", options, "duplicate subscribe.qos_overrides id 'camera'");
+}
+
+TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsEmptyPattern)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "   ");
+  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
+  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+
+  expectRuntimeConfigError(
+    "startup_config_empty_subscription_qos_pattern", options, "subscribe.qos_overrides pattern must not be empty");
+}
+
+TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParameterLibrary)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "sometimes");
+  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+
+  expectRuntimeConfigErrorContains(
+    "startup_config_invalid_subscription_qos_reliability",
+    options,
+    "Parameter 'subscribe.qos_overrides.camera.reliability' with the value 'sometimes' is not in the set");
+}
+
 TEST_F(RuntimeConfigTest, RosVideoEntryAcceptsDefaultPipelineAlias)
 {
   auto options = makeStaticTokenOptions();

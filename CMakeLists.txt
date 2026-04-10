@@ -63,6 +63,7 @@ add_library(${PROJECT_NAME} SHARED
   src/rpc_router.cpp
   src/runtime_config.cpp
   src/runtime.cpp
+  src/subscription_qos.cpp
   src/subscription_heartbeat_processor.cpp
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
@@ -175,6 +176,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_stream_control_payloads test/cpp/test_stream_control_payloads.cpp)
   target_link_libraries(test_stream_control_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
+  ament_add_gtest(test_subscription_qos test/cpp/test_subscription_qos.cpp)
+  target_link_libraries(test_subscription_qos ${PROJECT_NAME})
+
   ament_add_gtest(test_subscription_registry test/cpp/test_subscription_registry.cpp)
   target_link_libraries(test_subscription_registry ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
 
@@ -217,6 +221,7 @@ if(BUILD_TESTING)
     test_scope_exit
     test_service_call_payloads
     test_stream_control_payloads
+    test_subscription_qos
     test_subscription_heartbeat_processor
     test_subscription_registry
     test_topic_publish_command

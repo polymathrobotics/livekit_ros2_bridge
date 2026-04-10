@@ -277,6 +277,33 @@ TEST(SubscriptionRegistryTest, SendsRawCdrFramesOnGenericSubscription)
   EXPECT_EQ(decoded, message);
 }
 
+TEST(SubscriptionRegistryTest, BestEffortPublisherDeliversToDataSubscription)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_best_effort_data_test");
+  const std::string topic = "/battery/best_effort";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10).best_effort());
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  std::vector<CdrFrame> cdr_frames;
+  SubscriptionRegistry registry(
+    *node,
+    [&cdr_frames](const std::string & name, const std::uint8_t * data, std::size_t size) {
+      cdr_frames.push_back({name, std::vector<std::uint8_t>(data, data + size)});
+    },
+    noopCdrPublish(),
+    noopCdrUnpublish(),
+    nullptr);
+
+  registry.renewSubscription("alice", topic, 0, kFarFuture);
+
+  ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return cdr_frames.size() == 1U; }));
+  EXPECT_EQ(cdr_frames[0].track_name, "ros.cdr.battery.best_effort");
+}
+
 TEST(SubscriptionRegistryTest, AppliesMinimumRequesterInterval)
 {
   ScopedRclcppInit init;

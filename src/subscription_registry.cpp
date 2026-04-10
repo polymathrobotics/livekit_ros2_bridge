@@ -21,6 +21,7 @@
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
+#include "subscription_qos.hpp"
 #include "utils/interface_types.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
@@ -33,7 +34,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr std::size_t kDataSubscriptionDepth = 10U;
+constexpr std::size_t kDataSubscriptionDepth = 2U;
 constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
 constexpr char kTopicSubscriptionKeyPrefix[] = "topic:";
 constexpr char kExternalSubscriptionKeyPrefix[] = "external:";
@@ -127,7 +128,8 @@ SubscriptionRegistry::SubscriptionRegistry(
   PublishCdrTrackFn publish_cdr_track_fn,
   UnpublishCdrTrackFn unpublish_cdr_track_fn,
   VideoStreamManager * video_stream_manager,
-  const VideoConfig * video_config)
+  const VideoConfig * video_config,
+  const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , send_cdr_fn_(std::move(send_cdr_fn))
 , publish_cdr_track_fn_(std::move(publish_cdr_track_fn))
@@ -135,6 +137,7 @@ SubscriptionRegistry::SubscriptionRegistry(
 , video_stream_manager_(video_stream_manager)
 , default_video_config_(makeDefaultVideoConfig())
 , video_config_(video_config == nullptr ? &default_video_config_ : video_config)
+, subscription_qos_config_(subscription_qos_config)
 {}
 
 StreamStatus SubscriptionRegistry::renewSubscription(
@@ -364,7 +367,9 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   const std::map<std::string, RequesterLease> & requesters,
   const std::string & requester_identity)
 {
-  const rclcpp::QoS qos(kDataSubscriptionDepth);
+  const rclcpp::QoS base_qos(kDataSubscriptionDepth);
+  const ResolvedSubscriptionQos resolved_qos =
+    resolveTopicSubscriptionQos(node_, topic, base_qos, subscription_qos_config_);
 
   DataTrackResource data;
   const std::size_t callback_generation = message_callback_guard_.currentGeneration();
@@ -373,10 +378,25 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   data.generation = registry_generation_.load();
   publishPendingCdrTrack(topic, data, requester_identity);
 
+  LogEvent(kSubscriptionRegistryLogger, "subscription_qos_resolved")
+    .kv("resource", topic)
+    .kv("kind", "topic")
+    .kv("delivery", "data_track")
+    .kv("interface_type", interface_type)
+    .kv("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
+    .kv("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
+    .kv("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
+    .kv("used_publisher_info", resolved_qos.used_publisher_info)
+    .kv("mixed_reliability", resolved_qos.mixed_reliability)
+    .kv("mixed_durability", resolved_qos.mixed_durability)
+    .kv("override_id", resolved_qos.matched_override_id)
+    .kv("override_pattern", resolved_qos.matched_override_pattern)
+    .info();
+
   data.subscription_handle = node_.create_generic_subscription(
     topic,
     interface_type,
-    qos,
+    resolved_qos.qos,
     [this, callback_generation, normalized_topic = topic](std::shared_ptr<rclcpp::SerializedMessage> message) {
       // Reset/shutdown bumps callback_generation before tearing down subscriptions. Any queued
       // callback from the old generation exits before touching cleared subscription state.

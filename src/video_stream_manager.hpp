@@ -21,6 +21,7 @@
 
 #include "rclcpp/node.hpp"
 #include "room_session.hpp"
+#include "subscription_qos.hpp"
 #include "video_config.hpp"
 
 namespace livekit_ros2_bridge
@@ -30,7 +31,8 @@ namespace livekit_ros2_bridge
 class VideoStreamManager final
 {
 public:
-  VideoStreamManager(rclcpp::Node & node, RoomSession & session);
+  VideoStreamManager(
+    rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config = nullptr);
   ~VideoStreamManager();
 
   std::string ensureStream(const SidecarLaunchSpec & spec);
@@ -42,6 +44,7 @@ private:
 
   rclcpp::Node & node_;
   RoomSession & session_;
+  const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   std::unordered_map<std::string, std::shared_ptr<StreamRecord>> streams_;

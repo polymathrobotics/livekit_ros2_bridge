@@ -176,6 +176,31 @@ TEST_F(VideoStreamManagerTest, StopStreamUnpublishesRosTrackAndRemovesSubscripti
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 0U; }));
 }
 
+TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
+{
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_reliable_ros"));
+  FakeRoomSession session;
+  VideoStreamManager manager(*node, session);
+
+  const std::string topic = "/camera/reliable";
+  const auto spec = makeRosSpec(topic, "ros.video.camera.reliable");
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(1).reliable());
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+
+  ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
+
+  const auto image = makeRgbImage();
+  ASSERT_TRUE(publishUntil(
+    executor, publisher, image, [&session]() { return session.state->published_video_track_names.size() == 1U; }));
+
+  ASSERT_EQ(session.state->published_video_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
+}
+
 TEST_F(VideoStreamManagerTest, ExternalPipelinePublishesTrackAndStopUnpublishesIt)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_external"));

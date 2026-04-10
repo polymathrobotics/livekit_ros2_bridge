@@ -70,6 +70,56 @@ Empty allow lists are valid, but they deny everything for that operation. Deny r
 
 For matching behavior, read [access-control.md](./access-control.md).
 
+## Subscriber QoS resolution
+
+ROS topic subscriptions resolve subscriber QoS when the bridge creates each shared subscription.
+
+Default behavior:
+
+- inspect visible publishers for that topic first
+- infer only `reliability` and `durability`
+- keep data-track subscriptions at `KeepLast(2)`
+- keep ROS video subscriptions at `KeepLast(1)`
+- if any publisher is `best_effort`, subscribe `best_effort`
+- otherwise subscribe `reliable`
+- if any publisher is `volatile`, subscribe `volatile`
+- otherwise subscribe `transient_local`
+- if no usable publisher QoS is visible yet, fall back to the subscription class default
+
+QoS is resolved only when the subscription is created or recreated later. It is not live-reconciled after that.
+
+### QoS override parameters
+
+Use `subscribe.qos_overrides.*` to pin subscriber QoS fields for ROS topic subscriptions.
+
+| Parameter | Meaning |
+| --- | --- |
+| `subscribe.qos_overrides.ids` | the override ids to load |
+| `subscribe.qos_overrides.<id>.pattern` | ROS topic pattern to match |
+| `subscribe.qos_overrides.<id>.reliability` | `auto`, `reliable`, or `best_effort` |
+| `subscribe.qos_overrides.<id>.durability` | `auto`, `volatile`, or `transient_local` |
+
+Override rules:
+
+- overrides apply only to ROS topic subscriptions
+- they affect both CDR data-track and ROS video subscriptions
+- longest matching pattern wins
+- same-length ties keep declaration order
+- `auto` defers to publisher inspection for that field
+
+Example:
+
+```yaml
+livekit_ros2_bridge:
+  ros__parameters:
+    subscribe.qos_overrides.ids: ["gazebo_cameras"]
+    subscribe.qos_overrides.gazebo_cameras.pattern: "/front_camera/*"
+    subscribe.qos_overrides.gazebo_cameras.reliability: "reliable"
+    subscribe.qos_overrides.gazebo_cameras.durability: "auto"
+```
+
+This is useful when a publisher is not visible yet at subscription-creation time, or when a source such as `ros_gz_bridge` cameras must be pinned to `reliable`.
+
 ## Publish cache limit
 
 `publish.max_topics` controls how many active ROS publishers the bridge keeps cached for `ros.topics.publish`.

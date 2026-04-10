@@ -40,6 +40,7 @@
 #include "rclcpp/qos.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
 
 #include <gst/video/video-format.h>
@@ -153,10 +154,15 @@ std::string composePipeline(const std::string & prefix, const std::string & midd
 class VideoStreamManager::StreamRecord final : public std::enable_shared_from_this<StreamRecord>
 {
 public:
-  StreamRecord(rclcpp::Node & node, RoomSession & session, SidecarLaunchSpec spec)
+  StreamRecord(
+    rclcpp::Node & node,
+    RoomSession & session,
+    SidecarLaunchSpec spec,
+    const SubscriptionQosConfig * subscription_qos_config)
   : node_(node)
   , session_(session)
   , spec_(std::move(spec))
+  , subscription_qos_config_(subscription_qos_config)
   {}
 
   ~StreamRecord()
@@ -208,10 +214,29 @@ private:
 
   void createRosSubscriptionLocked()
   {
+    const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
+    const ResolvedSubscriptionQos resolved_qos =
+      resolveTopicSubscriptionQos(node_, spec_.ros_topic, base_qos, subscription_qos_config_);
+
+    LogEvent(kVideoStreamManagerLogger, "subscription_qos_resolved")
+      .kv("resource", spec_.ros_topic)
+      .kv("kind", "topic")
+      .kv("delivery", "video")
+      .kv("interface_type", spec_.interface_type)
+      .kv("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
+      .kv("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
+      .kv("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
+      .kv("used_publisher_info", resolved_qos.used_publisher_info)
+      .kv("mixed_reliability", resolved_qos.mixed_reliability)
+      .kv("mixed_durability", resolved_qos.mixed_durability)
+      .kv("override_id", resolved_qos.matched_override_id)
+      .kv("override_pattern", resolved_qos.matched_override_pattern)
+      .info();
+
     if (spec_.interface_type == kImageInterfaceType) {
       auto weak_self = weak_from_this();
       subscription_ = node_.create_subscription<sensor_msgs::msg::Image>(
-        spec_.ros_topic, rclcpp::SensorDataQoS(), [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr message) {
+        spec_.ros_topic, resolved_qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr message) {
           if (const auto self = weak_self.lock()) {
             self->handleRawImageMessage(message);
           }
@@ -229,7 +254,7 @@ private:
       auto weak_self = weak_from_this();
       subscription_ = node_.create_subscription<sensor_msgs::msg::CompressedImage>(
         spec_.ros_topic,
-        rclcpp::SensorDataQoS(),
+        resolved_qos.qos,
         [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr message) {
           if (const auto self = weak_self.lock()) {
             self->handleCompressedImageMessage(message);
@@ -749,11 +774,14 @@ private:
   std::shared_ptr<PublishedVideoTrack> published_track_;
   int published_width_ = 0;
   int published_height_ = 0;
+  const SubscriptionQosConfig * subscription_qos_config_;
 };
 
-VideoStreamManager::VideoStreamManager(rclcpp::Node & node, RoomSession & session)
+VideoStreamManager::VideoStreamManager(
+  rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , session_(session)
+, subscription_qos_config_(subscription_qos_config)
 {
   ensureGstreamerInitialized();
 }
@@ -774,7 +802,7 @@ std::string VideoStreamManager::ensureStream(const SidecarLaunchSpec & spec)
 
     auto [it, inserted] = streams_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<StreamRecord>(node_, session_, spec);
+      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_);
     }
     record = it->second;
   }

@@ -32,6 +32,7 @@
 #include "rclcpp/generic_subscription.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialized_message.hpp"
+#include "subscription_qos.hpp"
 #include "utils/quiesce_guard.hpp"
 #include "video_config.hpp"
 
@@ -69,7 +70,8 @@ public:
     PublishCdrTrackFn publish_cdr_track_fn,
     UnpublishCdrTrackFn unpublish_cdr_track_fn,
     VideoStreamManager * video_stream_manager,
-    const VideoConfig * video_config = nullptr);
+    const VideoConfig * video_config = nullptr,
+    const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
   StreamStatus renewSubscription(
     const std::string & requester_identity, const SubscriptionRequest & entry, Clock::time_point expiry);
@@ -200,6 +202,7 @@ private:
   VideoStreamManager * video_stream_manager_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
+  const SubscriptionQosConfig * subscription_qos_config_;
   // Subscriptions capture the guard's current generation in their message callback.
   // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from
   // the old session self-reject on entry.

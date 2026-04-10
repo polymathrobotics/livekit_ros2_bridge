@@ -10,8 +10,8 @@ This page covers the common failures people hit during setup, connection, subscr
 | Room never stabilizes | `room_token_load_failed`, `room_connect_failed`, `room_reconnect_backoff` | bad credentials, empty token, unreachable LiveKit URL |
 | Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, session ownership mismatch |
 | Service call rejected or times out | `rpc_request_rejected`, `service_call_failed`, `service_calls_settled` | missing caller identity, access denied, bad payload, request build failure, timeout, requester disconnect |
-| CDR topic subscription appears but data does not flow | `subscription_renew_failed`, `cdr_track_pending`, `cdr_track_published`, `cdr_track_publish_failed`, `cdr_track_delivery_failed`, `cdr_track_delivery_dropped` | ambiguous topic type, track publish failure, LiveKit queue backpressure |
-| Video source never appears | `subscription_renew_failed`, `video_sidecar_spawned`, `video_sidecar_restart`, `video_sidecar_exited`, `video_sidecar_health_check_failed` | missing API credentials, invalid source pipeline, sidecar crash, unhealthy publisher |
+| CDR topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `cdr_track_pending`, `cdr_track_published`, `cdr_track_publish_failed`, `cdr_track_delivery_failed`, `cdr_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
+| Video source never appears | `subscription_renew_failed`, `subscription_qos_resolved`, `video_stream_subscription_started`, `video_stream_pipeline_starting`, `video_stream_push_failed`, `video_stream_pipeline_failed` | QoS mismatch, invalid source pipeline, unsupported image encoding, unhealthy source pipeline |
 
 ## Startup and connection issues
 
@@ -135,9 +135,15 @@ Useful log events:
 
 Check these first:
 
-- bridge-managed video sidecars require `livekit.api_key` and `livekit.api_secret`
 - the `videos.*` entry exists and matches what the client requested
 - configured source names normalize like ROS resource names
+- the bridge logged `subscription_qos_resolved` for that ROS topic
+- the resolved `reliability` and `durability` match the publisher
+
+Common QoS example:
+
+- `ros_gz_bridge` camera topics often publish `RELIABLE`
+- if the bridge subscribes before publisher QoS is visible, add `subscribe.qos_overrides.*` for that topic pattern
 
 Example:
 
@@ -145,12 +151,11 @@ Example:
 
 Useful log events:
 
-- `event=video_sidecar_spawned`
-- `event=video_sidecar_exited`
-- `event=video_sidecar_unhealthy`
-- `event=video_sidecar_restart`
-
-Subscription status for video includes `publisher_identity`. `track_name` is intentionally empty for video today.
+- `event=subscription_qos_resolved`
+- `event=video_stream_subscription_started`
+- `event=video_stream_input_received`
+- `event=video_stream_push_failed`
+- `event=video_stream_pipeline_failed`
 
 ### A ROS topic becomes a data track instead of video
 

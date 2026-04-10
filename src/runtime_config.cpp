@@ -23,7 +23,9 @@
 
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
+#include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
+#include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
@@ -148,11 +150,11 @@ std::shared_ptr<AccessTokenSource> loadTokenSource(const Params & params, const 
   throw std::runtime_error("Either livekit.token or livekit.api_key + livekit.api_secret must be set");
 }
 
-std::string normalizeVideoRulePattern(std::string_view raw_pattern)
+std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
   if (trimmed.empty()) {
-    throw std::runtime_error("video topic rule pattern must not be empty");
+    throw std::runtime_error(std::string(context) + " pattern must not be empty");
   }
   if (trimmed == "*") {
     return "/*";
@@ -161,16 +163,51 @@ std::string normalizeVideoRulePattern(std::string_view raw_pattern)
   if (is_subtree_rule) {
     const std::string normalized = normalizeRosResourceName(trimmed.substr(0, trimmed.size() - 2));
     if (normalized.empty()) {
-      throw std::runtime_error("video topic rule pattern must normalize to a valid ROS resource");
+      throw std::runtime_error(std::string(context) + " pattern must normalize to a valid ROS resource");
     }
     return normalized + "/*";
   }
 
   const std::string normalized = normalizeRosResourceName(trimmed);
   if (normalized.empty()) {
-    throw std::runtime_error("video topic rule pattern must normalize to a valid ROS resource");
+    throw std::runtime_error(std::string(context) + " pattern must normalize to a valid ROS resource");
   }
   return normalized;
+}
+
+std::string normalizeVideoRulePattern(std::string_view raw_pattern)
+{
+  return normalizeRosTopicPattern(raw_pattern, "video topic rule");
+}
+
+SubscriptionQosReliabilityMode parseSubscriptionQosReliabilityMode(const std::string & raw_mode)
+{
+  if (raw_mode == "auto") {
+    return SubscriptionQosReliabilityMode::kAuto;
+  }
+  if (raw_mode == "reliable") {
+    return SubscriptionQosReliabilityMode::kReliable;
+  }
+  if (raw_mode == "best_effort") {
+    return SubscriptionQosReliabilityMode::kBestEffort;
+  }
+
+  throw std::runtime_error("unsupported subscribe.qos_overrides reliability mode '" + raw_mode + "'");
+}
+
+SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::string & raw_mode)
+{
+  if (raw_mode == "auto") {
+    return SubscriptionQosDurabilityMode::kAuto;
+  }
+  if (raw_mode == "volatile") {
+    return SubscriptionQosDurabilityMode::kVolatile;
+  }
+  if (raw_mode == "transient_local") {
+    return SubscriptionQosDurabilityMode::kTransientLocal;
+  }
+
+  throw std::runtime_error("unsupported subscribe.qos_overrides durability mode '" + raw_mode + "'");
 }
 
 bool isSupportedRosPipelineAlias(std::string_view alias)
@@ -345,6 +382,30 @@ AccessPolicy loadAccessPolicy(const Params & params)
   return AccessPolicy(config);
 }
 
+SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
+{
+  SubscriptionQosConfig config;
+
+  std::unordered_set<std::string> seen_override_ids;
+  for (const auto & override_id : params.subscribe.qos_overrides.ids) {
+    const auto & entry = requireUniqueGeneratedVideoEntry(
+      seen_override_ids,
+      override_id,
+      params.subscribe.qos_overrides.ids_map,
+      "subscribe.qos_overrides id",
+      "subscribe.qos_overrides entry");
+
+    TopicSubscriptionQosOverride override_entry;
+    override_entry.id = override_id;
+    override_entry.pattern = normalizeRosTopicPattern(entry.pattern, "subscribe.qos_overrides");
+    override_entry.reliability = parseSubscriptionQosReliabilityMode(entry.reliability);
+    override_entry.durability = parseSubscriptionQosDurabilityMode(entry.durability);
+    config.topic_overrides.push_back(std::move(override_entry));
+  }
+
+  return config;
+}
+
 }  // namespace
 
 RuntimeConfig loadRuntimeConfig(
@@ -376,6 +437,7 @@ RuntimeConfig loadRuntimeConfig(
     runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params, node_name);
     runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
+    runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
     runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")

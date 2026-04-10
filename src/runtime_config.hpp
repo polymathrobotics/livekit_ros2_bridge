@@ -22,6 +22,7 @@
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "room_session.hpp"
+#include "subscription_qos.hpp"
 #include "video_config.hpp"
 
 namespace livekit_ros2_bridge
@@ -35,6 +36,7 @@ struct RuntimeConfig
   RoomConnectionConfig connect_config;
   std::shared_ptr<AccessTokenSource> token_source;
   AccessPolicy access_policy;
+  SubscriptionQosConfig subscription_qos_config;
   VideoConfig video_config;
 };
 
