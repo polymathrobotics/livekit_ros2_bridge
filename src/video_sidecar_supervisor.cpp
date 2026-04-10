@@ -62,6 +62,23 @@ void logSidecarSubprocessFailure(
     .error();
 }
 
+void logStopFailure(
+  const std::string & sidecar_key,
+  const std::string & publisher_identity,
+  const char * reason,
+  int error_code,
+  pid_t pid)
+{
+  LogEvent(kLogger, "video_sidecar_stop_failed")
+    .kv("sidecar_key", sidecar_key)
+    .kv("publisher_identity", publisher_identity)
+    .kv("phase", "wait")
+    .kv("reason", reason)
+    .kv("error", strerror(error_code))
+    .kv("pid", static_cast<int>(pid))
+    .error();
+}
+
 void signalSidecarProcessGroup(pid_t pid, int signal_number)
 {
   if (pid <= 0) {
@@ -76,6 +93,39 @@ void signalSidecarProcessGroup(pid_t pid, int signal_number)
   // normal path puts the sidecar in its own group so grandchildren are also
   // terminated during restart and shutdown.
   (void)kill(pid, signal_number);
+}
+
+const char * restartFailurePhase(pid_t pid)
+{
+  return pid > 0 ? "prepare" : "spawn";
+}
+
+bool withinStartupGrace(
+  std::chrono::steady_clock::time_point now,
+  std::chrono::steady_clock::time_point spawned_at,
+  std::chrono::milliseconds startup_grace)
+{
+  return now - spawned_at < startup_grace;
+}
+
+bool shouldLogUnhealthy(std::chrono::steady_clock::time_point now, std::chrono::steady_clock::time_point next_log_at)
+{
+  return next_log_at == std::chrono::steady_clock::time_point{} || now >= next_log_at;
+}
+
+void resetUnhealthyTracking(
+  std::size_t & consecutive_unhealthy_checks, std::chrono::steady_clock::time_point & next_unhealthy_log_at)
+{
+  consecutive_unhealthy_checks = 0;
+  next_unhealthy_log_at = std::chrono::steady_clock::time_point{};
+}
+
+std::chrono::system_clock::duration clampedTokenRefreshMargin(const VideoSidecarSupervisor::Config & config)
+{
+  const auto refresh_margin =
+    std::chrono::duration_cast<std::chrono::system_clock::duration>(config.token_refresh_margin);
+  const auto half_ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(config.token_ttl) / 2;
+  return std::min(refresh_margin, half_ttl);
 }
 
 VideoSidecarSupervisor::Config validateConfig(VideoSidecarSupervisor::Config config)
@@ -136,55 +186,6 @@ VideoSidecarSupervisor::~VideoSidecarSupervisor()
   shutdown();
 }
 
-std::string VideoSidecarSupervisor::ensureSidecar(const SidecarLaunchSpec & spec)
-{
-  if (spec.sidecar_key.empty()) {
-    throw std::invalid_argument("Sidecar launch spec sidecar_key is required.");
-  }
-  if (is_shutdown_.load()) {
-    throw std::runtime_error("Video sidecar supervisor is shut down.");
-  }
-  reapExitedSidecars();
-
-  auto [it, inserted] = sidecars_.try_emplace(spec.sidecar_key);
-  it->second.spec = spec;
-  if (it->second.publisher_identity.empty()) {
-    it->second.publisher_identity = derivePublisherIdentity(config_.bridge_identity, spec);
-  }
-  if (it->second.pid <= 0) {
-    try {
-      restartSidecar(it->first, it->second);
-    } catch (...) {
-      if (inserted) {
-        sidecars_.erase(it);
-      }
-      throw;
-    }
-  }
-  return it->second.publisher_identity;
-}
-
-void VideoSidecarSupervisor::stopSidecar(const std::string & sidecar_key)
-{
-  auto it = sidecars_.find(sidecar_key);
-  if (it == sidecars_.end()) {
-    return;
-  }
-  killSidecar(it->first, it->second);
-  sidecars_.erase(it);
-}
-
-void VideoSidecarSupervisor::shutdown()
-{
-  if (is_shutdown_.exchange(true)) {
-    return;
-  }
-  for (auto & entry : sidecars_) {
-    killSidecar(entry.first, entry.second);
-  }
-  sidecars_.clear();
-}
-
 std::string VideoSidecarSupervisor::derivePublisherIdentity(
   const std::string & bridge_identity, const SidecarLaunchSpec & spec)
 {
@@ -211,6 +212,201 @@ std::string VideoSidecarSupervisor::keyToSlug(const std::string & key)
     slug.pop_back();
   }
   return slug;
+}
+
+// Policy entry points --------------------------------------------------------
+
+std::string VideoSidecarSupervisor::ensureSidecar(const SidecarLaunchSpec & spec)
+{
+  if (spec.sidecar_key.empty()) {
+    throw std::invalid_argument("Sidecar launch spec sidecar_key is required.");
+  }
+  if (is_shutdown_.load()) {
+    throw std::runtime_error("Video sidecar supervisor is shut down.");
+  }
+
+  reapExitedSidecars();
+
+  auto [sidecar_it, inserted] = sidecars_.try_emplace(spec.sidecar_key);
+  SidecarRecord & sidecar = sidecar_it->second;
+  sidecar.spec = spec;
+  if (sidecar.publisher_identity.empty()) {
+    sidecar.publisher_identity = derivePublisherIdentity(config_.bridge_identity, spec);
+  }
+  if (sidecar.pid > 0) {
+    return sidecar.publisher_identity;
+  }
+
+  try {
+    restartSidecar(sidecar_it->first, sidecar);
+  } catch (...) {
+    if (inserted) {
+      sidecars_.erase(sidecar_it);
+    }
+    throw;
+  }
+
+  return sidecar.publisher_identity;
+}
+
+void VideoSidecarSupervisor::stopSidecar(const std::string & sidecar_key)
+{
+  auto sidecar_it = sidecars_.find(sidecar_key);
+  if (sidecar_it == sidecars_.end()) {
+    return;
+  }
+
+  killSidecar(sidecar_it->first, sidecar_it->second);
+  sidecars_.erase(sidecar_it);
+}
+
+void VideoSidecarSupervisor::shutdown()
+{
+  if (is_shutdown_.exchange(true)) {
+    return;
+  }
+
+  for (auto & sidecar_entry : sidecars_) {
+    killSidecar(sidecar_entry.first, sidecar_entry.second);
+  }
+  sidecars_.clear();
+}
+
+void VideoSidecarSupervisor::maintainSidecars()
+{
+  reapExitedSidecars();
+  restartUnhealthy();
+  restartExpiring();
+}
+
+void VideoSidecarSupervisor::restartUnhealthy()
+{
+  if (is_shutdown_.load() || !is_publisher_healthy_) {
+    return;
+  }
+
+  const auto now = SteadyClock::now();
+  for (auto & sidecar_entry : sidecars_) {
+    const std::string & sidecar_key = sidecar_entry.first;
+    SidecarRecord & sidecar = sidecar_entry.second;
+    if (sidecar.pid <= 0 || sidecar.publisher_identity.empty()) {
+      continue;
+    }
+
+    // Policy: a fresh child gets a grace window before missing publications
+    // count toward a restart.
+    if (withinStartupGrace(now, sidecar.spawned_at, config_.health_check_startup_grace)) {
+      continue;
+    }
+
+    bool healthy = false;
+    try {
+      healthy = is_publisher_healthy_(sidecar.publisher_identity);
+    } catch (const std::exception & exc) {
+      LogEvent(kLogger, "video_sidecar_health_check_failed")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("error", exc.what())
+        .error();
+      continue;
+    } catch (...) {
+      LogEvent(kLogger, "video_sidecar_health_check_failed")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .error();
+      continue;
+    }
+
+    if (healthy) {
+      resetUnhealthyTracking(sidecar.consecutive_unhealthy_checks, sidecar.next_unhealthy_log_at);
+      continue;
+    }
+
+    ++sidecar.consecutive_unhealthy_checks;
+    if (sidecar.consecutive_unhealthy_checks < config_.unhealthy_restart_threshold) {
+      if (shouldLogUnhealthy(now, sidecar.next_unhealthy_log_at)) {
+        LogEvent(kLogger, "video_sidecar_unhealthy")
+          .kv("sidecar_key", sidecar_key)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("reason", "publisher_unhealthy")
+          .kv("count", sidecar.consecutive_unhealthy_checks)
+          .kv("threshold", config_.unhealthy_restart_threshold)
+          .warn();
+        sidecar.next_unhealthy_log_at = now + kUnhealthyLogThrottlePeriod;
+      }
+      continue;
+    }
+
+    LogEvent(kLogger, "video_sidecar_restart")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("reason", "publisher_unhealthy")
+      .warn();
+    tryRestartSidecar(sidecar_key, sidecar, "publisher_unhealthy");
+  }
+}
+
+void VideoSidecarSupervisor::restartExpiring()
+{
+  if (is_shutdown_.load()) {
+    return;
+  }
+
+  const auto now = std::chrono::system_clock::now();
+  const auto margin = clampedTokenRefreshMargin(config_);
+
+  for (auto & sidecar_entry : sidecars_) {
+    const std::string & sidecar_key = sidecar_entry.first;
+    SidecarRecord & sidecar = sidecar_entry.second;
+    if (sidecar.pid <= 0) {
+      continue;
+    }
+    if (now < sidecar.token_expires_at - margin) {
+      continue;
+    }
+
+    LogEvent(kLogger, "video_sidecar_restart")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("reason", "token_expiring")
+      .kv("pid", static_cast<int>(sidecar.pid))
+      .info();
+    tryRestartSidecar(sidecar_key, sidecar, "token_expiring");
+  }
+}
+
+void VideoSidecarSupervisor::restartSidecar(const std::string & sidecar_key, SidecarRecord & sidecar)
+{
+  // Policy: prepare the replacement before killing the current child so token
+  // minting or argv-building failures leave the current publisher running.
+  auto launch = prepareSidecarLaunch(sidecar);
+  if (sidecar.pid > 0) {
+    killSidecar(sidecar_key, sidecar);
+  }
+  spawnPreparedSidecar(sidecar_key, sidecar, std::move(launch));
+}
+
+void VideoSidecarSupervisor::tryRestartSidecar(
+  const std::string & sidecar_key, SidecarRecord & sidecar, const char * reason)
+{
+  try {
+    restartSidecar(sidecar_key, sidecar);
+  } catch (const std::exception & exc) {
+    LogEvent(kLogger, "video_sidecar_restart_failed")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("phase", restartFailurePhase(sidecar.pid))
+      .kv("reason", reason)
+      .kv("error", exc.what())
+      .error();
+  } catch (...) {
+    LogEvent(kLogger, "video_sidecar_restart_failed")
+      .kv("sidecar_key", sidecar_key)
+      .kv("publisher_identity", sidecar.publisher_identity)
+      .kv("phase", restartFailurePhase(sidecar.pid))
+      .kv("reason", reason)
+      .error();
+  }
 }
 
 VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSidecarLaunch(
@@ -242,39 +438,61 @@ VideoSidecarSupervisor::PreparedSidecarLaunch VideoSidecarSupervisor::prepareSid
   return launch;
 }
 
-void VideoSidecarSupervisor::restartSidecar(const std::string & sidecar_key, SidecarRecord & sidecar)
-{
-  // Prepare the replacement before killing the current child so command or token
-  // failures leave the existing publisher running.
-  auto launch = prepareSidecarLaunch(sidecar);
-  if (sidecar.pid > 0) {
-    killSidecar(sidecar_key, sidecar);
-  }
-  spawnPreparedSidecar(sidecar_key, sidecar, std::move(launch));
-}
+// Process mechanics ----------------------------------------------------------
 
-void VideoSidecarSupervisor::tryRestartSidecar(
-  const std::string & sidecar_key, SidecarRecord & sidecar, const char * reason)
+void VideoSidecarSupervisor::reapExitedSidecars()
 {
-  try {
-    restartSidecar(sidecar_key, sidecar);
-  } catch (const std::exception & exc) {
-    const char * phase = sidecar.pid > 0 ? "prepare" : "spawn";
-    LogEvent(kLogger, "video_sidecar_restart_failed")
-      .kv("sidecar_key", sidecar_key)
-      .kv("publisher_identity", sidecar.publisher_identity)
-      .kv("phase", phase)
-      .kv("reason", reason)
-      .kv("error", exc.what())
-      .error();
-  } catch (...) {
-    const char * phase = sidecar.pid > 0 ? "prepare" : "spawn";
-    LogEvent(kLogger, "video_sidecar_restart_failed")
-      .kv("sidecar_key", sidecar_key)
-      .kv("publisher_identity", sidecar.publisher_identity)
-      .kv("phase", phase)
-      .kv("reason", reason)
-      .error();
+  if (is_shutdown_.load()) {
+    return;
+  }
+
+  for (auto & sidecar_entry : sidecars_) {
+    const std::string & sidecar_key = sidecar_entry.first;
+    SidecarRecord & sidecar = sidecar_entry.second;
+    if (sidecar.pid <= 0) {
+      continue;
+    }
+
+    int status = 0;
+    // Reap only known sidecar pids so unrelated children remain waitable by their owner.
+    const pid_t result = waitpidNoIntr(sidecar.pid, &status, WNOHANG);
+    if (result == 0) {
+      continue;
+    }
+
+    if (result < 0) {
+      if (errno == ECHILD) {
+        LogEvent(kLogger, "video_sidecar_not_waitable")
+          .kv("sidecar_key", sidecar_key)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("pid", static_cast<int>(sidecar.pid))
+          .warn();
+        sidecar.pid = -1;
+      } else {
+        LogEvent(kLogger, "video_sidecar_waitpid_error")
+          .kv("sidecar_key", sidecar_key)
+          .kv("publisher_identity", sidecar.publisher_identity)
+          .kv("pid", static_cast<int>(sidecar.pid))
+          .kv("error", strerror(errno))
+          .error();
+      }
+      continue;
+    }
+
+    sidecar.pid = -1;
+    if (WIFEXITED(status)) {
+      LogEvent(kLogger, "video_sidecar_exited")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("exit_code", WEXITSTATUS(status))
+        .warn();
+    } else if (WIFSIGNALED(status)) {
+      LogEvent(kLogger, "video_sidecar_signaled")
+        .kv("sidecar_key", sidecar_key)
+        .kv("publisher_identity", sidecar.publisher_identity)
+        .kv("signal", WTERMSIG(status))
+        .warn();
+    }
   }
 }
 
@@ -311,10 +529,10 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
 #ifdef __linux__
     prctl(PR_SET_PDEATHSIG, SIGTERM);
 #endif
-    // Put each sidecar in its own process group so restart/shutdown can signal
-    // the whole subtree. Some launchers are shell scripts that spawn helpers,
-    // and killing only the direct child leaves grandchildren behind.
+    // Mechanics: each child becomes its own process group so restarts and
+    // shutdowns can signal the whole subtree, including wrapper scripts.
     (void)setpgid(0, 0);
+
     std::vector<char *> c_argv;
     c_argv.reserve(launch.argv.size() + 1);
     for (const auto & arg : launch.argv) {
@@ -368,8 +586,7 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
   sidecar.pid = pid;
   sidecar.token_expires_at = launch.token_expires_at;
   sidecar.spawned_at = SteadyClock::now();
-  sidecar.consecutive_unhealthy_checks = 0;
-  sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
+  resetUnhealthyTracking(sidecar.consecutive_unhealthy_checks, sidecar.next_unhealthy_log_at);
   LogEvent(kLogger, "video_sidecar_spawned")
     .kv("sidecar_key", sidecar_key)
     .kv("publisher_identity", sidecar.publisher_identity)
@@ -384,23 +601,18 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
   }
 
   const pid_t pid = sidecar.pid;
+  const auto clearRuntimeState = [&sidecar]() {
+    sidecar.pid = -1;
+    resetUnhealthyTracking(sidecar.consecutive_unhealthy_checks, sidecar.next_unhealthy_log_at);
+  };
+
   signalSidecarProcessGroup(pid, SIGTERM);
 
   int status = 0;
   pid_t result = waitpidNoIntr(pid, &status, WNOHANG);
   if (result < 0) {
-    const int error_code = errno;
-    LogEvent(kLogger, "video_sidecar_stop_failed")
-      .kv("sidecar_key", sidecar_key)
-      .kv("publisher_identity", sidecar.publisher_identity)
-      .kv("phase", "wait")
-      .kv("reason", "sigterm_waitpid_failed")
-      .kv("error", strerror(error_code))
-      .kv("pid", static_cast<int>(pid))
-      .error();
-    sidecar.pid = -1;
-    sidecar.consecutive_unhealthy_checks = 0;
-    sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
+    logStopFailure(sidecar_key, sidecar.publisher_identity, "sigterm_waitpid_failed", errno, pid);
+    clearRuntimeState();
     return;
   }
 
@@ -408,18 +620,8 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
     usleep(500000);
     result = waitpidNoIntr(pid, &status, WNOHANG);
     if (result < 0) {
-      const int error_code = errno;
-      LogEvent(kLogger, "video_sidecar_stop_failed")
-        .kv("sidecar_key", sidecar_key)
-        .kv("publisher_identity", sidecar.publisher_identity)
-        .kv("phase", "wait")
-        .kv("reason", "sigterm_waitpid_failed")
-        .kv("error", strerror(error_code))
-        .kv("pid", static_cast<int>(pid))
-        .error();
-      sidecar.pid = -1;
-      sidecar.consecutive_unhealthy_checks = 0;
-      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
+      logStopFailure(sidecar_key, sidecar.publisher_identity, "sigterm_waitpid_failed", errno, pid);
+      clearRuntimeState();
       return;
     }
 
@@ -427,18 +629,8 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
       signalSidecarProcessGroup(pid, SIGKILL);
       result = waitpidNoIntr(pid, &status, 0);
       if (result < 0) {
-        const int error_code = errno;
-        LogEvent(kLogger, "video_sidecar_stop_failed")
-          .kv("sidecar_key", sidecar_key)
-          .kv("publisher_identity", sidecar.publisher_identity)
-          .kv("phase", "wait")
-          .kv("reason", "sigkill_waitpid_failed")
-          .kv("error", strerror(error_code))
-          .kv("pid", static_cast<int>(pid))
-          .error();
-        sidecar.pid = -1;
-        sidecar.consecutive_unhealthy_checks = 0;
-        sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
+        logStopFailure(sidecar_key, sidecar.publisher_identity, "sigkill_waitpid_failed", errno, pid);
+        clearRuntimeState();
         return;
       }
 
@@ -448,9 +640,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
         .kv("reason", "sigterm_timeout")
         .kv("pid", static_cast<int>(pid))
         .warn();
-      sidecar.pid = -1;
-      sidecar.consecutive_unhealthy_checks = 0;
-      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
+      clearRuntimeState();
       return;
     }
   }
@@ -460,173 +650,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
     .kv("publisher_identity", sidecar.publisher_identity)
     .kv("pid", static_cast<int>(pid))
     .info();
-  sidecar.pid = -1;
-  sidecar.consecutive_unhealthy_checks = 0;
-  sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
-}
-
-void VideoSidecarSupervisor::reapExitedSidecars()
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  for (auto & entry : sidecars_) {
-    auto & sidecar = entry.second;
-    if (sidecar.pid <= 0) {
-      continue;
-    }
-
-    int status = 0;
-    // Reap only known sidecar pids so unrelated children remain waitable by their owner.
-    const pid_t result = waitpidNoIntr(sidecar.pid, &status, WNOHANG);
-    if (result == 0) {
-      continue;
-    }
-
-    if (result < 0) {
-      if (errno == ECHILD) {
-        LogEvent(kLogger, "video_sidecar_not_waitable")
-          .kv("sidecar_key", entry.first)
-          .kv("publisher_identity", sidecar.publisher_identity)
-          .kv("pid", static_cast<int>(sidecar.pid))
-          .warn();
-        sidecar.pid = -1;
-      } else {
-        LogEvent(kLogger, "video_sidecar_waitpid_error")
-          .kv("sidecar_key", entry.first)
-          .kv("publisher_identity", sidecar.publisher_identity)
-          .kv("pid", static_cast<int>(sidecar.pid))
-          .kv("error", strerror(errno))
-          .error();
-      }
-      continue;
-    }
-
-    sidecar.pid = -1;
-
-    if (WIFEXITED(status)) {
-      LogEvent(kLogger, "video_sidecar_exited")
-        .kv("sidecar_key", entry.first)
-        .kv("publisher_identity", sidecar.publisher_identity)
-        .kv("exit_code", WEXITSTATUS(status))
-        .warn();
-    } else if (WIFSIGNALED(status)) {
-      LogEvent(kLogger, "video_sidecar_signaled")
-        .kv("sidecar_key", entry.first)
-        .kv("publisher_identity", sidecar.publisher_identity)
-        .kv("signal", WTERMSIG(status))
-        .warn();
-    }
-  }
-}
-
-void VideoSidecarSupervisor::restartUnhealthy()
-{
-  if (is_shutdown_.load() || !is_publisher_healthy_) {
-    return;
-  }
-
-  const auto now = SteadyClock::now();
-  for (auto & entry : sidecars_) {
-    auto & sidecar = entry.second;
-    if (sidecar.pid <= 0 || sidecar.publisher_identity.empty()) {
-      continue;
-    }
-
-    // A freshly spawned sidecar needs time to join the room and publish its
-    // video track before the bridge starts treating missing publications as a
-    // failure that warrants a hard restart.
-    if (now - sidecar.spawned_at < config_.health_check_startup_grace) {
-      continue;
-    }
-
-    bool healthy = false;
-    try {
-      healthy = is_publisher_healthy_(sidecar.publisher_identity);
-    } catch (const std::exception & exc) {
-      LogEvent(kLogger, "video_sidecar_health_check_failed")
-        .kv("sidecar_key", entry.first)
-        .kv("publisher_identity", sidecar.publisher_identity)
-        .kv("error", exc.what())
-        .error();
-      continue;
-    } catch (...) {
-      LogEvent(kLogger, "video_sidecar_health_check_failed")
-        .kv("sidecar_key", entry.first)
-        .kv("publisher_identity", sidecar.publisher_identity)
-        .error();
-      continue;
-    }
-
-    if (healthy) {
-      sidecar.consecutive_unhealthy_checks = 0;
-      sidecar.next_unhealthy_log_at = SteadyClock::time_point{};
-      continue;
-    }
-
-    ++sidecar.consecutive_unhealthy_checks;
-    if (sidecar.consecutive_unhealthy_checks < config_.unhealthy_restart_threshold) {
-      if (sidecar.next_unhealthy_log_at == SteadyClock::time_point{} || now >= sidecar.next_unhealthy_log_at) {
-        LogEvent(kLogger, "video_sidecar_unhealthy")
-          .kv("sidecar_key", entry.first)
-          .kv("publisher_identity", sidecar.publisher_identity)
-          .kv("reason", "publisher_unhealthy")
-          .kv("count", sidecar.consecutive_unhealthy_checks)
-          .kv("threshold", config_.unhealthy_restart_threshold)
-          .warn();
-        sidecar.next_unhealthy_log_at = now + kUnhealthyLogThrottlePeriod;
-      }
-      continue;
-    }
-
-    LogEvent(kLogger, "video_sidecar_restart")
-      .kv("sidecar_key", entry.first)
-      .kv("publisher_identity", sidecar.publisher_identity)
-      .kv("reason", "publisher_unhealthy")
-      .warn();
-    tryRestartSidecar(entry.first, sidecar, "publisher_unhealthy");
-  }
-}
-
-void VideoSidecarSupervisor::restartExpiring()
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  const auto now = std::chrono::system_clock::now();
-  const auto refresh_margin =
-    std::chrono::duration_cast<std::chrono::system_clock::duration>(config_.token_refresh_margin);
-  const auto half_ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(config_.token_ttl) / 2;
-  // Clamp the lead time so an oversized configured margin does not make every fresh sidecar immediately expire.
-  const auto margin = std::min(refresh_margin, half_ttl);
-
-  for (auto & entry : sidecars_) {
-    auto & sidecar = entry.second;
-    if (sidecar.pid <= 0) {
-      continue;
-    }
-
-    const auto deadline = sidecar.token_expires_at - margin;
-    if (now < deadline) {
-      continue;
-    }
-
-    LogEvent(kLogger, "video_sidecar_restart")
-      .kv("sidecar_key", entry.first)
-      .kv("publisher_identity", sidecar.publisher_identity)
-      .kv("reason", "token_expiring")
-      .kv("pid", static_cast<int>(sidecar.pid))
-      .info();
-
-    tryRestartSidecar(entry.first, sidecar, "token_expiring");
-  }
-}
-
-void VideoSidecarSupervisor::maintainSidecars()
-{
-  reapExitedSidecars();
-  restartUnhealthy();
-  restartExpiring();
+  clearRuntimeState();
 }
 
 }  // namespace livekit_ros2_bridge
