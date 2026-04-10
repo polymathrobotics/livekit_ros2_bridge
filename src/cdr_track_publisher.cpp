@@ -119,10 +119,12 @@ void CdrTrackPublisher::publishTrack(
 void CdrTrackPublisher::unpublishTrack(const std::string & track_name)
 {
   auto it = published_tracks_.find(track_name);
-  if (it != published_tracks_.end()) {
-    unpublishTrackSafely(session_, track_name, it->second);
-    published_tracks_.erase(it);
+  if (it == published_tracks_.end()) {
+    return;
   }
+
+  unpublishTrackSafely(session_, track_name, it->second);
+  published_tracks_.erase(it);
 }
 
 void CdrTrackPublisher::unpublishAll()

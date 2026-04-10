@@ -133,16 +133,20 @@ SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
   result.target = parseSubscriptionTarget(entry);
 
   const auto prefs_it = entry.find("delivery_preferences");
-  if (prefs_it != entry.end()) {
-    if (!prefs_it->is_object()) {
-      throw std::invalid_argument("delivery_preferences must be an object");
-    }
-    const int interval = parseIntervalMs(*prefs_it);
-    if (interval != 0) {
-      result.preferred_interval_ms = interval;
-    }
+  if (prefs_it == entry.end()) {
+    return result;
   }
 
+  if (!prefs_it->is_object()) {
+    throw std::invalid_argument("delivery_preferences must be an object");
+  }
+
+  const int interval = parseIntervalMs(*prefs_it);
+  if (interval == 0) {
+    return result;
+  }
+
+  result.preferred_interval_ms = interval;
   return result;
 }
 

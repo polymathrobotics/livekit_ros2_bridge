@@ -705,18 +705,20 @@ void SubscriptionRegistry::handleSerializedMessage(const std::string & topic, co
     return;
   }
 
-  if (data->cdr_track_state == CdrTrackState::kPending || data->cdr_track_state == CdrTrackState::kPublished) {
-    const auto & rcl_msg = message.get_rcl_serialized_message();
-    try {
-      send_cdr_fn_(data->track_name, rcl_msg.buffer, rcl_msg.buffer_length);
-    } catch (const std::exception & exc) {
-      LogEvent(kSubscriptionRegistryLogger, "cdr_track_delivery_failed")
-        .kv("resource", sub.resource)
-        .kv("kind", "topic")
-        .kv("track_name", data->track_name)
-        .kv("error", exc.what())
-        .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(5000));
-    }
+  if (data->cdr_track_state != CdrTrackState::kPending && data->cdr_track_state != CdrTrackState::kPublished) {
+    return;
+  }
+
+  const auto & rcl_msg = message.get_rcl_serialized_message();
+  try {
+    send_cdr_fn_(data->track_name, rcl_msg.buffer, rcl_msg.buffer_length);
+  } catch (const std::exception & exc) {
+    LogEvent(kSubscriptionRegistryLogger, "cdr_track_delivery_failed")
+      .kv("resource", sub.resource)
+      .kv("kind", "topic")
+      .kv("track_name", data->track_name)
+      .kv("error", exc.what())
+      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(5000));
   }
 }
 

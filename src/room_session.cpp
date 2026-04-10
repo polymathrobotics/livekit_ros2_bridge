@@ -653,27 +653,26 @@ private:
   {
     std::string room_name;
     std::string identity;
-    bool should_log = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      should_log = !reconnect_requested_;
-      reconnect_requested_ = true;
-      if (should_log) {
-        last_reconnect_reason_ = reason;
+      if (reconnect_requested_) {
+        condition_.notify_all();
+        return;
       }
+
+      reconnect_requested_ = true;
+      last_reconnect_reason_ = reason;
       room_name = config_.room;
       identity = config_.identity;
       condition_.notify_all();
     }
 
-    if (should_log) {
-      LogEvent(kRoomSessionLogger, "room_reconnect_requested")
-        .kv("phase", "runtime")
-        .kv("reason", reason)
-        .kvOr("room", room_name, "<unset>")
-        .kvOr("identity", identity, "<unset>")
-        .warn();
-    }
+    LogEvent(kRoomSessionLogger, "room_reconnect_requested")
+      .kv("phase", "runtime")
+      .kv("reason", reason)
+      .kvOr("room", room_name, "<unset>")
+      .kvOr("identity", identity, "<unset>")
+      .warn();
   }
 
   std::string lastReconnectReason() const
