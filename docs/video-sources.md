@@ -169,4 +169,4 @@ Shared behavior:
 
 If a later `sensor_msgs/msg/Image` message changes width, height, or encoding after caps negotiation, `create()` returns `GST_FLOW_ERROR` instead of renegotiating.
 
-`roscompressedimagesrc` supports only JPEG and PNG payloads. It parses the primary token from `CompressedImage.format`, ignoring any `; ...` suffix, trimming whitespace, and lowercasing before matching. Once the first frame picks JPEG or PNG, a later format change also becomes `GST_FLOW_ERROR`.
+`roscompressedimagesrc` supports only JPEG and PNG payloads. It accepts either plain `jpeg` or `png` `CompressedImage.format` values or image_transport-style codec sections such as `rgb8; jpeg compressed bgr8` and `bgr8; png compressed bgr8`. Once the first frame picks JPEG or PNG, a later format change also becomes `GST_FLOW_ERROR`.

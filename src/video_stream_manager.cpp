@@ -80,25 +80,43 @@ bool operator!=(const RawSourceConfig & lhs, const RawSourceConfig & rhs)
   return !(lhs == rhs);
 }
 
-std::optional<std::string> parseCompressedFormat(const std::string & raw_format)
+std::string trimWhitespace(std::string value)
 {
-  const auto sep = raw_format.find(';');
-  std::string primary = raw_format.substr(0, sep);
-  primary.erase(
-    primary.begin(), std::find_if(primary.begin(), primary.end(), [](unsigned char ch) { return !std::isspace(ch); }));
-  primary.erase(
-    std::find_if(primary.rbegin(), primary.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(),
-    primary.end());
-  std::transform(primary.begin(), primary.end(), primary.begin(), [](unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
-  if (primary == "jpeg" || primary == "jpg") {
+  value.erase(
+    value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+  value.erase(
+    std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), value.end());
+  return value;
+}
+
+std::optional<std::string> normalizeCompressedCodecToken(std::string token)
+{
+  token = trimWhitespace(std::move(token));
+  const auto token_end = token.find_first_of(" \t\r\n");
+  if (token_end != std::string::npos) {
+    token.resize(token_end);
+  }
+  std::transform(
+    token.begin(), token.end(), token.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (token == "jpeg" || token == "jpg") {
     return std::string("jpeg");
   }
-  if (primary == "png") {
+  if (token == "png") {
     return std::string("png");
   }
   return std::nullopt;
+}
+
+std::optional<std::string> parseCompressedFormat(const std::string & raw_format)
+{
+  const auto sep = raw_format.find(';');
+  if (const auto primary = normalizeCompressedCodecToken(raw_format.substr(0, sep)); primary.has_value()) {
+    return primary;
+  }
+  if (sep == std::string::npos) {
+    return std::nullopt;
+  }
+  return normalizeCompressedCodecToken(raw_format.substr(sep + 1));
 }
 
 GstClockTime rosStampToClockTime(const builtin_interfaces::msg::Time & stamp)
