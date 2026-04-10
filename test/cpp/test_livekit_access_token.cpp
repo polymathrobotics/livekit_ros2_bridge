@@ -32,6 +32,13 @@ namespace
 {
 
 using Clock = std::chrono::system_clock;
+constexpr auto kMintedTokenIssuedAt = Clock::time_point(std::chrono::seconds(1700000000));
+constexpr auto kMintedTokenTtl = std::chrono::seconds(600);
+constexpr auto kStaticTokenTtl = std::chrono::seconds(300);
+constexpr auto kRefreshableTokenTtl = std::chrono::seconds(900);
+constexpr auto kMintedTokenIssuedAtUnixSeconds = std::chrono::seconds(1700000000);
+constexpr auto kMintedTokenExpiresAtUnixSeconds = kMintedTokenIssuedAtUnixSeconds + kMintedTokenTtl;
+constexpr auto kStaticTokenExpiresAtUnixSeconds = kMintedTokenIssuedAtUnixSeconds + kStaticTokenTtl;
 
 std::optional<std::vector<std::uint8_t>> base64UrlDecode(const std::string & value)
 {
@@ -93,18 +100,17 @@ TEST(LiveKitAccessTokenTest, MintedTokenIncludesExpectedClaims)
 {
   LiveKitRoomGrant grant;
   grant.room = "robot-room";
-  const auto issued_at = Clock::time_point(std::chrono::seconds(1700000000));
 
   const std::string token =
-    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, issued_at, std::chrono::seconds(600));
+    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, kMintedTokenIssuedAt, kMintedTokenTtl);
 
   const auto payload = decodeJwtPayloadForTest(token);
   ASSERT_TRUE(payload.has_value());
   const auto & video_claims = (*payload)["video"];
   EXPECT_EQ((*payload)["iss"], "api-key");
   EXPECT_EQ((*payload)["sub"], "bridge-id");
-  EXPECT_EQ((*payload)["nbf"], 1700000000);
-  EXPECT_EQ((*payload)["exp"], 1700000600);
+  EXPECT_EQ((*payload)["nbf"], kMintedTokenIssuedAtUnixSeconds.count());
+  EXPECT_EQ((*payload)["exp"], kMintedTokenExpiresAtUnixSeconds.count());
   EXPECT_EQ(video_claims["room"], "robot-room");
   EXPECT_TRUE(video_claims["roomJoin"].get<bool>());
   EXPECT_TRUE(video_claims["canPublish"].get<bool>());
@@ -127,9 +133,8 @@ TEST(LiveKitAccessTokenTest, StaticTokenSourceParsesExpiration)
 {
   LiveKitRoomGrant grant;
   grant.room = "robot-room";
-  const auto issued_at = Clock::time_point(std::chrono::seconds(1700000000));
   StaticTokenSource source(
-    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, issued_at, std::chrono::seconds(300)));
+    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, kMintedTokenIssuedAt, kStaticTokenTtl));
 
   RoomConnectionConfig connect_config{"wss://example", "robot-room", "bridge-id"};
   EXPECT_EQ(connect_config.identity, "bridge-id");
@@ -141,12 +146,12 @@ TEST(LiveKitAccessTokenTest, StaticTokenSourceParsesExpiration)
   ASSERT_TRUE(token.expires_at.has_value());
   EXPECT_EQ(
     std::chrono::duration_cast<std::chrono::seconds>(token.expires_at->time_since_epoch()),
-    std::chrono::seconds(1700000300));
+    kStaticTokenExpiresAtUnixSeconds);
 }
 
 TEST(LiveKitAccessTokenTest, ApiKeyAccessTokenSourceMarksTokensRefreshable)
 {
-  ApiKeyAccessTokenSource source("api-key", "api-secret", std::chrono::seconds(900));
+  ApiKeyAccessTokenSource source("api-key", "api-secret", kRefreshableTokenTtl);
   RoomConnectionConfig connect_config{"wss://example", "robot-room", "bridge-id"};
 
   EXPECT_EQ(connect_config.identity, "bridge-id");
@@ -157,7 +162,7 @@ TEST(LiveKitAccessTokenTest, ApiKeyAccessTokenSourceMarksTokensRefreshable)
   ASSERT_TRUE(token.issued_at.has_value());
   ASSERT_TRUE(token.expires_at.has_value());
   EXPECT_EQ(
-    std::chrono::duration_cast<std::chrono::seconds>(*token.expires_at - *token.issued_at), std::chrono::seconds(900));
+    std::chrono::duration_cast<std::chrono::seconds>(*token.expires_at - *token.issued_at), kRefreshableTokenTtl);
 
   const auto payload = decodeJwtPayloadForTest(token.value);
   ASSERT_TRUE(payload.has_value());
@@ -172,8 +177,7 @@ TEST(LiveKitAccessTokenTest, MintRejectsEmptyApiKey)
   LiveKitRoomGrant grant;
   grant.room = "robot-room";
   EXPECT_THROW(
-    mintLiveKitAccessToken("", "api-secret", "bridge-id", grant, Clock::now(), std::chrono::seconds(600)),
-    std::invalid_argument);
+    mintLiveKitAccessToken("", "api-secret", "bridge-id", grant, Clock::now(), kMintedTokenTtl), std::invalid_argument);
 }
 
 TEST(LiveKitAccessTokenTest, MintRejectsEmptyApiSecret)
@@ -181,8 +185,7 @@ TEST(LiveKitAccessTokenTest, MintRejectsEmptyApiSecret)
   LiveKitRoomGrant grant;
   grant.room = "robot-room";
   EXPECT_THROW(
-    mintLiveKitAccessToken("api-key", "", "bridge-id", grant, Clock::now(), std::chrono::seconds(600)),
-    std::invalid_argument);
+    mintLiveKitAccessToken("api-key", "", "bridge-id", grant, Clock::now(), kMintedTokenTtl), std::invalid_argument);
 }
 
 TEST(LiveKitAccessTokenTest, MintRejectsEmptyIdentity)
@@ -190,8 +193,7 @@ TEST(LiveKitAccessTokenTest, MintRejectsEmptyIdentity)
   LiveKitRoomGrant grant;
   grant.room = "robot-room";
   EXPECT_THROW(
-    mintLiveKitAccessToken("api-key", "api-secret", "", grant, Clock::now(), std::chrono::seconds(600)),
-    std::invalid_argument);
+    mintLiveKitAccessToken("api-key", "api-secret", "", grant, Clock::now(), kMintedTokenTtl), std::invalid_argument);
 }
 
 TEST(LiveKitAccessTokenTest, MintRejectsEmptyRoomWhenRoomJoinEnabled)
@@ -200,7 +202,7 @@ TEST(LiveKitAccessTokenTest, MintRejectsEmptyRoomWhenRoomJoinEnabled)
   grant.room_join = true;
   grant.room = "";
   EXPECT_THROW(
-    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, Clock::now(), std::chrono::seconds(600)),
+    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, Clock::now(), kMintedTokenTtl),
     std::invalid_argument);
 }
 
@@ -209,8 +211,7 @@ TEST(LiveKitAccessTokenTest, MintAllowsEmptyRoomWhenRoomJoinDisabled)
   LiveKitRoomGrant grant;
   grant.room_join = false;
   grant.room = "";
-  EXPECT_NO_THROW(
-    mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, Clock::now(), std::chrono::seconds(600)));
+  EXPECT_NO_THROW(mintLiveKitAccessToken("api-key", "api-secret", "bridge-id", grant, Clock::now(), kMintedTokenTtl));
 }
 
 }  // namespace

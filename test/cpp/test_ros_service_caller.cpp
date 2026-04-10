@@ -40,6 +40,16 @@ namespace
 
 constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
+constexpr auto kSpinPollInterval = std::chrono::milliseconds(10);
+constexpr auto kSpinTimeout = std::chrono::seconds(5);
+constexpr auto kDefaultTimeoutSlack = std::chrono::milliseconds(250);
+constexpr auto kDefaultTimeoutUpperBoundSlack = std::chrono::milliseconds(2000);
+constexpr auto kExplicitTimeoutLowerBound = std::chrono::milliseconds(150);
+constexpr auto kExplicitTimeoutUpperBound = std::chrono::milliseconds(2000);
+constexpr auto kShutdownCoordinationTimeout = std::chrono::seconds(2);
+constexpr auto kShutdownBlockedWindow = std::chrono::milliseconds(50);
+constexpr int kStandardRequestTimeoutMs = 5000;
+constexpr int kResponseSettleTimeoutMs = 2000;
 
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
@@ -68,7 +78,7 @@ MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
 bool spinUntil(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  std::chrono::milliseconds timeout = kSpinTimeout)
 {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -76,7 +86,7 @@ bool spinUntil(
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(kSpinPollInterval);
   }
   return predicate();
 }
@@ -119,7 +129,7 @@ bool waitForService(
   rclcpp::executors::SingleThreadedExecutor & executor,
   rclcpp::Node & node,
   const std::string & service_name,
-  std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  std::chrono::milliseconds timeout = kSpinTimeout)
 {
   return spinUntil(
     executor,
@@ -178,7 +188,7 @@ TEST_F(RosServiceCallerTest, CallsServiceAndReturnsResponse)
 
   RosServiceCaller caller(*caller_node);
 
-  auto future = caller.call("requester-1", makeSetBoolRequest("/test_set_bool", 2000));
+  auto future = caller.call("requester-1", makeSetBoolRequest("/test_set_bool", kResponseSettleTimeoutMs));
 
   ASSERT_TRUE(
     spinUntil(executor, [&]() { return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
@@ -263,8 +273,8 @@ TEST_F(RosServiceCallerTest, UsesDefaultTimeoutWhenTimeoutNotProvided)
     std::chrono::seconds(4)));
 
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-  EXPECT_GE(elapsed.count(), kDefaultTimeoutMs - 250);
-  EXPECT_LT(elapsed.count(), kDefaultTimeoutMs + 2000);
+  EXPECT_GE(elapsed, std::chrono::milliseconds(kDefaultTimeoutMs) - kDefaultTimeoutSlack);
+  EXPECT_LT(elapsed, std::chrono::milliseconds(kDefaultTimeoutMs) + kDefaultTimeoutUpperBoundSlack);
   EXPECT_EQ(expectRuntimeErrorMessage(future), "Service call timed out.");
 
   caller.shutdown();
@@ -288,8 +298,8 @@ TEST_F(RosServiceCallerTest, UsesExplicitTimeoutWhenServiceUnavailable)
     std::chrono::seconds(3)));
 
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-  EXPECT_GE(elapsed.count(), 150);
-  EXPECT_LT(elapsed.count(), 2000);
+  EXPECT_GE(elapsed, kExplicitTimeoutLowerBound);
+  EXPECT_LT(elapsed, kExplicitTimeoutUpperBound);
   EXPECT_EQ(expectRuntimeErrorMessage(future), "Service call timed out.");
 
   caller.shutdown();
@@ -302,10 +312,10 @@ TEST_F(RosServiceCallerTest, EnforcesRequesterIdentityInflightLimit)
   RosServiceCaller caller(*caller_node);
 
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
-    (void)caller.call("requester-1", makeSetBoolRequest("/blocked_service", 5000));
+    (void)caller.call("requester-1", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
   }
 
-  auto overflow_future = caller.call("requester-1", makeSetBoolRequest("/blocked_service", 5000));
+  auto overflow_future = caller.call("requester-1", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
 
   EXPECT_EQ(expectRuntimeErrorMessage(overflow_future), "Requester identity service call limit reached.");
 
@@ -318,7 +328,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
 
   RosServiceCaller caller(*caller_node);
 
-  const auto request = makeSetBoolRequest("/blocked_service", 5000);
+  const auto request = makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs);
 
   for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", request);
@@ -359,12 +369,12 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallSettl
 
   RosServiceCaller caller(*caller_node);
 
-  const auto holding_request = makeSetBoolRequest("/blocked_response_release", 5000);
+  const auto holding_request = makeSetBoolRequest("/blocked_response_release", kStandardRequestTimeoutMs);
   for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", holding_request);
   }
 
-  auto settled_future = caller.call("requester-1", makeSetBoolRequest("/release_response", 2000));
+  auto settled_future = caller.call("requester-1", makeSetBoolRequest("/release_response", kResponseSettleTimeoutMs));
 
   ASSERT_TRUE(spinUntil(
     executor, [&]() { return settled_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
@@ -392,7 +402,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallTimes
 
   RosServiceCaller caller(*caller_node);
 
-  const auto holding_request = makeSetBoolRequest("/blocked_timeout_release", 5000);
+  const auto holding_request = makeSetBoolRequest("/blocked_timeout_release", kStandardRequestTimeoutMs);
   for (int i = 0; i < kMaxInflightPerRequester - 1; ++i) {
     (void)caller.call("requester-1", holding_request);
   }
@@ -421,7 +431,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequester
 
   RosServiceCaller caller(*caller_node);
 
-  const auto request = makeSetBoolRequest("/disconnect_release", 5000);
+  const auto request = makeSetBoolRequest("/disconnect_release", kStandardRequestTimeoutMs);
   std::vector<std::future<RosServiceCaller::ServiceCallResponse>> pending_futures;
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     pending_futures.push_back(caller.call("requester-1", request));
@@ -450,7 +460,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesPendingCallsAndReleasesRequest
 
   RosServiceCaller caller(*caller_node);
 
-  const auto request = makeSetBoolRequest("/session_reset_release", 5000);
+  const auto request = makeSetBoolRequest("/session_reset_release", kStandardRequestTimeoutMs);
   std::vector<std::future<RosServiceCaller::ServiceCallResponse>> pending_futures;
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     pending_futures.push_back(caller.call("requester-1", request));
@@ -484,7 +494,7 @@ TEST_F(RosServiceCallerTest, RejectsEmptyRequesterIdentityBeforeConsumingRequest
 
   RosServiceCaller caller(*caller_node);
 
-  const auto request = makeSetBoolRequest("/blocked_service", 5000);
+  const auto request = makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs);
 
   auto anonymous_future = caller.call("", request);
   ASSERT_EQ(anonymous_future.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
@@ -520,7 +530,7 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
 
   RosServiceCaller caller(*caller_node);
 
-  auto future = caller.call("requester-1", makeSetBoolRequest("/resolve_test", 2000, false));
+  auto future = caller.call("requester-1", makeSetBoolRequest("/resolve_test", kResponseSettleTimeoutMs, false));
 
   ASSERT_TRUE(
     spinUntil(executor, [&]() { return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
@@ -587,9 +597,9 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
     release_poll->set_value();
   };
 
-  auto pending_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", 5000));
+  auto pending_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", kStandardRequestTimeoutMs));
 
-  const auto poll_started = poll_entered_future.wait_for(std::chrono::seconds(2));
+  const auto poll_started = poll_entered_future.wait_for(kShutdownCoordinationTimeout);
   EXPECT_EQ(poll_started, std::future_status::ready);
 
   auto shutdown_started = std::make_shared<std::promise<void>>();
@@ -599,18 +609,18 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
     caller.shutdown();
   });
 
-  const auto shutdown_started_status = shutdown_started_future.wait_for(std::chrono::seconds(2));
+  const auto shutdown_started_status = shutdown_started_future.wait_for(kShutdownCoordinationTimeout);
   EXPECT_EQ(shutdown_started_status, std::future_status::ready);
 
   if (poll_started == std::future_status::ready && shutdown_started_status == std::future_status::ready) {
-    EXPECT_EQ(shutdown_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
-    EXPECT_EQ(pending_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+    EXPECT_EQ(shutdown_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
+    EXPECT_EQ(pending_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
   }
 
   release_poll_callback();
 
-  EXPECT_EQ(poll_exited_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_EQ(shutdown_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(shutdown_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Service caller shut down.");
 
   executor.cancel();
@@ -640,11 +650,12 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
 
   std::thread spin_thread([&executor]() { executor.spin(); });
 
-  auto pending_future = caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", 5000));
+  auto pending_future =
+    caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", kStandardRequestTimeoutMs));
 
-  EXPECT_EQ(shutdown_completed_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_EQ(poll_exited_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_EQ(pending_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(shutdown_completed_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(pending_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Service caller shut down.");
 
   executor.cancel();

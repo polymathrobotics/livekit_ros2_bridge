@@ -152,7 +152,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   if (!update.session_id.has_value()) {
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
       .kv("reason", "anonymous_requester_without_session")
-      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
 
@@ -161,7 +161,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
       .kv("reason", "unknown_session_id")
       .kv("session_id", *update.session_id)
-      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
 
@@ -173,7 +173,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
     .kv("session_id", *update.session_id)
     .kv("requester_identity", lease_it->second.requester_identity)
     .kv("reason", "anonymous_requester")
-    .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+    .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   return lease_it->second.requester_identity;
 }
 
@@ -242,7 +242,7 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
       .kv("requester_identity", requester_identity)
       .kv("control_topic", packet.control_topic)
       .kv("error", exc.what())
-      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   }
 }
 

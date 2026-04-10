@@ -29,6 +29,8 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr char kUnknownTrackName[] = "<unknown>";
+
 struct FakeRoomSessionState
 {
   RoomSessionCallbacks callbacks;
@@ -190,7 +192,7 @@ private:
   std::string lookupTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
     const auto it = cdr_track_names_.find(track.get());
-    return it == cdr_track_names_.end() ? "<unknown>" : it->second;
+    return it == cdr_track_names_.end() ? kUnknownTrackName : it->second;
   }
 
   int next_track_id_ = 1;

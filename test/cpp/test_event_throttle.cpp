@@ -21,22 +21,25 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr auto kThrottleInterval = std::chrono::milliseconds(20);
+constexpr auto kThrottleWindowResetWait = std::chrono::milliseconds(25);
+
 TEST(EventThrottleTest, FirstEventFiresImmediately)
 {
-  EventThrottle throttle(std::chrono::milliseconds(20));
+  EventThrottle throttle(kThrottleInterval);
 
   EXPECT_EQ(throttle.recordAndCheck(), 1U);
 }
 
 TEST(EventThrottleTest, AggregatesSuppressedEventsUntilIntervalPasses)
 {
-  EventThrottle throttle(std::chrono::milliseconds(20));
+  EventThrottle throttle(kThrottleInterval);
 
   EXPECT_EQ(throttle.recordAndCheck(), 1U);
   EXPECT_EQ(throttle.recordAndCheck(), 0U);
   EXPECT_EQ(throttle.recordAndCheck(), 0U);
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  std::this_thread::sleep_for(kThrottleWindowResetWait);
 
   EXPECT_EQ(throttle.recordAndCheck(), 3U);
   EXPECT_EQ(throttle.recordAndCheck(), 0U);

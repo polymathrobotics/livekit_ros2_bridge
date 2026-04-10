@@ -29,6 +29,8 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
+
 class LogEvent
 {
 public:
@@ -51,19 +53,19 @@ public:
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, const std::string & value, std::string_view fallback = "<unknown>")
+  LogEvent & kvOr(std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, std::string_view value, std::string_view fallback = "<unknown>")
+  LogEvent & kvOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=" << (value.empty() ? fallback : value);
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, const char * value, std::string_view fallback = "<unknown>")
+  LogEvent & kvOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=";
     if (value == nullptr || value[0] == '\0') {

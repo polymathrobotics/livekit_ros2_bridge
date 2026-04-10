@@ -22,6 +22,8 @@
 namespace livekit_ros2_bridge
 {
 
+const auto kNoOwningThread = std::thread::id{};
+
 // Coordinates shutdown of a single active callback/drain section. External callers wait until the
 // section goes inactive, while the owning thread can quiesce itself without self-deadlocking.
 class ReentrantQuiesceGuard
@@ -66,7 +68,7 @@ public:
       }
 
       active_ = false;
-      owner_thread_id_ = std::thread::id{};
+      owner_thread_id_ = kNoOwningThread;
     }
 
     quiesced_.notify_all();
@@ -95,7 +97,7 @@ private:
   std::condition_variable quiesced_;
   bool enabled_ = true;
   bool active_ = false;
-  std::thread::id owner_thread_id_;
+  std::thread::id owner_thread_id_{kNoOwningThread};
 };
 
 }  // namespace livekit_ros2_bridge

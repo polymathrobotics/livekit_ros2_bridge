@@ -33,6 +33,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr int kNoPreferredIntervalOverrideMs = 0;
+
 const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
 {
   switch (kind) {
@@ -66,7 +68,7 @@ int parseIntervalMs(const nlohmann::json & prefs)
 {
   const auto interval_it = prefs.find("interval_ms");
   if (interval_it == prefs.end()) {
-    return 0;
+    return kNoPreferredIntervalOverrideMs;
   }
 
   if (!interval_it->is_number_integer()) {
@@ -142,7 +144,7 @@ SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
   }
 
   const int interval = parseIntervalMs(*prefs_it);
-  if (interval == 0) {
+  if (interval == kNoPreferredIntervalOverrideMs) {
     return result;
   }
 

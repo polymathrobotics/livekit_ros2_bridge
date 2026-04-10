@@ -47,6 +47,8 @@ public:
   void shutdown();
 
 private:
+  static constexpr auto kPublisherCacheEvictionThrottlePeriod = std::chrono::seconds(5);
+
   // Test-only hook that runs after cache setup and immediately before the
   // underlying ROS publisher publishes the serialized message.
   void setBeforePublishHookForTest(std::function<void()> hook);
@@ -75,7 +77,7 @@ private:
   std::unordered_map<std::string, PublisherCacheEntry> publishers_;
   std::list<std::string> lru_topics_;
   std::function<void()> before_publish_hook_for_test_;
-  EventThrottle publisher_cache_eviction_throttle_{std::chrono::seconds(5)};
+  EventThrottle publisher_cache_eviction_throttle_{kPublisherCacheEvictionThrottlePeriod};
 };
 
 }  // namespace livekit_ros2_bridge

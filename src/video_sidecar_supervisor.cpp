@@ -27,6 +27,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "access_policy.hpp"
@@ -43,6 +44,10 @@ namespace
 
 const rclcpp::Logger kLogger = rclcpp::get_logger("video_sidecar_supervisor");
 constexpr auto kUnhealthyLogThrottlePeriod = std::chrono::seconds(5);
+constexpr char kRosTopicPublisherIdentityPrefix[] = "-video-";
+constexpr char kConfiguredSourcePublisherIdentityPrefix[] = "-video-source-";
+constexpr int kExecFailureExitCode = 127;
+constexpr auto kSigtermGracePeriod = std::chrono::milliseconds(500);
 
 void logSidecarSubprocessFailure(
   const std::string & sidecar_key,
@@ -190,9 +195,9 @@ std::string VideoSidecarSupervisor::derivePublisherIdentity(
   const std::string & bridge_identity, const SidecarLaunchSpec & spec)
 {
   if (!spec.external_name.empty()) {
-    return bridge_identity + "-video-source-" + keyToSlug(spec.external_name);
+    return bridge_identity + kConfiguredSourcePublisherIdentityPrefix + keyToSlug(spec.external_name);
   }
-  return bridge_identity + "-video-" + keyToSlug(spec.ros_topic);
+  return bridge_identity + kRosTopicPublisherIdentityPrefix + keyToSlug(spec.ros_topic);
 }
 
 std::string VideoSidecarSupervisor::keyToSlug(const std::string & key)
@@ -543,7 +548,7 @@ void VideoSidecarSupervisor::spawnPreparedSidecar(
     const ssize_t ignored = writeNoIntr(exec_status_pipe.write_end.get(), &exec_error, sizeof(exec_error));
     (void)ignored;
     exec_status_pipe.write_end.reset();
-    _exit(127);
+    _exit(kExecFailureExitCode);
   }
 
   exec_status_pipe.write_end.reset();
@@ -614,7 +619,7 @@ void VideoSidecarSupervisor::killSidecar(const std::string & sidecar_key, Sideca
   }
 
   if (result == 0) {
-    usleep(500000);
+    std::this_thread::sleep_for(kSigtermGracePeriod);
     result = waitpidNoIntr(pid, &status, WNOHANG);
     if (result < 0) {
       logStopFailure(sidecar_key, sidecar.publisher_identity, "sigterm_waitpid_failed", errno, pid);

@@ -26,12 +26,18 @@ namespace
 {
 
 using Json = nlohmann::json;
+constexpr char kNameField[] = "name";
+constexpr char kInterfaceTypeField[] = "interface_type";
+constexpr char kQueryField[] = "query";
+constexpr char kServicesField[] = "services";
+constexpr char kTopicsField[] = "topics";
+constexpr bool kTreatBlankQueryAsAbsent = true;
 
 std::string serializeEntries(const char * key, const std::vector<ResourceListEntry> & entries)
 {
   Json json_entries = Json::array();
   for (const auto & entry : entries) {
-    json_entries.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
+    json_entries.push_back({{kNameField, entry.name}, {kInterfaceTypeField, entry.interface_type}});
   }
 
   const Json body = {{key, json_entries}};
@@ -46,7 +52,8 @@ ResourceListRequest parseResourceListRequest(const std::string & payload)
 
   ResourceListRequest request;
 
-  request.query = parseOptionalNonEmptyTrimmedStringField(json, "query", "query must be a string", true);
+  request.query =
+    parseOptionalNonEmptyTrimmedStringField(json, kQueryField, "query must be a string", kTreatBlankQueryAsAbsent);
 
   const auto limit_it = json.find("limit");
   const bool has_limit = limit_it != json.end() && !limit_it->is_null();
@@ -68,12 +75,12 @@ ResourceListRequest parseResourceListRequest(const std::string & payload)
 
 std::string serializeServiceListResponse(const std::vector<ResourceListEntry> & services)
 {
-  return serializeEntries("services", services);
+  return serializeEntries(kServicesField, services);
 }
 
 std::string serializeTopicListResponse(const std::vector<ResourceListEntry> & topics)
 {
-  return serializeEntries("topics", topics);
+  return serializeEntries(kTopicsField, topics);
 }
 
 }  // namespace livekit_ros2_bridge

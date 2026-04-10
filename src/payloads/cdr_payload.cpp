@@ -30,6 +30,9 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr char kContentTypeField[] = "content_type";
+constexpr char kPayloadBase64Field[] = "payload_base64";
+
 std::string base64Encode(const std::uint8_t * data, std::size_t size)
 {
   if (size == 0U) {
@@ -102,20 +105,20 @@ const std::string & requireStringField(const nlohmann::json & body, const char *
 std::vector<std::uint8_t> parseCdrPayload(const nlohmann::json & body, const char * field_name)
 {
   const auto & field = requireObjectField(body, field_name);
-  const std::string & content_type = requireStringField(field, "content_type");
+  const std::string & content_type = requireStringField(field, kContentTypeField);
   if (content_type != protocol::kDataContentTypeCdr) {
-    throw std::invalid_argument(std::string(field_name) + ".content_type must be application/x-ros-cdr.");
+    throw std::invalid_argument(std::string(field_name) + "." + kContentTypeField + " must be application/x-ros-cdr.");
   }
 
-  const std::string & encoded_payload = requireStringField(field, "payload_base64");
+  const std::string & encoded_payload = requireStringField(field, kPayloadBase64Field);
   return base64Decode(encoded_payload);
 }
 
 nlohmann::json serializeCdrPayload(const std::vector<std::uint8_t> & payload)
 {
   return {
-    {"content_type", protocol::kDataContentTypeCdr},
-    {"payload_base64", base64Encode(payload.data(), payload.size())},
+    {kContentTypeField, protocol::kDataContentTypeCdr},
+    {kPayloadBase64Field, base64Encode(payload.data(), payload.size())},
   };
 }
 

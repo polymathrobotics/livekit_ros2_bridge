@@ -25,6 +25,8 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr int kChildExitCode = 23;
+
 TEST(ProcessUtilsTest, UniqueFdMoveTransfersOwnership)
 {
   int pipe_fds[2] = {-1, -1};
@@ -103,13 +105,13 @@ TEST(ProcessUtilsTest, WaitpidNoIntrReturnsChildExitStatus)
   ASSERT_NE(pid, -1);
 
   if (pid == 0) {
-    _exit(23);
+    _exit(kChildExitCode);
   }
 
   int status = 0;
   ASSERT_EQ(waitpidNoIntr(pid, &status, 0), pid);
   ASSERT_TRUE(WIFEXITED(status));
-  EXPECT_EQ(WEXITSTATUS(status), 23);
+  EXPECT_EQ(WEXITSTATUS(status), kChildExitCode);
 }
 
 }  // namespace livekit_ros2_bridge

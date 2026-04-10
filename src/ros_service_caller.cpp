@@ -70,10 +70,14 @@ using MessageMembers = rosidl_typesupport_introspection_cpp::MessageMembers;
 
 constexpr char kSerializationTsId[] = "rosidl_typesupport_cpp";
 constexpr char kIntrospectionTsId[] = "rosidl_typesupport_introspection_cpp";
+constexpr char kServiceTypeSupportSymbolPrefix[] = "__get_service_type_support_handle__";
+constexpr char kRequestTypeSuffix[] = "_Request";
+constexpr char kResponseTypeSuffix[] = "_Response";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
 constexpr auto kResponseLogThrottleMs = 5000;
 constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
+constexpr char kAnyServiceLogValue[] = "*";
 const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -98,12 +102,12 @@ std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage
 
 std::string serviceRequestTypeName(const std::string & service_type)
 {
-  return service_type + "_Request";
+  return service_type + kRequestTypeSuffix;
 }
 
 std::string serviceResponseTypeName(const std::string & service_type)
 {
-  return service_type + "_Response";
+  return service_type + kResponseTypeSuffix;
 }
 
 const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * ts)
@@ -179,7 +183,7 @@ const rosidl_service_type_support_t * loadServiceTypeSupportHandle(
 const rosidl_service_type_support_t * loadServiceTypeSupportHandle(
   const std::string & service_type, const std::string & typesupport_identifier, rcpputils::SharedLibrary & library)
 {
-  std::string symbol = typesupport_identifier + "__get_service_type_support_handle__";
+  std::string symbol = typesupport_identifier + kServiceTypeSupportSymbolPrefix;
   for (const char ch : service_type) {
     if (ch == '/') {
       symbol += "__";
@@ -598,7 +602,15 @@ void RosServiceCaller::Impl::checkTimeouts()
   const auto now = std::chrono::steady_clock::now();
   const std::size_t timed_out_count =
     settlePendingCallsIf([now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.");
-  logPendingSettlementSummary(kRosServiceCallerLogger, true, "timeout", "fail_futures", "*", "*", "*", timed_out_count);
+  logPendingSettlementSummary(
+    kRosServiceCallerLogger,
+    true,
+    "timeout",
+    "fail_futures",
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    timed_out_count);
 }
 
 RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
@@ -715,8 +727,8 @@ void RosServiceCaller::cancelCallsForRequester(const std::string & requester_ide
     false,
     "requester_disconnected",
     "fail_futures",
-    "*",
-    "*",
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
     requester_identity.c_str(),
     canceled_count);
 }
@@ -726,7 +738,14 @@ void RosServiceCaller::resetSessionState()
   const std::size_t canceled_count =
     impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.");
   impl_->logPendingSettlementSummary(
-    kRosServiceCallerLogger, false, "session_reset", "fail_futures", "*", "*", "*", canceled_count);
+    kRosServiceCallerLogger,
+    false,
+    "session_reset",
+    "fail_futures",
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    canceled_count);
 }
 
 void RosServiceCaller::shutdown()
@@ -743,7 +762,14 @@ void RosServiceCaller::shutdown()
   const std::size_t canceled_count =
     impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "Service caller shut down.");
   impl_->logPendingSettlementSummary(
-    kRosServiceCallerLogger, false, "shutdown", "fail_futures", "*", "*", "*", canceled_count);
+    kRosServiceCallerLogger,
+    false,
+    "shutdown",
+    "fail_futures",
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    kAnyServiceLogValue,
+    canceled_count);
   impl_->clients.clear();
 }
 

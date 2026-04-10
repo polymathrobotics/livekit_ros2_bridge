@@ -26,6 +26,9 @@
 namespace livekit_ros2_bridge::test_support
 {
 
+constexpr auto kDefaultWaitTimeout = std::chrono::seconds(2);
+constexpr auto kWaitPollInterval = std::chrono::milliseconds(20);
+
 class ScopedRclcppInit
 {
 public:
@@ -47,7 +50,7 @@ public:
 inline bool spinUntil(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(2))
+  std::chrono::milliseconds timeout = kDefaultWaitTimeout)
 {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -55,20 +58,19 @@ inline bool spinUntil(
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(kWaitPollInterval);
   }
   return predicate();
 }
 
-inline bool waitUntil(
-  const std::function<bool()> & predicate, std::chrono::milliseconds timeout = std::chrono::seconds(2))
+inline bool waitUntil(const std::function<bool()> & predicate, std::chrono::milliseconds timeout = kDefaultWaitTimeout)
 {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(kWaitPollInterval);
   }
   return predicate();
 }
@@ -78,7 +80,7 @@ inline bool waitForTopicType(
   const std::shared_ptr<rclcpp::Node> & node,
   const std::string & topic,
   const std::string & expected_type,
-  std::chrono::milliseconds timeout = std::chrono::seconds(2))
+  std::chrono::milliseconds timeout = kDefaultWaitTimeout)
 {
   const bool found = spinUntil(
     executor,

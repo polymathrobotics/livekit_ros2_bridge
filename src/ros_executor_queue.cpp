@@ -32,6 +32,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 const auto kRosExecutorQueueLogger = rclcpp::get_logger("ros_executor_queue");
+constexpr int kGuardConditionReadyEntityId = 0;
 }  // namespace
 
 class ExecutorWakeWaitable final : public rclcpp::Waitable
@@ -115,7 +116,7 @@ public:
     }
 
     if (unread_count > 0U && ready_callback) {
-      ready_callback(unread_count, 0);
+      ready_callback(unread_count, kGuardConditionReadyEntityId);
     }
   }
 
@@ -145,7 +146,7 @@ public:
     }
 
     if (callback) {
-      callback(1U, 0);
+      callback(1U, kGuardConditionReadyEntityId);
     }
   }
 

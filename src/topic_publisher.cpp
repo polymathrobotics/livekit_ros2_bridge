@@ -32,6 +32,7 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 constexpr auto kPublishLogThrottleMs = 5000;
+constexpr int kUnlimitedTopicCacheSize = 0;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -198,7 +199,7 @@ void RosTopicPublisher::publishWithPublisherCache(
 
   // Enforce the cap after serving the current command: the publish succeeds and
   // an older cached publisher is discarded to make room for future use.
-  while (max_topics_ != 0 && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
+  while (max_topics_ != kUnlimitedTopicCacheSize && publishers_.size() > static_cast<std::size_t>(max_topics_)) {
     const std::string evicted_topic = lru_topics_.front();
     eraseCachedPublisher(evicted_topic);
     if (const std::size_t count = publisher_cache_eviction_throttle_.recordAndCheck(); count > 0U) {

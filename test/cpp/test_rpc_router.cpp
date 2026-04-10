@@ -47,6 +47,9 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr auto kSpinPollInterval = std::chrono::milliseconds(5);
+constexpr auto kSpinTimeout = std::chrono::seconds(5);
+
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
 {
@@ -74,7 +77,7 @@ MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
 bool spinUntil(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  std::chrono::milliseconds timeout = kSpinTimeout)
 {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
@@ -82,7 +85,7 @@ bool spinUntil(
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(kSpinPollInterval);
   }
   return predicate();
 }
@@ -91,7 +94,7 @@ template <typename FutureT>
 bool waitForFutureReady(
   rclcpp::executors::SingleThreadedExecutor & executor,
   FutureT & future,
-  std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  std::chrono::milliseconds timeout = kSpinTimeout)
 {
   return spinUntil(
     executor,

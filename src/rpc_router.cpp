@@ -43,6 +43,7 @@ namespace
 {
 
 const auto kRpcRouterLogger = rclcpp::get_logger("rpc_router");
+constexpr char kUnknownLogValue[] = "<unknown>";
 
 using GraphResourceMap = std::map<std::string, std::vector<std::string>>;
 
@@ -50,12 +51,12 @@ using GraphResourceMap = std::map<std::string, std::vector<std::string>>;
 
 const char * requestIdForLog(const RpcInvocation & invocation)
 {
-  return invocation.request_id.empty() ? "<unknown>" : invocation.request_id.c_str();
+  return invocation.request_id.empty() ? kUnknownLogValue : invocation.request_id.c_str();
 }
 
 const char * requesterIdentityForLog(const RpcInvocation & invocation)
 {
-  return invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
+  return invocation.caller_identity.empty() ? kUnknownLogValue : invocation.caller_identity.c_str();
 }
 
 const char * resourceForMethod(const char * method_name)
@@ -121,7 +122,7 @@ const char * rpcReasonForCode(std::uint32_t code)
     .kv("requester_identity", requesterIdentityForLog(invocation));
 
   if (service != nullptr) {
-    event.kv("resource", request_resource == nullptr ? "<unknown>" : request_resource)
+    event.kv("resource", request_resource == nullptr ? kUnknownLogValue : request_resource)
       .kv("service", service)
       .kv("error", exc.what());
   } else if (request_resource != nullptr) {

@@ -26,6 +26,8 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr int kInvalidFileDescriptor = -1;
+
 class UniqueFd final
 {
 public:
@@ -65,11 +67,11 @@ public:
   int release() noexcept
   {
     const int fd = fd_;
-    fd_ = -1;
+    fd_ = kInvalidFileDescriptor;
     return fd;
   }
 
-  void reset(int fd = -1) noexcept
+  void reset(int fd = kInvalidFileDescriptor) noexcept
   {
     if (fd_ >= 0 && fd_ != fd) {
       (void)close(fd_);
@@ -83,7 +85,7 @@ public:
   }
 
 private:
-  int fd_ = -1;
+  int fd_ = kInvalidFileDescriptor;
 };
 
 struct PipePair
@@ -94,7 +96,7 @@ struct PipePair
 
 inline bool createPipePair(PipePair & out) noexcept
 {
-  int pipe_fds[2] = {-1, -1};
+  int pipe_fds[2] = {kInvalidFileDescriptor, kInvalidFileDescriptor};
   if (pipe(pipe_fds) != 0) {
     return false;
   }

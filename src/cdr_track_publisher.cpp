@@ -31,6 +31,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 const auto kCdrTrackPublisherLogger = rclcpp::get_logger("cdr_track_publisher");
+constexpr auto kPushFailureLogThrottlePeriod = std::chrono::seconds(5);
 
 void unpublishTrackSafely(
   RoomSession & session, const std::string & track_name, const std::shared_ptr<livekit::LocalDataTrack> & track)
@@ -68,13 +69,13 @@ void CdrTrackPublisher::pushMessage(const std::string & track_name, const std::u
       LogEvent(kCdrTrackPublisherLogger, "cdr_track_delivery_dropped")
         .kv("track_name", track_name)
         .kv("reason", "queue_full")
-        .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+        .warnThrottle(*clock_, kPushFailureLogThrottlePeriod);
       return;
     }
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_push_failed")
       .kv("track_name", track_name)
       .kv("error", result.error().message)
-      .warnThrottle(*clock_, std::chrono::milliseconds(5000));
+      .warnThrottle(*clock_, kPushFailureLogThrottlePeriod);
   }
 }
 

@@ -40,6 +40,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr int kUnlimitedTopicCacheSize = 0;
+
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
 {
@@ -236,7 +238,7 @@ TEST(TopicPublisherTest, ConstructorRejectsNegativeMaxTopicsAndAcceptsUnlimitedZ
   const auto empty_access_policy = AccessPolicy(AccessPolicyConfig{});
 
   EXPECT_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, -1), std::invalid_argument);
-  EXPECT_NO_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, 0));
+  EXPECT_NO_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, kUnlimitedTopicCacheSize));
 }
 
 TEST(TopicPublisherTest, RejectsDeniedPublishCommands)

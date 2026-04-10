@@ -26,6 +26,9 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr char kTopicSidecarKeyPrefix[] = "topic";
+constexpr char kExternalSidecarKeyPrefix[] = "external";
+
 std::string makeVideoSidecarKey(std::string_view prefix, const std::string & resource)
 {
   return std::string(prefix) + ":" + resource;
@@ -137,7 +140,7 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
   const std::string resolved = interpolateTopic(pipeline_it->second, normalized);
 
   SidecarLaunchSpec spec;
-  spec.sidecar_key = makeVideoSidecarKey("topic", normalized);
+  spec.sidecar_key = makeVideoSidecarKey(kTopicSidecarKeyPrefix, normalized);
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
   spec.source_kind = VideoSourceKind::RosTopic;
@@ -163,7 +166,7 @@ SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, con
 
   SidecarLaunchSpec spec;
   // sidecar_key, external_name, and selected_config_key all use the same canonical configured-source name.
-  spec.sidecar_key = makeVideoSidecarKey("external", normalized);
+  spec.sidecar_key = makeVideoSidecarKey(kExternalSidecarKeyPrefix, normalized);
   spec.external_name = normalized;
   spec.source_kind = VideoSourceKind::Pipeline;
   spec.selected_config_key = normalized;

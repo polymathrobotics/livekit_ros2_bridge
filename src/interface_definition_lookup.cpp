@@ -30,6 +30,7 @@ namespace
 {
 
 constexpr char kSchemaEncodingRos2Msg[] = "ros2msg";
+constexpr char kServiceDefinitionSeparator[] = "---";
 
 // ROS 2 primitive types that do not need dependency resolution.
 const std::set<std::string> kPrimitiveTypes = {
@@ -144,7 +145,7 @@ std::vector<std::string> extractTypeReferences(const std::string & schema_text)
     }
 
     // Skip .srv separator lines
-    if (line.compare(first_non_space, 3, "---") == 0) {
+    if (line.compare(first_non_space, sizeof(kServiceDefinitionSeparator) - 1U, kServiceDefinitionSeparator) == 0) {
       continue;
     }
 

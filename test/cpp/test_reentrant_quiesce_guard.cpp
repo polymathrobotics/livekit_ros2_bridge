@@ -22,6 +22,9 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr auto kQuiesceStillBlockedWindow = std::chrono::milliseconds(50);
+constexpr auto kQuiesceReadyTimeout = std::chrono::seconds(2);
+
 TEST(ReentrantQuiesceGuardTest, TryBeginWorkSucceedsWhileEnabled)
 {
   ReentrantQuiesceGuard guard;
@@ -49,11 +52,11 @@ TEST(ReentrantQuiesceGuardTest, QuiesceBlocksUntilOtherThreadEndsWork)
     return true;
   });
 
-  EXPECT_EQ(quiesce_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+  EXPECT_EQ(quiesce_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
 
   guard.endWork();
 
-  EXPECT_EQ(quiesce_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(quiesce_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
   EXPECT_TRUE(quiesce_future.get());
 }
 
@@ -66,7 +69,7 @@ TEST(ReentrantQuiesceGuardTest, QuiesceReturnsImmediatelyForOwningThread)
   guard.quiesce();
   const auto elapsed = std::chrono::steady_clock::now() - start;
 
-  EXPECT_LT(elapsed, std::chrono::milliseconds(50));
+  EXPECT_LT(elapsed, kQuiesceStillBlockedWindow);
 
   guard.endWork();
 }

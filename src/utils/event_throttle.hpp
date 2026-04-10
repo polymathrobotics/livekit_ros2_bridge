@@ -20,6 +20,9 @@
 namespace livekit_ros2_bridge
 {
 
+constexpr std::size_t kNoSuppressedEvents = 0U;
+const auto kNoNextFireScheduled = std::chrono::steady_clock::time_point{};
+
 class EventThrottle
 {
 public:
@@ -31,20 +34,20 @@ public:
   {
     ++count_;
     const auto now = std::chrono::steady_clock::now();
-    const bool should_fire_now = next_fire_at_ == std::chrono::steady_clock::time_point{} || now >= next_fire_at_;
+    const bool should_fire_now = next_fire_at_ == kNoNextFireScheduled || now >= next_fire_at_;
     if (should_fire_now) {
       const std::size_t fired_count = count_;
-      count_ = 0U;
+      count_ = kNoSuppressedEvents;
       next_fire_at_ = now + interval_;
       return fired_count;
     }
-    return 0U;
+    return kNoSuppressedEvents;
   }
 
 private:
   std::chrono::steady_clock::duration interval_;
-  std::size_t count_ = 0U;
-  std::chrono::steady_clock::time_point next_fire_at_{};
+  std::size_t count_ = kNoSuppressedEvents;
+  std::chrono::steady_clock::time_point next_fire_at_{kNoNextFireScheduled};
 };
 
 }  // namespace livekit_ros2_bridge

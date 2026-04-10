@@ -49,6 +49,9 @@ using test_support::spinUntil;
 using test_support::waitForTopicType;
 using test_support::waitUntil;
 
+constexpr auto kHealthyPublisherObservationWindow = std::chrono::milliseconds(1200);
+constexpr auto kRuntimeTestPollInterval = std::chrono::milliseconds(20);
+
 std::string nextNodeName(const std::string & prefix)
 {
   static std::atomic<size_t> next_suffix{0};
@@ -435,11 +438,11 @@ TEST_F(RuntimeTest, VideoWatchdogRestartsUnhealthyPublisherWithoutSessionReset)
   const std::string publisher_identity = delivery["publisher_identity"].get<std::string>();
   fake_session->setVideoPublisherHealthy(publisher_identity, true);
 
-  const auto stable_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1200);
+  const auto stable_deadline = std::chrono::steady_clock::now() + kHealthyPublisherObservationWindow;
   while (std::chrono::steady_clock::now() < stable_deadline) {
     executor.spin_some();
     EXPECT_EQ(countFileLines(invocation_log), 1U);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(kRuntimeTestPollInterval);
   }
 
   fake_session->setVideoPublisherHealthy(publisher_identity, false);

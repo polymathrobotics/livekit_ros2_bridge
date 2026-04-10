@@ -33,6 +33,7 @@ namespace
 {
 
 const auto kRuntimeConfigLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
+constexpr char kUnsetLogValue[] = "<unset>";
 
 std::string deriveDefaultIdentity(const std::string & node_name)
 {
@@ -373,8 +374,8 @@ RuntimeConfig loadRuntimeConfig(
   const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
   const std::string & node_name)
 {
-  std::string room = "<unset>";
-  std::string identity = "<unset>";
+  std::string room = kUnsetLogValue;
+  std::string identity = kUnsetLogValue;
   const char * auth_mode_name = "unknown";
   bool sidecar_enabled = false;
 
@@ -386,7 +387,8 @@ RuntimeConfig loadRuntimeConfig(
     ParamListener param_listener(parameters_interface);
     RuntimeConfig runtime_config;
     runtime_config.loaded_params = param_listener.get_params();
-    room = runtime_config.loaded_params.livekit.room.empty() ? "<unset>" : runtime_config.loaded_params.livekit.room;
+    room =
+      runtime_config.loaded_params.livekit.room.empty() ? kUnsetLogValue : runtime_config.loaded_params.livekit.room;
 
     const LiveKitAuthMode auth_mode = classifyLiveKitAuthMode(runtime_config.loaded_params);
     auth_mode_name = authModeString(auth_mode);
@@ -405,8 +407,8 @@ RuntimeConfig loadRuntimeConfig(
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .kv("phase", "startup")
-      .kvOr("room", runtime_config.connect_config.room, "<unset>")
-      .kvOr("identity", runtime_config.connect_config.identity, "<unset>")
+      .kvOr("room", runtime_config.connect_config.room, kUnsetLogValue)
+      .kvOr("identity", runtime_config.connect_config.identity, kUnsetLogValue)
       .kv("auth_mode", auth_mode_name)
       .kv("sidecar_enabled", sidecar_enabled)
       .info();

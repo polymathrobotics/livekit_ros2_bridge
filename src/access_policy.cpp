@@ -27,6 +27,7 @@ namespace
 {
 
 const auto kAccessPolicyLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
+constexpr char kMatchAllRuleEntry[] = "*";
 
 }  // namespace
 
@@ -79,7 +80,7 @@ AccessPolicy::ParsedRuleEntries AccessPolicy::parseRuleEntries(const std::vector
     if (token.empty()) {
       continue;
     }
-    if (token == "*") {
+    if (token == kMatchAllRuleEntry) {
       parsed.matches_all = true;
       continue;
     }

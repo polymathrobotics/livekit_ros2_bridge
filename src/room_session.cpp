@@ -48,15 +48,18 @@ namespace
 
 using Clock = std::chrono::system_clock;
 const auto kRoomSessionLogger = rclcpp::get_logger("livekit_ros2_bridge.room_session");
+constexpr char kUnknownLogValue[] = "<unknown>";
+constexpr char kUnsetLogValue[] = "<unset>";
+constexpr auto kRefreshStatePollInterval = std::chrono::seconds(1);
 
 const char * requestIdForLog(const livekit::RpcInvocationData & invocation)
 {
-  return invocation.request_id.empty() ? "<unknown>" : invocation.request_id.c_str();
+  return invocation.request_id.empty() ? kUnknownLogValue : invocation.request_id.c_str();
 }
 
 const char * requesterIdentityForLog(const livekit::RpcInvocationData & invocation)
 {
-  return invocation.caller_identity.empty() ? "<unknown>" : invocation.caller_identity.c_str();
+  return invocation.caller_identity.empty() ? kUnknownLogValue : invocation.caller_identity.c_str();
 }
 
 livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & method_name, const RpcHandler & handler)
@@ -121,7 +124,7 @@ std::optional<Clock::time_point> computeRefreshDeadline(const AccessToken & toke
 std::string formatTokenExpiry(const std::optional<Clock::time_point> & expires_at)
 {
   if (!expires_at.has_value()) {
-    return "<unknown>";
+    return kUnknownLogValue;
   }
 
   const auto unix_seconds = std::chrono::duration_cast<std::chrono::seconds>(expires_at->time_since_epoch()).count();
@@ -169,8 +172,8 @@ public:
     thread_started_ = true;
     LogEvent(kRoomSessionLogger, "room_session_start_requested")
       .kv("phase", "startup")
-      .kvOr("room", config_.room, "<unset>")
-      .kvOr("identity", config_.identity, "<unset>")
+      .kvOr("room", config_.room, kUnsetLogValue)
+      .kvOr("identity", config_.identity, kUnsetLogValue)
       .info();
     worker_thread_ = std::thread([this]() { run(); });
   }
@@ -408,8 +411,8 @@ private:
         LogEvent(kRoomSessionLogger, "room_reconnect_backoff")
           .kv("phase", "reconnect")
           .kv("reason", lastReconnectReason())
-          .kvOr("room", config_.room, "<unset>")
-          .kvOr("identity", config_.identity, "<unset>")
+          .kvOr("room", config_.room, kUnsetLogValue)
+          .kvOr("identity", config_.identity, kUnsetLogValue)
           .kv("delay_seconds", backoff.count() / 1000.0)
           .warn();
         waitForStop(backoff);
@@ -444,8 +447,8 @@ private:
       LogEvent(kRoomSessionLogger, "room_token_load_failed")
         .kv("phase", "connect")
         .kv("reason", "exception")
-        .kvOr("room", config.room, "<unset>")
-        .kvOr("identity", config.identity, "<unset>")
+        .kvOr("room", config.room, kUnsetLogValue)
+        .kvOr("identity", config.identity, kUnsetLogValue)
         .kv("error", exc.what())
         .error();
       return false;
@@ -455,8 +458,8 @@ private:
       LogEvent(kRoomSessionLogger, "room_token_load_failed")
         .kv("phase", "connect")
         .kv("reason", "empty_token")
-        .kvOr("room", config.room, "<unset>")
-        .kvOr("identity", config.identity, "<unset>")
+        .kvOr("room", config.room, kUnsetLogValue)
+        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       return false;
     }
@@ -476,7 +479,7 @@ private:
       .kv("phase", "connect")
       .kv("url", config.url)
       .kv("room", config.room)
-      .kvOr("identity", config.identity, "<unset>")
+      .kvOr("identity", config.identity, kUnsetLogValue)
       .info();
 
     try {
@@ -486,7 +489,7 @@ private:
           .kv("reason", "connect_returned_false")
           .kv("url", config.url)
           .kv("room", config.room)
-          .kvOr("identity", config.identity, "<unset>")
+          .kvOr("identity", config.identity, kUnsetLogValue)
           .error();
         room->setDelegate(nullptr);
         return false;
@@ -497,7 +500,7 @@ private:
         .kv("reason", "exception")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, "<unset>")
+        .kvOr("identity", config.identity, kUnsetLogValue)
         .kv("error", exc.what())
         .error();
       room->setDelegate(nullptr);
@@ -508,7 +511,7 @@ private:
         .kv("reason", "unknown_exception")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, "<unset>")
+        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       room->setDelegate(nullptr);
       return false;
@@ -521,7 +524,7 @@ private:
         .kv("reason", "local_participant_unavailable")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, "<unset>")
+        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       room->setDelegate(nullptr);
       return false;
@@ -545,10 +548,10 @@ private:
     }
 
     const livekit::RoomInfoData room_info = roomInfoSnapshot();
-    const char * room_name = room_info.name.empty() ? "<unknown>" : room_info.name.c_str();
-    const char * room_sid = room_info.sid.has_value() ? room_info.sid->c_str() : "<unknown>";
+    const char * room_name = room_info.name.empty() ? kUnknownLogValue : room_info.name.c_str();
+    const char * room_sid = room_info.sid.has_value() ? room_info.sid->c_str() : kUnknownLogValue;
     const std::string & local_identity = participant->identity();
-    const char * identity = local_identity.empty() ? "<unknown>" : local_identity.c_str();
+    const char * identity = local_identity.empty() ? kUnknownLogValue : local_identity.c_str();
     LogEvent(kRoomSessionLogger, "room_connected")
       .kv("phase", "connect")
       .kv("room", room_name)
@@ -566,7 +569,7 @@ private:
         if (reconnect_requested_) {
           return false;
         }
-        condition_.wait_for(lock, std::chrono::seconds(1));
+        condition_.wait_for(lock, kRefreshStatePollInterval);
         if (reconnect_requested_) {
           return false;
         }
@@ -586,8 +589,8 @@ private:
           LogEvent(kRoomSessionLogger, "room_reconnect_requested")
             .kv("phase", "runtime")
             .kv("reason", "token_refresh_due")
-            .kvOr("room", config_.room, "<unset>")
-            .kvOr("identity", config_.identity, "<unset>")
+            .kvOr("room", config_.room, kUnsetLogValue)
+            .kvOr("identity", config_.identity, kUnsetLogValue)
             .kv("exp_unix", formatTokenExpiry(current_token_.expires_at))
             .info();
           reconnect_requested_ = true;
@@ -643,8 +646,8 @@ private:
       LogEvent(kRoomSessionLogger, "room_session_reset")
         .kv("phase", "reconnect")
         .kv("reason", reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str())
-        .kvOr("room", room_name, "<unset>")
-        .kvOr("identity", identity, "<unset>")
+        .kvOr("room", room_name, kUnsetLogValue)
+        .kvOr("identity", identity, kUnsetLogValue)
         .info();
       callback();
     }
@@ -671,8 +674,8 @@ private:
     LogEvent(kRoomSessionLogger, "room_reconnect_requested")
       .kv("phase", "runtime")
       .kv("reason", reason)
-      .kvOr("room", room_name, "<unset>")
-      .kvOr("identity", identity, "<unset>")
+      .kvOr("room", room_name, kUnsetLogValue)
+      .kvOr("identity", identity, kUnsetLogValue)
       .warn();
   }
 

@@ -34,6 +34,9 @@ namespace
 {
 
 constexpr std::size_t kDataSubscriptionDepth = 10U;
+constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
+constexpr char kTopicSubscriptionKeyPrefix[] = "topic:";
+constexpr char kExternalSubscriptionKeyPrefix[] = "external:";
 const auto kSubscriptionRegistryLogger = rclcpp::get_logger("subscription_registry");
 
 const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
@@ -588,7 +591,8 @@ std::string SubscriptionRegistry::deriveTrackName(const std::string & normalized
 
 std::string SubscriptionRegistry::makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource)
 {
-  return (target_kind == SubscriptionTargetKind::Topic ? "topic:" : "external:") + resource;
+  return (target_kind == SubscriptionTargetKind::Topic ? kTopicSubscriptionKeyPrefix : kExternalSubscriptionKeyPrefix) +
+         resource;
 }
 
 void SubscriptionRegistry::removeRequesterLeasesIf(
@@ -718,7 +722,7 @@ void SubscriptionRegistry::handleSerializedMessage(const std::string & topic, co
       .kv("kind", "topic")
       .kv("track_name", data->track_name)
       .kv("error", exc.what())
-      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(5000));
+      .warnThrottle(*node_.get_clock(), kTrackDeliveryFailureLogThrottlePeriod);
   }
 }
 

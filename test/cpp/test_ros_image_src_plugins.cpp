@@ -26,6 +26,12 @@
 namespace
 {
 
+constexpr int kNegotiatedImageWidth = 640;
+constexpr int kNegotiatedImageHeight = 480;
+constexpr int kIncomingMismatchedImageWidth = 1280;
+constexpr int kIncomingMismatchedImageHeight = 720;
+constexpr int kRgbBytesPerPixel = 3;
+
 class RosImageSrcTest : public ::testing::Test
 {
 protected:
@@ -114,15 +120,15 @@ TEST_F(RosImageSrcTest, RawImageSrcCreateReturnsErrorOnDimensionMismatch)
     rosrawimagesrc_get_type(), [](GstElement * element) { return GST_ROSRAWIMAGESRC(element); });
 
   source.instance->caps_set = TRUE;
-  source.instance->width = 640;
-  source.instance->height = 480;
+  source.instance->width = kNegotiatedImageWidth;
+  source.instance->height = kNegotiatedImageHeight;
   source.instance->format = GST_VIDEO_FORMAT_RGB;
 
   auto message = std::make_shared<sensor_msgs::msg::Image>();
-  message->width = 1280;
-  message->height = 720;
+  message->width = kIncomingMismatchedImageWidth;
+  message->height = kIncomingMismatchedImageHeight;
   message->encoding = "rgb8";
-  message->data.resize(1280 * 720 * 3);
+  message->data.resize(kIncomingMismatchedImageWidth * kIncomingMismatchedImageHeight * kRgbBytesPerPixel);
 
   {
     std::unique_lock<std::mutex> lk(source.instance->msg_queue_mtx);
@@ -140,15 +146,15 @@ TEST_F(RosImageSrcTest, RawImageSrcCreateReturnsErrorOnEncodingMismatch)
     rosrawimagesrc_get_type(), [](GstElement * element) { return GST_ROSRAWIMAGESRC(element); });
 
   source.instance->caps_set = TRUE;
-  source.instance->width = 640;
-  source.instance->height = 480;
+  source.instance->width = kNegotiatedImageWidth;
+  source.instance->height = kNegotiatedImageHeight;
   source.instance->format = GST_VIDEO_FORMAT_RGB;
 
   auto message = std::make_shared<sensor_msgs::msg::Image>();
-  message->width = 640;
-  message->height = 480;
+  message->width = kNegotiatedImageWidth;
+  message->height = kNegotiatedImageHeight;
   message->encoding = "bgr8";
-  message->data.resize(640 * 480 * 3);
+  message->data.resize(kNegotiatedImageWidth * kNegotiatedImageHeight * kRgbBytesPerPixel);
 
   {
     std::unique_lock<std::mutex> lk(source.instance->msg_queue_mtx);
