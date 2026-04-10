@@ -62,7 +62,7 @@ dev_target() {
 }
 
 dev_image() {
-  printf 'livekit_ros2_bridge-builder:%s' "$(ros_distro)"
+  printf 'livekit_ros2_bridge-dev:%s' "$(ros_distro)"
 }
 
 ensure_dev_volume() {
