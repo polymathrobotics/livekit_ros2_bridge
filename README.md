@@ -1,45 +1,135 @@
-# LiveKit ROS2 Bridge
+# livekit_ros2_bridge
 
-Generic bridge for connecting ROS2 pub/sub into LiveKit.
+`livekit_ros2_bridge` is a ROS 2 package that joins a LiveKit room as a ROS-aware participant. It gives LiveKit clients a small, policy-controlled way to discover ROS resources, call ROS services, request topic or video subscriptions, fetch interface definitions, and publish small ROS topic messages into ROS 2.
 
-## Local development
+## When to use it
 
-The local workflow is intentionally small:
+Use this package when:
 
-- `just build`
-- `just test`
-- `just format`
-- `just clean`
+- your browser, mobile, or backend client already speaks LiveKit
+- you want controlled ROS access instead of exposing the ROS graph directly
+- you want ROS interactions and robot video in the same LiveKit room
+- you can describe allowed resources with static allow and deny rules
 
-`just build` and `just test` auto-create the Docker dev image, container, and
-named volumes for the active `ROS_DISTRO`. The default distro is `humble`.
+## What it exposes
 
-Extra `colcon` arguments go after `--`:
+| Surface | Name | Purpose |
+| --- | --- | --- |
+| Control topic | `ros.topics.publish` | Best-effort ROS topic publication |
+| Control topic | `ros.subscriptions.heartbeat` | Request and renew topic or video subscriptions |
+| Control topic | `ros.subscriptions.status` | Receive per-stream subscription status |
+| RPC | `ros.services.call` | Call an authorized ROS service |
+| RPC | `ros.services.list` | List authorized ROS services |
+| RPC | `ros.topics.list` | List authorized ROS topics |
+| RPC | `ros.interfaces.get` | Fetch ROS interface definitions |
 
-- `just build -- --cmake-force-configure`
-- `just test -- --ctest-args -R test_runtime`
+The core mental model is:
 
-`just format` runs `pre-commit run --all-files` on the host. `just clean`
-removes the local dev container and its named volumes for the current
-`ROS_DISTRO` or `DEV_RESOURCE_PREFIX`.
+- clients join the same LiveKit room as the bridge
+- discovery and request-response work happen over RPC
+- subscriptions stay alive only while clients keep sending heartbeats
+- allowed ROS topics are delivered either as CDR data tracks or as video, depending on interface type
+- access control is name-based and default-deny
 
-Prerequisites:
+The full contract lives in [docs/protocol.md](./docs/protocol.md) and [docs/subscriptions.md](./docs/subscriptions.md).
 
-- `docker` with `buildx`
-- `just`
-- `pre-commit` for `just format`
+## Before you start
 
-## Docker image builds
+You need:
 
-Rare image work no longer goes through `just`. Use `docker buildx bake`
-directly with [`docker/bake.hcl`](docker/bake.hcl), for example:
+- a ROS 2 workspace where you can build and source this package
+- a reachable LiveKit deployment
+- either a pre-minted `livekit.token`, or both `livekit.api_key` and `livekit.api_secret`
+- at least one allowed topic or service in `access.rules.*.allow`
 
-- `docker buildx bake --file docker/bake.hcl --print all`
-- `docker buildx bake --file docker/bake.hcl --load dev-humble`
-- `docker buildx bake --file docker/bake.hcl runtime-all`
+If you want bridge-managed video sidecars, you also need `livekit.api_key` and `livekit.api_secret`. Static bridge tokens alone are not enough for that path.
 
-If you rebuild the dev image manually and want a fresh local container, run
-`just clean` before the next `just build` or `just test`.
+## Build the package
+
+If you have not built the package yet, run this from the workspace root:
+
+```bash
+source /opt/ros/$ROS_DISTRO/setup.bash
+rosdep install --from-paths src --ignore-src -y
+colcon build --packages-up-to livekit_ros2_bridge
+source install/setup.bash
+```
+
+If you use this repository's dev-container workflow, `just build` runs the package build there.
+
+## Quickstart
+
+1. Copy the example parameters file.
+
+   ```bash
+   cp livekit_bridge.params.example.yaml livekit_bridge.params.yaml
+   ```
+
+2. Edit `livekit_bridge.params.yaml` and set the connection, auth, and at least one allow rule.
+
+   ```yaml
+   livekit_ros2_bridge:
+     ros__parameters:
+       livekit.url: "wss://your-livekit.example"
+       livekit.room: "robot-room"
+       livekit.identity: "robot-bridge"
+
+       # Choose one auth mode.
+       livekit.token: ""
+       # or:
+       # livekit.api_key: ""
+       # livekit.api_secret: ""
+
+       access.rules.subscribe.allow: ["/camera/*"]
+       access.rules.publish.allow: ["/cmd_vel"]
+       access.rules.service.allow: ["/example/service"]
+   ```
+
+   For the full parameter model, read [docs/runtime-configuration.md](./docs/runtime-configuration.md). For rule matching and deny precedence, read [docs/access-control.md](./docs/access-control.md).
+
+3. If you want video, add `videos.*` entries in the same file. For `kind: pipeline` entries, the configured id becomes the external name clients request after normalization. For example, `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
+
+4. Run the node.
+
+   ```bash
+   ros2 run livekit_ros2_bridge livekit_ros2_bridge_node --ros-args \
+     --params-file $(pwd)/livekit_bridge.params.yaml
+   ```
+
+   Wait for `event=runtime_ready` and `event=node_ready`.
+
+5. Connect a LiveKit client to the same room and use the resources you allowed.
+
+For a fast first success, allow one service or one small topic path first. Add more rules and video sources after that works.
+
+If startup or connection fails, start with [startup and connection issues](./docs/troubleshooting.md#startup-and-connection-issues).
+
+## Current scope
+
+Supported today:
+
+- ROS service calls
+- topic and service discovery
+- topic subscriptions
+- video subscriptions
+- small ROS topic publications into ROS 2
+- configured external video sources
+
+Not supported today:
+
+- ROS actions
+- ROS parameter get and set
+- full audio support
+- large topic publish payloads
+
+## Where to go next
+
+- [docs/README.md](./docs/README.md) for the full documentation map
+- [docs/integration.md](./docs/integration.md) for the client integration flow
+- [docs/protocol.md](./docs/protocol.md) for the LiveKit-facing contract
+- [docs/subscriptions.md](./docs/subscriptions.md) for heartbeat, status, lease, and replay behavior
+- [docs/runtime-configuration.md](./docs/runtime-configuration.md) for auth, access, and video configuration
+- [docs/runtime-architecture.md](./docs/runtime-architecture.md) for runtime ownership, threading, and reconnect behavior
 
 ## License
 
