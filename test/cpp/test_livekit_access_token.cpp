@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <openssl/evp.h>
-
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -24,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "room_session.hpp"
+#include "utils/base64.hpp"
 #include "utils/livekit_access_token.hpp"
 
 namespace livekit_ros2_bridge
@@ -40,39 +38,6 @@ constexpr auto kMintedTokenIssuedAtUnixSeconds = std::chrono::seconds(1700000000
 constexpr auto kMintedTokenExpiresAtUnixSeconds = kMintedTokenIssuedAtUnixSeconds + kMintedTokenTtl;
 constexpr auto kStaticTokenExpiresAtUnixSeconds = kMintedTokenIssuedAtUnixSeconds + kStaticTokenTtl;
 
-std::optional<std::vector<std::uint8_t>> base64UrlDecode(const std::string & value)
-{
-  if (value.empty()) {
-    return std::vector<std::uint8_t>{};
-  }
-
-  std::string padded = value;
-  std::replace(padded.begin(), padded.end(), '-', '+');
-  std::replace(padded.begin(), padded.end(), '_', '/');
-  while ((padded.size() % 4U) != 0U) {
-    padded.push_back('=');
-  }
-
-  std::vector<std::uint8_t> decoded((padded.size() / 4U) * 3U, 0);
-  const int written = EVP_DecodeBlock(
-    reinterpret_cast<unsigned char *>(decoded.data()),
-    reinterpret_cast<const unsigned char *>(padded.data()),
-    static_cast<int>(padded.size()));
-  if (written < 0) {
-    return std::nullopt;
-  }
-
-  std::size_t actual_size = static_cast<std::size_t>(written);
-  if (!padded.empty() && padded.back() == '=') {
-    --actual_size;
-  }
-  if (padded.size() > 1U && padded[padded.size() - 2U] == '=') {
-    --actual_size;
-  }
-  decoded.resize(actual_size);
-  return decoded;
-}
-
 std::optional<nlohmann::json> decodeJwtPayloadForTest(const std::string & token)
 {
   const auto first_dot = token.find('.');
@@ -84,13 +49,14 @@ std::optional<nlohmann::json> decodeJwtPayloadForTest(const std::string & token)
     return std::nullopt;
   }
 
-  const auto decoded = base64UrlDecode(token.substr(first_dot + 1U, second_dot - first_dot - 1U));
-  if (!decoded.has_value()) {
+  const Base64DecodeResult decoded =
+    livekit_ros2_bridge::base64UrlDecode(token.substr(first_dot + 1U, second_dot - first_dot - 1U));
+  if (!decoded) {
     return std::nullopt;
   }
 
   try {
-    return nlohmann::json::parse(decoded->begin(), decoded->end());
+    return nlohmann::json::parse(decoded.bytes.begin(), decoded.bytes.end());
   } catch (const nlohmann::json::exception &) {
     return std::nullopt;
   }

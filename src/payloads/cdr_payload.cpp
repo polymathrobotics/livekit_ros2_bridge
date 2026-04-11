@@ -14,8 +14,6 @@
 
 #include "payloads/cdr_payload.hpp"
 
-#include <openssl/evp.h>
-
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -23,6 +21,7 @@
 
 #include "nlohmann/json.hpp"
 #include "protocol.hpp"
+#include "utils/base64.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -33,53 +32,19 @@ namespace
 constexpr char kContentTypeField[] = "content_type";
 constexpr char kPayloadBase64Field[] = "payload_base64";
 
-std::string base64Encode(const std::uint8_t * data, std::size_t size)
-{
-  if (size == 0U) {
-    return "";
-  }
-
-  const std::size_t encoded_size = ((size + 2U) / 3U) * 4U;
-  std::string encoded(encoded_size, '\0');
-  const int written = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(encoded.data()), data, static_cast<int>(size));
-  if (written < 0) {
-    throw std::runtime_error("Failed base64 encoding.");
-  }
-
-  encoded.resize(static_cast<std::size_t>(written));
-  return encoded;
-}
-
 std::vector<std::uint8_t> base64Decode(const std::string & value)
 {
-  if (value.empty()) {
-    return {};
+  const Base64DecodeResult decoded = livekit_ros2_bridge::base64Decode(value);
+  switch (decoded.status) {
+    case Base64DecodeStatus::kOk:
+      return decoded.bytes;
+    case Base64DecodeStatus::kMissingPadding:
+      throw std::invalid_argument("payload_base64 must be padded standard base64.");
+    case Base64DecodeStatus::kInvalidEncoding:
+      throw std::invalid_argument("payload_base64 is not valid base64.");
   }
 
-  if ((value.size() % 4U) != 0U) {
-    throw std::invalid_argument("payload_base64 must be padded standard base64.");
-  }
-
-  const std::size_t max_decoded_size = (value.size() / 4U) * 3U;
-  std::vector<std::uint8_t> decoded(max_decoded_size, 0);
-  const int written = EVP_DecodeBlock(
-    reinterpret_cast<unsigned char *>(decoded.data()),
-    reinterpret_cast<const unsigned char *>(value.data()),
-    static_cast<int>(value.size()));
-  if (written < 0) {
-    throw std::invalid_argument("payload_base64 is not valid base64.");
-  }
-
-  std::size_t actual_size = static_cast<std::size_t>(written);
-  // EVP_DecodeBlock reports the padded output size, so trim bytes implied only by '=' padding.
-  if (!value.empty() && value.back() == '=') {
-    --actual_size;
-  }
-  if (value.size() > 1U && value[value.size() - 2U] == '=') {
-    --actual_size;
-  }
-  decoded.resize(actual_size);
-  return decoded;
+  throw std::invalid_argument("payload_base64 is not valid base64.");
 }
 
 const nlohmann::json & requireObjectField(const nlohmann::json & body, const char * field_name)

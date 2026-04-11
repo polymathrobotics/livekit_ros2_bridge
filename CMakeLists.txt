@@ -68,6 +68,7 @@ add_library(${PROJECT_NAME} SHARED
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
   src/topic_publisher.cpp
+  src/utils/base64.cpp
   src/utils/livekit_access_token.cpp
   src/video_config.cpp
   src/video_stream_manager.cpp
@@ -107,6 +108,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_access_policy test/cpp/test_access_policy.cpp)
   target_link_libraries(test_access_policy ${PROJECT_NAME})
+
+  ament_add_gtest(test_base64 test/cpp/test_base64.cpp)
+  target_link_libraries(test_base64 ${PROJECT_NAME})
 
   ament_add_gtest(test_cdr_track_publisher test/cpp/test_cdr_track_publisher.cpp)
   target_link_libraries(test_cdr_track_publisher ${PROJECT_NAME})
@@ -180,7 +184,7 @@ if(BUILD_TESTING)
   target_link_libraries(test_subscription_registry ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
 
   ament_add_gtest(test_livekit_access_token test/cpp/test_livekit_access_token.cpp)
-  target_link_libraries(test_livekit_access_token ${PROJECT_NAME} OpenSSL::Crypto)
+  target_link_libraries(test_livekit_access_token ${PROJECT_NAME})
 
   ament_add_gtest(test_topic_publish_command test/cpp/test_topic_publish_command.cpp)
   target_link_libraries(test_topic_publish_command ${PROJECT_NAME} nlohmann_json::nlohmann_json)
@@ -196,6 +200,7 @@ if(BUILD_TESTING)
 
   set(livekit_ros2_bridge_test_targets
     test_access_policy
+    test_base64
     test_cdr_track_publisher
     test_control_packet_router
     test_event_throttle

@@ -14,10 +14,8 @@
 
 #include "utils/livekit_access_token.hpp"
 
-#include <openssl/evp.h>
 #include <openssl/hmac.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -26,6 +24,7 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
+#include "utils/base64.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -33,57 +32,13 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-std::string base64UrlEncode(const std::uint8_t * data, std::size_t size)
-{
-  if (size == 0U) {
-    return "";
-  }
-
-  std::string encoded(((size + 2U) / 3U) * 4U, '\0');
-  const int written = EVP_EncodeBlock(reinterpret_cast<unsigned char *>(encoded.data()), data, static_cast<int>(size));
-  if (written < 0) {
-    throw std::runtime_error("Failed base64url encoding.");
-  }
-  encoded.resize(static_cast<std::size_t>(written));
-  std::replace(encoded.begin(), encoded.end(), '+', '-');
-  std::replace(encoded.begin(), encoded.end(), '/', '_');
-  while (!encoded.empty() && encoded.back() == '=') {
-    encoded.pop_back();
-  }
-  return encoded;
-}
-
 std::optional<std::vector<std::uint8_t>> base64UrlDecode(const std::string & value)
 {
-  if (value.empty()) {
-    return std::vector<std::uint8_t>{};
-  }
-
-  std::string padded = value;
-  std::replace(padded.begin(), padded.end(), '-', '+');
-  std::replace(padded.begin(), padded.end(), '_', '/');
-  while ((padded.size() % 4U) != 0U) {
-    padded.push_back('=');
-  }
-
-  std::vector<std::uint8_t> decoded((padded.size() / 4U) * 3U, 0);
-  const int written = EVP_DecodeBlock(
-    reinterpret_cast<unsigned char *>(decoded.data()),
-    reinterpret_cast<const unsigned char *>(padded.data()),
-    static_cast<int>(padded.size()));
-  if (written < 0) {
+  const Base64DecodeResult decoded = livekit_ros2_bridge::base64UrlDecode(value);
+  if (!decoded) {
     return std::nullopt;
   }
-
-  std::size_t actual_size = static_cast<std::size_t>(written);
-  if (!padded.empty() && padded.back() == '=') {
-    --actual_size;
-  }
-  if (padded.size() > 1U && padded[padded.size() - 2U] == '=') {
-    --actual_size;
-  }
-  decoded.resize(actual_size);
-  return decoded;
+  return decoded.bytes;
 }
 
 std::int64_t toUnixSeconds(std::chrono::system_clock::time_point time_point)
@@ -156,10 +111,10 @@ std::string mintLiveKitAccessToken(
   const std::string header_json = header.dump();
   const std::string payload_json = payload.dump();
 
-  const std::string encoded_header =
-    base64UrlEncode(reinterpret_cast<const std::uint8_t *>(header_json.data()), header_json.size());
-  const std::string encoded_payload =
-    base64UrlEncode(reinterpret_cast<const std::uint8_t *>(payload_json.data()), payload_json.size());
+  const std::string encoded_header = livekit_ros2_bridge::base64UrlEncode(
+    reinterpret_cast<const std::uint8_t *>(header_json.data()), header_json.size());
+  const std::string encoded_payload = livekit_ros2_bridge::base64UrlEncode(
+    reinterpret_cast<const std::uint8_t *>(payload_json.data()), payload_json.size());
   const std::string signing_input = encoded_header + "." + encoded_payload;
 
   std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
@@ -178,7 +133,7 @@ std::string mintLiveKitAccessToken(
   }
 
   const std::string encoded_signature =
-    base64UrlEncode(reinterpret_cast<const std::uint8_t *>(digest.data()), digest_size);
+    livekit_ros2_bridge::base64UrlEncode(reinterpret_cast<const std::uint8_t *>(digest.data()), digest_size);
   return signing_input + "." + encoded_signature;
 }
 
