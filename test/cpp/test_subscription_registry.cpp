@@ -141,9 +141,9 @@ bool publishUntil(
 VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
-  ConfiguredExternalSource source;
+  ConfiguredSource source;
   source.source = "videotestsrc is-live=true pattern=black";
-  config.external_sources.emplace("/sources/front", std::move(source));
+  config.configured_sources.emplace("/sources/front", std::move(source));
   return config;
 }
 
@@ -202,12 +202,12 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDataTrackForNonVideoTopic
 
   EXPECT_EQ(response.target.name, topic);
   EXPECT_EQ(response.interface_type, "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kDataTrack);
+  EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kData);
   ASSERT_EQ(published_track_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_track_names[0]);
   EXPECT_EQ(second_response.target.name, topic);
   EXPECT_EQ(second_response.interface_type, "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(second_response.delivery_kind, StreamDeliveryKind::kDataTrack);
+  EXPECT_EQ(second_response.delivery_kind, StreamDeliveryKind::kData);
   EXPECT_EQ(second_response.track_name, published_track_names[0]);
 }
 
@@ -238,7 +238,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawHeartbeatTopicSubsc
     "bob", SubscriptionRequest{{SubscriptionTargetKind::Topic, topic}, std::nullopt}, kFarFuture);
 
   EXPECT_EQ(raw_response.target.name, topic);
-  EXPECT_EQ(raw_response.delivery_kind, StreamDeliveryKind::kDataTrack);
+  EXPECT_EQ(raw_response.delivery_kind, StreamDeliveryKind::kData);
   EXPECT_EQ(canonical_response.target.name, topic);
   ASSERT_EQ(published_track_names.size(), 1U);
   EXPECT_EQ(raw_response.track_name, published_track_names[0]);
@@ -273,7 +273,7 @@ TEST(SubscriptionRegistryTest, SendsRawCdrFramesOnGenericSubscription)
   ASSERT_TRUE(publishUntil(executor, publisher, message, [&]() { return cdr_frames.size() == 1U; }));
 
   ASSERT_EQ(cdr_frames.size(), 1U);
-  EXPECT_EQ(cdr_frames[0].track_name, "ros.cdr.battery.send");
+  EXPECT_EQ(cdr_frames[0].track_name, "ros.data.battery.send");
   const auto decoded = deserializeMessage<sensor_msgs::msg::BatteryState>(cdr_frames[0].data);
   EXPECT_EQ(decoded, message);
 }
@@ -302,7 +302,7 @@ TEST(SubscriptionRegistryTest, BestEffortPublisherDeliversToDataSubscription)
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return cdr_frames.size() == 1U; }));
-  EXPECT_EQ(cdr_frames[0].track_name, "ros.cdr.battery.best_effort");
+  EXPECT_EQ(cdr_frames[0].track_name, "ros.data.battery.best_effort");
 }
 
 TEST(SubscriptionRegistryTest, AppliesMinimumRequesterInterval)
@@ -402,14 +402,16 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
     *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
 
   const auto response = registry.renewSubscription(
-    "alice", SubscriptionRequest{{SubscriptionTargetKind::External, "/sources/front"}, std::nullopt}, kFarFuture);
+    "alice",
+    SubscriptionRequest{{SubscriptionTargetKind::ConfiguredSource, "/sources/front"}, std::nullopt},
+    kFarFuture);
 
-  EXPECT_EQ(response.target.kind, SubscriptionTargetKind::External);
+  EXPECT_EQ(response.target.kind, SubscriptionTargetKind::ConfiguredSource);
   EXPECT_EQ(response.target.name, "/sources/front");
   EXPECT_EQ(response.interface_type, "");
   EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kVideo);
-  EXPECT_EQ(response.track_name, "ros.video.external.sources.front");
-  EXPECT_TRUE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::External));
+  EXPECT_EQ(response.track_name, "ros.video.configured_source.sources.front");
+  EXPECT_TRUE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::ConfiguredSource));
 }
 
 TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHeartbeatSubscriptions)
@@ -419,9 +421,11 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHea
   FakeRoomSession session;
   VideoStreamManager video_stream_manager(*node, session);
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  const std::string external_name = "/sources/front";
-  const SubscriptionRequest raw_subscription{{SubscriptionTargetKind::External, "  //sources//front/  "}, std::nullopt};
-  const SubscriptionRequest canonical_subscription{{SubscriptionTargetKind::External, external_name}, std::nullopt};
+  const std::string configured_source_name = "/sources/front";
+  const SubscriptionRequest raw_subscription{
+    {SubscriptionTargetKind::ConfiguredSource, "  //sources//front/  "}, std::nullopt};
+  const SubscriptionRequest canonical_subscription{
+    {SubscriptionTargetKind::ConfiguredSource, configured_source_name}, std::nullopt};
 
   SubscriptionRegistry registry(
     *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
@@ -429,16 +433,16 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHea
   const auto raw_response = registry.renewSubscription("alice", raw_subscription, kFarFuture);
   const auto canonical_response = registry.renewSubscription("bob", canonical_subscription, kFarFuture);
 
-  EXPECT_EQ(raw_response.target.name, external_name);
-  EXPECT_EQ(canonical_response.target.name, external_name);
+  EXPECT_EQ(raw_response.target.name, configured_source_name);
+  EXPECT_EQ(canonical_response.target.name, configured_source_name);
   EXPECT_EQ(raw_response.track_name, canonical_response.track_name);
-  EXPECT_TRUE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
+  EXPECT_TRUE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 
   registry.removeRequesterLeases("bob");
-  EXPECT_TRUE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
+  EXPECT_TRUE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 
   registry.removeRequesterLeases("alice");
-  EXPECT_FALSE(registry.hasSubscription(external_name, SubscriptionTargetKind::External));
+  EXPECT_FALSE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 }
 
 TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatch)
@@ -461,14 +465,14 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
 
   const auto topic_response = registry.renewSubscription("alice", shared_name, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
-    "bob", SubscriptionRequest{{SubscriptionTargetKind::External, shared_name}, std::nullopt}, kFarFuture);
+    "bob", SubscriptionRequest{{SubscriptionTargetKind::ConfiguredSource, shared_name}, std::nullopt}, kFarFuture);
 
   EXPECT_EQ(topic_response.target.kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(topic_response.delivery_kind, StreamDeliveryKind::kDataTrack);
-  EXPECT_EQ(source_response.target.kind, SubscriptionTargetKind::External);
+  EXPECT_EQ(topic_response.delivery_kind, StreamDeliveryKind::kData);
+  EXPECT_EQ(source_response.target.kind, SubscriptionTargetKind::ConfiguredSource);
   EXPECT_EQ(source_response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::Topic));
-  EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::External));
+  EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::ConfiguredSource));
 }
 
 TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoStreamManager)
@@ -767,7 +771,7 @@ TEST(SubscriptionRegistryTest, OnCdrTrackPublishedReturnsFalseForUnknownTrack)
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_unknown_track_test");
 
   SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
-  EXPECT_FALSE(registry.onCdrTrackPublished("ros.cdr.no.such.topic", 0));
+  EXPECT_FALSE(registry.onCdrTrackPublished("ros.data.no.such.topic", 0));
 }
 
 TEST(SubscriptionRegistryTest, HasSubscriptionReturnsFalseForWhitespaceTopic)
@@ -871,8 +875,8 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
     SubscriptionRequest{{SubscriptionTargetKind::Topic, "   "}, std::nullopt},
     "heartbeat subscription target name must normalize to a non-empty topic name");
   expect_invalid_argument(
-    SubscriptionRequest{{SubscriptionTargetKind::External, "  \t\n  "}, std::nullopt},
-    "heartbeat subscription target name must normalize to a non-empty external name");
+    SubscriptionRequest{{SubscriptionTargetKind::ConfiguredSource, "  \t\n  "}, std::nullopt},
+    "heartbeat subscription target name must normalize to a non-empty configured_source name");
 }
 
 TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPublishedDataTracks)

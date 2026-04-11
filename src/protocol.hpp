@@ -33,7 +33,7 @@ inline constexpr char kDataContentTypeCdr[] = "application/x-ros-cdr";
 
 // Stable delivery.kind values in stream status payloads.
 inline constexpr char kDeliveryKindVideo[] = "video";
-inline constexpr char kDeliveryKindDataTrack[] = "data_track";
+inline constexpr char kDeliveryKindData[] = "data";
 
 // Bump only when the bridge intentionally changes the wire contract.
 inline constexpr int kProtocolVersion = 2;

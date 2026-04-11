@@ -27,10 +27,10 @@ namespace livekit_ros2_bridge
 enum class SubscriptionTargetKind
 {
   Topic,
-  External,
+  ConfiguredSource,
 };
 
-/// A normalized subscription identifier. `kind` decides whether the wire field is `topic` or `external`.
+/// A normalized subscription identifier shared by heartbeat parsing and stream-status serialization.
 struct SubscriptionTarget
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -55,7 +55,7 @@ struct SubscriptionHeartbeat
 
 enum class StreamDeliveryKind
 {
-  kDataTrack,
+  kData,
   kVideo,
 };
 
@@ -67,21 +67,21 @@ struct StreamStatus
   std::string degraded_reason;
   /// Omitted from the payload when empty.
   std::string interface_type;
-  /// Serialized only for `data_track` delivery as `applied_preferences.interval_ms`.
+  /// Serialized only for `data` delivery as `delivery.interval_ms`.
   int applied_interval_ms = 0;
-  StreamDeliveryKind delivery_kind = StreamDeliveryKind::kDataTrack;
+  StreamDeliveryKind delivery_kind = StreamDeliveryKind::kData;
   /// Serialized for both delivery modes.
   std::string track_name;
 };
 
 /// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
-/// Each subscription entry must contain exactly one of `topic` or `external`, plus an optional
-/// `delivery_preferences.interval_ms` integer. Topic and external names are normalized separately,
+/// Each subscription entry must contain exactly one of `topic` or `configured_source`, plus an optional
+/// `delivery_preferences.interval_ms` integer. Topic and configured-source names are normalized separately,
 /// duplicate normalized targets are coalesced, and duplicate intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
-/// Serialize one active stream-status entry. Data-track deliveries include
-/// `content_type="application/x-ros-cdr"` and `applied_preferences.interval_ms`.
+/// Serialize one active stream-status entry. Data deliveries include
+/// `content_type="application/x-ros-cdr"` and `delivery.interval_ms`.
 nlohmann::json serializeStreamStatus(const StreamStatus & stream_status);
 
 }  // namespace livekit_ros2_bridge

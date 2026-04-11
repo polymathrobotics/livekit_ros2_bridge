@@ -45,9 +45,9 @@ VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredExternalSource source;
+  ConfiguredSource source;
   source.source = "videotestsrc is-live=true pattern=black";
-  config.external_sources.emplace("/sources/front", std::move(source));
+  config.configured_sources.emplace("/sources/front", std::move(source));
   return config;
 }
 
@@ -158,7 +158,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["topic"], "/battery_state");
+  EXPECT_EQ(stream["name"], "/battery_state");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "forbidden");
 }
@@ -174,7 +174,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["topic"], "/nonexistent_topic");
+  EXPECT_EQ(stream["name"], "/nonexistent_topic");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "not_found");
 }
@@ -195,7 +195,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamManagerReturnsUnava
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["topic"], "/camera/front");
+  EXPECT_EQ(stream["name"], "/camera/front");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "unavailable");
   (void)publisher;
@@ -210,15 +210,15 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   auto registry = makeRegistry(&video_stream_manager, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/front"}}}}};
+  const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "external");
-  EXPECT_EQ(stream["external"], "/sources/front");
+  EXPECT_EQ(stream["kind"], "configured_source");
+  EXPECT_EQ(stream["name"], "/sources/front");
   EXPECT_EQ(stream["status"], "active");
   EXPECT_EQ(stream["delivery"]["kind"], protocol::kDeliveryKindVideo);
-  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.external.sources.front");
+  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.configured_source.sources.front");
   EXPECT_FALSE(stream.contains("error"));
 }
 
@@ -230,12 +230,12 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
   auto registry = makeRegistry(&video_stream_manager, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"external", "/sources/missing"}}}}};
+  const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/missing"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "external");
-  EXPECT_EQ(stream["external"], "/sources/missing");
+  EXPECT_EQ(stream["kind"], "configured_source");
+  EXPECT_EQ(stream["name"], "/sources/missing");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "not_found");
 }
@@ -265,13 +265,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStat
   EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
   ASSERT_EQ(response["streams"].size(), 1U);
   EXPECT_EQ(response["streams"][0]["kind"], "topic");
-  EXPECT_EQ(response["streams"][0]["topic"], "/battery_state");
+  EXPECT_EQ(response["streams"][0]["name"], "/battery_state");
   EXPECT_EQ(response["streams"][0]["status"], "active");
   EXPECT_EQ(response["streams"][0]["interface_type"], "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(response["streams"][0]["delivery"]["kind"], protocol::kDeliveryKindDataTrack);
-  EXPECT_EQ(response["streams"][0]["delivery"]["track_name"], "ros.cdr.battery_state");
+  EXPECT_EQ(response["streams"][0]["delivery"]["kind"], protocol::kDeliveryKindData);
+  EXPECT_EQ(response["streams"][0]["delivery"]["track_name"], "ros.data.battery_state");
   EXPECT_EQ(response["streams"][0]["delivery"]["content_type"], "application/x-ros-cdr");
-  EXPECT_EQ(response["streams"][0]["applied_preferences"]["interval_ms"], 100);
+  EXPECT_EQ(response["streams"][0]["delivery"]["interval_ms"], 100);
   EXPECT_FALSE(response["streams"][0]["delivery"].contains("publisher_identity"));
   EXPECT_FALSE(response["streams"][0].contains("error"));
   EXPECT_FALSE(response["streams"][0].contains("target"));
@@ -301,7 +301,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownSession)
   const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(response["session_id"], "session-1");
   ASSERT_EQ(response["streams"].size(), 1U);
-  EXPECT_EQ(response["streams"][0]["topic"], "/battery_state");
+  EXPECT_EQ(response["streams"][0]["name"], "/battery_state");
   EXPECT_EQ(response["streams"][0]["status"], "active");
   (void)publisher;
 }
@@ -357,7 +357,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 
   const auto stream = extractSinglePublishedStream(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["topic"], "/battery_state");
+  EXPECT_EQ(stream["name"], "/battery_state");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "forbidden");
 }

@@ -40,8 +40,8 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return "topic";
-    case SubscriptionTargetKind::External:
-      return "external";
+    case SubscriptionTargetKind::ConfiguredSource:
+      return "configured_source";
   }
 
   throw std::invalid_argument("stream status target kind is invalid");
@@ -55,8 +55,8 @@ std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
 const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
 {
   switch (delivery_kind) {
-    case StreamDeliveryKind::kDataTrack:
-      return protocol::kDeliveryKindDataTrack;
+    case StreamDeliveryKind::kData:
+      return protocol::kDeliveryKindData;
     case StreamDeliveryKind::kVideo:
       return protocol::kDeliveryKindVideo;
   }
@@ -96,16 +96,16 @@ int parseIntervalMs(const nlohmann::json & prefs)
 SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
 {
   const auto topic_it = entry.find("topic");
-  const auto external_it = entry.find("external");
+  const auto configured_source_it = entry.find("configured_source");
   const bool has_topic = topic_it != entry.end();
-  const bool has_external = external_it != entry.end();
+  const bool has_configured_source = configured_source_it != entry.end();
 
-  if (has_topic && has_external) {
-    throw std::invalid_argument("heartbeat subscription entry must not contain both 'topic' and 'external'");
+  if (has_topic && has_configured_source) {
+    throw std::invalid_argument("heartbeat subscription entry must not contain both 'topic' and 'configured_source'");
   }
 
-  if (!has_topic && !has_external) {
-    throw std::invalid_argument("heartbeat subscription entry must contain 'topic' or 'external'");
+  if (!has_topic && !has_configured_source) {
+    throw std::invalid_argument("heartbeat subscription entry must contain 'topic' or 'configured_source'");
   }
 
   if (has_topic) {
@@ -119,14 +119,14 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
     return {SubscriptionTargetKind::Topic, std::move(name)};
   }
 
-  if (!external_it->is_string()) {
-    throw std::invalid_argument("heartbeat subscription 'external' must be a string");
+  if (!configured_source_it->is_string()) {
+    throw std::invalid_argument("heartbeat subscription 'configured_source' must be a string");
   }
-  std::string name = normalizeExternalName(external_it->get_ref<const std::string &>());
+  std::string name = normalizeConfiguredSourceName(configured_source_it->get_ref<const std::string &>());
   if (name.empty()) {
-    throw std::invalid_argument("heartbeat subscription external must normalize to a non-empty name");
+    throw std::invalid_argument("heartbeat subscription configured_source must normalize to a non-empty name");
   }
-  return {SubscriptionTargetKind::External, std::move(name)};
+  return {SubscriptionTargetKind::ConfiguredSource, std::move(name)};
 }
 
 SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
@@ -198,11 +198,10 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
 {
   const char * kind_str = subscriptionTargetKindString(stream_status.target.kind);
-  const char * name_key = stream_status.target.kind == SubscriptionTargetKind::Topic ? "topic" : "external";
 
   nlohmann::json entry = {
     {"kind", kind_str},
-    {name_key, stream_status.target.name},
+    {"name", stream_status.target.name},
     {"status", "active"},
   };
 
@@ -218,12 +217,12 @@ nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
       entry["delivery"] = {
         {"kind", streamDeliveryKindString(stream_status.delivery_kind)}, {"track_name", stream_status.track_name}};
       return entry;
-    case StreamDeliveryKind::kDataTrack:
+    case StreamDeliveryKind::kData:
       entry["delivery"] = {
         {"kind", streamDeliveryKindString(stream_status.delivery_kind)},
         {"track_name", stream_status.track_name},
-        {"content_type", protocol::kDataContentTypeCdr}};
-      entry["applied_preferences"] = {{"interval_ms", stream_status.applied_interval_ms}};
+        {"content_type", protocol::kDataContentTypeCdr},
+        {"interval_ms", stream_status.applied_interval_ms}};
       return entry;
   }
 

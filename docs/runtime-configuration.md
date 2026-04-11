@@ -7,7 +7,7 @@ At startup, configuration determines:
 - how the bridge connects to LiveKit and identifies itself
 - whether the bridge reuses a static token or mints tokens with API credentials
 - which ROS resources each access policy family exposes
-- how video requests resolve to ROS-backed or configured external sources
+- how video requests resolve to ROS-backed or configured sources
 
 If a change would affect any of those decisions, restart the node. Reconnect alone is not enough.
 
@@ -88,14 +88,14 @@ QoS is resolved only when the subscription is created or recreated later. It is 
 
 ### QoS override parameters
 
-Use `subscription_qos_override_ids` together with `subscribe.qos_overrides.*` to pin subscriber QoS fields for ROS topic subscriptions.
+Use `subscription_qos_overrides_ids` together with `subscription.qos_overrides.*` to pin subscriber QoS fields for ROS topic subscriptions.
 
 | Parameter | Meaning |
 | --- | --- |
-| `subscription_qos_override_ids` | the override ids to load |
-| `subscribe.qos_overrides.<id>.pattern` | ROS topic pattern to match |
-| `subscribe.qos_overrides.<id>.reliability` | `auto`, `reliable`, or `best_effort` |
-| `subscribe.qos_overrides.<id>.durability` | `auto`, `volatile`, or `transient_local` |
+| `subscription_qos_overrides_ids` | the override ids to load |
+| `subscription.qos_overrides.<id>.pattern` | ROS topic pattern to match |
+| `subscription.qos_overrides.<id>.reliability` | `auto`, `reliable`, or `best_effort` |
+| `subscription.qos_overrides.<id>.durability` | `auto`, `volatile`, or `transient_local` |
 
 Override rules:
 
@@ -110,10 +110,10 @@ Example:
 ```yaml
 livekit_ros2_bridge:
   ros__parameters:
-    subscription_qos_override_ids: ["gazebo_cameras"]
-    subscribe.qos_overrides.gazebo_cameras.pattern: "/front_camera/*"
-    subscribe.qos_overrides.gazebo_cameras.reliability: "reliable"
-    subscribe.qos_overrides.gazebo_cameras.durability: "auto"
+    subscription_qos_overrides_ids: ["gazebo_cameras"]
+    subscription.qos_overrides.gazebo_cameras.pattern: "/front_camera/*"
+    subscription.qos_overrides.gazebo_cameras.reliability: "reliable"
+    subscription.qos_overrides.gazebo_cameras.durability: "auto"
 ```
 
 This is useful when a publisher is not visible yet at subscription-creation time, or when a source such as `ros_gz_bridge` cameras must be pinned to `reliable`.
@@ -138,32 +138,32 @@ Common parameters:
 | Parameter | Meaning |
 | --- | --- |
 | `video_topic_rule_ids` | the topic rule ids to load from `video.topic_rules.<id>` |
-| `video_custom_source_ids` | the custom source ids to load from `video.custom_sources.<id>` |
+| `video_configured_source_ids` | the configured source ids to load from `video.configured_sources.<id>` |
 | `video.topic_rules.<id>.pattern` | topic pattern for this ROS video rule |
 | `video.topic_rules.<id>.transform` | optional transform fragment for this ROS video rule |
 | `video.topic_rules.<id>.publish.*` | optional partial LiveKit publish overrides for this ROS video rule |
-| `video.custom_sources.<id>.source` | external ingress fragment for this configured source |
-| `video.custom_sources.<id>.transform` | optional transform fragment for this configured source |
-| `video.custom_sources.<id>.publish.*` | optional partial LiveKit publish overrides for this configured source |
+| `video.configured_sources.<id>.source` | ingress fragment for this configured source |
+| `video.configured_sources.<id>.transform` | optional transform fragment for this configured source |
+| `video.configured_sources.<id>.publish.*` | optional partial LiveKit publish overrides for this configured source |
 
 Rules:
 
 - `video.topic_rules.<id>.pattern` is required
-- `video.custom_sources.<id>.source` is required
+- `video.configured_sources.<id>.source` is required
 - `transform` is optional for both entry types
 - `publish.*` is optional for both entry types and can override any subset of `video.publish.*`
 - duplicate `video_topic_rule_ids` entries are rejected
-- duplicate `video_custom_source_ids` entries are rejected
-- configured source ids normalize to the external names clients request
+- duplicate `video_configured_source_ids` entries are rejected
+- configured source ids normalize to the `configured_source` names clients request
 
 Examples:
 
 - `video.topic_rules.front_camera.pattern: "/camera/front/*"` matches ROS topics according to that pattern
 - `video.topic_rules.front_camera.publish.max_framerate: 15.0` overrides only framerate for that rule
-- `video.custom_sources.front_rtsp.source: "uridecodebin uri=rtsp://..."` creates a configured external source requested as `external: "/front_rtsp"`
-- `video.custom_sources.front_rtsp.publish.codec: "h264"` overrides only codec for that source
+- `video.configured_sources.front_rtsp.source: "uridecodebin uri=rtsp://..."` creates a configured source requested as `configured_source: "/front_rtsp"`
+- `video.configured_sources.front_rtsp.publish.codec: "h264"` overrides only codec for that source
 
-`video_topic_rule_ids` and `video_custom_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly under `video.topic_rules.ids` and `video.custom_sources.ids` yet.
+`video_topic_rule_ids` and `video_configured_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly under `video.topic_rules.ids` and `video.configured_sources.ids` yet.
 
 Default LiveKit video publish options are also startup-only:
 
@@ -172,7 +172,7 @@ Default LiveKit video publish options are also startup-only:
 - `video.publish.max_framerate`
 - `video.publish.simulcast`
 
-Those settings provide the default for every video track publish. Leave them at their defaults to use SDK-selected behavior, or override any subset per entry with `video.topic_rules.<id>.publish.*` or `video.custom_sources.<id>.publish.*`.
+Those settings provide the default for every video track publish. Leave them at their defaults to use SDK-selected behavior, or override any subset per entry with `video.topic_rules.<id>.publish.*` or `video.configured_sources.<id>.publish.*`.
 
 ## Runtime image
 

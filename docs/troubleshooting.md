@@ -29,7 +29,7 @@ Common causes:
 - missing auth configuration
 - only one of `livekit.api_key` or `livekit.api_secret` is set
 - `livekit.token_ttl_seconds <= 0` while API credentials are enabled
-- invalid `video.topic_rules.*` or `video.custom_sources.*` configuration
+- invalid `video.topic_rules.*` or `video.configured_sources.*` configuration
 
 Start with [runtime-configuration.md](./runtime-configuration.md).
 
@@ -108,13 +108,13 @@ Useful log events:
 | `error.reason` | What it usually means |
 | --- | --- |
 | `forbidden` | the subscribe policy denied a topic |
-| `not_found` | the topic or external source could not be resolved, or the topic type was ambiguous |
+| `not_found` | the topic or configured source could not be resolved, or the topic type was ambiguous |
 | `unavailable` | a required runtime dependency could not start or keep running, usually a video stream pipeline |
 
 Remember:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- configured `external` sources do not use those rules; they depend on which `video_custom_source_ids` and `video.custom_sources.*` entries exist
+- `configured_source` targets do not use those rules; they depend on which `video_configured_source_ids` and `video.configured_sources.*` entries exist
 
 For the heartbeat and status contract, read [subscriptions.md](./subscriptions.md).
 
@@ -135,7 +135,7 @@ Useful log events:
 
 Check these first:
 
-- the relevant `video.topic_rules.*` or `video.custom_sources.*` entry exists and matches what the client requested
+- the relevant `video.topic_rules.*` or `video.configured_sources.*` entry exists and matches what the client requested
 - configured source names normalize like ROS resource names
 - the bridge logged `subscription_qos_resolved` for that ROS topic
 - the resolved `reliability` and `durability` match the publisher
@@ -143,11 +143,11 @@ Check these first:
 Common QoS example:
 
 - `ros_gz_bridge` camera topics often publish `RELIABLE`
-- if the bridge subscribes before publisher QoS is visible, add `subscribe.qos_overrides.*` for that topic pattern
+- if the bridge subscribes before publisher QoS is visible, add `subscription.qos_overrides.*` for that topic pattern
 
 Example:
 
-- `video.custom_sources.front_rtsp.source: ...` is requested as `external: "/front_rtsp"`
+- `video.configured_sources.front_rtsp.source: ...` is requested as `configured_source: "/front_rtsp"`
 
 Useful log events:
 
@@ -170,7 +170,7 @@ All other ROS topic types stay on the CDR data-track path.
 
 Common causes:
 
-- the configured external source fragment could not be composed into a valid runtime pipeline
+- the configured-source fragment could not be composed into a valid runtime pipeline
 - the ROS image encoding or compressed-image format is unsupported
 - the source pipeline reached EOS or an error state before it could produce frames
 - a LiveKit video track publish failed

@@ -85,11 +85,11 @@ If you use this repository's dev-container workflow, `just build` runs the packa
 
    For the full parameter model, read [docs/runtime-configuration.md](./docs/runtime-configuration.md). For rule matching and deny precedence, read [docs/access-control.md](./docs/access-control.md).
 
-   ROS topic subscriptions resolve subscriber `reliability` and `durability` from visible publishers when the bridge creates the subscription. Use `subscription_qos_override_ids` together with `subscribe.qos_overrides.*` when you need to pin those fields for a topic pattern.
+   ROS topic subscriptions resolve subscriber `reliability` and `durability` from visible publishers when the bridge creates the subscription. Use `subscription_qos_overrides_ids` together with `subscription.qos_overrides.*` when you need to pin those fields for a topic pattern.
 
-3. If you want video, add root-level `video_topic_rule_ids` and `video_custom_source_ids` plus matching `video.topic_rules.*` and `video.custom_sources.*` entries in the same file. Topic rules match ROS image topics by required `pattern` and optional `transform`. Custom sources define configured external inputs with required `source` and optional `transform`; the configured id becomes the external name clients request after normalization. For example, `video.custom_sources.front_rtsp.source: ...` is requested as `external: "/front_rtsp"`. Use `video.publish.*` for default LiveKit video publish options such as codec, bitrate, framerate, and simulcast, then override any subset per entry with `video.topic_rules.<id>.publish.*` or `video.custom_sources.<id>.publish.*`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
+3. If you want video, add root-level `video_topic_rule_ids` and `video_configured_source_ids` plus matching `video.topic_rules.*` and `video.configured_sources.*` entries in the same file. Topic rules match ROS image topics by required `pattern` and optional `transform`. Configured sources define non-ROS video inputs with required `source` and optional `transform`; the configured id becomes the `configured_source` name clients request after normalization. For example, `video.configured_sources.front_rtsp.source: ...` is requested as `configured_source: "/front_rtsp"`. Use `video.publish.*` for default LiveKit video publish options such as codec, bitrate, framerate, and simulcast, then override any subset per entry with `video.topic_rules.<id>.publish.*` or `video.configured_sources.<id>.publish.*`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
 
-   This matters for camera topics coming from bridges like `ros_gz_bridge`, which often publish `RELIABLE`. If the publisher is not visible yet when the subscription is created, add a `subscription_qos_override_ids` entry and matching `subscribe.qos_overrides.*` parameters for that topic pattern.
+   This matters for camera topics coming from bridges like `ros_gz_bridge`, which often publish `RELIABLE`. If the publisher is not visible yet when the subscription is created, add a `subscription_qos_overrides_ids` entry and matching `subscription.qos_overrides.*` parameters for that topic pattern.
 
 4. Run the node.
 
@@ -115,7 +115,7 @@ Supported today:
 - topic subscriptions
 - video subscriptions
 - small ROS topic publications into ROS 2
-- configured external video sources
+- configured video sources
 
 Not supported today:
 

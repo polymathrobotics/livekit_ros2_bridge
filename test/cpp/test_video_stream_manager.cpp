@@ -143,15 +143,15 @@ VideoStreamSpec makeCompressedRosSpec(const std::string & topic, const std::stri
   return spec;
 }
 
-VideoStreamSpec makeExternalSpec(const std::string & external_name, const std::string & track_name)
+VideoStreamSpec makeConfiguredSourceSpec(const std::string & configured_source_name, const std::string & track_name)
 {
   VideoStreamSpec spec;
-  spec.stream_key = "external:" + external_name;
+  spec.stream_key = "configured_source:" + configured_source_name;
   spec.track_name = track_name;
-  spec.external_name = external_name;
-  spec.source_kind = VideoSourceKind::External;
-  spec.ingest_mode = kExternalIngestMode;
-  spec.selected_config_key = external_name;
+  spec.configured_source_name = configured_source_name;
+  spec.source_kind = VideoSourceKind::ConfiguredSource;
+  spec.ingest_mode = kConfiguredSourceIngestMode;
+  spec.selected_config_key = configured_source_name;
   spec.source_description = "videotestsrc is-live=true pattern=black";
   return spec;
 }
@@ -299,13 +299,13 @@ TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJ
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, ExternalPipelinePublishesTrackAndStopUnpublishesIt)
+TEST_F(VideoStreamManagerTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_external"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_configured_source"));
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makeExternalSpec("/sources/front", "ros.video.external.sources.front");
+  const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.sources.front");
 
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
@@ -324,7 +324,7 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makeExternalSpec("/sources/shutdown", "ros.video.external.sources.shutdown");
+  const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.sources.shutdown");
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));

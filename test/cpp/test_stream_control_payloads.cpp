@@ -53,12 +53,12 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsNormalizedTopicAndInterval
     125);
 }
 
-TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsExternalAndInterval)
+TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterval)
 {
   expectSingleSubscription(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"external":"/cameras/front","delivery_preferences":{"interval_ms":125}}]})"),
-    SubscriptionTargetKind::External,
+      R"({"subscriptions":[{"configured_source":"/cameras/front","delivery_preferences":{"interval_ms":125}}]})"),
+    SubscriptionTargetKind::ConfiguredSource,
     "/cameras/front",
     125);
 }
@@ -89,9 +89,9 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidTargets)
 {
   const std::array<nlohmann::json, 4> payloads{
     nlohmann::json::parse(R"({"subscriptions":[{"delivery_preferences":{"interval_ms":100}}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"external":""}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"configured_source":""}]})"),
     nlohmann::json::parse(R"({"subscriptions":[{"topic":123}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/battery","external":"/sources/x"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/battery","configured_source":"/sources/x"}]})"),
   };
 
   for (const auto & body : payloads) {
@@ -136,12 +136,12 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
   EXPECT_EQ(update.subscriptions[0].preferred_interval_ms, 25);
 }
 
-TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndExternalDistinctWhenNamesMatch)
+TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndConfiguredSourceDistinctWhenNamesMatch)
 {
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
       {"topic":"/camera/front","delivery_preferences":{"interval_ms":25}},
-      {"external":"/camera/front","delivery_preferences":{"interval_ms":125}}
+      {"configured_source":"/camera/front","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto update = parseSubscriptionHeartbeat(body);
 
@@ -149,7 +149,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndExternalDistinctWhenN
   EXPECT_EQ(update.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
   EXPECT_EQ(update.subscriptions[0].target.name, "/camera/front");
   EXPECT_EQ(update.subscriptions[0].preferred_interval_ms, 25);
-  EXPECT_EQ(update.subscriptions[1].target.kind, SubscriptionTargetKind::External);
+  EXPECT_EQ(update.subscriptions[1].target.kind, SubscriptionTargetKind::ConfiguredSource);
   EXPECT_EQ(update.subscriptions[1].target.name, "/camera/front");
   EXPECT_EQ(update.subscriptions[1].preferred_interval_ms, 125);
 }
@@ -168,7 +168,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
     entry,
     (nlohmann::json{
       {"kind", "topic"},
-      {"topic", "/camera/image"},
+      {"name", "/camera/image"},
       {"status", "active"},
       {"interface_type", "sensor_msgs/msg/Image"},
       {"delivery",
@@ -182,22 +182,22 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
 TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery)
 {
   StreamStatus stream_status;
-  stream_status.target = {SubscriptionTargetKind::External, "/sources/front"};
+  stream_status.target = {SubscriptionTargetKind::ConfiguredSource, "/sources/front"};
   stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.track_name = "ros.video.external.sources.front";
+  stream_status.track_name = "ros.video.configured_source.sources.front";
 
   const auto entry = serializeStreamStatus(stream_status);
 
   EXPECT_EQ(
     entry,
     (nlohmann::json{
-      {"kind", "external"},
-      {"external", "/sources/front"},
+      {"kind", "configured_source"},
+      {"name", "/sources/front"},
       {"status", "active"},
       {"delivery",
        {
          {"kind", "video"},
-         {"track_name", "ros.video.external.sources.front"},
+         {"track_name", "ros.video.configured_source.sources.front"},
        }},
     }));
 }
@@ -208,8 +208,8 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
   stream_status.target = {SubscriptionTargetKind::Topic, "/lidar/points"};
   stream_status.interface_type = "sensor_msgs/msg/PointCloud2";
   stream_status.applied_interval_ms = 0;
-  stream_status.delivery_kind = StreamDeliveryKind::kDataTrack;
-  stream_status.track_name = "ros.cdr.lidar.points";
+  stream_status.delivery_kind = StreamDeliveryKind::kData;
+  stream_status.track_name = "ros.data.lidar.points";
 
   const auto entry = serializeStreamStatus(stream_status);
 
@@ -217,16 +217,16 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
     entry,
     (nlohmann::json{
       {"kind", "topic"},
-      {"topic", "/lidar/points"},
+      {"name", "/lidar/points"},
       {"status", "active"},
       {"interface_type", "sensor_msgs/msg/PointCloud2"},
       {"delivery",
        {
-         {"kind", "data_track"},
-         {"track_name", "ros.cdr.lidar.points"},
+         {"kind", "data"},
+         {"track_name", "ros.data.lidar.points"},
          {"content_type", "application/x-ros-cdr"},
+         {"interval_ms", 0},
        }},
-      {"applied_preferences", {{"interval_ms", 0}}},
     }));
 }
 

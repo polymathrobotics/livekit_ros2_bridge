@@ -204,7 +204,7 @@ SubscriptionQosReliabilityMode parseSubscriptionQosReliabilityMode(const std::st
     return SubscriptionQosReliabilityMode::kBestEffort;
   }
 
-  throw std::runtime_error("unsupported subscribe.qos_overrides reliability mode '" + raw_mode + "'");
+  throw std::runtime_error("unsupported subscription.qos_overrides reliability mode '" + raw_mode + "'");
 }
 
 SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::string & raw_mode)
@@ -219,7 +219,7 @@ SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::stri
     return SubscriptionQosDurabilityMode::kTransientLocal;
   }
 
-  throw std::runtime_error("unsupported subscribe.qos_overrides durability mode '" + raw_mode + "'");
+  throw std::runtime_error("unsupported subscription.qos_overrides durability mode '" + raw_mode + "'");
 }
 
 VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec)
@@ -480,11 +480,11 @@ std::string parseVideoTransform(const std::string & raw_transform)
   return trim(raw_transform);
 }
 
-std::string parseCustomVideoSource(const std::string & entry_id, const std::string & raw_source)
+std::string parseConfiguredSource(const std::string & entry_id, const std::string & raw_source)
 {
   const std::string source = trim(raw_source);
   if (source.empty()) {
-    throw std::runtime_error("video custom source '" + entry_id + "' requires a non-empty source");
+    throw std::runtime_error("video configured source '" + entry_id + "' requires a non-empty source");
   }
   return source;
 }
@@ -495,10 +495,10 @@ void validateVideoTopicRuleTransform(const std::string & entry_id, const std::st
   validatePipelineDescription(context, composeVideoPipelineDescription(makeRosValidationPrefix(), transform), true);
 }
 
-void validateCustomVideoSourceFragments(
+void validateConfiguredSourceFragments(
   const std::string & entry_id, const std::string & source, const std::string & transform)
 {
-  const std::string context = "video custom source '" + entry_id + "'";
+  const std::string context = "video configured source '" + entry_id + "'";
   validatePipelineDescription(context, composeVideoPipelineDescription(source, transform), false);
 }
 
@@ -543,8 +543,8 @@ VideoConfig loadVideoConfig(const Params & params)
   config.ros_topic_rules.clear();
 
   std::unordered_set<std::string> seen_topic_rule_ids;
-  std::unordered_set<std::string> seen_custom_source_ids;
-  std::unordered_set<std::string> seen_external_names;
+  std::unordered_set<std::string> seen_configured_source_ids;
+  std::unordered_set<std::string> seen_configured_source_names;
   // Keep video_topic_rule_ids at the root until generate_parameter_library 0.7+
   // is the baseline across the full distro matrix. GPL 0.6.x does not support
   // moving this cleanly to video.topic_rules.ids for every target we test.
@@ -569,36 +569,38 @@ VideoConfig loadVideoConfig(const Params & params)
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
-  // Keep video_custom_source_ids at the root until generate_parameter_library
+  // Keep video_configured_source_ids at the root until generate_parameter_library
   // 0.7+ is the baseline across the full distro matrix. GPL 0.6.x does not
-  // support moving this cleanly to video.custom_sources.ids for every target we
+  // support moving this cleanly to video.configured_sources.ids for every target we
   // test.
-  for (const auto & entry_id : params.video_custom_source_ids) {
+  for (const auto & entry_id : params.video_configured_source_ids) {
     const auto & entry = requireUniqueGeneratedEntry(
-      seen_custom_source_ids,
+      seen_configured_source_ids,
       entry_id,
-      params.video.custom_sources.video_custom_source_ids_map,
-      "video custom source id",
-      "video custom source");
+      params.video.configured_sources.video_configured_source_ids_map,
+      "video configured source id",
+      "video configured source");
 
-    const std::string source_fragment = parseCustomVideoSource(entry_id, entry.source);
+    const std::string source_fragment = parseConfiguredSource(entry_id, entry.source);
     const std::string transform = parseVideoTransform(entry.transform);
-    validateCustomVideoSourceFragments(entry_id, source_fragment, transform);
+    validateConfiguredSourceFragments(entry_id, source_fragment, transform);
 
-    // Configured sources are keyed by the canonical normalized external name, so
+    // Configured sources are keyed by the canonical normalized configured-source name, so
     // spelling variants collapse to one lookup key and one shared stream contract.
-    const std::string normalized_external_name = normalizeExternalName(entry_id);
-    if (normalized_external_name.empty()) {
-      throw std::runtime_error("video custom source '" + entry_id + "' must normalize to a valid external name");
+    const std::string normalized_configured_source_name = normalizeConfiguredSourceName(entry_id);
+    if (normalized_configured_source_name.empty()) {
+      throw std::runtime_error(
+        "video configured source '" + entry_id + "' must normalize to a valid configured source name");
     }
-    requireUniqueEntryKey(seen_external_names, normalized_external_name, "configured video external name");
+    requireUniqueEntryKey(
+      seen_configured_source_names, normalized_configured_source_name, "configured video source name");
 
-    ConfiguredExternalSource source;
+    ConfiguredSource source;
     source.source = source_fragment;
     source.transform = transform;
     source.publish = mergeVideoPublishConfig(
-      config.publish, parseVideoPublishOverride(entry, "video custom source '" + entry_id + "'"));
-    config.external_sources.emplace(normalized_external_name, std::move(source));
+      config.publish, parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
+    config.configured_sources.emplace(normalized_configured_source_name, std::move(source));
   }
 
   // Append built-in catch-all after user entries.
@@ -630,17 +632,17 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
   SubscriptionQosConfig config;
 
   std::unordered_set<std::string> seen_override_ids;
-  for (const auto & override_id : params.subscription_qos_override_ids) {
+  for (const auto & override_id : params.subscription_qos_overrides_ids) {
     const auto & entry = requireUniqueGeneratedEntry(
       seen_override_ids,
       override_id,
-      params.subscribe.qos_overrides.subscription_qos_override_ids_map,
+      params.subscription.qos_overrides.subscription_qos_overrides_ids_map,
       "subscription QoS override id",
       "subscription QoS override entry");
 
     TopicSubscriptionQosOverride override_entry;
     override_entry.id = override_id;
-    override_entry.pattern = normalizeRosTopicPattern(entry.pattern, "subscribe.qos_overrides");
+    override_entry.pattern = normalizeRosTopicPattern(entry.pattern, "subscription.qos_overrides");
     override_entry.reliability = parseSubscriptionQosReliabilityMode(entry.reliability);
     override_entry.durability = parseSubscriptionQosDurabilityMode(entry.durability);
     config.topic_overrides.push_back(std::move(override_entry));

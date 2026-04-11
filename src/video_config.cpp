@@ -26,9 +26,9 @@ namespace
 {
 
 constexpr char kTopicStreamKeyPrefix[] = "topic";
-constexpr char kExternalStreamKeyPrefix[] = "external";
+constexpr char kConfiguredSourceStreamKeyPrefix[] = "configured_source";
 constexpr char kTopicTrackNamePrefix[] = "ros.video.";
-constexpr char kExternalTrackNamePrefix[] = "ros.video.external.";
+constexpr char kConfiguredSourceTrackNamePrefix[] = "ros.video.configured_source.";
 
 std::string makeVideoStreamKey(std::string_view prefix, const std::string & resource)
 {
@@ -91,9 +91,9 @@ std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::s
   return std::nullopt;
 }
 
-std::string normalizeExternalName(std::string_view external_name)
+std::string normalizeConfiguredSourceName(std::string_view configured_source_name)
 {
-  return normalizeRosResourceName(external_name);
+  return normalizeRosResourceName(configured_source_name);
 }
 
 std::string videoSourceKindToString(VideoSourceKind kind)
@@ -101,7 +101,7 @@ std::string videoSourceKindToString(VideoSourceKind kind)
   if (kind == VideoSourceKind::RosTopic) {
     return "ros_topic";
   }
-  return "external";
+  return "configured_source";
 }
 
 VideoStreamSpec resolveRosVideoStreamSpec(
@@ -143,30 +143,31 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   return spec;
 }
 
-VideoStreamSpec resolveExternalVideoStreamSpec(const VideoConfig & config, const std::string & external_name)
+VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
+  const VideoConfig & config, const std::string & configured_source_name)
 {
-  const std::string normalized = normalizeExternalName(external_name);
+  const std::string normalized = normalizeConfiguredSourceName(configured_source_name);
   if (normalized.empty()) {
-    throw std::invalid_argument("Invalid external name.");
+    throw std::invalid_argument("Invalid configured source name.");
   }
 
-  const auto source_it = config.external_sources.find(normalized);
-  if (source_it == config.external_sources.end()) {
+  const auto source_it = config.configured_sources.find(normalized);
+  if (source_it == config.configured_sources.end()) {
     throw std::invalid_argument("Unknown configured video source '" + normalized + "'.");
   }
 
   const auto & source = source_it->second;
 
   VideoStreamSpec spec;
-  // stream_key, external_name, and selected_config_key all use the same canonical configured-source name.
-  spec.stream_key = makeVideoStreamKey(kExternalStreamKeyPrefix, normalized);
-  spec.track_name = makeVideoTrackName(kExternalTrackNamePrefix, normalized);
-  spec.external_name = normalized;
-  spec.source_kind = VideoSourceKind::External;
+  // stream_key, configured_source_name, and selected_config_key all use the same canonical configured-source name.
+  spec.stream_key = makeVideoStreamKey(kConfiguredSourceStreamKeyPrefix, normalized);
+  spec.track_name = makeVideoTrackName(kConfiguredSourceTrackNamePrefix, normalized);
+  spec.configured_source_name = normalized;
+  spec.source_kind = VideoSourceKind::ConfiguredSource;
   spec.selected_config_key = normalized;
   spec.source_description = source.source;
   spec.transform_description = source.transform;
-  spec.ingest_mode = kExternalIngestMode;
+  spec.ingest_mode = kConfiguredSourceIngestMode;
   spec.publish_config = source.publish;
 
   return spec;

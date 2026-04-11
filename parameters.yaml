@@ -73,9 +73,9 @@ livekit_ros2_bridge:
           type: string_array
           default_value: []
           description: "Denylist patterns for service targets."
-  subscribe:
+  subscription:
     qos_overrides:
-      __map_subscription_qos_override_ids:
+      __map_subscription_qos_overrides_ids:
         pattern:
           type: string
           default_value: ""
@@ -92,10 +92,10 @@ livekit_ros2_bridge:
           description: "Subscriber durability override: auto, volatile, or transient_local."
           validation:
             one_of<>: [["auto", "volatile", "transient_local"]]
-  subscription_qos_override_ids:
+  subscription_qos_overrides_ids:
     type: string_array
     default_value: []
-    description: "QoS override ids defined under subscribe.qos_overrides.<id>."
+    description: "QoS override ids defined under subscription.qos_overrides.<id>."
   publish:
     max_topics:
       type: int
@@ -111,14 +111,14 @@ livekit_ros2_bridge:
     type: string_array
     default_value: []
     description: "Video topic rule ids defined under video.topic_rules.<id>."
-  # Keep video_custom_source_ids at the root for now. generate_parameter_library
+  # Keep video_configured_source_ids at the root for now. generate_parameter_library
   # 0.6.x, which is still part of our supported test matrix, does not support
-  # moving this cleanly to video.custom_sources.ids across all distros. Move it
+  # moving this cleanly to video.configured_sources.ids across all distros. Move it
   # once GPL 0.7+ is baseline everywhere in the matrix.
-  video_custom_source_ids:
+  video_configured_source_ids:
     type: string_array
     default_value: []
-    description: "Video custom source ids defined under video.custom_sources.<id>."
+    description: "Video configured source ids defined under video.configured_sources.<id>."
   video:
     publish:
       codec:
@@ -179,37 +179,40 @@ livekit_ros2_bridge:
             description: "Optional LiveKit simulcast override for this video topic rule. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
-    custom_sources:
-      __map_video_custom_source_ids:
+    configured_sources:
+      __map_video_configured_source_ids:
         source:
           type: string
-          description: "External source fragment for this custom video source (e.g. uridecodebin, v4l2src)."
+          description: "Ingress fragment for this configured video source (e.g. uridecodebin, v4l2src)."
         transform:
           type: string
           default_value: ""
-          description: "Optional GStreamer transform fragment inserted after external source ingress."
+          description: "Optional GStreamer transform fragment inserted after configured source ingress."
         publish:
           codec:
             type: string
             default_value: ""
-            description: "Optional LiveKit codec override for this custom video source. Empty inherits from video.publish.codec."
+            description: "Optional LiveKit codec override for this configured video source. Empty inherits from video.publish.codec."
             validation:
               one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
           max_bitrate_bps:
             type: int
             default_value: -1
-            description: "Optional LiveKit max video bitrate override for this source in bps. -1 inherits from video.publish.max_bitrate_bps."
+            description: >-
+              Optional LiveKit max video bitrate override for this configured
+              source in bps. -1 inherits from
+              video.publish.max_bitrate_bps.
             validation:
               gt_eq<>: [-1]
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this source. -1 inherits from video.publish.max_framerate."
+            description: "Optional LiveKit max video framerate override for this configured source. -1 inherits from video.publish.max_framerate."
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ""
-            description: "Optional LiveKit simulcast override for this custom video source. Empty inherits from video.publish.simulcast."
+            description: "Optional LiveKit simulcast override for this configured video source. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]

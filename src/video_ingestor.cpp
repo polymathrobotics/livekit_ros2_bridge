@@ -53,7 +53,7 @@ namespace
 const auto kVideoStreamManagerLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_manager");
 constexpr char kAppSrcName[] = "bridge_video_src";
 constexpr char kAppSinkName[] = "bridge_video_sink";
-constexpr auto kExternalRestartDelay = std::chrono::milliseconds(250);
+constexpr auto kConfiguredSourceRestartDelay = std::chrono::milliseconds(250);
 
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
@@ -937,10 +937,10 @@ private:
   std::string compressed_format_;
 };
 
-class ExternalVideoIngestor final : public GstreamerVideoIngestorBase
+class ConfiguredSourceVideoIngestor final : public GstreamerVideoIngestorBase
 {
 public:
-  ExternalVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
+  ConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
   : GstreamerVideoIngestorBase(std::move(spec), frame_sink)
   {}
 
@@ -952,7 +952,7 @@ public:
     }
 
     if (pipeline_ == nullptr) {
-      startExternalPipelineLocked();
+      startConfiguredSourcePipelineLocked();
     }
   }
 
@@ -973,7 +973,7 @@ public:
   }
 
 private:
-  void startExternalPipelineLocked()
+  void startConfiguredSourcePipelineLocked()
   {
     startPipelineLocked(composePipeline(spec_.source_description, spec_.transform_description));
     playPipelineLocked();
@@ -989,12 +989,12 @@ private:
 
   std::chrono::milliseconds restartDelayOnFailure() const override
   {
-    return kExternalRestartDelay;
+    return kConfiguredSourceRestartDelay;
   }
 
   void restartAfterFailureLocked() override
   {
-    startExternalPipelineLocked();
+    startConfiguredSourcePipelineLocked();
   }
 };
 
@@ -1018,9 +1018,9 @@ std::shared_ptr<IVideoIngestor> makeCompressedRosVideoIngestor(
   return std::make_shared<CompressedRosVideoIngestor>(node, std::move(spec), subscription_qos_config, frame_sink);
 }
 
-std::shared_ptr<IVideoIngestor> makeExternalVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
+std::shared_ptr<IVideoIngestor> makeConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
 {
-  return std::make_shared<ExternalVideoIngestor>(std::move(spec), frame_sink);
+  return std::make_shared<ConfiguredSourceVideoIngestor>(std::move(spec), frame_sink);
 }
 
 }  // namespace livekit_ros2_bridge

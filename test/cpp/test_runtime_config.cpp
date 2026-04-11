@@ -246,12 +246,13 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front_camera"});
-  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front_rtsp"});
+  options.append_parameter_override("video_configured_source_ids", std::vector<std::string>{"front_rtsp"});
   options.append_parameter_override("video.topic_rules.front_camera.pattern", "/camera/front/*");
   options.append_parameter_override(
     "video.topic_rules.front_camera.transform", "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
-  options.append_parameter_override("video.custom_sources.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
-  options.append_parameter_override("video.custom_sources.front_rtsp.transform", "videobalance saturation=0.0");
+  options.append_parameter_override(
+    "video.configured_sources.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
+  options.append_parameter_override("video.configured_sources.front_rtsp.transform", "videobalance saturation=0.0");
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_params", options);
 
@@ -260,10 +261,10 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.pattern, "/camera/front/*");
   EXPECT_EQ(front_rule.id, "front_camera");
   EXPECT_EQ(front_rule.transform, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
-  ASSERT_EQ(startup_config.video_config.external_sources.size(), 1U);
+  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
   EXPECT_EQ(
-    startup_config.video_config.external_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(startup_config.video_config.external_sources.at("/front_rtsp").transform, "videobalance saturation=0.0");
+    startup_config.video_config.configured_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(startup_config.video_config.configured_sources.at("/front_rtsp").transform, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
@@ -285,13 +286,13 @@ TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
 TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera", "front"});
-  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "best_effort");
-  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
-  options.append_parameter_override("subscribe.qos_overrides.front.pattern", " //camera/front/ ");
-  options.append_parameter_override("subscribe.qos_overrides.front.reliability", "auto");
-  options.append_parameter_override("subscribe.qos_overrides.front.durability", "transient_local");
+  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera", "front"});
+  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "best_effort");
+  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription.qos_overrides.front.pattern", " //camera/front/ ");
+  options.append_parameter_override("subscription.qos_overrides.front.reliability", "auto");
+  options.append_parameter_override("subscription.qos_overrides.front.durability", "transient_local");
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_subscription_qos_params", options);
 
@@ -313,10 +314,10 @@ TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams
 TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera", "camera"});
-  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
-  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera", "camera"});
+  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "auto");
+  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
 
   expectRuntimeConfigError(
     "startup_config_duplicate_subscription_qos_override_id",
@@ -327,27 +328,27 @@ TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecif
 TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsEmptyPattern)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera"});
-  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "   ");
-  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
-  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "   ");
+  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "auto");
+  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
 
   expectRuntimeConfigError(
-    "startup_config_empty_subscription_qos_pattern", options, "subscribe.qos_overrides pattern must not be empty");
+    "startup_config_empty_subscription_qos_pattern", options, "subscription.qos_overrides pattern must not be empty");
 }
 
 TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera"});
-  options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "sometimes");
-  options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "sometimes");
+  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
 
   expectRuntimeConfigErrorContains(
     "startup_config_invalid_subscription_qos_reliability",
     options,
-    "Parameter 'subscribe.qos_overrides.camera.reliability' with the value 'sometimes' is not in the set");
+    "Parameter 'subscription.qos_overrides.camera.reliability' with the value 'sometimes' is not in the set");
 }
 
 TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)
@@ -389,21 +390,22 @@ TEST_F(RuntimeConfigTest, RosVideoPublishOverrideCanSetSingleFieldWithoutTransfo
   expectPublishConfigEq(rule.publish, VideoPublishCodec::H264, 900000U, 15.0, VideoPublishSimulcast::Enabled);
 }
 
-TEST_F(RuntimeConfigTest, CustomVideoPublishOverrideCanSetSingleFieldWithoutTransform)
+TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldWithoutTransform)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video.publish.codec", "vp8");
   options.append_parameter_override("video.publish.max_bitrate_bps", 500000);
   options.append_parameter_override("video.publish.max_framerate", 30.0);
   options.append_parameter_override("video.publish.simulcast", "disabled");
-  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("video.custom_sources.front.source", "videotestsrc pattern=ball");
-  options.append_parameter_override("video.custom_sources.front.publish.codec", "h265");
+  options.append_parameter_override("video_configured_source_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.configured_sources.front.source", "videotestsrc pattern=ball");
+  options.append_parameter_override("video.configured_sources.front.publish.codec", "h265");
 
-  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_custom_publish_override", options);
+  const RuntimeConfig startup_config =
+    loadRuntimeConfigForNode("startup_config_configured_source_publish_override", options);
 
-  ASSERT_EQ(startup_config.video_config.external_sources.size(), 1U);
-  const auto & source = startup_config.video_config.external_sources.at("/front");
+  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
+  const auto & source = startup_config.video_config.configured_sources.at("/front");
   EXPECT_EQ(source.transform, "");
   expectPublishConfigEq(source.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
 }
@@ -453,15 +455,15 @@ TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersAreRejectedByParam
     "parameter 'video.topic_rules.front.pattern' is not initialized");
 }
 
-TEST_F(RuntimeConfigTest, MissingGeneratedVideoCustomSourceParametersAreRejectedByParameterLibrary)
+TEST_F(RuntimeConfigTest, MissingGeneratedVideoConfiguredSourceParametersAreRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_configured_source_ids", std::vector<std::string>{"front"});
 
   expectRuntimeConfigErrorContains(
-    "startup_config_missing_video_custom_source_params",
+    "startup_config_missing_video_configured_source_params",
     options,
-    "parameter 'video.custom_sources.front.source' is not initialized");
+    "parameter 'video.configured_sources.front.source' is not initialized");
 }
 
 TEST_F(RuntimeConfigTest, RosVideoTransformRejectsBridgeManagedAppsink)
@@ -477,26 +479,26 @@ TEST_F(RuntimeConfigTest, RosVideoTransformRejectsBridgeManagedAppsink)
     "video topic rule 'front' transform must not define appsrc/appsink endpoints; the bridge owns them");
 }
 
-TEST_F(RuntimeConfigTest, ExternalVideoSourceRejectsBridgeManagedAppsrc)
+TEST_F(RuntimeConfigTest, ConfiguredSourceRejectsBridgeManagedAppsrc)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("video.custom_sources.front.source", "appsrc ! videoconvert");
+  options.append_parameter_override("video_configured_source_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.configured_sources.front.source", "appsrc ! videoconvert");
 
   expectRuntimeConfigError(
-    "startup_config_external_source_appsrc_rejected",
+    "startup_config_configured_source_appsrc_rejected",
     options,
-    "video custom source 'front' must not define appsrc/appsink endpoints; the bridge owns them");
+    "video configured source 'front' must not define appsrc/appsink endpoints; the bridge owns them");
 }
 
-TEST_F(RuntimeConfigTest, DuplicateVideoCustomSourceIdReportsSectionSpecificError)
+TEST_F(RuntimeConfigTest, DuplicateVideoConfiguredSourceIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front", "front"});
-  options.append_parameter_override("video.custom_sources.front.source", "videotestsrc pattern=ball");
+  options.append_parameter_override("video_configured_source_ids", std::vector<std::string>{"front", "front"});
+  options.append_parameter_override("video.configured_sources.front.source", "videotestsrc pattern=ball");
 
   expectRuntimeConfigError(
-    "startup_config_duplicate_video_custom_source_id", options, "duplicate video custom source id 'front'");
+    "startup_config_duplicate_video_configured_source_id", options, "duplicate video configured source id 'front'");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError)
@@ -513,14 +515,14 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
     params_file << "    livekit.url: ws://test:7880\n";
     params_file << "    livekit.room: robot-room\n";
     params_file << "    livekit.token: static-token\n";
-    params_file << "    video_custom_source_ids: ['/front_rtsp', '/front_rtsp/']\n";
-    params_file << "    \"video.custom_sources./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";
-    params_file << "    \"video.custom_sources./front_rtsp/.source\": 'videotestsrc is-live=true pattern=smpte'\n";
+    params_file << "    video_configured_source_ids: ['/front_rtsp', '/front_rtsp/']\n";
+    params_file << "    \"video.configured_sources./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";
+    params_file << "    \"video.configured_sources./front_rtsp/.source\": 'videotestsrc is-live=true pattern=smpte'\n";
   }
 
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", params_path.string()});
-  expectRuntimeConfigError(node_name, options, "duplicate configured video external name '/front_rtsp'");
+  expectRuntimeConfigError(node_name, options, "duplicate configured video source name '/front_rtsp'");
 
   std::filesystem::remove(params_path);
 }

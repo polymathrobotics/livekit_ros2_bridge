@@ -54,6 +54,6 @@ std::shared_ptr<IVideoIngestor> makeCompressedRosVideoIngestor(
   const SubscriptionQosConfig * subscription_qos_config,
   IVideoFrameSink & frame_sink);
 
-std::shared_ptr<IVideoIngestor> makeExternalVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink);
+std::shared_ptr<IVideoIngestor> makeConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink);
 
 }  // namespace livekit_ros2_bridge

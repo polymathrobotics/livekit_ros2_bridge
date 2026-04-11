@@ -124,8 +124,8 @@ public:
 private:
   std::shared_ptr<IVideoIngestor> createIngestorLocked()
   {
-    if (spec_.source_kind == VideoSourceKind::External) {
-      return makeExternalVideoIngestor(spec_, *this);
+    if (spec_.source_kind == VideoSourceKind::ConfiguredSource) {
+      return makeConfiguredSourceVideoIngestor(spec_, *this);
     }
     if (spec_.source_kind == VideoSourceKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
       return makeRawRosVideoIngestor(node_, spec_, subscription_qos_config_, *this);

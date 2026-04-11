@@ -17,7 +17,7 @@ Control topic: `ros.subscriptions.heartbeat`
       }
     },
     {
-      "external": "/front_camera"
+      "configured_source": "/front_camera"
     }
   ]
 }
@@ -27,9 +27,9 @@ Rules:
 
 - `subscriptions` is required and must be an array
 - each entry must be an object
-- each entry must contain exactly one of `topic` or `external`
+- each entry must contain exactly one of `topic` or `configured_source`
 - `topic` values are normalized as ROS resource names
-- `external` values are normalized the same way, so inputs such as `"front_camera"` and `"/front_camera/"` collapse to `"/front_camera"`
+- `configured_source` values are normalized the same way, so inputs such as `"front_camera"` and `"/front_camera/"` collapse to `"/front_camera"`
 - if normalization produces an empty name, that entry is invalid
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
@@ -39,7 +39,7 @@ Rules:
 
 The heartbeat parser treats `subscriptions` as a set keyed by normalized target:
 
-- repeating the same normalized `topic` or `external` name yields one effective request
+- repeating the same normalized `topic` or `configured_source` name yields one effective request
 - when duplicates provide multiple non-zero `interval_ms` values, the smallest value wins
 - `interval_ms: 0` means no preference
 - negative `interval_ms` values are accepted by the parser but clamped to `0` when the lease is applied
@@ -73,15 +73,13 @@ Control topic: `ros.subscriptions.status`
   "streams": [
     {
       "kind": "topic",
-      "topic": "/battery_state",
+      "name": "/battery_state",
       "status": "active",
       "interface_type": "sensor_msgs/msg/BatteryState",
       "delivery": {
-        "kind": "data_track",
-        "track_name": "ros.cdr.battery_state",
-        "content_type": "application/x-ros-cdr"
-      },
-      "applied_preferences": {
+        "kind": "data",
+        "track_name": "ros.data.battery_state",
+        "content_type": "application/x-ros-cdr",
         "interval_ms": 100
       }
     }
@@ -101,14 +99,14 @@ Envelope rules:
 
 Active entries always include:
 
-- `kind`: `topic` or `external`
-- exactly one name field: `topic` or `external`
+- `kind`: `topic` or `configured_source`
+- `name`
 - `status`: `active`
 
 Error entries always include:
 
 - `kind`
-- exactly one name field
+- `name`
 - `status`: `error`
 - `error.reason`
 - `error.message`
@@ -126,15 +124,13 @@ Non-video ROS topics are delivered on a LiveKit data track:
 ```json
 {
   "kind": "topic",
-  "topic": "/battery_state",
+  "name": "/battery_state",
   "status": "active",
   "interface_type": "sensor_msgs/msg/BatteryState",
   "delivery": {
-    "kind": "data_track",
-    "track_name": "ros.cdr.battery_state",
-    "content_type": "application/x-ros-cdr"
-  },
-  "applied_preferences": {
+    "kind": "data",
+    "track_name": "ros.data.battery_state",
+    "content_type": "application/x-ros-cdr",
     "interval_ms": 100
   }
 }
@@ -142,8 +138,8 @@ Non-video ROS topics are delivered on a LiveKit data track:
 
 Notes:
 
-- `track_name` is deterministic: the bridge prefixes `ros.cdr` and replaces `/` with `.`
-- `applied_preferences.interval_ms` is always present for data-track deliveries, including `0`
+- `track_name` is deterministic: the bridge prefixes `ros.data` and replaces `/` with `.`
+- `delivery.interval_ms` is always present for data deliveries, including `0`
 - the bytes sent on the data track are raw serialized CDR bytes, not nested JSON
 
 ## Active video entries
@@ -152,19 +148,19 @@ Video deliveries use the same deterministic track-name surface the bridge publis
 
 ```json
 {
-  "kind": "external",
-  "external": "/front_camera",
+  "kind": "configured_source",
+  "name": "/front_camera",
   "status": "active",
   "delivery": {
     "kind": "video",
-    "track_name": "ros.video.external.front_camera"
+    "track_name": "ros.video.configured_source.front_camera"
   }
 }
 ```
 
 Notes:
 
-- configured `external` targets are always video streams
+- `configured_source` targets are always video streams
 - ROS topics become video streams only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
 - video `track_name` is deterministic and stable for the normalized target name
 
@@ -172,14 +168,14 @@ Notes:
 
 | Requested target | Resolved from | Delivery | Shared resource model |
 | --- | --- | --- | --- |
-| Non-video ROS topic | normalized topic name and unique graph type | data track | one ROS subscription and one data track per normalized topic |
+| Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
 | ROS video topic | normalized topic name, unique graph type, and matching video rule | video | one in-process video stream per resolved `stream_key` |
-| Configured external source | normalized `external` name and matching `video.custom_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
+| Configured source | normalized `configured_source` name and matching `video.configured_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
 
 Important behavior:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- configured `external` sources do not use subscribe rules; they are controlled by which `video_custom_source_ids` and `video.custom_sources.*` entries exist
+- `configured_source` targets do not use subscribe rules; they are controlled by which `video_configured_source_ids` and `video.configured_sources.*` entries exist
 - the bridge never guesses when topic type resolution is ambiguous
 - when the last requester lease disappears, the shared data track or video stream is torn down
 

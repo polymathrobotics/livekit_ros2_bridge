@@ -5,11 +5,11 @@ The bridge resolves each video subscription to one canonical in-process `VideoSt
 Video requests start from one of two inputs:
 
 - a ROS topic whose resolved interface type is a supported video type
-- an `external` target backed by a configured `video.custom_sources.*` entry
+- a `configured_source` target backed by a configured `video.configured_sources.*` entry
 
 ## What becomes a video stream
 
-Configured `external` targets are always video.
+`configured_source` targets are always video.
 
 ROS topics become video only when their resolved interface type is one of:
 
@@ -27,9 +27,9 @@ All other ROS topic types stay on the CDR data-track path.
 
 ## Public config shape
 
-Use root-level `video_topic_rule_ids`, `video_custom_source_ids`, and the matching `video.topic_rules.<id>.*` / `video.custom_sources.<id>.*` entries.
+Use root-level `video_topic_rule_ids`, `video_configured_source_ids`, and the matching `video.topic_rules.<id>.*` / `video.configured_sources.<id>.*` entries.
 
-`video_topic_rule_ids` and `video_custom_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly to `video.topic_rules.ids` and `video.custom_sources.ids` yet.
+`video_topic_rule_ids` and `video_configured_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly to `video.topic_rules.ids` and `video.configured_sources.ids` yet.
 
 Each topic rule has:
 
@@ -37,7 +37,7 @@ Each topic rule has:
 - `transform`: optional
 - `publish.*`: optional partial overrides for `video.publish.*`
 
-Each custom source has:
+Each configured source has:
 
 - `source`: required
 - `transform`: optional
@@ -67,19 +67,19 @@ If no user rule matches, the built-in `default_ros` rule handles both supported 
 
 Its `transform` is empty, so the default behavior is bridge-managed ingress plus bridge-managed tail, with no extra processing stages.
 
-## Configured external sources
+## Configured sources
 
-`video.custom_sources.<id>` entries named in `video_custom_source_ids` become configured external sources.
+`video.configured_sources.<id>` entries named in `video_configured_source_ids` become configured sources.
 
 Rules:
 
 - `source` is required and must be non-empty
 - `transform` is optional
 - `publish.*` fields are optional and may override any subset of `video.publish.*`
-- duplicate ids that normalize to the same external name are rejected at startup
-- lookup uses the normalized external name
+- duplicate ids that normalize to the same configured-source name are rejected at startup
+- lookup uses the normalized configured-source name
 
-That means values such as `front_rtsp`, `/front_rtsp`, and `/front_rtsp/` all collapse to the same canonical external name, `"/front_rtsp"`.
+That means values such as `front_rtsp`, `/front_rtsp`, and `/front_rtsp/` all collapse to the same canonical configured-source name, `"/front_rtsp"`.
 
 ## Runtime pipeline composition
 
@@ -93,12 +93,12 @@ Composition by source kind:
 
 - ROS raw image topic: `appsrc(caps from Image) ! <transform> ! <bridge tail>`
 - ROS compressed image topic: `appsrc(image/jpeg|image/png) ! jpegdec|pngdec ! <transform> ! <bridge tail>`
-- external source: `<source> ! <transform> ! <bridge tail>`
+- configured source: `<source> ! <transform> ! <bridge tail>`
 
 That means:
 
 - ROS `transform` should describe only optional processing stages
-- external `source` should begin with the ingress stage, such as RTSP, V4L2, or a test source
+- configured-source `source` should begin with the ingress stage, such as RTSP, V4L2, or a test source
 - `transform` should not create `appsrc` or `appsink`; the bridge owns those endpoints
 
 At startup the bridge uses GStreamer itself to parse and structurally validate configured `source` and `transform` fragments. That catches malformed syntax and forbidden endpoint ownership early, but runtime failures such as bad URIs, negotiation problems, EOS, or source outages can still happen only when the stream starts.
@@ -112,16 +112,16 @@ These startup-only parameters define the default LiveKit track publish options f
 - `video.publish.max_framerate`
 - `video.publish.simulcast`
 
-Each `video.topic_rules.<id>` and `video.custom_sources.<id>` entry may optionally override any subset of those fields with:
+Each `video.topic_rules.<id>` and `video.configured_sources.<id>` entry may optionally override any subset of those fields with:
 
 - `video.topic_rules.<id>.publish.codec`
 - `video.topic_rules.<id>.publish.max_bitrate_bps`
 - `video.topic_rules.<id>.publish.max_framerate`
 - `video.topic_rules.<id>.publish.simulcast`
-- `video.custom_sources.<id>.publish.codec`
-- `video.custom_sources.<id>.publish.max_bitrate_bps`
-- `video.custom_sources.<id>.publish.max_framerate`
-- `video.custom_sources.<id>.publish.simulcast`
+- `video.configured_sources.<id>.publish.codec`
+- `video.configured_sources.<id>.publish.max_bitrate_bps`
+- `video.configured_sources.<id>.publish.max_framerate`
+- `video.configured_sources.<id>.publish.simulcast`
 
 Entry overrides merge per field with `video.publish.*`, so omitted entry fields inherit the default. Explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior.
 
@@ -146,7 +146,7 @@ Important behavior:
 Failure handling differs slightly by source kind:
 
 - ROS streams recreate their internal pipeline when image dimensions or compressed format change
-- external streams restart after pipeline EOS or error, with a short backoff
+- configured-source streams restart after pipeline EOS or error, with a short backoff
 
 ## ROS input constraints
 

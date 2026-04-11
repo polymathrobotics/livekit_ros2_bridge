@@ -43,8 +43,8 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return "topic";
-    case SubscriptionTargetKind::External:
-      return "external";
+    case SubscriptionTargetKind::ConfiguredSource:
+      return "configured_source";
   }
 
   throw std::invalid_argument("heartbeat target kind is invalid");
@@ -53,8 +53,7 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
 nlohmann::json makeFlatTargetEntry(const SubscriptionTarget & target)
 {
   const char * kind_str = subscriptionTargetKindString(target.kind);
-  const char * name_key = target.kind == SubscriptionTargetKind::Topic ? "topic" : "external";
-  return {{"kind", kind_str}, {name_key, target.name}};
+  return {{"kind", kind_str}, {"name", target.name}};
 }
 
 void appendStreamError(

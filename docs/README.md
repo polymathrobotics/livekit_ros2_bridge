@@ -9,7 +9,7 @@ The repository README is the fast path for deciding whether this package fits an
 | Implement heartbeat and stream handling correctly | [subscriptions.md](./subscriptions.md) |
 | Configure auth, access rules, publish limits, and video entries | [runtime-configuration.md](./runtime-configuration.md) |
 | Understand allow and deny behavior | [access-control.md](./access-control.md) |
-| Configure ROS-backed and external video sources | [video-sources.md](./video-sources.md) |
+| Configure ROS-backed and configured video sources | [video-sources.md](./video-sources.md) |
 | Read the runtime from the source outward | [runtime-architecture.md](./runtime-architecture.md) |
 | Run or extend the test suite | [testing.md](./testing.md) |
 | Debug startup, runtime, or test failures | [troubleshooting.md](./troubleshooting.md) |

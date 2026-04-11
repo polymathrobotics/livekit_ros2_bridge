@@ -28,7 +28,7 @@ inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
 inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
-inline constexpr char kExternalIngestMode[] = "external";
+inline constexpr char kConfiguredSourceIngestMode[] = "configured_source";
 
 namespace video_defaults
 {
@@ -46,7 +46,7 @@ struct RosVideoSourceClassification
 enum class VideoSourceKind
 {
   RosTopic,
-  External,
+  ConfiguredSource,
 };
 
 enum class VideoPublishCodec
@@ -82,7 +82,7 @@ struct RosTopicRule
   VideoPublishConfig publish;
 };
 
-struct ConfiguredExternalSource
+struct ConfiguredSource
 {
   std::string source;
   std::string transform;
@@ -92,14 +92,14 @@ struct ConfiguredExternalSource
 struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
-  // Keyed by normalizeExternalName(...).
-  std::unordered_map<std::string, ConfiguredExternalSource> external_sources;
+  // Keyed by normalizeConfiguredSourceName(...).
+  std::unordered_map<std::string, ConfiguredSource> configured_sources;
   VideoPublishConfig publish;
 };
 
 struct VideoStreamSpec
 {
-  // Stable video runtime key: "topic:<normalized topic>" or "external:<normalized external name>".
+  // Stable video runtime key: "topic:<normalized topic>" or "configured_source:<normalized configured source name>".
   std::string stream_key;
   // Stable LiveKit track name exposed to subscribers.
   std::string track_name;
@@ -107,14 +107,14 @@ struct VideoStreamSpec
   std::string ros_topic;
   // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
   std::string interface_type;
-  // Set only for configured external sources after external-name normalization.
-  std::string external_name;
+  // Set only for configured sources after configured-source-name normalization.
+  std::string configured_source_name;
   VideoSourceKind source_kind = VideoSourceKind::RosTopic;
   std::string ingest_mode;
-  // ROS sources store the matched rule id; external sources store the canonical external name.
+  // ROS sources store the matched rule id; configured sources store the canonical configured source name.
   std::string selected_config_key;
   std::optional<std::string> degraded_reason;
-  // External sources set this to the configured source fragment. ROS sources leave it empty.
+  // Configured sources set this to the configured source fragment. ROS sources leave it empty.
   std::string source_description;
   // Optional GStreamer transform fragment inserted after ingress and before the bridge tail.
   std::string transform_description;
@@ -127,13 +127,14 @@ VideoConfig makeDefaultVideoConfig();
 // Returns the ingest contract for supported ROS video types and std::nullopt for non-video types.
 std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
 // Canonicalizes configured source names so equivalent spellings share one config key and track name.
-std::string normalizeExternalName(std::string_view external_name);
+std::string normalizeConfiguredSourceName(std::string_view configured_source_name);
 std::string videoSourceKindToString(VideoSourceKind kind);
 
 // Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
 VideoStreamSpec resolveRosVideoStreamSpec(
   const VideoConfig & config, const std::string & topic, const std::string & interface_type);
-// Normalizes the configured source name before lookup and fills only the external-source fields in the result.
-VideoStreamSpec resolveExternalVideoStreamSpec(const VideoConfig & config, const std::string & external_name);
+// Normalizes the configured source name before lookup and fills only the configured-source fields in the result.
+VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
+  const VideoConfig & config, const std::string & configured_source_name);
 
 }  // namespace livekit_ros2_bridge

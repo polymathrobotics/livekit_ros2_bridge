@@ -152,23 +152,23 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholde
   expectPublishConfigEq(spec.publish_config, config.ros_topic_rules.front().publish);
 }
 
-TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
+TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecNormalizesConfiguredSourceName)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredExternalSource source;
+  ConfiguredSource source;
   source.source = "videotestsrc is-live=true pattern=black";
   source.transform = "videobalance saturation=0.0";
   source.publish = makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
-  config.external_sources.emplace("/sources/front", std::move(source));
+  config.configured_sources.emplace("/sources/front", std::move(source));
 
-  const auto spec = resolveExternalVideoStreamSpec(config, "  /sources/front/ ");
+  const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "  /sources/front/ ");
 
-  EXPECT_EQ(spec.stream_key, "external:/sources/front");
-  EXPECT_EQ(spec.track_name, "ros.video.external.sources.front");
-  EXPECT_EQ(spec.external_name, "/sources/front");
-  EXPECT_EQ(spec.source_kind, VideoSourceKind::External);
-  EXPECT_EQ(spec.ingest_mode, kExternalIngestMode);
+  EXPECT_EQ(spec.stream_key, "configured_source:/sources/front");
+  EXPECT_EQ(spec.track_name, "ros.video.configured_source.sources.front");
+  EXPECT_EQ(spec.configured_source_name, "/sources/front");
+  EXPECT_EQ(spec.source_kind, VideoSourceKind::ConfiguredSource);
+  EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
   EXPECT_EQ(spec.selected_config_key, "/sources/front");
   EXPECT_EQ(spec.source_description, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(spec.transform_description, "videobalance saturation=0.0");
@@ -176,12 +176,12 @@ TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
     spec.publish_config, makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled));
 }
 
-TEST(VideoConfigTest, ResolveExternalVideoStreamSpecRejectsUnknownExternalName)
+TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecRejectsUnknownConfiguredSourceName)
 {
   const VideoConfig config = makeDefaultVideoConfig();
 
   try {
-    (void)resolveExternalVideoStreamSpec(config, "/sources/missing");
+    (void)resolveConfiguredSourceVideoStreamSpec(config, "/sources/missing");
     FAIL() << "Expected invalid_argument";
   } catch (const std::invalid_argument & exc) {
     EXPECT_STREQ(exc.what(), "Unknown configured video source '/sources/missing'.");

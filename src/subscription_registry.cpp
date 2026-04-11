@@ -37,14 +37,14 @@ namespace
 constexpr std::size_t kDataSubscriptionDepth = 2U;
 constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
 constexpr char kTopicSubscriptionKeyPrefix[] = "topic:";
-constexpr char kExternalSubscriptionKeyPrefix[] = "external:";
+constexpr char kConfiguredSourceSubscriptionKeyPrefix[] = "configured_source:";
 const auto kSubscriptionRegistryLogger = rclcpp::get_logger("subscription_registry");
 
 const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
 {
   switch (delivery_kind) {
-    case StreamDeliveryKind::kDataTrack:
-      return protocol::kDeliveryKindDataTrack;
+    case StreamDeliveryKind::kData:
+      return protocol::kDeliveryKindData;
     case StreamDeliveryKind::kVideo:
       return protocol::kDeliveryKindVideo;
   }
@@ -70,8 +70,8 @@ std::optional<std::string> tryResolveVideoStreamKey(
   const VideoConfig & video_config, const SubscriptionTarget & target, const std::string & interface_type)
 {
   try {
-    if (target.kind == SubscriptionTargetKind::External) {
-      return resolveExternalVideoStreamSpec(video_config, target.name).stream_key;
+    if (target.kind == SubscriptionTargetKind::ConfiguredSource) {
+      return resolveConfiguredSourceVideoStreamSpec(video_config, target.name).stream_key;
     }
     return resolveRosVideoStreamSpec(video_config, target.name, interface_type).stream_key;
   } catch (...) {
@@ -93,19 +93,20 @@ const char * requesterRemovalReasonToString(RequesterLeaseRemovalReason reason)
 
 const char * subscriptionKindToString(SubscriptionTargetKind target_kind)
 {
-  return target_kind == SubscriptionTargetKind::Topic ? "topic" : "external";
+  return target_kind == SubscriptionTargetKind::Topic ? "topic" : "configured_source";
 }
 
 SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & entry)
 {
   const auto & target = entry.target;
-  const std::string normalized = target.kind == SubscriptionTargetKind::Topic ? normalizeRosResourceName(target.name)
-                                                                              : normalizeExternalName(target.name);
+  const std::string normalized = target.kind == SubscriptionTargetKind::Topic
+                                   ? normalizeRosResourceName(target.name)
+                                   : normalizeConfiguredSourceName(target.name);
   if (normalized.empty()) {
     throw std::invalid_argument(
       target.kind == SubscriptionTargetKind::Topic
         ? "heartbeat subscription target name must normalize to a non-empty topic name"
-        : "heartbeat subscription target name must normalize to a non-empty external name");
+        : "heartbeat subscription target name must normalize to a non-empty configured_source name");
   }
 
   return SubscriptionRequest{{target.kind, normalized}, entry.preferred_interval_ms};
@@ -176,7 +177,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   SubscriptionState sub;
   std::string interface_type;
   try {
-    if (target.kind == SubscriptionTargetKind::External) {
+    if (target.kind == SubscriptionTargetKind::ConfiguredSource) {
       sub = createVideoSubscription(normalized, "", requester_identity, requester_lease);
     } else {
       interface_type = requireUniqueInterfaceType(node_.get_topic_names_and_types(), target.name, "topic");
@@ -187,7 +188,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
       }
     }
   } catch (const std::exception & exc) {
-    const bool is_video_target = target.kind == SubscriptionTargetKind::External ||
+    const bool is_video_target = target.kind == SubscriptionTargetKind::ConfiguredSource ||
                                  (!interface_type.empty() && classifyRosVideoInterfaceType(interface_type).has_value());
     const std::optional<std::string> stream_key =
       is_video_target ? tryResolveVideoStreamKey(*video_config_, target, interface_type) : std::nullopt;
@@ -325,8 +326,8 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
 
-  const VideoStreamSpec video_stream_spec = target.kind == SubscriptionTargetKind::External
-                                              ? resolveExternalVideoStreamSpec(*video_config_, target.name)
+  const VideoStreamSpec video_stream_spec = target.kind == SubscriptionTargetKind::ConfiguredSource
+                                              ? resolveConfiguredSourceVideoStreamSpec(*video_config_, target.name)
                                               : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
   assignVideoMetadata(sub, video_stream_spec, ensureVideoStream(videoStreamManager(), video_stream_spec));
   return sub;
@@ -374,7 +375,7 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   LogEvent(kSubscriptionRegistryLogger, "subscription_qos_resolved")
     .kv("resource", topic)
     .kv("kind", "topic")
-    .kv("delivery", "data_track")
+    .kv("delivery", protocol::kDeliveryKindData)
     .kv("interface_type", interface_type)
     .kv("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
     .kv("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
@@ -466,8 +467,8 @@ void SubscriptionRegistry::sweepExpiredLeases()
 
 bool SubscriptionRegistry::hasSubscription(const std::string & resource, SubscriptionTargetKind target_kind) const
 {
-  const std::string normalized =
-    target_kind == SubscriptionTargetKind::Topic ? normalizeRosResourceName(resource) : normalizeExternalName(resource);
+  const std::string normalized = target_kind == SubscriptionTargetKind::Topic ? normalizeRosResourceName(resource)
+                                                                              : normalizeConfiguredSourceName(resource);
   if (normalized.empty()) {
     return false;
   }
@@ -558,7 +559,7 @@ StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & su
   stream_status.target = {sub.target_kind, sub.resource};
   stream_status.interface_type = sub.interface_type;
   if (const auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
-    stream_status.delivery_kind = StreamDeliveryKind::kDataTrack;
+    stream_status.delivery_kind = StreamDeliveryKind::kData;
     if (data->cdr_track_state == CdrTrackState::kPending || data->cdr_track_state == CdrTrackState::kPublished) {
       stream_status.track_name = data->track_name;
     }
@@ -589,7 +590,7 @@ int SubscriptionRegistry::computeAppliedIntervalMs(const std::map<std::string, R
 
 std::string SubscriptionRegistry::deriveTrackName(const std::string & normalized_topic)
 {
-  std::string name = "ros.cdr";
+  std::string name = "ros.data";
   for (char ch : normalized_topic) {
     name.push_back(ch == '/' ? '.' : ch);
   }
@@ -598,7 +599,8 @@ std::string SubscriptionRegistry::deriveTrackName(const std::string & normalized
 
 std::string SubscriptionRegistry::makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource)
 {
-  return (target_kind == SubscriptionTargetKind::Topic ? kTopicSubscriptionKeyPrefix : kExternalSubscriptionKeyPrefix) +
+  return (target_kind == SubscriptionTargetKind::Topic ? kTopicSubscriptionKeyPrefix
+                                                       : kConfiguredSourceSubscriptionKeyPrefix) +
          resource;
 }
 
