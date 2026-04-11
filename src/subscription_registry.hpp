@@ -26,6 +26,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include "payloads/stream_control_payloads.hpp"
@@ -126,29 +127,19 @@ private:
     std::size_t generation = 0;
   };
 
+  struct VideoTrackResource
+  {
+    std::string track_name;
+    VideoStreamSpec stream_spec;
+  };
+
   struct SubscriptionState
   {
     SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
     std::string resource;
     std::string interface_type;
-    std::string source_kind;
-    std::string ingest_mode;
-    std::string selected_config_key;
-    std::string degraded_reason;
-    std::string video_track_name;
-    std::optional<VideoStreamSpec> video_stream_spec;
     std::map<std::string, RequesterLease> requesters;
-    std::optional<DataTrackResource> data_track_resource;
-
-    DataTrackResource * data_track_ptr()
-    {
-      return data_track_resource ? &*data_track_resource : nullptr;
-    }
-
-    const DataTrackResource * data_track_ptr() const
-    {
-      return data_track_resource ? &*data_track_resource : nullptr;
-    }
+    std::variant<DataTrackResource, VideoTrackResource> resource_state = DataTrackResource{};
   };
 
   using SubscriptionStateMap = std::unordered_map<std::string, SubscriptionState>;
@@ -172,7 +163,7 @@ private:
     const std::string & interface_type,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
-  void assignVideoMetadata(SubscriptionState & sub, const VideoStreamSpec & video_stream_spec, std::string track_name);
+  void assignVideoMetadata(SubscriptionState & sub, VideoStreamSpec video_stream_spec, std::string track_name);
   DataTrackResource createPendingDataTrackResource(
     const std::string & topic,
     const std::string & interface_type,

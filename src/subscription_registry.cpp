@@ -164,8 +164,8 @@ StreamStatus SubscriptionRegistry::renewSubscription(
       event.kv("resource", sub.resource)
         .kv("kind", subscriptionKindToString(sub.target_kind))
         .kv("requester_identity", requester_identity);
-      if (sub.video_stream_spec.has_value()) {
-        event.kv("stream_key", sub.video_stream_spec->stream_key).kv("track_name", sub.video_track_name);
+      if (const auto * video = std::get_if<SubscriptionRegistry::VideoTrackResource>(&sub.resource_state)) {
+        event.kv("stream_key", video->stream_spec.stream_key).kv("track_name", video->track_name);
       }
       event.kv("error", exc.what()).warn();
       throw;
@@ -208,11 +208,10 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     .kv("kind", subscriptionKindToString(sub.target_kind))
     .kv("delivery", streamDeliveryKindString(stream_status.delivery_kind))
     .kv("requester_identity", requester_identity);
-  if (sub.video_stream_spec.has_value()) {
-    event.kv("stream_key", sub.video_stream_spec->stream_key).kv("track_name", sub.video_track_name);
-  } else {
-    const auto * data = sub.data_track_ptr();
-    event.kv("track_name", data == nullptr ? "" : data->track_name);
+  if (const auto * video = std::get_if<VideoTrackResource>(&sub.resource_state)) {
+    event.kv("stream_key", video->stream_spec.stream_key).kv("track_name", video->track_name);
+  } else if (const auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
+    event.kv("track_name", data->track_name);
   }
   event.info();
   subscriptions_.emplace(subscription_key, std::move(sub));
@@ -241,7 +240,7 @@ void SubscriptionRegistry::markRequesterForCdrReplay(const std::string & request
 
   for (const auto & [subscription_key, sub] : subscriptions_) {
     (void)subscription_key;
-    const auto * data = sub.data_track_ptr();
+    const auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
     if (data == nullptr || data->cdr_track_state != CdrTrackState::kPublished) {
       continue;
     }
@@ -266,7 +265,7 @@ void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & reque
 
   for (auto & [subscription_key, sub] : subscriptions_) {
     (void)subscription_key;
-    auto * data = sub.data_track_ptr();
+    auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
     if (data == nullptr || data->cdr_track_state != CdrTrackState::kPublished) {
       continue;
     }
@@ -294,7 +293,7 @@ void SubscriptionRegistry::refreshExistingLease(
   auto updated_requesters = sub.requesters;
   updated_requesters[requester_identity] = requester_lease;
 
-  if (auto * data = sub.data_track_ptr()) {
+  if (auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     sub.requesters = std::move(updated_requesters);
     data->applied_interval_ms = computeAppliedIntervalMs(sub.requesters);
     if (!requester_already_present && data->cdr_track_state == CdrTrackState::kPublished) {
@@ -310,7 +309,7 @@ void SubscriptionRegistry::refreshExistingLease(
 
   const std::string track_name = ensureVideoStream(videoStreamManager(), videoStreamSpec(sub));
   sub.requesters = std::move(updated_requesters);
-  sub.video_track_name = track_name;
+  std::get<VideoTrackResource>(sub.resource_state).track_name = track_name;
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscription(
@@ -345,19 +344,14 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
   sub.resource = target.name;
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
-  sub.data_track_resource =
-    createPendingDataTrackResource(target.name, interface_type, sub.requesters, requester_identity);
+  sub.resource_state = createPendingDataTrackResource(target.name, interface_type, sub.requesters, requester_identity);
   return sub;
 }
 
 void SubscriptionRegistry::assignVideoMetadata(
-  SubscriptionState & sub, const VideoStreamSpec & video_stream_spec, std::string track_name)
+  SubscriptionState & sub, VideoStreamSpec video_stream_spec, std::string track_name)
 {
-  sub.source_kind = videoSourceKindToString(video_stream_spec.source_kind);
-  sub.ingest_mode = video_stream_spec.ingest_mode;
-  sub.selected_config_key = video_stream_spec.selected_config_key;
-  sub.video_track_name = std::move(track_name);
-  sub.video_stream_spec = video_stream_spec;
+  sub.resource_state = VideoTrackResource{std::move(track_name), std::move(video_stream_spec)};
 }
 
 SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataTrackResource(
@@ -435,11 +429,12 @@ VideoStreamManager & SubscriptionRegistry::videoStreamManager() const
 
 const VideoStreamSpec & SubscriptionRegistry::videoStreamSpec(const SubscriptionState & sub) const
 {
-  if (!sub.video_stream_spec.has_value()) {
+  const auto * video = std::get_if<VideoTrackResource>(&sub.resource_state);
+  if (video == nullptr) {
     throw std::logic_error("video subscription invariant violated: video stream spec is required");
   }
 
-  return *sub.video_stream_spec;
+  return video->stream_spec;
 }
 
 void SubscriptionRegistry::removeRequesterLeases(const std::string & requester_identity)
@@ -519,7 +514,7 @@ bool SubscriptionRegistry::onCdrTrackPublished(const std::string & track_name, s
     return false;
   }
   auto & sub = it->second;
-  auto * data = sub.data_track_ptr();
+  auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
   if (data == nullptr || data->cdr_track_state != CdrTrackState::kPending) {
     return false;
   }
@@ -545,7 +540,7 @@ void SubscriptionRegistry::onCdrTrackFailed(const std::string & track_name)
     return;
   }
   auto & sub = it->second;
-  auto * data = sub.data_track_ptr();
+  auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
   if (data == nullptr) {
     return;
   }
@@ -562,18 +557,17 @@ StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & su
   StreamStatus stream_status;
   stream_status.target = {sub.target_kind, sub.resource};
   stream_status.interface_type = sub.interface_type;
-  stream_status.degraded_reason = sub.degraded_reason;
-
-  const auto * data = sub.data_track_ptr();
-  if (data != nullptr) {
+  if (const auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     stream_status.delivery_kind = StreamDeliveryKind::kDataTrack;
     if (data->cdr_track_state == CdrTrackState::kPending || data->cdr_track_state == CdrTrackState::kPublished) {
       stream_status.track_name = data->track_name;
     }
     stream_status.applied_interval_ms = data->applied_interval_ms;
   } else {
+    const auto & video = std::get<VideoTrackResource>(sub.resource_state);
     stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-    stream_status.track_name = sub.video_track_name;
+    stream_status.track_name = video.track_name;
+    stream_status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
   }
 
   return stream_status;
@@ -661,7 +655,7 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::findB
 {
   for (auto it = subscriptions_.begin(); it != subscriptions_.end(); ++it) {
     auto & sub = it->second;
-    auto * data = sub.data_track_ptr();
+    auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
     if (data != nullptr && data->track_name == track_name) {
       return it;
     }
@@ -674,7 +668,7 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
 {
   auto & sub = it->second;
   if (sub.requesters.empty()) {
-    if (const auto * data = sub.data_track_ptr()) {
+    if (const auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
       LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
         .kv("resource", sub.resource)
         .kv("kind", subscriptionKindToString(sub.target_kind))
@@ -682,19 +676,20 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
         .kv("track_name", data->track_name)
         .info();
     } else {
+      const auto & video = std::get<VideoTrackResource>(sub.resource_state);
       LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
         .kv("resource", sub.resource)
         .kv("kind", subscriptionKindToString(sub.target_kind))
         .kv("reason", requesterRemovalReasonToString(reason))
-        .kv("stream_key", videoStreamSpec(sub).stream_key)
-        .kv("track_name", sub.video_track_name)
+        .kv("stream_key", video.stream_spec.stream_key)
+        .kv("track_name", video.track_name)
         .info();
     }
     destroyResource(sub);
     return subscriptions_.erase(it);
   }
 
-  if (auto * data = sub.data_track_ptr()) {
+  if (auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     data->applied_interval_ms = computeAppliedIntervalMs(sub.requesters);
   }
   ++it;
@@ -713,7 +708,7 @@ void SubscriptionRegistry::handleSerializedMessage(const std::string & topic, co
     return;
   }
 
-  auto * data = sub.data_track_ptr();
+  auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
   if (data == nullptr) {
     return;
   }
@@ -763,7 +758,7 @@ std::size_t SubscriptionRegistry::registryGeneration() const
 
 void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
 {
-  if (auto * data = sub.data_track_ptr()) {
+  if (auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
       .kv("resource", sub.resource)
       .kv("kind", subscriptionKindToString(sub.target_kind))
@@ -775,19 +770,20 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
     }
     data->cdr_track_state = CdrTrackState::kNone;
     data->subscription_handle.reset();
-    sub.data_track_resource.reset();
+    sub.resource_state = DataTrackResource{};
     // Track names are deterministic per topic, so destroying a data subscription must advance the
     // generation before any delayed publish/disconnect callback can target the replacement entry.
     registry_generation_.fetch_add(1);
   } else {
+    const auto & video = std::get<VideoTrackResource>(sub.resource_state);
     LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
       .kv("resource", sub.resource)
       .kv("kind", subscriptionKindToString(sub.target_kind))
       .kv("interface_type", sub.interface_type)
-      .kv("stream_key", videoStreamSpec(sub).stream_key)
-      .kv("track_name", sub.video_track_name)
+      .kv("stream_key", video.stream_spec.stream_key)
+      .kv("track_name", video.track_name)
       .info();
-    videoStreamManager().stopStream(videoStreamSpec(sub).stream_key);
+    videoStreamManager().stopStream(video.stream_spec.stream_key);
   }
 }
 
