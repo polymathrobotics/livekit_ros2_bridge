@@ -97,17 +97,6 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
-std::size_t countFileLines(const std::filesystem::path & path)
-{
-  std::ifstream stream(path);
-  std::size_t lines = 0U;
-  std::string line;
-  while (std::getline(stream, line)) {
-    ++lines;
-  }
-  return lines;
-}
-
 class ScopedPathEnvPrepend
 {
 public:
