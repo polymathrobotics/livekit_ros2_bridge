@@ -15,6 +15,7 @@
 #include "interface_definition_lookup.hpp"
 
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -22,6 +23,7 @@
 #include <string>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
+#include "ament_index_cpp/version.h"
 
 namespace livekit_ros2_bridge
 {
@@ -69,6 +71,20 @@ std::string readInterfaceDefinitionFile(const std::string & path)
   throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);
 }
 
+std::string getPackageShareDirectoryCompat(const std::string & package)
+{
+  // ament_index_cpp 1.11+ adds the filesystem-path overload used by Kilted/Rolling, while
+  // Humble and Jazzy still only expose the legacy string-returning API. Keep one compatibility
+  // wrapper here instead of scattering distro/version checks across schema lookup code.
+#if AMENT_INDEX_CPP_VERSION_GTE(1, 11, 0)
+  std::filesystem::path share_dir;
+  ament_index_cpp::get_package_share_directory(package, share_dir);
+  return share_dir.string();
+#else
+  return ament_index_cpp::get_package_share_directory(package);
+#endif
+}
+
 std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
 {
   // Expected: "package/kind/Name" where kind is msg, srv, or action
@@ -90,7 +106,7 @@ std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
 
   std::string share_dir;
   try {
-    share_dir = ament_index_cpp::get_package_share_directory(package);
+    share_dir = getPackageShareDirectoryCompat(package);
   } catch (const std::exception &) {
     throw std::runtime_error("Package '" + package + "' not found in ament index");
   }
