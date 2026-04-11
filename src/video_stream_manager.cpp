@@ -208,17 +208,30 @@ public:
 
   void shutdown()
   {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
-      return;
+    DetachedPipelineState detached_pipeline_state;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (is_shutdown_) {
+        return;
+      }
+
+      is_shutdown_ = true;
+      subscription_.reset();
+      detached_pipeline_state = detachPipelineStateLocked();
     }
 
-    is_shutdown_ = true;
-    subscription_.reset();
-    stopPipelineLocked();
+    teardownDetachedPipelineState(detached_pipeline_state);
   }
 
 private:
+  struct DetachedPipelineState
+  {
+    GstElement * pipeline = nullptr;
+    GstAppSrc * appsrc = nullptr;
+    GstAppSink * appsink = nullptr;
+    std::shared_ptr<PublishedVideoTrack> published_track;
+  };
+
   static GstFlowReturn onNewSampleThunk(GstAppSink * sink, gpointer user_data)
   {
     return static_cast<StreamRecord *>(user_data)->onNewSample(sink);
@@ -500,6 +513,62 @@ private:
     }
     if (pipeline != nullptr) {
       gst_object_unref(pipeline);
+    }
+  }
+
+  DetachedPipelineState detachPipelineStateLocked()
+  {
+    DetachedPipelineState detached;
+    detached.pipeline = pipeline_;
+    detached.appsrc = appsrc_;
+    detached.appsink = appsink_;
+    detached.published_track = std::move(published_track_);
+
+    pipeline_ = nullptr;
+    appsrc_ = nullptr;
+    appsink_ = nullptr;
+    video_source_.reset();
+    published_width_ = 0;
+    published_height_ = 0;
+    raw_source_config_.reset();
+    compressed_format_.clear();
+    first_sample_logged_ = false;
+
+    return detached;
+  }
+
+  void teardownDetachedPipelineState(DetachedPipelineState & detached)
+  {
+    if (detached.published_track) {
+      LogEvent(kVideoStreamManagerLogger, "video_stream_track_unpublishing")
+        .kv("stream_key", spec_.stream_key)
+        .kv("track_name", spec_.track_name)
+        .info();
+      session_.unpublishVideoTrack(detached.published_track);
+      detached.published_track.reset();
+    }
+
+    if (detached.appsink != nullptr) {
+      GstAppSinkCallbacks callbacks{};
+      gst_app_sink_set_callbacks(detached.appsink, &callbacks, nullptr, nullptr);
+    }
+    if (detached.pipeline != nullptr) {
+      GstBus * bus = gst_element_get_bus(detached.pipeline);
+      gst_bus_set_sync_handler(bus, nullptr, nullptr, nullptr);
+      gst_object_unref(bus);
+      gst_element_set_state(detached.pipeline, GST_STATE_NULL);
+    }
+    if (detached.appsrc != nullptr) {
+      gst_object_unref(detached.appsrc);
+      detached.appsrc = nullptr;
+    }
+    if (detached.appsink != nullptr) {
+      gst_object_unref(detached.appsink);
+      detached.appsink = nullptr;
+    }
+    if (detached.pipeline != nullptr) {
+      gst_object_unref(detached.pipeline);
+      detached.pipeline = nullptr;
     }
   }
 
