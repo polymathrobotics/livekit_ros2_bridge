@@ -66,6 +66,36 @@ TEST(BoundedLruCacheTest, TouchingHitPreservesItDuringLruEviction)
   EXPECT_EQ(*cache.get("gamma"), 3);
 }
 
+TEST(BoundedLruCacheTest, PeekDoesNotRefreshRecencyButTouchDoes)
+{
+  BoundedLruCache<std::string, int> peek_cache(2U);
+  peek_cache.insertOrAssign("alpha", 1);
+  peek_cache.insertOrAssign("beta", 2);
+
+  ASSERT_TRUE(peek_cache.peek("alpha").has_value());
+  peek_cache.insertOrAssign("gamma", 3);
+  EXPECT_FALSE(peek_cache.peek("alpha").has_value());
+
+  BoundedLruCache<std::string, int> touch_cache(2U);
+  touch_cache.insertOrAssign("alpha", 1);
+  touch_cache.insertOrAssign("beta", 2);
+  ASSERT_TRUE(touch_cache.touch("alpha"));
+  touch_cache.insertOrAssign("gamma", 3);
+  EXPECT_TRUE(touch_cache.peek("alpha").has_value());
+  EXPECT_FALSE(touch_cache.peek("beta").has_value());
+}
+
+TEST(BoundedLruCacheTest, InsertReturnsEvictedEntryWhenCapacityExceeded)
+{
+  BoundedLruCache<std::string, int> cache(1U);
+  EXPECT_FALSE(cache.insertOrAssign("alpha", 1).has_value());
+
+  const auto evicted = cache.insertOrAssign("beta", 2);
+  ASSERT_TRUE(evicted.has_value());
+  EXPECT_EQ(evicted->key, "alpha");
+  EXPECT_EQ(evicted->value, 1);
+}
+
 TEST(BoundedLruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
 {
   BoundedLruCache<std::string, std::exception_ptr> cache(2U);

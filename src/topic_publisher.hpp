@@ -17,16 +17,15 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
-#include <list>
 #include <memory>
 #include <string>
-#include <unordered_map>
 
 #include "access_policy.hpp"
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "topic_publish_command.hpp"
+#include "utils/bounded_lru_cache.hpp"
 #include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge
@@ -49,33 +48,25 @@ public:
 private:
   static constexpr auto kPublisherCacheEvictionThrottlePeriod = std::chrono::seconds(5);
 
-  // Test-only hook that runs after cache setup and immediately before the
-  // underlying ROS publisher publishes the serialized message.
+  // Test-only hook that runs after publisher resolution/creation and
+  // immediately before the underlying ROS publisher publishes the message.
   void setBeforePublishHookForTest(std::function<void()> hook);
 
   struct PublisherCacheEntry
   {
     std::string interface_type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher_handle;
-    // lru_position points at this topic's node in lru_topics_ while the cache
-    // entry is live.
-    std::list<std::string>::iterator lru_position;
   };
 
   std::string resolveTopicTypeOrThrow(const std::string & topic, const std::string & requested_interface_type) const;
   void publishWithPublisherCache(
     const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized);
-  void eraseCachedPublisher(const std::string & topic);
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
   int max_topics_ = 0;
   std::atomic<bool> is_shutdown_{false};
-  // publishers_ and lru_topics_ are updated together so the list contains each
-  // cached topic at most once and eviction can remove the least-recently used
-  // handle.
-  std::unordered_map<std::string, PublisherCacheEntry> publishers_;
-  std::list<std::string> lru_topics_;
+  BoundedLruCache<std::string, PublisherCacheEntry> publishers_;
   std::function<void()> before_publish_hook_for_test_;
   EventThrottle publisher_cache_eviction_throttle_{kPublisherCacheEvictionThrottlePeriod};
 };

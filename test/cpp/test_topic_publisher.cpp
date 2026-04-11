@@ -364,7 +364,6 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
   EXPECT_TRUE(subscriber_ready_before_publish);
   EXPECT_FALSE(received_message.has_value());
   EXPECT_TRUE(publisher.publishers_.empty());
-  EXPECT_TRUE(publisher.lru_topics_.empty());
 
   subscriber_ready_before_publish = false;
   publisher.publish("alice", command);
@@ -373,9 +372,8 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   ASSERT_EQ(publisher.publishers_.size(), 1U);
-  EXPECT_EQ(publisher.publishers_.count(topic), 1U);
-  ASSERT_EQ(publisher.lru_topics_.size(), 1U);
-  EXPECT_EQ(publisher.lru_topics_.front(), topic);
+  ASSERT_TRUE(publisher.publishers_.peek(topic).has_value());
+  EXPECT_EQ(publisher.publishers_.peek(topic)->interface_type, "sensor_msgs/msg/BatteryState");
 }
 
 TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)

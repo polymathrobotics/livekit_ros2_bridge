@@ -32,6 +32,12 @@ template <typename Key, typename Value, typename Hash = std::hash<Key>, typename
 class BoundedLruCache
 {
 public:
+  struct Entry
+  {
+    Key key;
+    Value value;
+  };
+
   explicit BoundedLruCache(std::size_t capacity)
   : capacity_(capacity)
   {}
@@ -51,20 +57,43 @@ public:
     return it->second->value;
   }
 
-  void insertOrAssign(Key key, Value value)
+  std::optional<Value> peek(const Key & key) const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      return std::nullopt;
+    }
+
+    return it->second->value;
+  }
+
+  bool touch(const Key & key)
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      return false;
+    }
+
+    lru_entries_.splice(lru_entries_.end(), lru_entries_, it->second);
+    return true;
+  }
+
+  std::optional<Entry> insertOrAssign(Key key, Value value)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = entries_.find(key);
     if (it != entries_.end()) {
       it->second->value = std::move(value);
       lru_entries_.splice(lru_entries_.end(), lru_entries_, it->second);
-      return;
+      return std::nullopt;
     }
 
     lru_entries_.push_back(CacheEntry{std::move(key), std::move(value)});
     auto cache_entry_it = std::prev(lru_entries_.end());
     entries_.emplace(cache_entry_it->key, cache_entry_it);
-    evictIfNeeded();
+    return evictIfNeeded();
   }
 
   void clear()
@@ -80,6 +109,12 @@ public:
     return entries_.size();
   }
 
+  bool empty() const
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return entries_.empty();
+  }
+
 private:
   struct CacheEntry
   {
@@ -90,12 +125,16 @@ private:
   using CacheEntries = std::list<CacheEntry>;
   using CacheIndex = std::unordered_map<Key, typename CacheEntries::iterator, Hash, KeyEqual>;
 
-  void evictIfNeeded()
+  std::optional<Entry> evictIfNeeded()
   {
-    while (entries_.size() > capacity_) {
-      entries_.erase(lru_entries_.front().key);
-      lru_entries_.pop_front();
+    if (entries_.size() <= capacity_) {
+      return std::nullopt;
     }
+
+    Entry evicted{std::move(lru_entries_.front().key), std::move(lru_entries_.front().value)};
+    entries_.erase(evicted.key);
+    lru_entries_.pop_front();
+    return evicted;
   }
 
   std::size_t capacity_ = 0U;
