@@ -106,7 +106,7 @@ public:
     }
   }
 
-  void handleFrame(int width, int height, std::vector<std::uint8_t> rgba, std::int64_t timestamp_us) override
+  void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -114,7 +114,10 @@ public:
     }
 
     ensurePublishedTrackLocked(width, height);
-    livekit::VideoFrame frame(width, height, livekit::VideoBufferType::RGBA, std::move(rgba));
+    // The public LiveKit C++ SDK takes an owned VideoFrame buffer here, so this
+    // remains a low-copy path rather than true zero-copy. Keeping the data in
+    // I420 still avoids the more expensive per-frame color conversion.
+    livekit::VideoFrame frame(width, height, livekit::VideoBufferType::I420, std::move(i420));
     video_source_->captureFrame(frame, timestamp_us);
   }
 

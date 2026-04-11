@@ -15,6 +15,7 @@
 #pragma once
 
 #include <gst/gst.h>
+#include <gst/video/video.h>
 
 #include <memory>
 
@@ -194,6 +195,48 @@ public:
 private:
   GstBuffer * buffer_ = nullptr;
   GstMapInfo info_{};
+  bool mapped_ = false;
+};
+
+// gst_video_frame_map() exposes per-plane image data with stride metadata until
+// gst_video_frame_unmap() is called. This guard keeps planar frame access scoped
+// and exception-safe.
+class GstVideoFrameGuard final
+{
+public:
+  GstVideoFrameGuard(const GstVideoInfo * info, GstBuffer * buffer, GstMapFlags flags)
+  : mapped_(info != nullptr && buffer != nullptr && gst_video_frame_map(&frame_, info, buffer, flags))
+  {}
+
+  ~GstVideoFrameGuard()
+  {
+    if (mapped_) {
+      gst_video_frame_unmap(&frame_);
+    }
+  }
+
+  GstVideoFrameGuard(const GstVideoFrameGuard &) = delete;
+  GstVideoFrameGuard & operator=(const GstVideoFrameGuard &) = delete;
+  GstVideoFrameGuard(GstVideoFrameGuard &&) = delete;
+  GstVideoFrameGuard & operator=(GstVideoFrameGuard &&) = delete;
+
+  bool is_valid() const
+  {
+    return mapped_;
+  }
+
+  GstVideoFrame * get()
+  {
+    return &frame_;
+  }
+
+  const GstVideoFrame * get() const
+  {
+    return &frame_;
+  }
+
+private:
+  GstVideoFrame frame_{};
   bool mapped_ = false;
 };
 

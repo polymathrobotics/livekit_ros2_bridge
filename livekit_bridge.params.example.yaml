@@ -51,7 +51,7 @@ livekit_ros2_bridge:
     # `publish.*` overrides.
     # Custom sources use required `source`, optional `transform`, and optional
     # `publish.*` overrides.
-    # The bridge always appends its own queue/convert/RGBA/appsink tail.
+    # The bridge always appends its own queue/convert/I420/appsink tail.
     #
     # Optional default LiveKit publish policy:
     # video.publish.codec: "auto"  # or "vp8", "h264", "av1", "vp9", "h265"

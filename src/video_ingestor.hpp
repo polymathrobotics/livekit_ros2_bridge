@@ -30,7 +30,7 @@ class IVideoFrameSink
 public:
   virtual ~IVideoFrameSink() = default;
 
-  virtual void handleFrame(int width, int height, std::vector<std::uint8_t> rgba, std::int64_t timestamp_us) = 0;
+  virtual void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
 };
 
 class IVideoIngestor

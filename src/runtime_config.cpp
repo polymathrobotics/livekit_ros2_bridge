@@ -371,7 +371,9 @@ std::string composeVideoPipelineDescription(const std::string & prefix, const st
   }
   pipeline += " ! queue max-size-buffers=2 leaky=downstream";
   pipeline += " ! videoconvert";
-  pipeline += " ! video/x-raw,format=RGBA";
+  // Keep validation aligned with the runtime pipeline: the bridge-owned tail
+  // always normalizes frames to I420 before handing them to LiveKit.
+  pipeline += " ! video/x-raw,format=I420";
   pipeline += " ! appsink name=";
   pipeline += kBridgeVideoAppSinkName;
   pipeline += " sync=false drop=true max-buffers=1 emit-signals=false";

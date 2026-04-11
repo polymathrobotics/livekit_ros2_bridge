@@ -245,6 +245,31 @@ TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
+TEST_F(VideoStreamManagerTest, RawRosPublisherAcceptsOddSizedFrames)
+{
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_odd_dimensions"));
+  FakeRoomSession session;
+  VideoStreamManager manager(*node, session);
+
+  const std::string topic = "/camera/odd_dimensions";
+  const auto spec = makeRosSpec(topic, "ros.video.camera.odd_dimensions");
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(1).reliable());
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+
+  ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
+
+  const auto image = makeRgbImage(3, 5);
+  ASSERT_TRUE(publishUntil(
+    executor, publisher, image, [&session]() { return session.state->published_video_track_names.size() == 1U; }));
+
+  ASSERT_EQ(session.state->published_video_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
+}
+
 TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJpegFormat)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_compressed_ros"));

@@ -86,7 +86,7 @@ That means values such as `front_rtsp`, `/front_rtsp`, and `/front_rtsp/` all co
 The bridge always appends its own output tail:
 
 ```text
-queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=RGBA ! appsink
+queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink
 ```
 
 Composition by source kind:
