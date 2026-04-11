@@ -72,7 +72,7 @@ Common causes:
 | --- | --- | --- |
 | `2401` | unauthorized | missing `caller_identity` |
 | `2403` | forbidden | access rules deny the requested service or topic |
-| `2400` | invalid request | bad JSON, wrong field types, empty normalized names, invalid base64, invalid limits or timeouts |
+| `2400` | invalid request | bad JSON, wrong field types, empty canonical names, invalid base64, invalid limits or timeouts |
 | `2500` | internal | ROS graph failures, client creation failures, request build failures, timeout, disconnect, or shutdown after a service call started |
 
 For the exact RPC contract, read [protocol.md](./protocol.md). For rule matching, read [access-control.md](./access-control.md).
@@ -136,7 +136,7 @@ Useful log events:
 Check these first:
 
 - the relevant `video.topic_rules.*` or `video.configured_sources.*` entry exists and matches what the client requested
-- configured source names normalize like ROS resource names
+- configured-source ids are trimmed only; slash and colon variants stay distinct
 - the bridge logged `subscription_qos_resolved` for that ROS topic
 - the resolved `reliability` and `durability` match the publisher
 
@@ -147,7 +147,7 @@ Common QoS example:
 
 Example:
 
-- `video.configured_sources.front_rtsp.source: ...` is requested as `configured_source: "/front_rtsp"`
+- `video.configured_sources.front_rtsp.source: ...` is requested as `configured_source: "front_rtsp"`
 
 Useful log events:
 

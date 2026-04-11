@@ -305,7 +305,7 @@ TEST_F(VideoStreamManagerTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpu
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.sources.front");
+  const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.%2Fsources%2Ffront");
 
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
@@ -324,7 +324,7 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.sources.shutdown");
+  const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.%2Fsources%2Fshutdown");
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));

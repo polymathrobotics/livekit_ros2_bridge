@@ -263,8 +263,8 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.transform, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(startup_config.video_config.configured_sources.at("/front_rtsp").transform, "videobalance saturation=0.0");
+    startup_config.video_config.configured_sources.at("front_rtsp").source, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(startup_config.video_config.configured_sources.at("front_rtsp").transform, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
@@ -405,7 +405,7 @@ TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldW
     loadRuntimeConfigForNode("startup_config_configured_source_publish_override", options);
 
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
-  const auto & source = startup_config.video_config.configured_sources.at("/front");
+  const auto & source = startup_config.video_config.configured_sources.at("front");
   EXPECT_EQ(source.transform, "");
   expectPublishConfigEq(source.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
 }
@@ -501,11 +501,11 @@ TEST_F(RuntimeConfigTest, DuplicateVideoConfiguredSourceIdReportsSectionSpecific
     "startup_config_duplicate_video_configured_source_id", options, "duplicate video configured source id 'front'");
 }
 
-TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError)
+TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctConfiguredSources)
 {
-  const std::string node_name = "startup_config_duplicate_pipeline_source";
+  const std::string node_name = "startup_config_distinct_slash_configured_sources";
   const auto params_path =
-    std::filesystem::temp_directory_path() / "livekit_ros2_bridge_duplicate_pipeline_source_params.yaml";
+    std::filesystem::temp_directory_path() / "livekit_ros2_bridge_distinct_slash_configured_sources_params.yaml";
 
   {
     std::ofstream params_file(params_path);
@@ -522,7 +522,14 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
 
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", params_path.string()});
-  expectRuntimeConfigError(node_name, options, "duplicate configured video source name '/front_rtsp'");
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode(node_name, options);
+
+  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 2U);
+  EXPECT_EQ(
+    startup_config.video_config.configured_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(
+    startup_config.video_config.configured_sources.at("/front_rtsp/").source,
+    "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);
 }

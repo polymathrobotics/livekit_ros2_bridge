@@ -585,22 +585,21 @@ VideoConfig loadVideoConfig(const Params & params)
     const std::string transform = parseVideoTransform(entry.transform);
     validateConfiguredSourceFragments(entry_id, source_fragment, transform);
 
-    // Configured sources are keyed by the canonical normalized configured-source name, so
-    // spelling variants collapse to one lookup key and one shared stream contract.
-    const std::string normalized_configured_source_name = normalizeConfiguredSourceName(entry_id);
-    if (normalized_configured_source_name.empty()) {
+    // Configured sources are keyed by the trimmed configured-source name. Only
+    // surrounding whitespace is ignored; slash and colon variants stay distinct.
+    const std::string trimmed_configured_source_name = trimConfiguredSourceName(entry_id);
+    if (trimmed_configured_source_name.empty()) {
       throw std::runtime_error(
-        "video configured source '" + entry_id + "' must normalize to a valid configured source name");
+        "video configured source '" + entry_id + "' must trim to a non-empty configured source name");
     }
-    requireUniqueEntryKey(
-      seen_configured_source_names, normalized_configured_source_name, "configured video source name");
+    requireUniqueEntryKey(seen_configured_source_names, trimmed_configured_source_name, "configured video source name");
 
     ConfiguredSource source;
     source.source = source_fragment;
     source.transform = transform;
     source.publish = mergeVideoPublishConfig(
       config.publish, parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
-    config.configured_sources.emplace(normalized_configured_source_name, std::move(source));
+    config.configured_sources.emplace(trimmed_configured_source_name, std::move(source));
   }
 
   // Append built-in catch-all after user entries.

@@ -76,10 +76,12 @@ Rules:
 - `source` is required and must be non-empty
 - `transform` is optional
 - `publish.*` fields are optional and may override any subset of `video.publish.*`
-- duplicate ids that normalize to the same configured-source name are rejected at startup
-- lookup uses the normalized configured-source name
+- duplicate ids that trim to the same configured-source name are rejected at startup
+- lookup uses the trimmed configured-source name
 
-That means values such as `front_rtsp`, `/front_rtsp`, and `/front_rtsp/` all collapse to the same canonical configured-source name, `"/front_rtsp"`.
+That means values such as `front_rtsp` and ` front_rtsp ` collapse to the same canonical configured-source name, `front_rtsp`, while `/front_rtsp` and `front_rtsp/` stay distinct.
+
+Configured-source video track names use the trimmed id directly after percent-encoding any byte outside RFC 3986 unreserved characters. For example, `/front_rtsp:rgb` becomes `ros.video.configured_source.%2Ffront_rtsp%3Argb`.
 
 ## Runtime pipeline composition
 

@@ -92,14 +92,14 @@ struct ConfiguredSource
 struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
-  // Keyed by normalizeConfiguredSourceName(...).
+  // Keyed by trimConfiguredSourceName(...).
   std::unordered_map<std::string, ConfiguredSource> configured_sources;
   VideoPublishConfig publish;
 };
 
 struct VideoStreamSpec
 {
-  // Stable video runtime key: "topic:<normalized topic>" or "configured_source:<normalized configured source name>".
+  // Stable video runtime key: "topic:<normalized topic>" or "configured_source:<trimmed configured source name>".
   std::string stream_key;
   // Stable LiveKit track name exposed to subscribers.
   std::string track_name;
@@ -107,11 +107,11 @@ struct VideoStreamSpec
   std::string ros_topic;
   // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
   std::string interface_type;
-  // Set only for configured sources after configured-source-name normalization.
+  // Set only for configured sources after configured-source-name trimming.
   std::string configured_source_name;
   VideoSourceKind source_kind = VideoSourceKind::RosTopic;
   std::string ingest_mode;
-  // ROS sources store the matched rule id; configured sources store the canonical configured source name.
+  // ROS sources store the matched rule id; configured sources store the canonical trimmed configured source name.
   std::string selected_config_key;
   std::optional<std::string> degraded_reason;
   // Configured sources set this to the configured source fragment. ROS sources leave it empty.
@@ -126,14 +126,14 @@ VideoConfig makeDefaultVideoConfig();
 
 // Returns the ingest contract for supported ROS video types and std::nullopt for non-video types.
 std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
-// Canonicalizes configured source names so equivalent spellings share one config key and track name.
-std::string normalizeConfiguredSourceName(std::string_view configured_source_name);
+// Trims configured source names. Unlike ROS resources, slashes and colons stay significant.
+std::string trimConfiguredSourceName(std::string_view configured_source_name);
 std::string videoSourceKindToString(VideoSourceKind kind);
 
 // Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
 VideoStreamSpec resolveRosVideoStreamSpec(
   const VideoConfig & config, const std::string & topic, const std::string & interface_type);
-// Normalizes the configured source name before lookup and fills only the configured-source fields in the result.
+// Trims the configured source name before lookup and fills only the configured-source fields in the result.
 VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
   const VideoConfig & config, const std::string & configured_source_name);
 

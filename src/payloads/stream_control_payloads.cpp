@@ -122,9 +122,9 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
   if (!configured_source_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'configured_source' must be a string");
   }
-  std::string name = normalizeConfiguredSourceName(configured_source_it->get_ref<const std::string &>());
+  std::string name = trimConfiguredSourceName(configured_source_it->get_ref<const std::string &>());
   if (name.empty()) {
-    throw std::invalid_argument("heartbeat subscription configured_source must normalize to a non-empty name");
+    throw std::invalid_argument("heartbeat subscription configured_source must trim to a non-empty name");
   }
   return {SubscriptionTargetKind::ConfiguredSource, std::move(name)};
 }
@@ -183,7 +183,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
     }
 
     auto & existing = update.subscriptions[it->second];
-    // Heartbeats are treated as a set keyed by normalized target; repeated requests tighten the
+    // Heartbeats are treated as a set keyed by canonical target; repeated requests tighten the
     // interval so the bridge keeps the most demanding subscriber cadence.
     if (entry.preferred_interval_ms.has_value() && existing.preferred_interval_ms.has_value()) {
       existing.preferred_interval_ms = std::min(*existing.preferred_interval_ms, *entry.preferred_interval_ms);

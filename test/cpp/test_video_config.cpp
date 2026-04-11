@@ -152,7 +152,14 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholde
   expectPublishConfigEq(spec.publish_config, config.ros_topic_rules.front().publish);
 }
 
-TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecNormalizesConfiguredSourceName)
+TEST(VideoConfigTest, TrimConfiguredSourceNameOnlyRemovesSurroundingWhitespace)
+{
+  EXPECT_EQ(trimConfiguredSourceName("  front_camera  "), "front_camera");
+  EXPECT_EQ(trimConfiguredSourceName("  /sources/front/  "), "/sources/front/");
+  EXPECT_EQ(trimConfiguredSourceName(" \t\n "), "");
+}
+
+TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredSourceName)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -160,20 +167,33 @@ TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecNormalizesConfigured
   source.source = "videotestsrc is-live=true pattern=black";
   source.transform = "videobalance saturation=0.0";
   source.publish = makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
-  config.configured_sources.emplace("/sources/front", std::move(source));
+  config.configured_sources.emplace("front_camera", std::move(source));
 
-  const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "  /sources/front/ ");
+  const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "  front_camera  ");
 
-  EXPECT_EQ(spec.stream_key, "configured_source:/sources/front");
-  EXPECT_EQ(spec.track_name, "ros.video.configured_source.sources.front");
-  EXPECT_EQ(spec.configured_source_name, "/sources/front");
+  EXPECT_EQ(spec.stream_key, "configured_source:front_camera");
+  EXPECT_EQ(spec.track_name, "ros.video.configured_source.front_camera");
+  EXPECT_EQ(spec.configured_source_name, "front_camera");
   EXPECT_EQ(spec.source_kind, VideoSourceKind::ConfiguredSource);
   EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
-  EXPECT_EQ(spec.selected_config_key, "/sources/front");
+  EXPECT_EQ(spec.selected_config_key, "front_camera");
   EXPECT_EQ(spec.source_description, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(spec.transform_description, "videobalance saturation=0.0");
   expectPublishConfigEq(
     spec.publish_config, makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled));
+}
+
+TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecPercentEncodesTrackNameSuffix)
+{
+  VideoConfig config = makeDefaultVideoConfig();
+
+  ConfiguredSource source;
+  source.source = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front:rgb%", std::move(source));
+
+  const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "/sources/front:rgb%");
+
+  EXPECT_EQ(spec.track_name, "ros.video.configured_source.%2Fsources%2Ffront%3Argb%25");
 }
 
 TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecRejectsUnknownConfiguredSourceName)
@@ -181,10 +201,10 @@ TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecRejectsUnknownConfig
   const VideoConfig config = makeDefaultVideoConfig();
 
   try {
-    (void)resolveConfiguredSourceVideoStreamSpec(config, "/sources/missing");
+    (void)resolveConfiguredSourceVideoStreamSpec(config, "sources/missing");
     FAIL() << "Expected invalid_argument";
   } catch (const std::invalid_argument & exc) {
-    EXPECT_STREQ(exc.what(), "Unknown configured video source '/sources/missing'.");
+    EXPECT_STREQ(exc.what(), "Unknown configured video source 'sources/missing'.");
   }
 }
 

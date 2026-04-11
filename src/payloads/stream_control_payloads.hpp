@@ -30,7 +30,7 @@ enum class SubscriptionTargetKind
   ConfiguredSource,
 };
 
-/// A normalized subscription identifier shared by heartbeat parsing and stream-status serialization.
+/// A canonical subscription identifier shared by heartbeat parsing and stream-status serialization.
 struct SubscriptionTarget
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -49,7 +49,7 @@ struct SubscriptionHeartbeat
 {
   /// Optional trimmed session identifier. Missing, null, or blank values are treated as absent.
   std::optional<std::string> session_id;
-  /// Requested subscriptions in first-seen order after coalescing duplicate normalized targets.
+  /// Requested subscriptions in first-seen order after coalescing duplicate canonical targets.
   std::vector<SubscriptionRequest> subscriptions;
 };
 
@@ -76,8 +76,8 @@ struct StreamStatus
 
 /// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
 /// Each subscription entry must contain exactly one of `topic` or `configured_source`, plus an optional
-/// `delivery_preferences.interval_ms` integer. Topic and configured-source names are normalized separately,
-/// duplicate normalized targets are coalesced, and duplicate intervals keep the smallest non-zero value.
+/// `delivery_preferences.interval_ms` integer. Topics are normalized as ROS names, configured-source ids are
+/// trimmed only, duplicate canonical targets are coalesced, and duplicate intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
 /// Serialize one active stream-status entry. Data deliveries include

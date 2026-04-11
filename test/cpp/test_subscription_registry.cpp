@@ -410,11 +410,11 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   EXPECT_EQ(response.target.name, "/sources/front");
   EXPECT_EQ(response.interface_type, "");
   EXPECT_EQ(response.delivery_kind, StreamDeliveryKind::kVideo);
-  EXPECT_EQ(response.track_name, "ros.video.configured_source.sources.front");
+  EXPECT_EQ(response.track_name, "ros.video.configured_source.%2Fsources%2Ffront");
   EXPECT_TRUE(registry.hasSubscription("/sources/front", SubscriptionTargetKind::ConfiguredSource));
 }
 
-TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHeartbeatSubscriptions)
+TEST(SubscriptionRegistryTest, RenewSubscriptionTrimsRawConfiguredSourceHeartbeatSubscriptions)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_raw_configured_source_test");
@@ -423,7 +423,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawConfiguredSourceHea
   const VideoConfig video_config = makeConfiguredVideoConfig();
   const std::string configured_source_name = "/sources/front";
   const SubscriptionRequest raw_subscription{
-    {SubscriptionTargetKind::ConfiguredSource, "  //sources//front/  "}, std::nullopt};
+    {SubscriptionTargetKind::ConfiguredSource, "  /sources/front  "}, std::nullopt};
   const SubscriptionRequest canonical_subscription{
     {SubscriptionTargetKind::ConfiguredSource, configured_source_name}, std::nullopt};
 
@@ -876,7 +876,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
     "heartbeat subscription target name must normalize to a non-empty topic name");
   expect_invalid_argument(
     SubscriptionRequest{{SubscriptionTargetKind::ConfiguredSource, "  \t\n  "}, std::nullopt},
-    "heartbeat subscription target name must normalize to a non-empty configured_source name");
+    "heartbeat subscription target name must trim to a non-empty configured_source name");
 }
 
 TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPublishedDataTracks)

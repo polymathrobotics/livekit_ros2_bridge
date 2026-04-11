@@ -99,17 +99,17 @@ const char * subscriptionKindToString(SubscriptionTargetKind target_kind)
 SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & entry)
 {
   const auto & target = entry.target;
-  const std::string normalized = target.kind == SubscriptionTargetKind::Topic
-                                   ? normalizeRosResourceName(target.name)
-                                   : normalizeConfiguredSourceName(target.name);
-  if (normalized.empty()) {
+  const std::string canonical_name = target.kind == SubscriptionTargetKind::Topic
+                                       ? normalizeRosResourceName(target.name)
+                                       : trimConfiguredSourceName(target.name);
+  if (canonical_name.empty()) {
     throw std::invalid_argument(
       target.kind == SubscriptionTargetKind::Topic
         ? "heartbeat subscription target name must normalize to a non-empty topic name"
-        : "heartbeat subscription target name must normalize to a non-empty configured_source name");
+        : "heartbeat subscription target name must trim to a non-empty configured_source name");
   }
 
-  return SubscriptionRequest{{target.kind, normalized}, entry.preferred_interval_ms};
+  return SubscriptionRequest{{target.kind, canonical_name}, entry.preferred_interval_ms};
 }
 
 std::string ensureVideoStream(VideoStreamManager & video_stream_manager, const VideoStreamSpec & spec)
@@ -467,12 +467,12 @@ void SubscriptionRegistry::sweepExpiredLeases()
 
 bool SubscriptionRegistry::hasSubscription(const std::string & resource, SubscriptionTargetKind target_kind) const
 {
-  const std::string normalized = target_kind == SubscriptionTargetKind::Topic ? normalizeRosResourceName(resource)
-                                                                              : normalizeConfiguredSourceName(resource);
-  if (normalized.empty()) {
+  const std::string canonical_name = target_kind == SubscriptionTargetKind::Topic ? normalizeRosResourceName(resource)
+                                                                                  : trimConfiguredSourceName(resource);
+  if (canonical_name.empty()) {
     return false;
   }
-  return subscriptions_.find(makeSubscriptionKey(target_kind, normalized)) != subscriptions_.end();
+  return subscriptions_.find(makeSubscriptionKey(target_kind, canonical_name)) != subscriptions_.end();
 }
 
 void SubscriptionRegistry::resetSessionState()

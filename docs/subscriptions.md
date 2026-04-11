@@ -17,7 +17,7 @@ Control topic: `ros.subscriptions.heartbeat`
       }
     },
     {
-      "configured_source": "/front_camera"
+      "configured_source": "front_camera"
     }
   ]
 }
@@ -29,17 +29,17 @@ Rules:
 - each entry must be an object
 - each entry must contain exactly one of `topic` or `configured_source`
 - `topic` values are normalized as ROS resource names
-- `configured_source` values are normalized the same way, so inputs such as `"front_camera"` and `"/front_camera/"` collapse to `"/front_camera"`
-- if normalization produces an empty name, that entry is invalid
+- `configured_source` values are trimmed only, so surrounding whitespace is ignored but `/`, repeated `/`, trailing `/`, and `:` stay significant
+- if topic normalization or configured-source trimming produces an empty name, that entry is invalid
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
 - `session_id` is optional; missing, `null`, and blank values are treated as absent
 
 ## Duplicate targets and interval handling
 
-The heartbeat parser treats `subscriptions` as a set keyed by normalized target:
+The heartbeat parser treats `subscriptions` as a set keyed by canonical target:
 
-- repeating the same normalized `topic` or `configured_source` name yields one effective request
+- repeating the same normalized `topic` or trimmed `configured_source` name yields one effective request
 - when duplicates provide multiple non-zero `interval_ms` values, the smallest value wins
 - `interval_ms: 0` means no preference
 - negative `interval_ms` values are accepted by the parser but clamped to `0` when the lease is applied
@@ -149,7 +149,7 @@ Video deliveries use the same deterministic track-name surface the bridge publis
 ```json
 {
   "kind": "configured_source",
-  "name": "/front_camera",
+  "name": "front_camera",
   "status": "active",
   "delivery": {
     "kind": "video",
@@ -162,7 +162,8 @@ Notes:
 
 - `configured_source` targets are always video streams
 - ROS topics become video streams only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
-- video `track_name` is deterministic and stable for the normalized target name
+- video `track_name` is deterministic and stable for the canonical target name
+- configured-source video track names percent-encode any byte outside RFC 3986 unreserved characters, so ids that differ by `/` or `:` stay distinct
 
 ## Delivery and sharing model
 
@@ -170,7 +171,7 @@ Notes:
 | --- | --- | --- | --- |
 | Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
 | ROS video topic | normalized topic name, unique graph type, and matching video rule | video | one in-process video stream per resolved `stream_key` |
-| Configured source | normalized `configured_source` name and matching `video.configured_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
+| Configured source | trimmed `configured_source` name and matching `video.configured_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
 
 Important behavior:
 

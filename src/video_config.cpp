@@ -29,13 +29,14 @@ constexpr char kTopicStreamKeyPrefix[] = "topic";
 constexpr char kConfiguredSourceStreamKeyPrefix[] = "configured_source";
 constexpr char kTopicTrackNamePrefix[] = "ros.video.";
 constexpr char kConfiguredSourceTrackNamePrefix[] = "ros.video.configured_source.";
+constexpr char kPercentEncodingHexDigits[] = "0123456789ABCDEF";
 
 std::string makeVideoStreamKey(std::string_view prefix, const std::string & resource)
 {
   return std::string(prefix) + ":" + resource;
 }
 
-std::string makeTrackSuffix(const std::string & resource)
+std::string makeRosTrackSuffix(const std::string & resource)
 {
   std::string suffix;
   suffix.reserve(resource.size());
@@ -58,9 +59,38 @@ std::string makeTrackSuffix(const std::string & resource)
   return suffix;
 }
 
+bool isRfc3986Unreserved(unsigned char byte)
+{
+  return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '-' ||
+         byte == '.' || byte == '_' || byte == '~';
+}
+
+std::string percentEncodeTrackSuffix(std::string_view resource)
+{
+  std::string suffix;
+  suffix.reserve(resource.size() * 3U);
+  for (const char ch : resource) {
+    const auto byte = static_cast<unsigned char>(ch);
+    if (isRfc3986Unreserved(byte)) {
+      suffix.push_back(static_cast<char>(byte));
+      continue;
+    }
+    suffix.push_back('%');
+    suffix.push_back(kPercentEncodingHexDigits[byte >> 4U]);
+    suffix.push_back(kPercentEncodingHexDigits[byte & 0x0FU]);
+  }
+  return suffix;
+}
+
 std::string makeVideoTrackName(std::string_view prefix, const std::string & resource)
 {
-  const std::string suffix = makeTrackSuffix(resource);
+  const std::string suffix = makeRosTrackSuffix(resource);
+  return suffix.empty() ? std::string(prefix) + "unnamed" : std::string(prefix) + suffix;
+}
+
+std::string makeConfiguredSourceTrackName(std::string_view prefix, const std::string & configured_source_name)
+{
+  const std::string suffix = percentEncodeTrackSuffix(configured_source_name);
   return suffix.empty() ? std::string(prefix) + "unnamed" : std::string(prefix) + suffix;
 }
 
@@ -91,9 +121,9 @@ std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::s
   return std::nullopt;
 }
 
-std::string normalizeConfiguredSourceName(std::string_view configured_source_name)
+std::string trimConfiguredSourceName(std::string_view configured_source_name)
 {
-  return normalizeRosResourceName(configured_source_name);
+  return trim(configured_source_name);
 }
 
 std::string videoSourceKindToString(VideoSourceKind kind)
@@ -146,25 +176,25 @@ VideoStreamSpec resolveRosVideoStreamSpec(
 VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
   const VideoConfig & config, const std::string & configured_source_name)
 {
-  const std::string normalized = normalizeConfiguredSourceName(configured_source_name);
-  if (normalized.empty()) {
+  const std::string trimmed_name = trimConfiguredSourceName(configured_source_name);
+  if (trimmed_name.empty()) {
     throw std::invalid_argument("Invalid configured source name.");
   }
 
-  const auto source_it = config.configured_sources.find(normalized);
+  const auto source_it = config.configured_sources.find(trimmed_name);
   if (source_it == config.configured_sources.end()) {
-    throw std::invalid_argument("Unknown configured video source '" + normalized + "'.");
+    throw std::invalid_argument("Unknown configured video source '" + trimmed_name + "'.");
   }
 
   const auto & source = source_it->second;
 
   VideoStreamSpec spec;
-  // stream_key, configured_source_name, and selected_config_key all use the same canonical configured-source name.
-  spec.stream_key = makeVideoStreamKey(kConfiguredSourceStreamKeyPrefix, normalized);
-  spec.track_name = makeVideoTrackName(kConfiguredSourceTrackNamePrefix, normalized);
-  spec.configured_source_name = normalized;
+  // stream_key, configured_source_name, and selected_config_key all use the same trimmed configured-source name.
+  spec.stream_key = makeVideoStreamKey(kConfiguredSourceStreamKeyPrefix, trimmed_name);
+  spec.track_name = makeConfiguredSourceTrackName(kConfiguredSourceTrackNamePrefix, trimmed_name);
+  spec.configured_source_name = trimmed_name;
   spec.source_kind = VideoSourceKind::ConfiguredSource;
-  spec.selected_config_key = normalized;
+  spec.selected_config_key = trimmed_name;
   spec.source_description = source.source;
   spec.transform_description = source.transform;
   spec.ingest_mode = kConfiguredSourceIngestMode;

@@ -209,7 +209,7 @@ Stable RPC error codes:
 
 | Code | Meaning | Typical causes |
 | --- | --- | --- |
-| `2400` | invalid request | bad JSON, wrong field types, empty normalized names, payload decode failures, invalid bounds |
+| `2400` | invalid request | bad JSON, wrong field types, empty canonical names, payload decode failures, invalid bounds |
 | `2401` | unauthorized | missing `caller_identity` |
 | `2403` | forbidden | access policy denies the requested service or topic |
 | `2500` | internal | ROS graph failures, client creation failures, runtime exceptions, late service-call failures |

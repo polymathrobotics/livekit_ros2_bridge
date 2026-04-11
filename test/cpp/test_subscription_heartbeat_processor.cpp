@@ -218,7 +218,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   EXPECT_EQ(stream["name"], "/sources/front");
   EXPECT_EQ(stream["status"], "active");
   EXPECT_EQ(stream["delivery"]["kind"], protocol::kDeliveryKindVideo);
-  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.configured_source.sources.front");
+  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.configured_source.%2Fsources%2Ffront");
   EXPECT_FALSE(stream.contains("error"));
 }
 

@@ -76,7 +76,7 @@ Important details:
 
 - a forbidden topic becomes a per-stream `forbidden` error in `ros.subscriptions.status`
 - `ros.topics.list` uses the same subscribe policy, so callers only see topics they could subscribe to
-- `configured_source` targets are normalized and resolved through `video.configured_sources.*`, but they do not use subscribe rules
+- `configured_source` targets are trimmed and resolved through `video.configured_sources.*`, but they do not use subscribe rules
 
 For the heartbeat and status contract, read [subscriptions.md](./subscriptions.md).
 

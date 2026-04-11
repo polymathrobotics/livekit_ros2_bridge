@@ -57,9 +57,9 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterva
 {
   expectSingleSubscription(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"configured_source":"/cameras/front","delivery_preferences":{"interval_ms":125}}]})"),
+      R"({"subscriptions":[{"configured_source":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
-    "/cameras/front",
+    "front_camera",
     125);
 }
 
@@ -154,6 +154,20 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndConfiguredSourceDisti
   EXPECT_EQ(update.subscriptions[1].preferred_interval_ms, 125);
 }
 
+TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsConfiguredSourceSlashVariantsDistinct)
+{
+  const auto body = nlohmann::json::parse(
+    R"({"subscriptions":[
+      {"configured_source":"front_camera","delivery_preferences":{"interval_ms":25}},
+      {"configured_source":"front_camera/","delivery_preferences":{"interval_ms":125}}
+    ]})");
+  const auto update = parseSubscriptionHeartbeat(body);
+
+  ASSERT_EQ(update.subscriptions.size(), 2U);
+  EXPECT_EQ(update.subscriptions[0].target.name, "front_camera");
+  EXPECT_EQ(update.subscriptions[1].target.name, "front_camera/");
+}
+
 TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
 {
   StreamStatus stream_status;
@@ -184,7 +198,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
   StreamStatus stream_status;
   stream_status.target = {SubscriptionTargetKind::ConfiguredSource, "/sources/front"};
   stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.track_name = "ros.video.configured_source.sources.front";
+  stream_status.track_name = "ros.video.configured_source.%2Fsources%2Ffront";
 
   const auto entry = serializeStreamStatus(stream_status);
 
@@ -197,7 +211,7 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
       {"delivery",
        {
          {"kind", "video"},
-         {"track_name", "ros.video.configured_source.sources.front"},
+         {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"},
        }},
     }));
 }
