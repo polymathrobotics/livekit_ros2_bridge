@@ -814,6 +814,8 @@ void RosServiceCaller::resetSessionState()
     kAnyServiceLogValue,
     kAnyServiceLogValue,
     canceled_count);
+  impl_->clients.clear();
+  impl_->resolved_type_supports.clear();
 }
 
 void RosServiceCaller::shutdown()

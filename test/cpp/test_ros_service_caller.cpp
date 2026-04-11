@@ -596,6 +596,59 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
   caller.shutdown();
 }
 
+TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
+{
+  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_session_reset_cache_node");
+  auto server_node = std::make_shared<rclcpp::Node>("service_server_session_reset_cache_node");
+
+  auto service = server_node->create_service<std_srvs::srv::SetBool>(
+    "/session_reset_cache_test",
+    [](const std_srvs::srv::SetBool::Request::SharedPtr request, std_srvs::srv::SetBool::Response::SharedPtr response) {
+      response->success = request->data;
+      response->message = request->data ? "enabled" : "disabled";
+    });
+  (void)service;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(caller_node);
+  executor.add_node(server_node);
+
+  ASSERT_TRUE(waitForService(executor, *caller_node, "/session_reset_cache_test"));
+
+  RosServiceCaller caller(*caller_node);
+
+  int resolution_attempts = 0;
+  caller.setTypeSupportResolveHookForTest([&resolution_attempts](const std::string & service_type) {
+    ++resolution_attempts;
+    EXPECT_EQ(service_type, "std_srvs/srv/SetBool");
+  });
+
+  auto first_future =
+    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
+  ASSERT_TRUE(spinUntil(
+    executor, [&]() { return first_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
+  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(first_future.get().response).success);
+  EXPECT_EQ(resolution_attempts, 1);
+
+  auto second_future =
+    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs, false));
+  ASSERT_TRUE(spinUntil(
+    executor, [&]() { return second_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
+  EXPECT_FALSE(deserializeMessage<std_srvs::srv::SetBool::Response>(second_future.get().response).success);
+  EXPECT_EQ(resolution_attempts, 1);
+
+  caller.resetSessionState();
+
+  auto third_future =
+    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
+  ASSERT_TRUE(spinUntil(
+    executor, [&]() { return third_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }));
+  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(third_future.get().response).success);
+  EXPECT_EQ(resolution_attempts, 2);
+
+  caller.shutdown();
+}
+
 TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_shutdown_quiesce_node");
