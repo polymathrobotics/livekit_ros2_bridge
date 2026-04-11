@@ -141,8 +141,7 @@ RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, Configure
   harness.state = session->state;
   configure_session(*session);
 
-  RuntimeConfig startup_config =
-    loadRuntimeConfig(harness.node->get_node_parameters_interface(), harness.node->get_name());
+  RuntimeConfig startup_config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
   harness.runtime = std::make_unique<Runtime>(*harness.node, std::move(session), std::move(startup_config));
   return harness;
 }
@@ -184,7 +183,7 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   auto session = std::make_unique<FakeRoomSession>();
   auto state = session->state;
   state->rejected_rpc_methods = {protocol::kRpcInterfacesGet};
-  RuntimeConfig startup_config = loadRuntimeConfig(node->get_node_parameters_interface(), node->get_name());
+  RuntimeConfig startup_config = loadRuntimeConfig(node->get_node_parameters_interface());
 
   try {
     Runtime runtime(*node, std::move(session), std::move(startup_config));

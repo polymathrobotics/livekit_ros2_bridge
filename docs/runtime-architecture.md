@@ -48,7 +48,7 @@ That order matters. The ROS-side helpers exist before the session can emit callb
 `RoomSession` runs one background loop:
 
 - try to connect once
-- wait for either disconnect or token-refresh deadline
+- wait for disconnect or stop
 - clear per-connection room state
 - reconnect with exponential backoff unless stop was requested
 

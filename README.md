@@ -39,7 +39,7 @@ You need:
 
 - a ROS 2 workspace where you can build and source this package
 - a reachable LiveKit deployment
-- either a pre-minted `livekit.token`, or both `livekit.api_key` and `livekit.api_secret`
+- a pre-minted `livekit.token`
 - at least one allowed topic or service in `access.rules.*.allow`
 
 ## Build the package
@@ -63,20 +63,15 @@ If you use this repository's dev-container workflow, `just build` runs the packa
    cp livekit_bridge.params.example.yaml livekit_bridge.params.yaml
    ```
 
-2. Edit `livekit_bridge.params.yaml` and set the connection, auth, and at least one allow rule.
+2. Edit `livekit_bridge.params.yaml` and set the connection, token, and at least one allow rule.
 
    ```yaml
    livekit_ros2_bridge:
      ros__parameters:
        livekit.url: "wss://your-livekit.example"
        livekit.room: "robot-room"
-       livekit.identity: "robot-bridge"
 
-       # Choose one auth mode.
        livekit.token: ""
-       # or:
-       # livekit.api_key: ""
-       # livekit.api_secret: ""
 
        access.rules.subscribe.allow: ["/camera/*"]
        access.rules.publish.allow: ["/cmd_vel"]

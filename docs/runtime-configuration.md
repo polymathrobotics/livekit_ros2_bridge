@@ -4,8 +4,7 @@ The bridge reads ROS parameters once at node startup and builds one immutable ru
 
 At startup, configuration determines:
 
-- how the bridge connects to LiveKit and identifies itself
-- whether the bridge reuses a static token or mints tokens with API credentials
+- how the bridge connects to LiveKit
 - which ROS resources each access policy family exposes
 - how video requests resolve to ROS-backed or configured sources
 
@@ -17,41 +16,18 @@ If a change would affect any of those decisions, restart the node. Reconnect alo
 | --- | --- | --- |
 | `livekit.url` | yes | LiveKit server URL |
 | `livekit.room` | yes | Room name the bridge should join |
-| `livekit.identity` | no | Defaults to `<node_name>-<hostname>`, or just `<node_name>` if hostname lookup fails |
 
 Startup fails if `livekit.url` or `livekit.room` is empty.
 
-## Authentication modes
+## Authentication
 
-Valid startup shapes:
+| Parameter | Required | Notes |
+| --- | --- | --- |
+| `livekit.token` | yes | Startup token for the bridge participant. The bridge does not mint or refresh tokens. |
 
-| Parameters | Bridge token source |
-| --- | --- |
-| `livekit.token` | reuse the configured token as-is |
-| `livekit.api_key` + `livekit.api_secret` | mint bridge tokens at connect time |
-| `livekit.token` + `livekit.api_key` + `livekit.api_secret` | reuse the configured token as-is |
+Startup fails if `livekit.token` is empty.
 
-Invalid startup shapes:
-
-- neither `livekit.token` nor a full `livekit.api_key` + `livekit.api_secret` pair is set
-- only one of `livekit.api_key` or `livekit.api_secret` is set
-
-When the bridge mints its own token, it enables the LiveKit room grants it needs to join, publish, subscribe, and publish data.
-
-## Token lifetime and refresh
-
-These parameters matter only when API credentials are in play:
-
-- `livekit.token_ttl_seconds`
-- `livekit.token_refresh_margin_seconds`
-
-Rules:
-
-- `livekit.token_ttl_seconds` must be greater than `0` when API credentials are used
-- `livekit.token_refresh_margin_seconds` is the lead time before expiry that triggers bridge reconnect
-- API-minted bridge tokens are refreshed by reconnecting before expiry
-- static bridge tokens are never refreshed automatically
-- for static tokens, the bridge only parses the JWT `exp` claim well enough to log an expiry warning; it does not verify the signature as part of that check
+The bridge reuses the configured startup token when it creates a fresh room connection. If that token expires, later reconnect attempts will fail until something outside the bridge restarts it with a fresh token.
 
 ## Access policy parameters
 

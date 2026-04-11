@@ -33,7 +33,7 @@ Node::Node(const rclcpp::NodeOptions & options)
   LogEvent(get_logger(), "node_startup_begin").kv("phase", "startup").info();
   RuntimeConfig runtime_config = [this]() {
     try {
-      return loadRuntimeConfig(get_node_parameters_interface(), get_name());
+      return loadRuntimeConfig(get_node_parameters_interface());
     } catch (const std::exception & exc) {
       LogEvent(get_logger(), "node_startup_failed")
         .kv("phase", "startup")
@@ -52,8 +52,6 @@ Node::Node(const rclcpp::NodeOptions & options)
   }();
 
   const std::string room = runtime_config.connect_config.room;
-  const std::string identity = runtime_config.connect_config.identity;
-
   try {
     runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
   } catch (const std::exception & exc) {
@@ -61,7 +59,6 @@ Node::Node(const rclcpp::NodeOptions & options)
       .kv("phase", "startup")
       .kv("reason", "runtime_initialization_failed")
       .kvOr("room", room, "<unset>")
-      .kvOr("identity", identity, "<unset>")
       .kv("error", exc.what())
       .error();
     throw;
@@ -70,17 +67,12 @@ Node::Node(const rclcpp::NodeOptions & options)
       .kv("phase", "startup")
       .kv("reason", "runtime_initialization_failed")
       .kvOr("room", room, "<unset>")
-      .kvOr("identity", identity, "<unset>")
       .kv("error", "unknown_exception")
       .error();
     throw;
   }
 
-  LogEvent(get_logger(), "node_ready")
-    .kv("phase", "startup")
-    .kvOr("room", room, "<unset>")
-    .kvOr("identity", identity, "<unset>")
-    .info();
+  LogEvent(get_logger(), "node_ready").kv("phase", "startup").kvOr("room", room, "<unset>").info();
 }
 
 Node::~Node()

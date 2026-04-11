@@ -48,26 +48,6 @@ public:
   }
 };
 
-bool usesDerivedIdentity(const std::string & node_name, const std::string & identity)
-{
-  return identity == node_name || identity.rfind(node_name + "-", 0) == 0;
-}
-
-const char * invalidTokenTtlError()
-{
-  return "livekit.token_ttl_seconds must be > 0 when livekit.api_key/livekit.api_secret mint bridge tokens";
-}
-
-const char * invalidApiCredentialPairError()
-{
-  return "livekit.api_key and livekit.api_secret must be both set or both unset";
-}
-
-const char * missingTokenConfigError()
-{
-  return "Either livekit.token or livekit.api_key + livekit.api_secret must be set";
-}
-
 rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
@@ -86,7 +66,7 @@ rclcpp::NodeOptions makeStaticTokenOptions()
 RuntimeConfig loadRuntimeConfigForNode(const std::string & node_name, const rclcpp::NodeOptions & options)
 {
   auto node = std::make_shared<rclcpp::Node>(node_name, options);
-  return loadRuntimeConfig(node->get_node_parameters_interface(), node->get_name());
+  return loadRuntimeConfig(node->get_node_parameters_interface());
 }
 
 void expectRuntimeConfigError(
@@ -136,110 +116,19 @@ protected:
   }
 };
 
-TEST_F(RuntimeConfigTest, StaticTokenStartupKeepsConfiguredIdentity)
+TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("livekit.identity", "bridge-id");
-  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_static_token", options);
+  const RuntimeConfig startup_config =
+    loadRuntimeConfigForNode("startup_config_static_token", makeStaticTokenOptions());
 
   EXPECT_EQ(startup_config.connect_config.url, "ws://test:7880");
   EXPECT_EQ(startup_config.connect_config.room, "robot-room");
-  EXPECT_EQ(startup_config.connect_config.identity, "bridge-id");
-
-  const auto token = startup_config.token_source->getToken(startup_config.connect_config);
-  EXPECT_EQ(token.value, "static-token");
-  EXPECT_FALSE(token.refreshable);
-}
-
-TEST_F(RuntimeConfigTest, ApiMintedTokenModesRejectZeroTokenTtl)
-{
-  struct Case
-  {
-    const char * name;
-    rclcpp::NodeOptions options;
-  };
-
-  std::vector<Case> cases;
-  {
-    auto options = makeBaseOptions();
-    options.append_parameter_override("livekit.api_key", "api-key");
-    options.append_parameter_override("livekit.api_secret", "api-secret");
-    options.append_parameter_override("livekit.token_ttl_seconds", 0);
-    cases.push_back({"api_key_and_secret", options});
-  }
-  {
-    auto options = makeStaticTokenOptions();
-    options.append_parameter_override("livekit.api_key", "api-key");
-    options.append_parameter_override("livekit.api_secret", "api-secret");
-    options.append_parameter_override("livekit.token_ttl_seconds", 0);
-    cases.push_back({"static_token_with_api_credentials", options});
-  }
-
-  for (const auto & c : cases) {
-    SCOPED_TRACE(c.name);
-    expectRuntimeConfigError(std::string("startup_config_zero_ttl_") + c.name, c.options, invalidTokenTtlError());
-  }
-}
-
-TEST_F(RuntimeConfigTest, GeneratedTokenStartupBuildsRefreshableTokenSource)
-{
-  auto options = makeBaseOptions();
-  options.append_parameter_override("livekit.api_key", "api-key");
-  options.append_parameter_override("livekit.api_secret", "api-secret");
-  options.append_parameter_override("livekit.token_ttl_seconds", 600);
-  options.append_parameter_override("livekit.token_refresh_margin_seconds", 120);
-  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_api_key", options);
-
-  EXPECT_TRUE(usesDerivedIdentity("startup_config_api_key", startup_config.connect_config.identity));
-
-  const auto token = startup_config.token_source->getToken(startup_config.connect_config);
-  EXPECT_TRUE(token.refreshable);
-  EXPECT_FALSE(token.value.empty());
-}
-
-TEST_F(RuntimeConfigTest, StaticTokenWithApiCredentialsStillUsesStaticTokenSource)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("livekit.api_key", "api-key");
-  options.append_parameter_override("livekit.api_secret", "api-secret");
-  options.append_parameter_override("livekit.token_ttl_seconds", 600);
-  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_static_token_with_api", options);
-
-  const auto token = startup_config.token_source->getToken(startup_config.connect_config);
-  EXPECT_EQ(token.value, "static-token");
-  EXPECT_FALSE(token.refreshable);
-}
-
-TEST_F(RuntimeConfigTest, RejectsMalformedApiCredentialPair)
-{
-  struct Case
-  {
-    const char * name;
-    const char * param;
-    const char * value;
-    bool with_static_token;
-  };
-
-  const Case cases[] = {
-    {"api_key_without_secret", "livekit.api_key", "api-key", false},
-    {"api_secret_without_key", "livekit.api_secret", "api-secret", false},
-    {"api_key_without_secret_with_token", "livekit.api_key", "api-key", true},
-  };
-
-  for (const auto & c : cases) {
-    SCOPED_TRACE(c.name);
-    auto options = makeBaseOptions();
-    if (c.with_static_token) {
-      options.append_parameter_override("livekit.token", "static-token");
-    }
-    options.append_parameter_override(c.param, c.value);
-    expectRuntimeConfigError(std::string("credential_pair_") + c.name, options, invalidApiCredentialPairError());
-  }
+  EXPECT_EQ(startup_config.access_token, "static-token");
 }
 
 TEST_F(RuntimeConfigTest, MissingTokenConfigurationThrows)
 {
-  expectRuntimeConfigError("startup_config_missing_token", makeBaseOptions(), missingTokenConfigError());
+  expectRuntimeConfigErrorContains("startup_config_missing_token", makeBaseOptions(), "livekit.token");
 }
 
 TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)

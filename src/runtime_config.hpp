@@ -34,17 +34,16 @@ struct RuntimeConfig
 {
   Params loaded_params;
   RoomConnectionConfig connect_config;
-  std::shared_ptr<AccessTokenSource> token_source;
+  std::string access_token;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos_config;
   VideoConfig video_config;
 };
 
 // Loads and validates the bridge's startup-only configuration from parameters, deriving the
-// bridge identity, connection settings, refresh-capable token source, access policy, and video
+// connection settings, startup access token, access policy, and video
 // source rules in one pass before Runtime starts.
 RuntimeConfig loadRuntimeConfig(
-  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
-  const std::string & node_name);
+  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface);
 
 }  // namespace livekit_ros2_bridge

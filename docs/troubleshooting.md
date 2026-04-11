@@ -6,8 +6,8 @@ This page covers the common failures people hit during setup, connection, subscr
 
 | Symptom | First events to check | Typical causes |
 | --- | --- | --- |
-| Node exits during startup | `runtime_config_load_failed`, `node_startup_failed`, `runtime_startup_failed` | missing `livekit.url`, missing `livekit.room`, invalid auth shape, invalid video config |
-| Room never stabilizes | `room_token_load_failed`, `room_connect_failed`, `room_reconnect_backoff` | bad credentials, empty token, unreachable LiveKit URL |
+| Node exits during startup | `runtime_config_load_failed`, `node_startup_failed`, `runtime_startup_failed` | missing `livekit.url`, missing `livekit.room`, missing token, invalid video config |
+| Room never stabilizes | `room_token_load_failed`, `room_connect_failed`, `room_reconnect_backoff` | bad or expired token, empty token, unreachable LiveKit URL |
 | Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, session ownership mismatch |
 | Service call rejected or times out | `rpc_request_rejected`, `service_call_failed`, `service_calls_settled` | missing caller identity, access denied, bad payload, request build failure, timeout, requester disconnect |
 | CDR topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `cdr_track_pending`, `cdr_track_published`, `cdr_track_publish_failed`, `cdr_track_delivery_failed`, `cdr_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
@@ -26,9 +26,7 @@ Look for:
 Common causes:
 
 - missing `livekit.url` or `livekit.room`
-- missing auth configuration
-- only one of `livekit.api_key` or `livekit.api_secret` is set
-- `livekit.token_ttl_seconds <= 0` while API credentials are enabled
+- missing `livekit.token`
 - invalid `video.topic_rules.*` or `video.configured_sources.*` configuration
 
 Start with [runtime-configuration.md](./runtime-configuration.md).
@@ -46,9 +44,6 @@ Common causes:
 - unreachable LiveKit URL
 - bad room name
 - bad or expired token
-- bad API credentials
-
-If you use a static token, the bridge cannot refresh it for you. Near expiry you may only see `event=room_token_expiry_warning`.
 
 ### The bridge keeps reconnecting
 
@@ -61,7 +56,7 @@ Look for:
 Common causes:
 
 - transport loss
-- refreshable bridge token reached its refresh margin
+- expired startup token
 - the room disconnected and the reconnect loop is backing off
 
 ## RPC and access issues

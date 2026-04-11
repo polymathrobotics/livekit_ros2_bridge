@@ -14,8 +14,6 @@
 
 #include "runtime_config.hpp"
 
-#include <unistd.h>
-
 #include <chrono>
 #include <cstdint>
 #include <mutex>
@@ -43,24 +41,13 @@ constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 
-std::string deriveDefaultIdentity(const std::string & node_name)
-{
-  char hostname[256];
-  hostname[0] = '\0';
-  if (gethostname(hostname, sizeof(hostname)) != 0 || hostname[0] == '\0') {
-    return node_name;
-  }
-  hostname[sizeof(hostname) - 1U] = '\0';
-  return node_name + "-" + hostname;
-}
-
 void ensureGstreamerInitialized()
 {
   static std::once_flag once;
   std::call_once(once, []() { gst_init(nullptr, nullptr); });
 }
 
-RoomConnectionConfig loadConnectConfig(const Params & params, const std::string & node_name)
+RoomConnectionConfig loadConnectConfig(const Params & params)
 {
   if (params.livekit.url.empty()) {
     throw std::runtime_error("livekit.url is required");
@@ -72,94 +59,7 @@ RoomConnectionConfig loadConnectConfig(const Params & params, const std::string 
   RoomConnectionConfig config;
   config.url = params.livekit.url;
   config.room = params.livekit.room;
-  config.identity = params.livekit.identity.empty() ? deriveDefaultIdentity(node_name) : params.livekit.identity;
   return config;
-}
-
-enum class LiveKitAuthMode
-{
-  Missing,
-  InvalidApiCredentialPair,
-  StaticToken,
-  StaticTokenWithApiCredentials,
-  ApiKeyAndSecret,
-};
-
-const char * authModeString(const LiveKitAuthMode auth_mode)
-{
-  switch (auth_mode) {
-    case LiveKitAuthMode::Missing:
-      return "missing";
-    case LiveKitAuthMode::InvalidApiCredentialPair:
-      return "invalid_api_credential_pair";
-    case LiveKitAuthMode::StaticToken:
-      return "static_token";
-    case LiveKitAuthMode::StaticTokenWithApiCredentials:
-      return "static_token_with_api_credentials";
-    case LiveKitAuthMode::ApiKeyAndSecret:
-      return "api_key_and_secret";
-  }
-
-  return "unknown";
-}
-
-LiveKitAuthMode classifyLiveKitAuthMode(const Params & params)
-{
-  const bool has_api_key = !params.livekit.api_key.empty();
-  const bool has_api_secret = !params.livekit.api_secret.empty();
-  if (has_api_key != has_api_secret) {
-    return LiveKitAuthMode::InvalidApiCredentialPair;
-  }
-  if (!params.livekit.token.empty()) {
-    return has_api_key ? LiveKitAuthMode::StaticTokenWithApiCredentials : LiveKitAuthMode::StaticToken;
-  }
-  return has_api_key ? LiveKitAuthMode::ApiKeyAndSecret : LiveKitAuthMode::Missing;
-}
-
-bool hasValidLiveKitApiCredentialPair(const LiveKitAuthMode auth_mode)
-{
-  return auth_mode != LiveKitAuthMode::InvalidApiCredentialPair;
-}
-
-bool usesStaticToken(const LiveKitAuthMode auth_mode)
-{
-  return auth_mode == LiveKitAuthMode::StaticToken || auth_mode == LiveKitAuthMode::StaticTokenWithApiCredentials;
-}
-
-bool enablesApiMintedTokens(const LiveKitAuthMode auth_mode)
-{
-  return auth_mode == LiveKitAuthMode::StaticTokenWithApiCredentials || auth_mode == LiveKitAuthMode::ApiKeyAndSecret;
-}
-
-void validateLiveKitApiCredentialPair(const LiveKitAuthMode auth_mode)
-{
-  if (!hasValidLiveKitApiCredentialPair(auth_mode)) {
-    throw std::runtime_error("livekit.api_key and livekit.api_secret must be both set or both unset");
-  }
-}
-
-void validateTokenTtl(const Params & params, const LiveKitAuthMode auth_mode)
-{
-  if (enablesApiMintedTokens(auth_mode) && params.livekit.token_ttl_seconds <= 0) {
-    throw std::runtime_error(
-      "livekit.token_ttl_seconds must be > 0 when livekit.api_key/livekit.api_secret mint bridge tokens");
-  }
-}
-
-std::shared_ptr<AccessTokenSource> loadTokenSource(const Params & params, const LiveKitAuthMode auth_mode)
-{
-  validateLiveKitApiCredentialPair(auth_mode);
-
-  if (usesStaticToken(auth_mode)) {
-    return std::make_shared<StaticTokenSource>(params.livekit.token);
-  }
-
-  if (auth_mode == LiveKitAuthMode::ApiKeyAndSecret) {
-    return std::make_shared<ApiKeyAccessTokenSource>(
-      params.livekit.api_key, params.livekit.api_secret, std::chrono::seconds(params.livekit.token_ttl_seconds));
-  }
-
-  throw std::runtime_error("Either livekit.token or livekit.api_key + livekit.api_secret must be set");
 }
 
 std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * context)
@@ -653,12 +553,9 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 }  // namespace
 
 RuntimeConfig loadRuntimeConfig(
-  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface,
-  const std::string & node_name)
+  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface)
 {
   std::string room = kUnsetLogValue;
-  std::string identity = kUnsetLogValue;
-  const char * auth_mode_name = "unknown";
 
   try {
     if (parameters_interface == nullptr) {
@@ -671,15 +568,8 @@ RuntimeConfig loadRuntimeConfig(
     room =
       runtime_config.loaded_params.livekit.room.empty() ? kUnsetLogValue : runtime_config.loaded_params.livekit.room;
 
-    const LiveKitAuthMode auth_mode = classifyLiveKitAuthMode(runtime_config.loaded_params);
-    auth_mode_name = authModeString(auth_mode);
-    identity = runtime_config.loaded_params.livekit.identity.empty() ? deriveDefaultIdentity(node_name)
-                                                                     : runtime_config.loaded_params.livekit.identity;
-
-    validateLiveKitApiCredentialPair(auth_mode);
-    validateTokenTtl(runtime_config.loaded_params, auth_mode);
-    runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params, node_name);
-    runtime_config.token_source = loadTokenSource(runtime_config.loaded_params, auth_mode);
+    runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params);
+    runtime_config.access_token = runtime_config.loaded_params.livekit.token;
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
     runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
     runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
@@ -687,8 +577,7 @@ RuntimeConfig loadRuntimeConfig(
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .kv("phase", "startup")
       .kvOr("room", runtime_config.connect_config.room, kUnsetLogValue)
-      .kvOr("identity", runtime_config.connect_config.identity, kUnsetLogValue)
-      .kv("auth_mode", auth_mode_name)
+      .kv("auth_mode", "static_token")
       .info();
 
     return runtime_config;
@@ -697,8 +586,6 @@ RuntimeConfig loadRuntimeConfig(
       .kv("phase", "startup")
       .kv("reason", "config_validation_failed")
       .kv("room", room)
-      .kv("identity", identity)
-      .kv("auth_mode", auth_mode_name)
       .kv("error", exc.what())
       .error();
     throw;
@@ -707,8 +594,6 @@ RuntimeConfig loadRuntimeConfig(
       .kv("phase", "startup")
       .kv("reason", "config_validation_failed")
       .kv("room", room)
-      .kv("identity", identity)
-      .kv("auth_mode", auth_mode_name)
       .kv("error", "unknown_exception")
       .error();
     throw;

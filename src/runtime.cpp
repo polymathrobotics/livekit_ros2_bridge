@@ -47,17 +47,12 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
 , video_config_(std::move(runtime_config.video_config))
 , subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
 , room_(runtime_config.connect_config.room)
-, identity_(runtime_config.connect_config.identity)
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
   }
 
-  LogEvent(node_.get_logger(), "runtime_startup_begin")
-    .kv("phase", "startup")
-    .kvOr("room", room_, "<unset>")
-    .kvOr("identity", identity_, "<unset>")
-    .info();
+  LogEvent(node_.get_logger(), "runtime_startup_begin").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
@@ -109,11 +104,9 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     });
   });
 
-  const auto token_refresh_margin =
-    std::chrono::seconds(runtime_config.loaded_params.livekit.token_refresh_margin_seconds);
   room_session_->start(
     runtime_config.connect_config,
-    runtime_config.token_source,
+    runtime_config.access_token,
     RoomSessionCallbacks{
       [this]() {
         submitExecutorWork([this]() {
@@ -135,24 +128,18 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
       [this](const IncomingControlPacket & packet) { handleIncomingControlPacket(packet); },
     },
     kReconnectInitialBackoff,
-    kReconnectMaxBackoff,
-    token_refresh_margin);
+    kReconnectMaxBackoff);
   if (!rpc_router_->registerRpcMethods(*room_session_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .kv("phase", "startup")
       .kv("reason", "required_rpc_registration_failed")
       .kvOr("room", room_, "<unset>")
-      .kvOr("identity", identity_, "<unset>")
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
 
-  LogEvent(node_.get_logger(), "runtime_ready")
-    .kv("phase", "startup")
-    .kvOr("room", room_, "<unset>")
-    .kvOr("identity", identity_, "<unset>")
-    .info();
+  LogEvent(node_.get_logger(), "runtime_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
 }
 
 Runtime::~Runtime()
@@ -166,11 +153,7 @@ void Runtime::shutdown()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start")
-    .kv("phase", "shutdown")
-    .kvOr("room", room_, "<unset>")
-    .kvOr("identity", identity_, "<unset>")
-    .info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_start").kv("phase", "shutdown").kvOr("room", room_, "<unset>").info();
 
   lease_gc_timer_.reset();
 
@@ -204,7 +187,6 @@ void Runtime::shutdown()
   LogEvent(node_.get_logger(), "runtime_shutdown_complete")
     .kv("phase", "shutdown")
     .kvOr("room", room_, "<unset>")
-    .kvOr("identity", identity_, "<unset>")
     .info();
 }
 

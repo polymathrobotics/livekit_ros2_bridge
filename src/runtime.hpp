@@ -76,7 +76,6 @@ private:
   SubscriptionQosConfig subscription_qos_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
   std::string room_;
-  std::string identity_;
   std::atomic<bool> shutting_down_{false};
   EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};

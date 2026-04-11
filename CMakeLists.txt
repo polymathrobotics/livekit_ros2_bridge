@@ -69,7 +69,6 @@ add_library(${PROJECT_NAME} SHARED
   src/topic_publish_command.cpp
   src/topic_publisher.cpp
   src/utils/base64.cpp
-  src/utils/livekit_access_token.cpp
   src/video_config.cpp
   src/video_ingestor.cpp
   src/video_stream_manager.cpp
@@ -190,9 +189,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_subscription_registry test/cpp/test_subscription_registry.cpp)
   target_link_libraries(test_subscription_registry ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
 
-  ament_add_gtest(test_livekit_access_token test/cpp/test_livekit_access_token.cpp)
-  target_link_libraries(test_livekit_access_token ${PROJECT_NAME})
-
   ament_add_gtest(test_topic_publish_command test/cpp/test_topic_publish_command.cpp)
   target_link_libraries(test_topic_publish_command ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
@@ -216,7 +212,6 @@ if(BUILD_TESTING)
     test_interface_definition_lookup
     test_interface_payloads
     test_interface_type_utils
-    test_livekit_access_token
     test_log_event
     test_node
     test_quiesce_guard

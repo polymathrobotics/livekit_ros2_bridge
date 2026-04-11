@@ -13,37 +13,12 @@ livekit_ros2_bridge:
       description: "LiveKit room name."
       validation:
         not_empty<>: null
-    identity:
-      type: string
-      default_value: ""
-      description: "Participant identity override."
     token:
       type: string
       default_value: ""
-      description: "Static LiveKit token."
-    api_key:
-      type: string
-      default_value: ""
-      description: "LiveKit API key. Set together with livekit.api_secret or leave both unset."
-    api_secret:
-      type: string
-      default_value: ""
-      description: "LiveKit API secret. Set together with livekit.api_key or leave both unset."
-    token_ttl_seconds:
-      type: int
-      default_value: 3600
-      description: >-
-        TTL for LiveKit tokens minted from livekit.api_key/livekit.api_secret in
-        seconds. Must be greater than 0 when those credentials are used for
-        bridge auth.
+      description: "LiveKit startup token. The bridge uses this token for room connection attempts and does not mint replacement tokens."
       validation:
-        gt_eq<>: [0]
-    token_refresh_margin_seconds:
-      type: int
-      default_value: 300
-      description: "Refresh reconnect margin in seconds before token expiration."
-      validation:
-        gt_eq<>: [0]
+        not_empty<>: null
   access:
     rules:
       publish:

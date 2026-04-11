@@ -13,7 +13,7 @@
 # The bridge will not start until you set:
 # - `livekit.url`: your LiveKit server URL
 # - `livekit.room`: the room this bridge should join
-# - `livekit.token`, or both `livekit.api_key` and `livekit.api_secret`
+# - `livekit.token`: a token minted outside the bridge
 # - at least one allowed topic or service in `access.rules.*.allow`
 
 ---
@@ -23,15 +23,8 @@ livekit_ros2_bridge:
     livekit.url: ""  # e.g. "wss://your-livekit.example"
     livekit.room: ""  # e.g. "robot-room"
 
-    # Recommended: set the participant name used by the bridge in LiveKit.
-    livekit.identity: ""  # e.g. "robot-bridge"
-
-    # Choose one authentication method.
-    # Option 1: use a token you already created.
+    # Use a token you created outside the bridge.
     livekit.token: ""
-    # Option 2: set both of these so the bridge can mint its own tokens.
-    livekit.api_key: ""
-    livekit.api_secret: ""
 
     # Tell the bridge what remote clients are allowed to use.
     # At least one of these allow lists must contain a real value.

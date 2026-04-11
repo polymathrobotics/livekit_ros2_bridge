@@ -39,7 +39,6 @@
 #include "livekit/video_source.h"
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
-#include "utils/livekit_access_token.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -48,11 +47,9 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-using Clock = std::chrono::system_clock;
 const auto kRoomSessionLogger = rclcpp::get_logger("livekit_ros2_bridge.room_session");
 constexpr char kUnknownLogValue[] = "<unknown>";
 constexpr char kUnsetLogValue[] = "<unset>";
-constexpr auto kRefreshStatePollInterval = std::chrono::seconds(1);
 
 const char * requestIdForLog(const livekit::RpcInvocationData & invocation)
 {
@@ -152,32 +149,6 @@ livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & 
   };
 }
 
-std::optional<Clock::time_point> computeRefreshDeadline(const AccessToken & token, std::chrono::seconds refresh_margin)
-{
-  if (!token.expires_at.has_value()) {
-    return std::nullopt;
-  }
-
-  auto effective_margin = std::max(refresh_margin, std::chrono::seconds(0));
-  if (token.issued_at.has_value() && *token.expires_at > *token.issued_at) {
-    const auto ttl = std::chrono::duration_cast<std::chrono::seconds>(*token.expires_at - *token.issued_at);
-    const auto half_ttl = ttl / 2;
-    effective_margin = std::min(effective_margin, half_ttl);
-  }
-
-  return *token.expires_at - effective_margin;
-}
-
-std::string formatTokenExpiry(const std::optional<Clock::time_point> & expires_at)
-{
-  if (!expires_at.has_value()) {
-    return kUnknownLogValue;
-  }
-
-  const auto unix_seconds = std::chrono::duration_cast<std::chrono::seconds>(expires_at->time_since_epoch()).count();
-  return std::to_string(unix_seconds);
-}
-
 class LiveKitRoomSession final : public RoomSession, public livekit::RoomDelegate
 {
 public:
@@ -190,11 +161,10 @@ public:
 
   void start(
     RoomConnectionConfig config,
-    std::shared_ptr<AccessTokenSource> access_token_source,
+    std::string access_token,
     RoomSessionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff,
-    std::chrono::seconds refresh_margin) override
+    std::chrono::milliseconds max_backoff) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_started_) {
@@ -202,25 +172,22 @@ public:
       return;
     }
 
-    if (access_token_source == nullptr) {
-      throw std::invalid_argument("LiveKit access_token_source is required.");
+    if (access_token.empty()) {
+      throw std::invalid_argument("LiveKit access_token is required.");
     }
 
     config_ = std::move(config);
-    token_source_ = std::move(access_token_source);
+    access_token_ = std::move(access_token);
     callbacks_ = std::move(callbacks);
     initial_backoff_ = std::max(initial_backoff, std::chrono::milliseconds(0));
     max_backoff_ = std::max(max_backoff, initial_backoff_);
-    refresh_margin_ = std::max(refresh_margin, std::chrono::seconds(0));
     stop_requested_ = false;
     reconnect_requested_ = false;
-    static_expiry_warned_ = false;
     last_reconnect_reason_.clear();
     thread_started_ = true;
     LogEvent(kRoomSessionLogger, "room_session_start_requested")
       .kv("phase", "startup")
       .kvOr("room", config_.room, kUnsetLogValue)
-      .kvOr("identity", config_.identity, kUnsetLogValue)
       .info();
     worker_thread_ = std::thread([this]() { run(); });
   }
@@ -500,14 +467,11 @@ private:
     LogEvent(kRoomSessionLogger, "livekit_initialized").kv("phase", "startup").info();
 
     auto backoff = initialBackoff();
-    bool immediate_retry = false;
     while (!stopRequested()) {
       const bool connected = connectOnce();
-      if (!connected) {
-        immediate_retry = false;
-      } else {
+      if (connected) {
         backoff = initialBackoff();
-        immediate_retry = waitForRefreshOrDisconnect();
+        waitForDisconnect();
       }
 
       const bool notify_reset = connected && !stopRequested();
@@ -517,16 +481,11 @@ private:
         break;
       }
 
-      if (immediate_retry) {
-        continue;
-      }
-
       if (backoff.count() > 0) {
         LogEvent(kRoomSessionLogger, "room_reconnect_backoff")
           .kv("phase", "reconnect")
           .kv("reason", lastReconnectReason())
           .kvOr("room", config_.room, kUnsetLogValue)
-          .kvOr("identity", config_.identity, kUnsetLogValue)
           .kv("delay_seconds", backoff.count() / 1000.0)
           .warn();
         waitForStop(backoff);
@@ -547,38 +506,21 @@ private:
   bool connectOnce()
   {
     RoomConnectionConfig config;
-    std::shared_ptr<AccessTokenSource> token_source;
+    std::string access_token;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       config = config_;
-      token_source = token_source_;
+      access_token = access_token_;
     }
 
-    AccessToken token;
-    try {
-      token = token_source->getToken(config);
-    } catch (const std::exception & exc) {
-      LogEvent(kRoomSessionLogger, "room_token_load_failed")
-        .kv("phase", "connect")
-        .kv("reason", "exception")
-        .kvOr("room", config.room, kUnsetLogValue)
-        .kvOr("identity", config.identity, kUnsetLogValue)
-        .kv("error", exc.what())
-        .error();
-      return false;
-    }
-
-    if (token.value.empty()) {
+    if (access_token.empty()) {
       LogEvent(kRoomSessionLogger, "room_token_load_failed")
         .kv("phase", "connect")
         .kv("reason", "empty_token")
         .kvOr("room", config.room, kUnsetLogValue)
-        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       return false;
     }
-
-    logTokenState(token);
 
     auto room = std::make_shared<livekit::Room>();
     room->setDelegate(this);
@@ -593,17 +535,15 @@ private:
       .kv("phase", "connect")
       .kv("url", config.url)
       .kv("room", config.room)
-      .kvOr("identity", config.identity, kUnsetLogValue)
       .info();
 
     try {
-      if (!room->Connect(config.url, token.value, room_options)) {
+      if (!room->Connect(config.url, access_token, room_options)) {
         LogEvent(kRoomSessionLogger, "room_connect_failed")
           .kv("phase", "connect")
           .kv("reason", "connect_returned_false")
           .kv("url", config.url)
           .kv("room", config.room)
-          .kvOr("identity", config.identity, kUnsetLogValue)
           .error();
         room->setDelegate(nullptr);
         return false;
@@ -614,7 +554,6 @@ private:
         .kv("reason", "exception")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, kUnsetLogValue)
         .kv("error", exc.what())
         .error();
       room->setDelegate(nullptr);
@@ -625,7 +564,6 @@ private:
         .kv("reason", "unknown_exception")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       room->setDelegate(nullptr);
       return false;
@@ -638,7 +576,6 @@ private:
         .kv("reason", "local_participant_unavailable")
         .kv("url", config.url)
         .kv("room", config.room)
-        .kvOr("identity", config.identity, kUnsetLogValue)
         .error();
       room->setDelegate(nullptr);
       return false;
@@ -648,9 +585,7 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       room_ = std::move(room);
-      current_token_ = token;
       reconnect_requested_ = false;
-      static_expiry_warned_ = false;
       participant_disconnects_enabled_ = true;
       rpc_methods_registered = registerAllRpcMethodsLocked();
     }
@@ -675,58 +610,10 @@ private:
     return true;
   }
 
-  bool waitForRefreshOrDisconnect()
+  void waitForDisconnect()
   {
-    while (!stopRequested()) {
-      {
-        std::unique_lock<std::mutex> lock(mutex_);
-        if (reconnect_requested_) {
-          return false;
-        }
-        condition_.wait_for(lock, kRefreshStatePollInterval);
-        if (reconnect_requested_) {
-          return false;
-        }
-      }
-
-      const auto now = Clock::now();
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!current_token_.expires_at.has_value()) {
-        continue;
-      }
-
-      if (current_token_.refreshable) {
-        // Refresh by reconnecting with a newly minted token before exp, rather than mutating the
-        // active LiveKit connection in place.
-        const auto deadline = computeRefreshDeadline(current_token_, refresh_margin_);
-        if (deadline.has_value() && now >= *deadline) {
-          LogEvent(kRoomSessionLogger, "room_reconnect_requested")
-            .kv("phase", "runtime")
-            .kv("reason", "token_refresh_due")
-            .kvOr("room", config_.room, kUnsetLogValue)
-            .kvOr("identity", config_.identity, kUnsetLogValue)
-            .kv("exp_unix", formatTokenExpiry(current_token_.expires_at))
-            .info();
-          reconnect_requested_ = true;
-          last_reconnect_reason_ = "token_refresh_due";
-          return true;
-        }
-        continue;
-      }
-
-      const auto warn_deadline = *current_token_.expires_at - refresh_margin_;
-      if (!static_expiry_warned_ && now >= warn_deadline) {
-        static_expiry_warned_ = true;
-        LogEvent(kRoomSessionLogger, "room_token_expiry_warning")
-          .kv("phase", "runtime")
-          .kv("mode", "static")
-          .kv("reason", "automatic_refresh_unavailable")
-          .kv("exp_unix", formatTokenExpiry(current_token_.expires_at))
-          .warn();
-      }
-    }
-
-    return false;
+    std::unique_lock<std::mutex> lock(mutex_);
+    condition_.wait(lock, [this]() { return reconnect_requested_ || stop_requested_; });
   }
 
   void clearRoomState(bool notify_session_reset)
@@ -735,17 +622,14 @@ private:
     std::function<void()> callback;
     std::string reconnect_reason;
     std::string room_name;
-    std::string identity;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
       room = std::move(room_);
       published_video_tracks_.clear();
-      current_token_ = AccessToken{};
       reconnect_requested_ = false;
       reconnect_reason = last_reconnect_reason_;
       room_name = config_.room;
-      identity = config_.identity;
       last_reconnect_reason_.clear();
       callback = callbacks_.on_session_reset;
     }
@@ -762,7 +646,6 @@ private:
         .kv("phase", "reconnect")
         .kv("reason", reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str())
         .kvOr("room", room_name, kUnsetLogValue)
-        .kvOr("identity", identity, kUnsetLogValue)
         .info();
       callback();
     }
@@ -771,7 +654,6 @@ private:
   void requestReconnect(const char * reason)
   {
     std::string room_name;
-    std::string identity;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (reconnect_requested_) {
@@ -782,7 +664,6 @@ private:
       reconnect_requested_ = true;
       last_reconnect_reason_ = reason;
       room_name = config_.room;
-      identity = config_.identity;
       condition_.notify_all();
     }
 
@@ -790,7 +671,6 @@ private:
       .kv("phase", "runtime")
       .kv("reason", reason)
       .kvOr("room", room_name, kUnsetLogValue)
-      .kvOr("identity", identity, kUnsetLogValue)
       .warn();
   }
 
@@ -872,33 +752,6 @@ private:
     return room_->room_info();
   }
 
-  void logTokenState(const AccessToken & token)
-  {
-    if (token.refreshable) {
-      LogEvent(kRoomSessionLogger, "room_token_loaded")
-        .kv("phase", "connect")
-        .kv("mode", "refreshable")
-        .kv("exp_unix", formatTokenExpiry(token.expires_at))
-        .info();
-      return;
-    }
-
-    if (token.expires_at.has_value()) {
-      LogEvent(kRoomSessionLogger, "room_token_loaded")
-        .kv("phase", "connect")
-        .kv("mode", "static")
-        .kv("exp_unix", formatTokenExpiry(token.expires_at))
-        .info();
-      return;
-    }
-
-    LogEvent(kRoomSessionLogger, "room_token_expiry_unavailable")
-      .kv("phase", "connect")
-      .kv("mode", "static")
-      .kv("reason", "parseable_exp_missing")
-      .warn();
-  }
-
   void waitForStop(std::chrono::milliseconds duration)
   {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -928,17 +781,14 @@ private:
   std::thread worker_thread_;
   std::shared_ptr<livekit::Room> room_;
   RoomConnectionConfig config_;
-  std::shared_ptr<AccessTokenSource> token_source_;
+  std::string access_token_;
   RoomSessionCallbacks callbacks_;
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
   std::unordered_map<const PublishedVideoTrack *, std::shared_ptr<livekit::LocalVideoTrack>> published_video_tracks_;
-  AccessToken current_token_;
   std::chrono::milliseconds initial_backoff_{500};
   std::chrono::milliseconds max_backoff_{10000};
-  std::chrono::seconds refresh_margin_{300};
   bool stop_requested_ = false;
   bool reconnect_requested_ = false;
-  bool static_expiry_warned_ = false;
   bool livekit_initialized_ = false;
   // Guards runtime-facing disconnect callbacks so transient reconnect churn does not look like a
   // requester disappearing permanently.
@@ -948,39 +798,6 @@ private:
 };
 
 }  // namespace
-
-StaticTokenSource::StaticTokenSource(std::string token)
-: token_(std::move(token))
-{}
-
-AccessToken StaticTokenSource::getToken(const RoomConnectionConfig &)
-{
-  AccessToken token;
-  token.value = token_;
-  token.expires_at = parseJwtExpiresAt(token_);
-  token.refreshable = false;
-  return token;
-}
-
-ApiKeyAccessTokenSource::ApiKeyAccessTokenSource(std::string api_key, std::string api_secret, std::chrono::seconds ttl)
-: api_key_(std::move(api_key))
-, api_secret_(std::move(api_secret))
-, ttl_(ttl)
-{}
-
-AccessToken ApiKeyAccessTokenSource::getToken(const RoomConnectionConfig & config)
-{
-  const auto now = Clock::now();
-  LiveKitRoomGrant grant;
-  grant.room = config.room;
-
-  AccessToken token;
-  token.value = mintLiveKitAccessToken(api_key_, api_secret_, config.identity, grant, now, ttl_);
-  token.issued_at = now;
-  token.expires_at = now + ttl_;
-  token.refreshable = true;
-  return token;
-}
 
 std::unique_ptr<RoomSession> makeRoomSession()
 {

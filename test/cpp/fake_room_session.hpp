@@ -36,6 +36,7 @@ struct FakeRoomSessionState
   RoomSessionCallbacks callbacks;
   bool started = false;
   bool stopped = false;
+  std::string access_token;
   std::vector<std::string> registered_rpc_methods;
   std::vector<std::string> unregistered_rpc_methods;
   std::vector<std::string> event_log;
@@ -64,18 +65,16 @@ public:
 
   void start(
     RoomConnectionConfig config,
-    std::shared_ptr<AccessTokenSource> token_source,
+    std::string access_token,
     RoomSessionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff,
-    std::chrono::seconds refresh_margin) override
+    std::chrono::milliseconds max_backoff) override
   {
     (void)config;
-    (void)token_source;
     (void)initial_backoff;
     (void)max_backoff;
-    (void)refresh_margin;
     state->started = true;
+    state->access_token = std::move(access_token);
     state->callbacks = std::move(callbacks);
   }
 

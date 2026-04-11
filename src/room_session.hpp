@@ -39,49 +39,6 @@ struct RoomConnectionConfig
 {
   std::string url;
   std::string room;
-  std::string identity;
-};
-
-struct AccessToken
-{
-  std::string value;
-  // Best-effort minting metadata used only for reconnect and refresh timing.
-  std::optional<std::chrono::system_clock::time_point> issued_at;
-  std::optional<std::chrono::system_clock::time_point> expires_at;
-  // True when getToken() can mint a replacement token for the same bridge identity.
-  bool refreshable = false;
-};
-
-class AccessTokenSource
-{
-public:
-  virtual ~AccessTokenSource() = default;
-  // Returns the token the bridge should use for the next room connection attempt. The config
-  // carries the bridge's own LiveKit identity, not a remote requester or RPC caller identity.
-  virtual AccessToken getToken(const RoomConnectionConfig & config) = 0;
-};
-
-class StaticTokenSource final : public AccessTokenSource
-{
-public:
-  explicit StaticTokenSource(std::string token);
-  AccessToken getToken(const RoomConnectionConfig & config) override;
-
-private:
-  std::string token_;
-};
-
-class ApiKeyAccessTokenSource final : public AccessTokenSource
-{
-public:
-  ApiKeyAccessTokenSource(std::string api_key, std::string api_secret, std::chrono::seconds ttl);
-
-  AccessToken getToken(const RoomConnectionConfig & config) override;
-
-private:
-  std::string api_key_;
-  std::string api_secret_;
-  std::chrono::seconds ttl_;
 };
 
 struct RpcInvocation
@@ -166,11 +123,10 @@ public:
   // are ignored until stop() returns.
   virtual void start(
     RoomConnectionConfig config,
-    std::shared_ptr<AccessTokenSource> access_token_source,
+    std::string access_token,
     RoomSessionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff,
-    std::chrono::seconds refresh_margin) = 0;
+    std::chrono::milliseconds max_backoff) = 0;
   // Stops the reconnect loop and waits for any session-owned background thread to exit.
   virtual void stop() = 0;
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
