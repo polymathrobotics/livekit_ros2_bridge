@@ -14,7 +14,6 @@
 
 #include "runtime_config.hpp"
 
-#include <gst/gst.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -28,6 +27,7 @@
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
 #include "subscription_qos.hpp"
+#include "utils/gstreamer_raii.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
@@ -385,24 +385,22 @@ void validateBridgeManagedEndpoints(const std::string & context, GstElement * pi
   guint named_bridge_appsrc_count = 0;
   guint named_bridge_appsink_count = 0;
 
-  GstIterator * iterator = gst_bin_iterate_recurse(GST_BIN(pipeline));
-  GValue item = G_VALUE_INIT;
+  GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(pipeline)));
+  GValueGuard item;
   while (true) {
-    const GstIteratorResult result = gst_iterator_next(iterator, &item);
+    const GstIteratorResult result = gst_iterator_next(iterator.get(), item.get());
     if (result == GST_ITERATOR_DONE) {
       break;
     }
     if (result == GST_ITERATOR_RESYNC) {
-      gst_iterator_resync(iterator);
+      gst_iterator_resync(iterator.get());
       continue;
     }
     if (result != GST_ITERATOR_OK) {
-      g_value_unset(&item);
-      gst_iterator_free(iterator);
       throw std::runtime_error(context + " could not inspect parsed GStreamer elements");
     }
 
-    auto * element = GST_ELEMENT(g_value_get_object(&item));
+    auto * element = GST_ELEMENT(g_value_get_object(item.get()));
     const GstElementFactory * factory = gst_element_get_factory(element);
     const std::string_view factory_name = factory == nullptr ? "" : GST_OBJECT_NAME(factory);
     const std::string_view element_name = GST_ELEMENT_NAME(element);
@@ -418,25 +416,19 @@ void validateBridgeManagedEndpoints(const std::string & context, GstElement * pi
 
     if (element_name == kBridgeVideoAppSrcName) {
       if (!is_appsrc) {
-        g_value_unset(&item);
-        gst_iterator_free(iterator);
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSrcName + "'");
       }
       ++named_bridge_appsrc_count;
     }
     if (element_name == kBridgeVideoAppSinkName) {
       if (!is_appsink) {
-        g_value_unset(&item);
-        gst_iterator_free(iterator);
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSinkName + "'");
       }
       ++named_bridge_appsink_count;
     }
 
-    g_value_reset(&item);
+    item.reset();
   }
-  g_value_unset(&item);
-  gst_iterator_free(iterator);
 
   if (expect_bridge_appsrc) {
     if (
@@ -457,29 +449,19 @@ void validatePipelineDescription(
 {
   ensureGstreamerInitialized();
 
-  GError * error = nullptr;
-  GstElement * pipeline = gst_parse_launch(pipeline_description.c_str(), &error);
+  GError * raw_error = nullptr;
+  GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
+  GErrorPtr error(raw_error);
   if (pipeline == nullptr) {
     const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
-    if (error != nullptr) {
-      g_error_free(error);
-    }
     throw std::runtime_error(context + " has invalid GStreamer syntax: " + message);
   }
 
-  if (!GST_IS_BIN(pipeline)) {
-    gst_object_unref(pipeline);
+  if (!GST_IS_BIN(pipeline.get())) {
     throw std::runtime_error(context + " must parse to a GstBin");
   }
 
-  try {
-    validateBridgeManagedEndpoints(context, pipeline, expect_bridge_appsrc);
-  } catch (...) {
-    gst_object_unref(pipeline);
-    throw;
-  }
-
-  gst_object_unref(pipeline);
+  validateBridgeManagedEndpoints(context, pipeline.get(), expect_bridge_appsrc);
 }
 
 std::string makeRosValidationPrefix()

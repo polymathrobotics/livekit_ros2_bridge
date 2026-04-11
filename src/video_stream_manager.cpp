@@ -41,6 +41,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
+#include "utils/gstreamer_raii.hpp"
 #include "utils/log_event.hpp"
 
 #include <gst/video/video-format.h>
@@ -55,6 +56,9 @@ const auto kVideoStreamManagerLogger = rclcpp::get_logger("livekit_ros2_bridge.v
 constexpr char kAppSrcName[] = "bridge_video_src";
 constexpr char kAppSinkName[] = "bridge_video_sink";
 constexpr auto kExternalRestartDelay = std::chrono::milliseconds(250);
+
+using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
+using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
 void ensureGstreamerInitialized()
 {
@@ -226,9 +230,9 @@ public:
 private:
   struct DetachedPipelineState
   {
-    GstElement * pipeline = nullptr;
-    GstAppSrc * appsrc = nullptr;
-    GstAppSink * appsink = nullptr;
+    GstElementPtr pipeline;
+    GstAppSrcPtr appsrc;
+    GstAppSinkPtr appsink;
     std::shared_ptr<PublishedVideoTrack> published_track;
   };
 
@@ -421,48 +425,41 @@ private:
       .kv("pipeline", pipeline_description)
       .info();
 
-    GError * error = nullptr;
-    GstElement * pipeline = gst_parse_launch(pipeline_description.c_str(), &error);
+    GError * raw_error = nullptr;
+    GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
+    GErrorPtr error(raw_error);
     if (pipeline == nullptr) {
       const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
-      if (error != nullptr) {
-        g_error_free(error);
-      }
       throw std::runtime_error("Failed to create GStreamer pipeline: " + message);
     }
 
-    if (!GST_IS_BIN(pipeline)) {
-      gst_object_unref(pipeline);
+    if (!GST_IS_BIN(pipeline.get())) {
       throw std::runtime_error("Video pipeline must resolve to a GstBin.");
     }
 
-    GstElement * sink = gst_bin_get_by_name(GST_BIN(pipeline), kAppSinkName);
+    GstElementPtr sink(gst_bin_get_by_name(GST_BIN(pipeline.get()), kAppSinkName));
     if (sink == nullptr) {
-      gst_object_unref(pipeline);
       throw std::runtime_error("Video pipeline did not create the expected appsink.");
     }
 
-    GstElement * src = nullptr;
+    GstElementPtr src;
     if (expect_appsrc) {
-      src = gst_bin_get_by_name(GST_BIN(pipeline), kAppSrcName);
+      src.reset(gst_bin_get_by_name(GST_BIN(pipeline.get()), kAppSrcName));
       if (src == nullptr) {
-        gst_object_unref(sink);
-        gst_object_unref(pipeline);
         throw std::runtime_error("Video pipeline did not create the expected appsrc.");
       }
     }
 
     GstAppSinkCallbacks callbacks{};
     callbacks.new_sample = &StreamRecord::onNewSampleThunk;
-    gst_app_sink_set_callbacks(GST_APP_SINK(sink), &callbacks, this, nullptr);
+    gst_app_sink_set_callbacks(GST_APP_SINK(sink.get()), &callbacks, this, nullptr);
 
-    GstBus * bus = gst_element_get_bus(pipeline);
-    gst_bus_set_sync_handler(bus, &StreamRecord::onBusMessageThunk, this, nullptr);
-    gst_object_unref(bus);
+    GstBusPtr bus(gst_element_get_bus(pipeline.get()));
+    gst_bus_set_sync_handler(bus.get(), &StreamRecord::onBusMessageThunk, this, nullptr);
 
-    pipeline_ = pipeline;
-    appsink_ = GST_APP_SINK(sink);
-    appsrc_ = src == nullptr ? nullptr : GST_APP_SRC(src);
+    pipeline_ = std::move(pipeline);
+    appsink_.reset(GST_APP_SINK(sink.release()));
+    appsrc_.reset(src == nullptr ? nullptr : GST_APP_SRC(src.release()));
   }
 
   void playPipelineLocked()
@@ -471,7 +468,7 @@ private:
       throw std::runtime_error("Video pipeline is unavailable.");
     }
 
-    const GstStateChangeReturn change = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    const GstStateChangeReturn change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
     if (change != GST_STATE_CHANGE_FAILURE) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_playing")
         .kv("stream_key", spec_.stream_key)
@@ -487,45 +484,33 @@ private:
 
   void discardPipelineElementsLocked()
   {
-    GstElement * pipeline = pipeline_;
-    GstAppSrc * appsrc = appsrc_;
-    GstAppSink * appsink = appsink_;
-    pipeline_ = nullptr;
-    appsrc_ = nullptr;
-    appsink_ = nullptr;
+    GstElementPtr pipeline = std::move(pipeline_);
+    GstAppSrcPtr appsrc = std::move(appsrc_);
+    GstAppSinkPtr appsink = std::move(appsink_);
 
     if (appsink != nullptr) {
       GstAppSinkCallbacks callbacks{};
-      gst_app_sink_set_callbacks(appsink, &callbacks, nullptr, nullptr);
+      gst_app_sink_set_callbacks(appsink.get(), &callbacks, nullptr, nullptr);
     }
     if (pipeline != nullptr) {
-      GstBus * bus = gst_element_get_bus(pipeline);
-      gst_bus_set_sync_handler(bus, nullptr, nullptr, nullptr);
-      gst_object_unref(bus);
-      gst_element_set_state(pipeline, GST_STATE_NULL);
+      GstBusPtr bus(gst_element_get_bus(pipeline.get()));
+      gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
+      gst_element_set_state(pipeline.get(), GST_STATE_NULL);
     }
-    if (appsrc != nullptr) {
-      gst_object_unref(appsrc);
-    }
-    if (appsink != nullptr) {
-      gst_object_unref(appsink);
-    }
-    if (pipeline != nullptr) {
-      gst_object_unref(pipeline);
-    }
+
+    appsrc.reset();
+    appsink.reset();
+    pipeline.reset();
   }
 
   DetachedPipelineState detachPipelineStateLocked()
   {
     DetachedPipelineState detached;
-    detached.pipeline = pipeline_;
-    detached.appsrc = appsrc_;
-    detached.appsink = appsink_;
+    detached.pipeline = std::move(pipeline_);
+    detached.appsrc = std::move(appsrc_);
+    detached.appsink = std::move(appsink_);
     detached.published_track = std::move(published_track_);
 
-    pipeline_ = nullptr;
-    appsrc_ = nullptr;
-    appsink_ = nullptr;
     video_source_.reset();
     published_width_ = 0;
     published_height_ = 0;
@@ -549,26 +534,17 @@ private:
 
     if (detached.appsink != nullptr) {
       GstAppSinkCallbacks callbacks{};
-      gst_app_sink_set_callbacks(detached.appsink, &callbacks, nullptr, nullptr);
+      gst_app_sink_set_callbacks(detached.appsink.get(), &callbacks, nullptr, nullptr);
     }
     if (detached.pipeline != nullptr) {
-      GstBus * bus = gst_element_get_bus(detached.pipeline);
-      gst_bus_set_sync_handler(bus, nullptr, nullptr, nullptr);
-      gst_object_unref(bus);
-      gst_element_set_state(detached.pipeline, GST_STATE_NULL);
+      GstBusPtr bus(gst_element_get_bus(detached.pipeline.get()));
+      gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
+      gst_element_set_state(detached.pipeline.get(), GST_STATE_NULL);
     }
-    if (detached.appsrc != nullptr) {
-      gst_object_unref(detached.appsrc);
-      detached.appsrc = nullptr;
-    }
-    if (detached.appsink != nullptr) {
-      gst_object_unref(detached.appsink);
-      detached.appsink = nullptr;
-    }
-    if (detached.pipeline != nullptr) {
-      gst_object_unref(detached.pipeline);
-      detached.pipeline = nullptr;
-    }
+
+    detached.appsrc.reset();
+    detached.appsink.reset();
+    detached.pipeline.reset();
   }
 
   void stopPipelineLocked()
@@ -597,23 +573,23 @@ private:
       throw std::runtime_error("Raw video appsrc is unavailable.");
     }
 
-    GstBuffer * buffer = gst_buffer_new_allocate(nullptr, message.data.size(), nullptr);
+    GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, message.data.size(), nullptr));
     if (buffer == nullptr) {
       throw std::runtime_error("Failed to allocate GStreamer buffer.");
     }
 
-    GstMapInfo map{};
-    if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
-      gst_buffer_unref(buffer);
-      throw std::runtime_error("Failed to map GStreamer buffer.");
+    {
+      GstMapGuard map(buffer.get(), GST_MAP_WRITE);
+      if (!map.is_valid()) {
+        throw std::runtime_error("Failed to map GStreamer buffer.");
+      }
+      std::memcpy(map.get()->data, message.data.data(), message.data.size());
     }
-    std::memcpy(map.data, message.data.data(), message.data.size());
-    gst_buffer_unmap(buffer, &map);
 
     gsize offsets[GST_VIDEO_MAX_PLANES] = {0};
     gint strides[GST_VIDEO_MAX_PLANES] = {static_cast<gint>(config.stride)};
     (void)gst_buffer_add_video_meta_full(
-      buffer,
+      buffer.get(),
       GST_VIDEO_FRAME_FLAG_NONE,
       config.format,
       static_cast<guint>(config.width),
@@ -623,11 +599,11 @@ private:
       strides);
 
     const auto pts = rosStampToClockTime(message.header.stamp);
-    GST_BUFFER_PTS(buffer) = pts;
-    GST_BUFFER_DTS(buffer) = pts;
-    GST_BUFFER_DURATION(buffer) = GST_CLOCK_TIME_NONE;
+    GST_BUFFER_PTS(buffer.get()) = pts;
+    GST_BUFFER_DTS(buffer.get()) = pts;
+    GST_BUFFER_DURATION(buffer.get()) = GST_CLOCK_TIME_NONE;
 
-    const GstFlowReturn result = gst_app_src_push_buffer(appsrc_, buffer);
+    const GstFlowReturn result = gst_app_src_push_buffer(appsrc_.get(), buffer.release());
     if (result != GST_FLOW_OK) {
       throw std::runtime_error("Failed to push raw ROS image into GStreamer.");
     }
@@ -639,25 +615,25 @@ private:
       throw std::runtime_error("Compressed video appsrc is unavailable.");
     }
 
-    GstBuffer * buffer = gst_buffer_new_allocate(nullptr, message.data.size(), nullptr);
+    GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, message.data.size(), nullptr));
     if (buffer == nullptr) {
       throw std::runtime_error("Failed to allocate GStreamer buffer.");
     }
 
-    GstMapInfo map{};
-    if (!gst_buffer_map(buffer, &map, GST_MAP_WRITE)) {
-      gst_buffer_unref(buffer);
-      throw std::runtime_error("Failed to map GStreamer buffer.");
+    {
+      GstMapGuard map(buffer.get(), GST_MAP_WRITE);
+      if (!map.is_valid()) {
+        throw std::runtime_error("Failed to map GStreamer buffer.");
+      }
+      std::memcpy(map.get()->data, message.data.data(), message.data.size());
     }
-    std::memcpy(map.data, message.data.data(), message.data.size());
-    gst_buffer_unmap(buffer, &map);
 
     const auto pts = rosStampToClockTime(message.header.stamp);
-    GST_BUFFER_PTS(buffer) = pts;
-    GST_BUFFER_DTS(buffer) = pts;
-    GST_BUFFER_DURATION(buffer) = GST_CLOCK_TIME_NONE;
+    GST_BUFFER_PTS(buffer.get()) = pts;
+    GST_BUFFER_DTS(buffer.get()) = pts;
+    GST_BUFFER_DURATION(buffer.get()) = GST_CLOCK_TIME_NONE;
 
-    const GstFlowReturn result = gst_app_src_push_buffer(appsrc_, buffer);
+    const GstFlowReturn result = gst_app_src_push_buffer(appsrc_.get(), buffer.release());
     if (result != GST_FLOW_OK) {
       throw std::runtime_error("Failed to push compressed ROS image into GStreamer.");
     }
@@ -665,15 +641,14 @@ private:
 
   GstFlowReturn onNewSample(GstAppSink * sink)
   {
-    GstSample * sample = gst_app_sink_pull_sample(sink);
+    GstSamplePtr sample(gst_app_sink_pull_sample(sink));
     if (sample == nullptr) {
       return GST_FLOW_EOS;
     }
 
-    GstCaps * caps = gst_sample_get_caps(sample);
-    GstBuffer * buffer = gst_sample_get_buffer(sample);
+    GstCaps * caps = gst_sample_get_caps(sample.get());
+    GstBuffer * buffer = gst_sample_get_buffer(sample.get());
     if (caps == nullptr || buffer == nullptr) {
-      gst_sample_unref(sample);
       return GST_FLOW_ERROR;
     }
 
@@ -681,21 +656,17 @@ private:
     int width = 0;
     int height = 0;
     if (!gst_structure_get_int(structure, "width", &width) || !gst_structure_get_int(structure, "height", &height)) {
-      gst_sample_unref(sample);
       return GST_FLOW_ERROR;
     }
 
-    GstMapInfo map{};
-    if (!gst_buffer_map(buffer, &map, GST_MAP_READ)) {
-      gst_sample_unref(sample);
+    GstMapGuard map(buffer, GST_MAP_READ);
+    if (!map.is_valid()) {
       return GST_FLOW_ERROR;
     }
 
-    std::vector<std::uint8_t> rgba(map.data, map.data + map.size);
+    std::vector<std::uint8_t> rgba(map.get()->data, map.get()->data + map.get()->size);
     const std::int64_t timestamp_us =
       GST_BUFFER_PTS_IS_VALID(buffer) ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U) : 0;
-    gst_buffer_unmap(buffer, &map);
-    gst_sample_unref(sample);
 
     try {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -773,16 +744,13 @@ private:
         handlePipelineFailure("eos");
         break;
       case GST_MESSAGE_ERROR: {
-        GError * error = nullptr;
-        gchar * debug = nullptr;
-        gst_message_parse_error(message, &error, &debug);
+        GError * raw_error = nullptr;
+        gchar * raw_debug = nullptr;
+        gst_message_parse_error(message, &raw_error, &raw_debug);
+        GErrorPtr error(raw_error);
+        GCharPtr debug(raw_debug);
+        (void)debug;
         const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-        if (error != nullptr) {
-          g_error_free(error);
-        }
-        if (debug != nullptr) {
-          g_free(debug);
-        }
         handlePipelineFailure(reason);
         break;
       }
@@ -851,9 +819,9 @@ private:
   bool first_input_logged_ = false;
   bool first_sample_logged_ = false;
   rclcpp::SubscriptionBase::SharedPtr subscription_;
-  GstElement * pipeline_ = nullptr;
-  GstAppSrc * appsrc_ = nullptr;
-  GstAppSink * appsink_ = nullptr;
+  GstElementPtr pipeline_;
+  GstAppSrcPtr appsrc_;
+  GstAppSinkPtr appsink_;
   std::optional<RawSourceConfig> raw_source_config_;
   std::string compressed_format_;
   std::shared_ptr<livekit::VideoSource> video_source_;

@@ -128,6 +128,9 @@ if(BUILD_TESTING)
   target_include_directories(test_event_throttle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(test_event_throttle ${PROJECT_NAME})
 
+  ament_add_gtest(test_gstreamer_raii test/cpp/test_gstreamer_raii.cpp)
+  target_link_libraries(test_gstreamer_raii ${PROJECT_NAME} PkgConfig::gstreamer)
+
   ament_add_gtest(test_interface_payloads test/cpp/test_interface_payloads.cpp)
   target_link_libraries(test_interface_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
@@ -204,6 +207,7 @@ if(BUILD_TESTING)
     test_cdr_track_publisher
     test_control_packet_router
     test_event_throttle
+    test_gstreamer_raii
     test_interface_definition_lookup
     test_interface_payloads
     test_interface_type_utils
