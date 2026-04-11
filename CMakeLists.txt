@@ -71,6 +71,7 @@ add_library(${PROJECT_NAME} SHARED
   src/utils/base64.cpp
   src/utils/livekit_access_token.cpp
   src/video_config.cpp
+  src/video_ingestor.cpp
   src/video_stream_manager.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
