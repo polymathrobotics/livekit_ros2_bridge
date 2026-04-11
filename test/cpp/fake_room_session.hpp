@@ -43,6 +43,7 @@ struct FakeRoomSessionState
   std::vector<std::string> published_cdr_track_names;
   std::vector<std::string> unpublished_cdr_track_names;
   std::vector<std::string> published_video_track_names;
+  std::vector<VideoPublishConfig> published_video_configs;
   std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> attempted_cdr_track_unpublish_names;
   std::vector<std::string> rejected_cdr_track_unpublish_names;
@@ -137,11 +138,14 @@ public:
   }
 
   std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) override
+    const std::string & track_name,
+    const std::shared_ptr<livekit::VideoSource> & source,
+    const VideoPublishConfig & publish_config) override
   {
     (void)source;
     state->event_log.push_back("publish_video_track:" + track_name);
     state->published_video_track_names.push_back(track_name);
+    state->published_video_configs.push_back(publish_config);
     auto track = std::make_shared<PublishedVideoTrack>();
     track->track_name = track_name;
     return track;

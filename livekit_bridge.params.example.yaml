@@ -42,28 +42,29 @@ livekit_ros2_bridge:
 
     # Optional video sources.
     # Add entries here if you want the bridge to publish video into LiveKit.
-    # Each source must have a `kind`:
-    # - `ros` matches one or more ROS topics by pattern
-    # - `pipeline` runs an in-process GStreamer source pipeline that you provide
-    # Set `video_ids` to the source names you want to enable.
-    # Each `pipelines` entry is written as `alias=pipeline`.
-    # ROS sources can use the aliases `image`, `compressed_image`, or `default`.
-    # For ROS sources, the bridge owns ingress and egress, so the pipeline should
-    # only describe optional transform stages.
-    # Pipeline sources should use the `default` alias and must resolve to one raw video output.
+    # `video.topic_rules.*` match one or more ROS topics by pattern.
+    # `video.custom_sources.*` run in-process GStreamer source fragments that you provide.
+    # Keep the IDs at the root for now because generate_parameter_library 0.6
+    # in the current test matrix cannot move them cleanly under
+    # `video.topic_rules.ids` / `video.custom_sources.ids` yet.
+    # Topic rules use `transform` for optional processing stages only.
+    # Custom sources use `source` for ingress and `transform` for optional processing.
+    # The bridge always appends its own queue/convert/RGBA/appsink tail.
     #
-    # video_ids: ["front_camera", "back_rtsp", "usb_cam"]
+    # Optional global LiveKit publish policy:
+    # video.publish.codec: "auto"  # or "vp8", "h264", "av1", "vp9", "h265"
+    # video.publish.max_bitrate_bps: 0
+    # video.publish.max_framerate: 0.0
+    # video.publish.simulcast: "auto"  # or "enabled", "disabled"
     #
-    # videos.front_camera.kind: "ros"
-    # videos.front_camera.pattern: "/camera/front/*"
-    # videos.front_camera.pipelines:
-    #   - "image=videoscale ! video/x-raw,width=1280,height=720"
-    #   - "compressed_image=videoscale ! video/x-raw,width=1280,height=720"
+    # video_topic_rule_ids: ["front_camera"]
+    # video_custom_source_ids: ["back_rtsp", "usb_cam"]
     #
-    # videos.back_rtsp.kind: "pipeline"
-    # videos.back_rtsp.pipelines:
-    #   - "default=uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
+    # video.topic_rules.front_camera.pattern: "/camera/front/*"
+    # video.topic_rules.front_camera.transform: "videoscale ! video/x-raw,width=1280,height=720"
     #
-    # videos.usb_cam.kind: "pipeline"
-    # videos.usb_cam.pipelines:
-    #   - "default=v4l2src device=/dev/video0 do-timestamp=true"
+    # video.custom_sources.back_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
+    # video.custom_sources.back_rtsp.transform: ""
+    #
+    # video.custom_sources.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"
+    # video.custom_sources.usb_cam.transform: ""

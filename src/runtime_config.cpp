@@ -14,10 +14,14 @@
 
 #include "runtime_config.hpp"
 
+#include <gst/gst.h>
 #include <unistd.h>
 
 #include <chrono>
+#include <cstdint>
+#include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -36,6 +40,8 @@ namespace
 
 const auto kRuntimeConfigLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
 constexpr char kUnsetLogValue[] = "<unset>";
+constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
+constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 
 std::string deriveDefaultIdentity(const std::string & node_name)
 {
@@ -46,6 +52,12 @@ std::string deriveDefaultIdentity(const std::string & node_name)
   }
   hostname[sizeof(hostname) - 1U] = '\0';
   return node_name + "-" + hostname;
+}
+
+void ensureGstreamerInitialized()
+{
+  static std::once_flag once;
+  std::call_once(once, []() { gst_init(nullptr, nullptr); });
 }
 
 RoomConnectionConfig loadConnectConfig(const Params & params, const std::string & node_name)
@@ -210,79 +222,199 @@ SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::stri
   throw std::runtime_error("unsupported subscribe.qos_overrides durability mode '" + raw_mode + "'");
 }
 
-bool isSupportedRosPipelineAlias(std::string_view alias)
+VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec)
 {
-  return alias == kImagePipelineAlias || alias == kCompressedImagePipelineAlias || alias == kDefaultPipelineAlias;
+  if (raw_codec == "auto") {
+    return VideoPublishCodec::Auto;
+  }
+  if (raw_codec == "vp8") {
+    return VideoPublishCodec::Vp8;
+  }
+  if (raw_codec == "h264") {
+    return VideoPublishCodec::H264;
+  }
+  if (raw_codec == "av1") {
+    return VideoPublishCodec::Av1;
+  }
+  if (raw_codec == "vp9") {
+    return VideoPublishCodec::Vp9;
+  }
+  if (raw_codec == "h265") {
+    return VideoPublishCodec::H265;
+  }
+
+  throw std::runtime_error("unsupported video.publish.codec '" + raw_codec + "'");
 }
 
-bool isSupportedConfiguredSourcePipelineAlias(std::string_view alias)
+VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast)
 {
-  return alias == kDefaultPipelineAlias;
+  if (raw_simulcast == "auto") {
+    return VideoPublishSimulcast::Auto;
+  }
+  if (raw_simulcast == "enabled") {
+    return VideoPublishSimulcast::Enabled;
+  }
+  if (raw_simulcast == "disabled") {
+    return VideoPublishSimulcast::Disabled;
+  }
+
+  throw std::runtime_error("unsupported video.publish.simulcast '" + raw_simulcast + "'");
 }
 
-PipelineMap parsePipelineEntries(const std::string & entry_id, const std::vector<std::string> & raw_entries)
+std::string composeVideoPipelineDescription(const std::string & prefix, const std::string & transform)
 {
-  PipelineMap pipelines;
-  for (const auto & raw : raw_entries) {
-    const auto eq_pos = raw.find('=');
-    if (eq_pos == std::string::npos || eq_pos == 0) {
-      throw std::runtime_error(
-        "video entry '" + entry_id + "' has malformed pipeline entry (expected alias=pipeline): '" + raw + "'");
-    }
-
-    const std::string alias = trim(raw.substr(0, eq_pos));
-    if (alias.empty()) {
-      throw std::runtime_error(
-        "video entry '" + entry_id + "' has malformed pipeline entry (expected alias=pipeline): '" + raw + "'");
-    }
-
-    const std::string pipeline = trim(raw.substr(eq_pos + 1));
-    if (pipeline.empty()) {
-      throw std::runtime_error("video entry '" + entry_id + "' has empty pipeline for alias '" + alias + "'");
-    }
-
-    const auto inserted = pipelines.emplace(alias, pipeline).second;
-    if (!inserted) {
-      throw std::runtime_error("video entry '" + entry_id + "' has duplicate pipeline alias '" + alias + "'");
-    }
+  std::string pipeline = prefix;
+  if (!transform.empty()) {
+    pipeline += " ! ";
+    pipeline += transform;
   }
-
-  return pipelines;
+  pipeline += " ! queue max-size-buffers=2 leaky=downstream";
+  pipeline += " ! videoconvert";
+  pipeline += " ! video/x-raw,format=RGBA";
+  pipeline += " ! appsink name=";
+  pipeline += kBridgeVideoAppSinkName;
+  pipeline += " sync=false drop=true max-buffers=1 emit-signals=false";
+  return pipeline;
 }
 
-void validateRosPipelines(const std::string & entry_id, const PipelineMap & pipelines)
+void validateBridgeManagedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
 {
-  if (pipelines.empty()) {
-    throw std::runtime_error(
-      "video entry '" + entry_id +
-      "' (ros kind) requires at least one pipeline alias from "
-      "[image, compressed_image, default]");
+  guint appsrc_count = 0;
+  guint appsink_count = 0;
+  guint named_bridge_appsrc_count = 0;
+  guint named_bridge_appsink_count = 0;
+
+  GstIterator * iterator = gst_bin_iterate_recurse(GST_BIN(pipeline));
+  GValue item = G_VALUE_INIT;
+  while (true) {
+    const GstIteratorResult result = gst_iterator_next(iterator, &item);
+    if (result == GST_ITERATOR_DONE) {
+      break;
+    }
+    if (result == GST_ITERATOR_RESYNC) {
+      gst_iterator_resync(iterator);
+      continue;
+    }
+    if (result != GST_ITERATOR_OK) {
+      g_value_unset(&item);
+      gst_iterator_free(iterator);
+      throw std::runtime_error(context + " could not inspect parsed GStreamer elements");
+    }
+
+    auto * element = GST_ELEMENT(g_value_get_object(&item));
+    const GstElementFactory * factory = gst_element_get_factory(element);
+    const std::string_view factory_name = factory == nullptr ? "" : GST_OBJECT_NAME(factory);
+    const std::string_view element_name = GST_ELEMENT_NAME(element);
+
+    const bool is_appsrc = factory_name == "appsrc";
+    const bool is_appsink = factory_name == "appsink";
+    if (is_appsrc) {
+      ++appsrc_count;
+    }
+    if (is_appsink) {
+      ++appsink_count;
+    }
+
+    if (element_name == kBridgeVideoAppSrcName) {
+      if (!is_appsrc) {
+        g_value_unset(&item);
+        gst_iterator_free(iterator);
+        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSrcName + "'");
+      }
+      ++named_bridge_appsrc_count;
+    }
+    if (element_name == kBridgeVideoAppSinkName) {
+      if (!is_appsink) {
+        g_value_unset(&item);
+        gst_iterator_free(iterator);
+        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSinkName + "'");
+      }
+      ++named_bridge_appsink_count;
+    }
+
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(iterator);
+
+  if (expect_bridge_appsrc) {
+    if (
+      appsrc_count != 1U || named_bridge_appsrc_count != 1U || appsink_count != 1U || named_bridge_appsink_count != 1U)
+    {
+      throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
+    }
+    return;
   }
 
-  for (const auto & pipeline_entry : pipelines) {
-    if (!isSupportedRosPipelineAlias(pipeline_entry.first)) {
-      throw std::runtime_error(
-        "video entry '" + entry_id + "' (ros kind) has unsupported pipeline alias '" + pipeline_entry.first + "'");
-    }
+  if (appsrc_count != 0U || appsink_count != 1U || named_bridge_appsink_count != 1U) {
+    throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
   }
 }
 
-void validateConfiguredSourcePipelines(const std::string & entry_id, const PipelineMap & pipelines)
+void validatePipelineDescription(
+  const std::string & context, const std::string & pipeline_description, bool expect_bridge_appsrc)
 {
-  if (pipelines.empty()) {
-    throw std::runtime_error("video entry '" + entry_id + "' (pipeline kind) requires a 'default' pipeline key");
-  }
+  ensureGstreamerInitialized();
 
-  for (const auto & pipeline_entry : pipelines) {
-    if (!isSupportedConfiguredSourcePipelineAlias(pipeline_entry.first)) {
-      throw std::runtime_error(
-        "video entry '" + entry_id + "' (pipeline kind) has unsupported pipeline alias '" + pipeline_entry.first + "'");
+  GError * error = nullptr;
+  GstElement * pipeline = gst_parse_launch(pipeline_description.c_str(), &error);
+  if (pipeline == nullptr) {
+    const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
+    if (error != nullptr) {
+      g_error_free(error);
     }
+    throw std::runtime_error(context + " has invalid GStreamer syntax: " + message);
   }
 
-  if (pipelines.find(kDefaultPipelineAlias) == pipelines.end()) {
-    throw std::runtime_error("video entry '" + entry_id + "' (pipeline kind) requires a 'default' pipeline key");
+  if (!GST_IS_BIN(pipeline)) {
+    gst_object_unref(pipeline);
+    throw std::runtime_error(context + " must parse to a GstBin");
   }
+
+  try {
+    validateBridgeManagedEndpoints(context, pipeline, expect_bridge_appsrc);
+  } catch (...) {
+    gst_object_unref(pipeline);
+    throw;
+  }
+
+  gst_object_unref(pipeline);
+}
+
+std::string makeRosValidationPrefix()
+{
+  std::string prefix = "appsrc name=";
+  prefix += kBridgeVideoAppSrcName;
+  prefix += " is-live=true block=false format=time do-timestamp=true";
+  prefix += " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
+  return prefix;
+}
+
+std::string parseVideoTransform(const std::string & raw_transform)
+{
+  return trim(raw_transform);
+}
+
+std::string parseCustomVideoSource(const std::string & entry_id, const std::string & raw_source)
+{
+  const std::string source = trim(raw_source);
+  if (source.empty()) {
+    throw std::runtime_error("video custom source '" + entry_id + "' requires a non-empty source");
+  }
+  return source;
+}
+
+void validateVideoTopicRuleTransform(const std::string & entry_id, const std::string & transform)
+{
+  const std::string context = "video topic rule '" + entry_id + "' transform";
+  validatePipelineDescription(context, composeVideoPipelineDescription(makeRosValidationPrefix(), transform), true);
+}
+
+void validateCustomVideoSourceFragments(
+  const std::string & entry_id, const std::string & source, const std::string & transform)
+{
+  const std::string context = "video custom source '" + entry_id + "'";
+  validatePipelineDescription(context, composeVideoPipelineDescription(source, transform), false);
 }
 
 void requireUniqueEntryKey(std::unordered_set<std::string> & seen_keys, const std::string & key, const char * context)
@@ -315,47 +447,69 @@ const typename EntryMap::mapped_type & requireUniqueGeneratedEntry(
 VideoConfig loadVideoConfig(const Params & params)
 {
   VideoConfig config = makeDefaultVideoConfig();
+  config.publish.codec = parseVideoPublishCodec(params.video.publish.codec);
+  config.publish.max_bitrate_bps = static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps);
+  config.publish.max_framerate = params.video.publish.max_framerate;
+  config.publish.simulcast = parseVideoPublishSimulcast(params.video.publish.simulcast);
 
   // Rebuild user rules ahead of the built-in catch-all so longest-match selection
   // still works and same-length ties stay first-declared.
   auto builtin_rules = std::move(config.ros_topic_rules);
   config.ros_topic_rules.clear();
 
-  std::unordered_set<std::string> seen_entry_ids;
+  std::unordered_set<std::string> seen_topic_rule_ids;
+  std::unordered_set<std::string> seen_custom_source_ids;
   std::unordered_set<std::string> seen_external_names;
-  for (const auto & entry_id : params.video_ids) {
+  // Keep video_topic_rule_ids at the root until generate_parameter_library 0.7+
+  // is the baseline across the full distro matrix. GPL 0.6.x does not support
+  // moving this cleanly to video.topic_rules.ids for every target we test.
+  for (const auto & entry_id : params.video_topic_rule_ids) {
     const auto & entry = requireUniqueGeneratedEntry(
-      seen_entry_ids, entry_id, params.videos.video_ids_map, "video entry id", "video entry");
+      seen_topic_rule_ids,
+      entry_id,
+      params.video.topic_rules.video_topic_rule_ids_map,
+      "video topic rule id",
+      "video topic rule");
 
-    PipelineMap pipelines = parsePipelineEntries(entry_id, entry.pipelines);
+    const std::string pattern = normalizeVideoRulePattern(entry.pattern);
+    const std::string transform = parseVideoTransform(entry.transform);
+    validateVideoTopicRuleTransform(entry_id, transform);
 
-    if (entry.kind == "ros") {
-      validateRosPipelines(entry_id, pipelines);
+    RosTopicRule rule;
+    rule.pattern = pattern;
+    rule.id = entry_id;
+    rule.transform = transform;
+    config.ros_topic_rules.push_back(std::move(rule));
+  }
 
-      const std::string pattern = normalizeVideoRulePattern(entry.pattern);
+  // Keep video_custom_source_ids at the root until generate_parameter_library
+  // 0.7+ is the baseline across the full distro matrix. GPL 0.6.x does not
+  // support moving this cleanly to video.custom_sources.ids for every target we
+  // test.
+  for (const auto & entry_id : params.video_custom_source_ids) {
+    const auto & entry = requireUniqueGeneratedEntry(
+      seen_custom_source_ids,
+      entry_id,
+      params.video.custom_sources.video_custom_source_ids_map,
+      "video custom source id",
+      "video custom source");
 
-      RosTopicRule rule;
-      rule.pattern = pattern;
-      rule.id = entry_id;
-      rule.pipelines = std::move(pipelines);
-      config.ros_topic_rules.push_back(std::move(rule));
-    } else if (entry.kind == "pipeline") {
-      validateConfiguredSourcePipelines(entry_id, pipelines);
+    const std::string source_fragment = parseCustomVideoSource(entry_id, entry.source);
+    const std::string transform = parseVideoTransform(entry.transform);
+    validateCustomVideoSourceFragments(entry_id, source_fragment, transform);
 
-      // Configured sources are keyed by the canonical normalized external name,
-      // so spelling variants collapse to one lookup key and one shared stream contract.
-      const std::string normalized_external_name = normalizeExternalName(entry_id);
-      if (normalized_external_name.empty()) {
-        throw std::runtime_error("video entry '" + entry_id + "' must normalize to a valid external name");
-      }
-      requireUniqueEntryKey(seen_external_names, normalized_external_name, "configured video external name");
-
-      ConfiguredPipelineSource source;
-      source.pipeline = pipelines.at(kDefaultPipelineAlias);
-      config.pipeline_sources.emplace(normalized_external_name, std::move(source));
-    } else {
-      throw std::runtime_error("video entry '" + entry_id + "' has unsupported kind '" + entry.kind + "'");
+    // Configured sources are keyed by the canonical normalized external name, so
+    // spelling variants collapse to one lookup key and one shared stream contract.
+    const std::string normalized_external_name = normalizeExternalName(entry_id);
+    if (normalized_external_name.empty()) {
+      throw std::runtime_error("video custom source '" + entry_id + "' must normalize to a valid external name");
     }
+    requireUniqueEntryKey(seen_external_names, normalized_external_name, "configured video external name");
+
+    ConfiguredExternalSource source;
+    source.source = source_fragment;
+    source.transform = transform;
+    config.external_sources.emplace(normalized_external_name, std::move(source));
   }
 
   // Append built-in catch-all after user entries.

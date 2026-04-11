@@ -73,12 +73,12 @@ Authorization is name-based, not requester-specific. A caller identity must be p
 The bridge has two delivery modes:
 
 - non-video ROS topics are delivered as raw CDR bytes on a LiveKit data track
-- ROS image topics and configured `external` sources are delivered as video through a managed sidecar publisher
+- ROS image topics and configured `external` sources are delivered as LiveKit video tracks
 
 This means your client needs different expectations for each:
 
 - data-track subscriptions need interface definitions from `ros.interfaces.get`
-- video subscriptions depend on `videos.*` configuration and, for bridge-managed sidecars, LiveKit API credentials
+- video subscriptions depend on `video_topic_rule_ids`, `video_custom_source_ids`, and the matching `video.topic_rules.*` / `video.custom_sources.*` configuration
 
 See [video-sources.md](./video-sources.md) for the rules that decide which path a stream uses.
 

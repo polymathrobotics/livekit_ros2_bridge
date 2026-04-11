@@ -25,8 +25,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kTopicSidecarKeyPrefix[] = "topic";
-constexpr char kExternalSidecarKeyPrefix[] = "external";
+constexpr char kTopicStreamKeyPrefix[] = "topic";
+constexpr char kExternalStreamKeyPrefix[] = "external";
 constexpr char kTopicTrackNamePrefix[] = "ros.video.";
 constexpr char kExternalTrackNamePrefix[] = "ros.video.external.";
 
@@ -64,20 +64,6 @@ std::string makeVideoTrackName(std::string_view prefix, const std::string & reso
   return suffix.empty() ? std::string(prefix) + "unnamed" : std::string(prefix) + suffix;
 }
 
-/// Replace all occurrences of `{topic}` in the template with the given topic.
-std::string interpolateTopic(const std::string & tmpl, const std::string & topic)
-{
-  static constexpr char kPlaceholder[] = "{topic}";
-  static constexpr std::size_t kPlaceholderLen = sizeof(kPlaceholder) - 1;
-  std::string result = tmpl;
-  std::size_t pos = 0;
-  while ((pos = result.find(kPlaceholder, pos)) != std::string::npos) {
-    result.replace(pos, kPlaceholderLen, topic);
-    pos += topic.size();
-  }
-  return result;
-}
-
 }  // namespace
 
 VideoConfig makeDefaultVideoConfig()
@@ -87,10 +73,7 @@ VideoConfig makeDefaultVideoConfig()
   RosTopicRule default_rule;
   default_rule.pattern = "/*";
   default_rule.id = video_defaults::kDefaultRosProfileId;
-  default_rule.pipelines = {
-    {kImagePipelineAlias, video_defaults::kDefaultImagePipeline},
-    {kCompressedImagePipelineAlias, video_defaults::kDefaultCompressedImagePipeline},
-  };
+  default_rule.transform = video_defaults::kDefaultRosTransform;
   config.ros_topic_rules.push_back(std::move(default_rule));
 
   return config;
@@ -99,10 +82,10 @@ VideoConfig makeDefaultVideoConfig()
 std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type)
 {
   if (interface_type == kImageInterfaceType) {
-    return RosVideoSourceClassification{kImagePipelineAlias, kRawImageIngestMode};
+    return RosVideoSourceClassification{kRawImageIngestMode};
   }
   if (interface_type == kCompressedImageInterfaceType) {
-    return RosVideoSourceClassification{kCompressedImagePipelineAlias, kCompressedImageIngestMode};
+    return RosVideoSourceClassification{kCompressedImageIngestMode};
   }
   return std::nullopt;
 }
@@ -117,10 +100,10 @@ std::string videoSourceKindToString(VideoSourceKind kind)
   if (kind == VideoSourceKind::RosTopic) {
     return "ros_topic";
   }
-  return "pipeline";
+  return "external";
 }
 
-SidecarLaunchSpec resolveRosVideoLaunchSpec(
+VideoStreamSpec resolveRosVideoStreamSpec(
   const VideoConfig & config, const std::string & topic, const std::string & interface_type)
 {
   const std::string normalized = normalizeRosResourceName(topic);
@@ -146,52 +129,42 @@ SidecarLaunchSpec resolveRosVideoLaunchSpec(
     throw std::runtime_error("no matching video rule for topic '" + normalized + "'");
   }
 
-  const std::string alias(source_classification->pipeline_alias);
-  auto pipeline_it = matched_rule->pipelines.find(alias);
-  if (pipeline_it == matched_rule->pipelines.end()) {
-    pipeline_it = matched_rule->pipelines.find(kDefaultPipelineAlias);
-  }
-  if (pipeline_it == matched_rule->pipelines.end()) {
-    throw std::runtime_error("no pipeline for alias '" + alias + "' in video rule '" + matched_rule->pattern + "'");
-  }
-
-  const std::string resolved = interpolateTopic(pipeline_it->second, normalized);
-
-  SidecarLaunchSpec spec;
-  spec.stream_key = makeVideoStreamKey(kTopicSidecarKeyPrefix, normalized);
+  VideoStreamSpec spec;
+  spec.stream_key = makeVideoStreamKey(kTopicStreamKeyPrefix, normalized);
   spec.track_name = makeVideoTrackName(kTopicTrackNamePrefix, normalized);
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
   spec.source_kind = VideoSourceKind::RosTopic;
   spec.ingest_mode = std::string(source_classification->ingest_mode);
   spec.selected_config_key = matched_rule->id;
-  spec.pipeline_description = resolved;
+  spec.transform_description = matched_rule->transform;
   return spec;
 }
 
-SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, const std::string & external_name)
+VideoStreamSpec resolveExternalVideoStreamSpec(const VideoConfig & config, const std::string & external_name)
 {
   const std::string normalized = normalizeExternalName(external_name);
   if (normalized.empty()) {
     throw std::invalid_argument("Invalid external name.");
   }
 
-  const auto source_it = config.pipeline_sources.find(normalized);
-  if (source_it == config.pipeline_sources.end()) {
+  const auto source_it = config.external_sources.find(normalized);
+  if (source_it == config.external_sources.end()) {
     throw std::invalid_argument("Unknown configured video source '" + normalized + "'.");
   }
 
   const auto & source = source_it->second;
 
-  SidecarLaunchSpec spec;
+  VideoStreamSpec spec;
   // stream_key, external_name, and selected_config_key all use the same canonical configured-source name.
-  spec.stream_key = makeVideoStreamKey(kExternalSidecarKeyPrefix, normalized);
+  spec.stream_key = makeVideoStreamKey(kExternalStreamKeyPrefix, normalized);
   spec.track_name = makeVideoTrackName(kExternalTrackNamePrefix, normalized);
   spec.external_name = normalized;
-  spec.source_kind = VideoSourceKind::Pipeline;
+  spec.source_kind = VideoSourceKind::External;
   spec.selected_config_key = normalized;
-  spec.pipeline_description = source.pipeline;
-  spec.ingest_mode = kPipelineIngestMode;
+  spec.source_description = source.source;
+  spec.transform_description = source.transform;
+  spec.ingest_mode = kExternalIngestMode;
 
   return spec;
 }

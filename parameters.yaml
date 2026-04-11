@@ -103,22 +103,63 @@ livekit_ros2_bridge:
       description: "Maximum active ROS publishers created by bridge ingress."
       validation:
         gt_eq<>: [0]
-  video_ids:
+  # Keep video_topic_rule_ids at the root for now. generate_parameter_library 0.6.x,
+  # which is still part of our supported test matrix, does not support moving this
+  # cleanly to video.topic_rules.ids across all distros. Move it once GPL 0.7+ is
+  # baseline everywhere in the matrix.
+  video_topic_rule_ids:
     type: string_array
     default_value: []
-    description: "Video entry ids defined under videos.<id>."
-  videos:
-    __map_video_ids:
-      kind:
+    description: "Video topic rule ids defined under video.topic_rules.<id>."
+  # Keep video_custom_source_ids at the root for now. generate_parameter_library
+  # 0.6.x, which is still part of our supported test matrix, does not support
+  # moving this cleanly to video.custom_sources.ids across all distros. Move it
+  # once GPL 0.7+ is baseline everywhere in the matrix.
+  video_custom_source_ids:
+    type: string_array
+    default_value: []
+    description: "Video custom source ids defined under video.custom_sources.<id>."
+  video:
+    publish:
+      codec:
         type: string
-        description: "Video entry kind: ros (topic pattern) or pipeline (GStreamer source pipeline)."
+        default_value: "auto"
+        description: "Global LiveKit video codec override: auto, vp8, h264, av1, vp9, or h265."
         validation:
-          one_of<>: [["ros", "pipeline"]]
-      pattern:
+          one_of<>: [["auto", "vp8", "h264", "av1", "vp9", "h265"]]
+      max_bitrate_bps:
+        type: int
+        default_value: 0
+        description: "Global LiveKit max video bitrate override in bps. 0 uses SDK defaults."
+        validation:
+          gt_eq<>: [0]
+      max_framerate:
+        type: double
+        default_value: 0.0
+        description: "Global LiveKit max video framerate override. 0 uses SDK defaults."
+        validation:
+          gt_eq<>: [0.0]
+      simulcast:
         type: string
-        default_value: ""
-        description: "Topic pattern for ros kind (e.g. '/camera/front/*')."
-      pipelines:
-        type: string_array
-        default_value: []
-        description: "Pipeline map as alias=pipeline entries. ros kind supports image/compressed_image/default; pipeline kind requires default."
+        default_value: "auto"
+        description: "Global LiveKit simulcast override: auto, enabled, or disabled."
+        validation:
+          one_of<>: [["auto", "enabled", "disabled"]]
+    topic_rules:
+      __map_video_topic_rule_ids:
+        pattern:
+          type: string
+          description: "Topic pattern for this video topic rule (e.g. '/camera/front/*')."
+        transform:
+          type: string
+          default_value: ""
+          description: "Optional GStreamer transform fragment inserted after bridge-managed ROS ingress."
+    custom_sources:
+      __map_video_custom_source_ids:
+        source:
+          type: string
+          description: "External source fragment for this custom video source (e.g. uridecodebin, v4l2src)."
+        transform:
+          type: string
+          default_value: ""
+          description: "Optional GStreamer transform fragment inserted after external source ingress."

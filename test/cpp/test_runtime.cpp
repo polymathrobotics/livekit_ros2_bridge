@@ -547,7 +547,10 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
     return;
   }
 
-  const bool subscription_ready = waitUntil([&publisher]() { return publisher->get_subscription_count() == 1U; });
+  // Graph counts can transiently exceed one across distros during discovery and
+  // teardown. The shutdown contract here is only that the subscription stays
+  // present until the blocked publish finishes.
+  const bool subscription_ready = waitUntil([&publisher]() { return publisher->get_subscription_count() >= 1U; });
   EXPECT_TRUE(subscription_ready);
   if (!subscription_ready) {
     release_publish_promise.set_value();
@@ -564,7 +567,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   });
 
   EXPECT_EQ(destroy_finished.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
-  EXPECT_EQ(publisher->get_subscription_count(), 1U);
+  EXPECT_GE(publisher->get_subscription_count(), 1U);
 
   release_publish_promise.set_value();
 

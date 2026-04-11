@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <utility>
+
 #include "gtest/gtest.h"
 #include "video_config.hpp"
 
@@ -20,12 +22,12 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-RosTopicRule makeRosRule(const char * id, const char * pattern, const char * pipeline, const char * alias = "image")
+RosTopicRule makeRosRule(const char * id, const char * pattern, const char * transform)
 {
   RosTopicRule rule;
   rule.id = id;
   rule.pattern = pattern;
-  rule.pipelines = {{alias, pipeline}};
+  rule.transform = transform;
   return rule;
 }
 
@@ -37,11 +39,9 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
   const auto & rule = config.ros_topic_rules.front();
   EXPECT_EQ(rule.pattern, "/*");
   EXPECT_EQ(rule.id, video_defaults::kDefaultRosProfileId);
-  ASSERT_EQ(rule.pipelines.size(), 2U);
-  EXPECT_EQ(rule.pipelines.at(kImagePipelineAlias), video_defaults::kDefaultImagePipeline);
-  EXPECT_EQ(rule.pipelines.at(kCompressedImagePipelineAlias), video_defaults::kDefaultCompressedImagePipeline);
+  EXPECT_EQ(rule.transform, video_defaults::kDefaultRosTransform);
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(spec.track_name, "ros.video.camera.front.image");
@@ -50,14 +50,14 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
   EXPECT_EQ(spec.source_kind, VideoSourceKind::RosTopic);
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
   EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
-  EXPECT_EQ(spec.pipeline_description, video_defaults::kDefaultImagePipeline);
+  EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
 }
 
 TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
 {
   const auto config = makeDefaultVideoConfig();
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
 
   EXPECT_EQ(spec.stream_key, "topic:/camera/front/image/compressed");
   EXPECT_EQ(spec.track_name, "ros.video.camera.front.image.compressed");
@@ -66,10 +66,10 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
   EXPECT_EQ(spec.source_kind, VideoSourceKind::RosTopic);
   EXPECT_EQ(spec.ingest_mode, kCompressedImageIngestMode);
   EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
-  EXPECT_EQ(spec.pipeline_description, video_defaults::kDefaultCompressedImagePipeline);
+  EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
 }
 
-TEST(VideoConfigTest, ResolveRosVideoLaunchSpecUsesLongestMatch)
+TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -79,14 +79,14 @@ TEST(VideoConfigTest, ResolveRosVideoLaunchSpecUsesLongestMatch)
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), broad_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), specific_rule);
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.selected_config_key, "specific");
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
-  EXPECT_EQ(spec.pipeline_description, "videoconvert ! specific-filter");
+  EXPECT_EQ(spec.transform_description, "videoconvert ! specific-filter");
 }
 
-TEST(VideoConfigTest, ResolveRosVideoLaunchSpecSameLengthUsesFirstDeclared)
+TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -96,10 +96,10 @@ TEST(VideoConfigTest, ResolveRosVideoLaunchSpecSameLengthUsesFirstDeclared)
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), first_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.end() - 1, second_rule);
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.selected_config_key, "first");
-  EXPECT_EQ(spec.pipeline_description, "videoconvert ! first-filter");
+  EXPECT_EQ(spec.transform_description, "videoconvert ! first-filter");
 }
 
 TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
@@ -109,50 +109,49 @@ TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
   const RosTopicRule user_rule = makeRosRule("user_default", "/*", "videoconvert ! user-filter");
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), user_rule);
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.selected_config_key, "user_default");
-  EXPECT_EQ(spec.pipeline_description, "videoconvert ! user-filter");
+  EXPECT_EQ(spec.transform_description, "videoconvert ! user-filter");
 }
 
-TEST(VideoConfigTest, ResolveRosVideoLaunchSpecFallsBackToDefaultAlias)
+TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholders)
 {
-  VideoConfig config;
+  VideoConfig config = makeDefaultVideoConfig();
+  config.ros_topic_rules.insert(config.ros_topic_rules.begin(), makeRosRule("front", "/camera/front/*", "{topic}"));
 
-  RosTopicRule rule = makeRosRule("catch_all", "/*", "videoconvert ! fallback-filter", "default");
-  config.ros_topic_rules.push_back(std::move(rule));
+  const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  const auto spec = resolveRosVideoLaunchSpec(config, "/camera/front/image", kImageInterfaceType);
-
-  EXPECT_EQ(spec.selected_config_key, "catch_all");
-  EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
-  EXPECT_EQ(spec.pipeline_description, "videoconvert ! fallback-filter");
+  EXPECT_EQ(spec.transform_description, "{topic}");
 }
 
-TEST(VideoConfigTest, ResolveConfiguredVideoLaunchSpecNormalizesExternalName)
+TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  config.pipeline_sources.emplace(
-    "/sources/front", ConfiguredPipelineSource{"videotestsrc is-live=true pattern=black"});
+  ConfiguredExternalSource source;
+  source.source = "videotestsrc is-live=true pattern=black";
+  source.transform = "videobalance saturation=0.0";
+  config.external_sources.emplace("/sources/front", std::move(source));
 
-  const auto spec = resolvePipelineVideoLaunchSpec(config, "  /sources/front/ ");
+  const auto spec = resolveExternalVideoStreamSpec(config, "  /sources/front/ ");
 
   EXPECT_EQ(spec.stream_key, "external:/sources/front");
   EXPECT_EQ(spec.track_name, "ros.video.external.sources.front");
   EXPECT_EQ(spec.external_name, "/sources/front");
-  EXPECT_EQ(spec.source_kind, VideoSourceKind::Pipeline);
-  EXPECT_EQ(spec.ingest_mode, kPipelineIngestMode);
+  EXPECT_EQ(spec.source_kind, VideoSourceKind::External);
+  EXPECT_EQ(spec.ingest_mode, kExternalIngestMode);
   EXPECT_EQ(spec.selected_config_key, "/sources/front");
-  EXPECT_EQ(spec.pipeline_description, "videotestsrc is-live=true pattern=black");
+  EXPECT_EQ(spec.source_description, "videotestsrc is-live=true pattern=black");
+  EXPECT_EQ(spec.transform_description, "videobalance saturation=0.0");
 }
 
-TEST(VideoConfigTest, ResolveConfiguredVideoLaunchSpecRejectsUnknownExternalName)
+TEST(VideoConfigTest, ResolveExternalVideoStreamSpecRejectsUnknownExternalName)
 {
   const VideoConfig config = makeDefaultVideoConfig();
 
   try {
-    (void)resolvePipelineVideoLaunchSpec(config, "/sources/missing");
+    (void)resolveExternalVideoStreamSpec(config, "/sources/missing");
     FAIL() << "Expected invalid_argument";
   } catch (const std::invalid_argument & exc) {
     EXPECT_STREQ(exc.what(), "Unknown configured video source '/sources/missing'.");

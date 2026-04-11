@@ -116,7 +116,7 @@ Error entries always include:
 Current `error.reason` values are:
 
 - `forbidden`: the subscribe policy denies a topic
-- `unavailable`: the bridge could not start a required runtime dependency, usually a video sidecar
+- `unavailable`: the bridge could not start or keep running a required runtime dependency, usually a video stream pipeline
 - `not_found`: lookup or subscription creation failed for another reason
 
 ## Active topic entries on a data track
@@ -148,7 +148,7 @@ Notes:
 
 ## Active video entries
 
-Video deliveries use a managed publisher identity:
+Video deliveries use the same deterministic track-name surface the bridge publishes:
 
 ```json
 {
@@ -157,8 +157,7 @@ Video deliveries use a managed publisher identity:
   "status": "active",
   "delivery": {
     "kind": "video",
-    "publisher_identity": "robot-bridge-video-source-front_camera",
-    "track_name": ""
+    "track_name": "ros.video.external.front_camera"
   }
 }
 ```
@@ -167,23 +166,22 @@ Notes:
 
 - configured `external` targets are always video streams
 - ROS topics become video streams only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
-- video status includes `publisher_identity`
-- video `track_name` is currently an empty string because the sidecar publisher does not expose a useful track name back to the bridge
+- video `track_name` is deterministic and stable for the normalized target name
 
 ## Delivery and sharing model
 
 | Requested target | Resolved from | Delivery | Shared resource model |
 | --- | --- | --- | --- |
 | Non-video ROS topic | normalized topic name and unique graph type | data track | one ROS subscription and one data track per normalized topic |
-| ROS video topic | normalized topic name, unique graph type, and matching video rule | video | one managed sidecar per resolved `sidecar_key` |
-| Configured external source | normalized `external` name and matching `videos.*` pipeline entry | video | one managed sidecar per resolved `sidecar_key` |
+| ROS video topic | normalized topic name, unique graph type, and matching video rule | video | one in-process video stream per resolved `stream_key` |
+| Configured external source | normalized `external` name and matching `video.custom_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
 
 Important behavior:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- configured `external` sources do not use subscribe rules; they are controlled by which `videos.*` entries exist
+- configured `external` sources do not use subscribe rules; they are controlled by which `video_custom_source_ids` and `video.custom_sources.*` entries exist
 - the bridge never guesses when topic type resolution is ambiguous
-- when the last requester lease disappears, the shared data track or sidecar is torn down
+- when the last requester lease disappears, the shared data track or video stream is torn down
 
 ## Lease timing and cleanup
 

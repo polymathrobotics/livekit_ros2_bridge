@@ -68,12 +68,6 @@ const char * missingTokenConfigError()
   return "Either livekit.token or livekit.api_key + livekit.api_secret must be set";
 }
 
-const char * missingRosPipelineConfigError()
-{
-  return "video entry 'front' (ros kind) requires at least one pipeline alias from [image, compressed_image, "
-         "default]";
-}
-
 rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
@@ -235,18 +229,16 @@ TEST_F(RuntimeConfigTest, MissingTokenConfigurationThrows)
   expectRuntimeConfigError("startup_config_missing_token", makeBaseOptions(), missingTokenConfigError());
 }
 
-TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromUnifiedParams)
+TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front_camera", "front_rtsp"});
-  options.append_parameter_override("videos.front_camera.kind", "ros");
-  options.append_parameter_override("videos.front_camera.pattern", "/camera/front/*");
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front_camera"});
+  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front_rtsp"});
+  options.append_parameter_override("video.topic_rules.front_camera.pattern", "/camera/front/*");
   options.append_parameter_override(
-    "videos.front_camera.pipelines",
-    std::vector<std::string>{"image=videoconvert ! videoscale ! video/x-raw,width=640,height=360"});
-  options.append_parameter_override("videos.front_rtsp.kind", "pipeline");
-  options.append_parameter_override(
-    "videos.front_rtsp.pipelines", std::vector<std::string>{"default=videotestsrc is-live=true pattern=ball"});
+    "video.topic_rules.front_camera.transform", "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
+  options.append_parameter_override("video.custom_sources.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
+  options.append_parameter_override("video.custom_sources.front_rtsp.transform", "videobalance saturation=0.0");
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_params", options);
 
@@ -254,11 +246,27 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromUnifiedParams)
   const auto & front_rule = startup_config.video_config.ros_topic_rules.front();
   EXPECT_EQ(front_rule.pattern, "/camera/front/*");
   EXPECT_EQ(front_rule.id, "front_camera");
-  ASSERT_EQ(front_rule.pipelines.size(), 1U);
-  EXPECT_EQ(front_rule.pipelines.at("image"), "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
-  ASSERT_EQ(startup_config.video_config.pipeline_sources.size(), 1U);
+  EXPECT_EQ(front_rule.transform, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
+  ASSERT_EQ(startup_config.video_config.external_sources.size(), 1U);
   EXPECT_EQ(
-    startup_config.video_config.pipeline_sources.at("/front_rtsp").pipeline, "videotestsrc is-live=true pattern=ball");
+    startup_config.video_config.external_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(startup_config.video_config.external_sources.at("/front_rtsp").transform, "videobalance saturation=0.0");
+}
+
+TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video.publish.codec", "h264");
+  options.append_parameter_override("video.publish.max_bitrate_bps", 900000);
+  options.append_parameter_override("video.publish.max_framerate", 24.0);
+  options.append_parameter_override("video.publish.simulcast", "enabled");
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_publish_params", options);
+
+  EXPECT_EQ(startup_config.video_config.publish.codec, VideoPublishCodec::H264);
+  EXPECT_EQ(startup_config.video_config.publish.max_bitrate_bps, 900000U);
+  EXPECT_DOUBLE_EQ(startup_config.video_config.publish.max_framerate, 24.0);
+  EXPECT_EQ(startup_config.video_config.publish.simulcast, VideoPublishSimulcast::Enabled);
 }
 
 TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
@@ -329,84 +337,83 @@ TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParam
     "Parameter 'subscribe.qos_overrides.camera.reliability' with the value 'sometimes' is not in the set");
 }
 
-TEST_F(RuntimeConfigTest, RosVideoEntryAcceptsDefaultPipelineAlias)
+TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "ros");
-  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
-  options.append_parameter_override(
-    "videos.front.pipelines", std::vector<std::string>{"default=videoconvert ! videoscale"});
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.topic_rules.front.pattern", "/camera/front/*");
 
-  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_ros_default_pipeline", options);
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_ros_empty_transform", options);
 
   ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
   EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().id, "front");
-  ASSERT_EQ(startup_config.video_config.ros_topic_rules.front().pipelines.size(), 1U);
-  EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().pipelines.at("default"), "videoconvert ! videoscale");
+  EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().transform, "");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front", "front"});
-  options.append_parameter_override("videos.front.kind", "ros");
-  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
-  options.append_parameter_override(
-    "videos.front.pipelines", std::vector<std::string>{"default=videoconvert ! videoscale"});
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front", "front"});
+  options.append_parameter_override("video.topic_rules.front.pattern", "/camera/front/*");
 
-  expectRuntimeConfigError("startup_config_duplicate_video_entry_id", options, "duplicate video entry id 'front'");
+  expectRuntimeConfigError("startup_config_duplicate_video_entry_id", options, "duplicate video topic rule id 'front'");
 }
 
 TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersAreRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front"});
 
   expectRuntimeConfigErrorContains(
-    "startup_config_missing_video_entry_params", options, "parameter 'videos.front.kind' is not initialized");
-}
-
-TEST_F(RuntimeConfigTest, RosVideoEntryWithoutPipelinesIsRejected)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "ros");
-  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
-
-  expectRuntimeConfigError("startup_config_missing_ros_pipeline", options, missingRosPipelineConfigError());
-}
-
-TEST_F(RuntimeConfigTest, RosVideoEntryRejectsUnsupportedPipelineAlias)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "ros");
-  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
-  options.append_parameter_override(
-    "videos.front.pipelines", std::vector<std::string>{"foo=videoconvert ! videoscale"});
-
-  expectRuntimeConfigError(
-    "startup_config_unsupported_ros_pipeline_alias",
+    "startup_config_missing_video_entry_params",
     options,
-    "video entry 'front' (ros kind) has unsupported pipeline alias 'foo'");
+    "parameter 'video.topic_rules.front.pattern' is not initialized");
 }
 
-TEST_F(RuntimeConfigTest, VideoEntryRejectsDuplicatePipelineAliases)
+TEST_F(RuntimeConfigTest, MissingGeneratedVideoCustomSourceParametersAreRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "ros");
-  options.append_parameter_override("videos.front.pattern", "/camera/front/*");
-  options.append_parameter_override(
-    "videos.front.pipelines",
-    std::vector<std::string>{
-      "image=videoconvert ! first-filter",
-      "image=videoconvert ! second-filter",
-    });
+  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
+
+  expectRuntimeConfigErrorContains(
+    "startup_config_missing_video_custom_source_params",
+    options,
+    "parameter 'video.custom_sources.front.source' is not initialized");
+}
+
+TEST_F(RuntimeConfigTest, RosVideoTransformRejectsBridgeManagedAppsink)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.topic_rules.front.pattern", "/camera/front/*");
+  options.append_parameter_override("video.topic_rules.front.transform", "videoconvert ! appsink");
 
   expectRuntimeConfigError(
-    "startup_config_duplicate_pipeline_alias", options, "video entry 'front' has duplicate pipeline alias 'image'");
+    "startup_config_ros_transform_appsink_rejected",
+    options,
+    "video topic rule 'front' transform must not define appsrc/appsink endpoints; the bridge owns them");
+}
+
+TEST_F(RuntimeConfigTest, ExternalVideoSourceRejectsBridgeManagedAppsrc)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.custom_sources.front.source", "appsrc ! videoconvert");
+
+  expectRuntimeConfigError(
+    "startup_config_external_source_appsrc_rejected",
+    options,
+    "video custom source 'front' must not define appsrc/appsink endpoints; the bridge owns them");
+}
+
+TEST_F(RuntimeConfigTest, DuplicateVideoCustomSourceIdReportsSectionSpecificError)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front", "front"});
+  options.append_parameter_override("video.custom_sources.front.source", "videotestsrc pattern=ball");
+
+  expectRuntimeConfigError(
+    "startup_config_duplicate_video_custom_source_id", options, "duplicate video custom source id 'front'");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError)
@@ -423,11 +430,9 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
     params_file << "    livekit.url: ws://test:7880\n";
     params_file << "    livekit.room: robot-room\n";
     params_file << "    livekit.token: static-token\n";
-    params_file << "    video_ids: ['/front_rtsp', '/front_rtsp/']\n";
-    params_file << "    \"videos./front_rtsp.kind\": pipeline\n";
-    params_file << "    \"videos./front_rtsp.pipelines\": ['default=videotestsrc is-live=true pattern=ball']\n";
-    params_file << "    \"videos./front_rtsp/.kind\": pipeline\n";
-    params_file << "    \"videos./front_rtsp/.pipelines\": ['default=videotestsrc is-live=true pattern=smpte']\n";
+    params_file << "    video_custom_source_ids: ['/front_rtsp', '/front_rtsp/']\n";
+    params_file << "    \"video.custom_sources./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";
+    params_file << "    \"video.custom_sources./front_rtsp/.source\": 'videotestsrc is-live=true pattern=smpte'\n";
   }
 
   rclcpp::NodeOptions options;
@@ -435,32 +440,6 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
   expectRuntimeConfigError(node_name, options, "duplicate configured video external name '/front_rtsp'");
 
   std::filesystem::remove(params_path);
-}
-
-TEST_F(RuntimeConfigTest, PipelineVideoEntryRejectsMissingDefaultAlias)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "pipeline");
-
-  expectRuntimeConfigError(
-    "startup_config_missing_pipeline_default",
-    options,
-    "video entry 'front' (pipeline kind) requires a 'default' pipeline key");
-}
-
-TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejectedByParameterLibrary)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("videos.front.kind", "gstream");
-  options.append_parameter_override(
-    "videos.front.pipelines", std::vector<std::string>{"default=videotestsrc pattern=ball"});
-
-  expectRuntimeConfigErrorContains(
-    "startup_config_unsupported_video_kind",
-    options,
-    "Parameter 'videos.front.kind' with the value 'gstream' is not in the set '{ros, pipeline}'");
 }
 
 }  // namespace livekit_ros2_bridge

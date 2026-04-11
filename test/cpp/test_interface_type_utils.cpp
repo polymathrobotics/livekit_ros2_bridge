@@ -61,7 +61,6 @@ TEST(ClassifyRosVideoInterfaceTypeTest, RawImageTypeIsVideo)
 {
   const auto classification = classifyRosVideoInterfaceType(kImageInterfaceType);
   ASSERT_TRUE(classification.has_value());
-  EXPECT_EQ(classification->pipeline_alias, kImagePipelineAlias);
   EXPECT_EQ(classification->ingest_mode, kRawImageIngestMode);
 }
 
@@ -69,7 +68,6 @@ TEST(ClassifyRosVideoInterfaceTypeTest, CompressedImageTypeIsVideo)
 {
   const auto classification = classifyRosVideoInterfaceType(kCompressedImageInterfaceType);
   ASSERT_TRUE(classification.has_value());
-  EXPECT_EQ(classification->pipeline_alias, kCompressedImagePipelineAlias);
   EXPECT_EQ(classification->ingest_mode, kCompressedImageIngestMode);
 }
 

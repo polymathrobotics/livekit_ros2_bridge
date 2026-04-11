@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -25,64 +26,76 @@ namespace livekit_ros2_bridge
 
 inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
 inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
-inline constexpr char kImagePipelineAlias[] = "image";
-inline constexpr char kCompressedImagePipelineAlias[] = "compressed_image";
-inline constexpr char kDefaultPipelineAlias[] = "default";
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
-inline constexpr char kPipelineIngestMode[] = "pipeline";
+inline constexpr char kExternalIngestMode[] = "external";
 
 namespace video_defaults
 {
 
 inline constexpr char kDefaultRosProfileId[] = "default_ros";
-
-// clang-format off
-inline constexpr char kDefaultImagePipeline[] =
-  "queue max-size-buffers=2 leaky=downstream";
-
-inline constexpr char kDefaultCompressedImagePipeline[] =
-  "queue max-size-buffers=2 leaky=downstream";
-// clang-format on
+inline constexpr char kDefaultRosTransform[] = "";
 
 }  // namespace video_defaults
 
-/// Pipeline alias → GStreamer pipeline snippet.
-/// Alias keys: "image", "compressed_image", "default".
-using PipelineMap = std::unordered_map<std::string, std::string>;
-
 struct RosVideoSourceClassification
 {
-  std::string_view pipeline_alias;
   std::string_view ingest_mode;
 };
 
 enum class VideoSourceKind
 {
   RosTopic,
-  Pipeline,
+  External,
+};
+
+enum class VideoPublishCodec
+{
+  Auto,
+  Vp8,
+  H264,
+  Av1,
+  Vp9,
+  H265,
+};
+
+enum class VideoPublishSimulcast
+{
+  Auto,
+  Enabled,
+  Disabled,
+};
+
+struct VideoPublishConfig
+{
+  VideoPublishCodec codec = VideoPublishCodec::Auto;
+  std::uint64_t max_bitrate_bps = 0;
+  double max_framerate = 0.0;
+  VideoPublishSimulcast simulcast = VideoPublishSimulcast::Auto;
 };
 
 struct RosTopicRule
 {
   std::string pattern;
   std::string id;
-  PipelineMap pipelines;
+  std::string transform;
 };
 
-struct ConfiguredPipelineSource
+struct ConfiguredExternalSource
 {
-  std::string pipeline;
+  std::string source;
+  std::string transform;
 };
 
 struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
   // Keyed by normalizeExternalName(...).
-  std::unordered_map<std::string, ConfiguredPipelineSource> pipeline_sources;
+  std::unordered_map<std::string, ConfiguredExternalSource> external_sources;
+  VideoPublishConfig publish;
 };
 
-struct SidecarLaunchSpec
+struct VideoStreamSpec
 {
   // Stable video runtime key: "topic:<normalized topic>" or "external:<normalized external name>".
   std::string stream_key;
@@ -92,30 +105,31 @@ struct SidecarLaunchSpec
   std::string ros_topic;
   // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
   std::string interface_type;
-  // Set only for configured pipeline sources after external-name normalization.
+  // Set only for configured external sources after external-name normalization.
   std::string external_name;
   VideoSourceKind source_kind = VideoSourceKind::RosTopic;
   std::string ingest_mode;
-  // ROS sources store the matched rule id; pipeline sources store the canonical external name.
+  // ROS sources store the matched rule id; external sources store the canonical external name.
   std::string selected_config_key;
   std::optional<std::string> degraded_reason;
-  // Resolved GStreamer pipeline snippet used by the in-process video runtime.
-  std::string pipeline_description;
+  // External sources set this to the configured source fragment. ROS sources leave it empty.
+  std::string source_description;
+  // Optional GStreamer transform fragment inserted after ingress and before the bridge tail.
+  std::string transform_description;
 };
 
 VideoConfig makeDefaultVideoConfig();
 
-// Returns the alias/ingest contract for supported ROS video types and std::nullopt for non-video types.
+// Returns the ingest contract for supported ROS video types and std::nullopt for non-video types.
 std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
 // Canonicalizes configured source names so equivalent spellings share one config key and track name.
 std::string normalizeExternalName(std::string_view external_name);
 std::string videoSourceKindToString(VideoSourceKind kind);
 
 // Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
-// Interface-specific aliases prefer "image"/"compressed_image" and fall back to "default".
-SidecarLaunchSpec resolveRosVideoLaunchSpec(
+VideoStreamSpec resolveRosVideoStreamSpec(
   const VideoConfig & config, const std::string & topic, const std::string & interface_type);
-// Normalizes the configured source name before lookup and fills only the pipeline-source fields in the result.
-SidecarLaunchSpec resolvePipelineVideoLaunchSpec(const VideoConfig & config, const std::string & external_name);
+// Normalizes the configured source name before lookup and fills only the external-source fields in the result.
+VideoStreamSpec resolveExternalVideoStreamSpec(const VideoConfig & config, const std::string & external_name);
 
 }  // namespace livekit_ros2_bridge

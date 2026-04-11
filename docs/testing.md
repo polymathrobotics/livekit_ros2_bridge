@@ -32,8 +32,8 @@ also the same cross-distro path used by CI.
 To narrow to one `ament_add_gtest` target:
 
 ```bash
-just test -- --ctest-args -R test_runtime
-just test -- --ctest-args -R test_subscription_heartbeat_processor
+just test --ctest-args -R test_runtime
+just test --ctest-args -R test_subscription_heartbeat_processor
 ```
 
 `CMakeLists.txt` registers one test target per `test/cpp/test_*.cpp` file, so the filter usually matches the filename stem.
@@ -44,10 +44,10 @@ Good entry points:
 
 - `test_runtime.cpp`: end-to-end runtime wiring around `FakeRoomSession`
 - `test_subscription_heartbeat_processor.cpp`: heartbeat parsing, status envelopes, access control, and video-source edge cases
-- `test_subscription_registry.cpp`: lease sharing, interval handling, CDR replay, and sidecar interactions
+- `test_subscription_registry.cpp`: lease sharing, interval handling, CDR replay, and video stream interactions
 - `test_rpc_router.cpp`: RPC request parsing, graph filtering, and error mapping
-- `test_runtime_config.cpp`: auth modes, parameter validation, and video entry loading
-- `test_ros_image_src_plugins.cpp`: `rosrawimagesrc` and `roscompressedimagesrc`
+- `test_runtime_config.cpp`: auth modes, parameter validation, and video rule/source loading
+- `test_video_stream_manager.cpp`: ROS ingress, external pipelines, and global video publish settings
 
 ## Common harness pattern
 
@@ -90,4 +90,4 @@ If a test is flaky, replace ad hoc sleeps first.
 - use `spinUntil(...)` when executor progress is required
 - use `waitUntil(...)` when the state change happens outside ROS callbacks
 
-That matters because many bridge operations cross thread boundaries: executor queue handoff, ROS graph discovery, data-track publication, sidecar management, and service-call completion.
+That matters because many bridge operations cross thread boundaries: executor queue handoff, ROS graph discovery, data-track publication, video stream management, and service-call completion.

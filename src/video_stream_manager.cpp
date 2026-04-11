@@ -175,12 +175,14 @@ public:
   StreamRecord(
     rclcpp::Node & node,
     RoomSession & session,
-    SidecarLaunchSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config)
+    VideoStreamSpec spec,
+    const SubscriptionQosConfig * subscription_qos_config,
+    VideoPublishConfig publish_config)
   : node_(node)
   , session_(session)
   , spec_(std::move(spec))
   , subscription_qos_config_(subscription_qos_config)
+  , publish_config_(std::move(publish_config))
   {}
 
   ~StreamRecord()
@@ -195,7 +197,7 @@ public:
       throw std::runtime_error("Video stream is shut down.");
     }
 
-    if (spec_.source_kind == VideoSourceKind::Pipeline) {
+    if (spec_.source_kind == VideoSourceKind::External) {
       if (pipeline_ == nullptr) {
         startExternalPipelineLocked();
       }
@@ -381,8 +383,7 @@ private:
 
   void startExternalPipelineLocked()
   {
-    const std::string prefix = spec_.pipeline_description;
-    startPipelineLocked(composePipeline(prefix, ""));
+    startPipelineLocked(composePipeline(spec_.source_description, spec_.transform_description));
     playPipelineLocked();
   }
 
@@ -393,7 +394,7 @@ private:
     prefix += " is-live=true block=false format=time do-timestamp=true";
     prefix += " caps=";
     prefix += formatToCapsString(config);
-    startPipelineLocked(composePipeline(prefix, spec_.pipeline_description), true);
+    startPipelineLocked(composePipeline(prefix, spec_.transform_description), true);
     playPipelineLocked();
     raw_source_config_ = config;
   }
@@ -404,7 +405,7 @@ private:
     prefix += kAppSrcName;
     prefix += " is-live=true block=false format=time do-timestamp=true";
     prefix += format == "png" ? " caps=image/png ! pngdec" : " caps=image/jpeg ! jpegdec";
-    startPipelineLocked(composePipeline(prefix, spec_.pipeline_description), true);
+    startPipelineLocked(composePipeline(prefix, spec_.transform_description), true);
     playPipelineLocked();
     compressed_format_ = format;
   }
@@ -754,7 +755,7 @@ private:
     }
 
     video_source_ = std::make_shared<livekit::VideoSource>(width, height);
-    published_track_ = session_.publishVideoTrack(spec_.track_name, video_source_);
+    published_track_ = session_.publishVideoTrack(spec_.track_name, video_source_, publish_config_);
     published_width_ = width;
     published_height_ = height;
 
@@ -810,7 +811,7 @@ private:
     }
     failure_recovery_pending_ = true;
 
-    const bool restart_external = spec_.source_kind == VideoSourceKind::Pipeline;
+    const bool restart_external = spec_.source_kind == VideoSourceKind::External;
     auto self = shared_from_this();
     std::thread([self, restart_external]() {
       if (restart_external) {
@@ -845,7 +846,7 @@ private:
 
   rclcpp::Node & node_;
   RoomSession & session_;
-  SidecarLaunchSpec spec_;
+  VideoStreamSpec spec_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_recovery_pending_ = false;
@@ -862,13 +863,18 @@ private:
   int published_width_ = 0;
   int published_height_ = 0;
   const SubscriptionQosConfig * subscription_qos_config_;
+  VideoPublishConfig publish_config_;
 };
 
 VideoStreamManager::VideoStreamManager(
-  rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config)
+  rclcpp::Node & node,
+  RoomSession & session,
+  const SubscriptionQosConfig * subscription_qos_config,
+  VideoPublishConfig publish_config)
 : node_(node)
 , session_(session)
 , subscription_qos_config_(subscription_qos_config)
+, publish_config_(std::move(publish_config))
 {
   ensureGstreamerInitialized();
 }
@@ -878,7 +884,7 @@ VideoStreamManager::~VideoStreamManager()
   shutdown();
 }
 
-std::string VideoStreamManager::ensureStream(const SidecarLaunchSpec & spec)
+std::string VideoStreamManager::ensureStream(const VideoStreamSpec & spec)
 {
   std::shared_ptr<StreamRecord> record;
   {
@@ -889,7 +895,7 @@ std::string VideoStreamManager::ensureStream(const SidecarLaunchSpec & spec)
 
     auto [it, inserted] = streams_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_);
+      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_, publish_config_);
     }
     record = it->second;
   }

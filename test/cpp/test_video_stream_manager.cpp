@@ -40,29 +40,25 @@ std::string nextNodeName(const std::string & prefix)
   return prefix + "_" + std::to_string(next_suffix.fetch_add(1));
 }
 
-sensor_msgs::msg::Image makeRgbImage()
+sensor_msgs::msg::Image makeRgbImage(std::uint32_t width = 2, std::uint32_t height = 2)
 {
   sensor_msgs::msg::Image image;
   image.header.stamp.sec = 1;
   image.header.stamp.nanosec = 2000;
-  image.width = 2;
-  image.height = 2;
+  image.width = width;
+  image.height = height;
   image.encoding = "rgb8";
-  image.step = 6;
-  image.data = {
-    255,
-    0,
-    0,
-    0,
-    255,
-    0,
-    0,
-    0,
-    255,
-    255,
-    255,
-    255,
-  };
+  image.step = width * 3U;
+  image.data.resize(static_cast<std::size_t>(image.step) * height);
+  for (std::size_t idx = 0; idx < image.data.size(); idx += 3U) {
+    image.data[idx] = 255;
+    if (idx + 1U < image.data.size()) {
+      image.data[idx + 1U] = 255;
+    }
+    if (idx + 2U < image.data.size()) {
+      image.data[idx + 2U] = 255;
+    }
+  }
   return image;
 }
 
@@ -125,9 +121,9 @@ bool publishUntil(
   return predicate();
 }
 
-SidecarLaunchSpec makeRosSpec(const std::string & topic, const std::string & track_name)
+VideoStreamSpec makeRosSpec(const std::string & topic, const std::string & track_name)
 {
-  SidecarLaunchSpec spec;
+  VideoStreamSpec spec;
   spec.stream_key = "topic:" + topic;
   spec.track_name = track_name;
   spec.ros_topic = topic;
@@ -135,11 +131,11 @@ SidecarLaunchSpec makeRosSpec(const std::string & topic, const std::string & tra
   spec.source_kind = VideoSourceKind::RosTopic;
   spec.ingest_mode = kRawImageIngestMode;
   spec.selected_config_key = "default_ros";
-  spec.pipeline_description = "queue max-size-buffers=2 leaky=downstream";
+  spec.transform_description = "queue max-size-buffers=2 leaky=downstream";
   return spec;
 }
 
-SidecarLaunchSpec makeCompressedRosSpec(const std::string & topic, const std::string & track_name)
+VideoStreamSpec makeCompressedRosSpec(const std::string & topic, const std::string & track_name)
 {
   auto spec = makeRosSpec(topic, track_name);
   spec.interface_type = kCompressedImageInterfaceType;
@@ -147,16 +143,16 @@ SidecarLaunchSpec makeCompressedRosSpec(const std::string & topic, const std::st
   return spec;
 }
 
-SidecarLaunchSpec makePipelineSpec(const std::string & external_name, const std::string & track_name)
+VideoStreamSpec makeExternalSpec(const std::string & external_name, const std::string & track_name)
 {
-  SidecarLaunchSpec spec;
+  VideoStreamSpec spec;
   spec.stream_key = "external:" + external_name;
   spec.track_name = track_name;
   spec.external_name = external_name;
-  spec.source_kind = VideoSourceKind::Pipeline;
-  spec.ingest_mode = kPipelineIngestMode;
+  spec.source_kind = VideoSourceKind::External;
+  spec.ingest_mode = kExternalIngestMode;
   spec.selected_config_key = external_name;
-  spec.pipeline_description = "videotestsrc is-live=true pattern=black";
+  spec.source_description = "videotestsrc is-live=true pattern=black";
   return spec;
 }
 
@@ -284,7 +280,7 @@ TEST_F(VideoStreamManagerTest, ExternalPipelinePublishesTrackAndStopUnpublishesI
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makePipelineSpec("/sources/front", "ros.video.external.sources.front");
+  const auto spec = makeExternalSpec("/sources/front", "ros.video.external.sources.front");
 
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
@@ -303,7 +299,7 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   FakeRoomSession session;
   VideoStreamManager manager(*node, session);
 
-  const auto spec = makePipelineSpec("/sources/shutdown", "ros.video.external.sources.shutdown");
+  const auto spec = makeExternalSpec("/sources/shutdown", "ros.video.external.sources.shutdown");
   EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
@@ -318,6 +314,52 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Video stream manager is shut down.");
+  }
+}
+
+TEST_F(VideoStreamManagerTest, GlobalPublishConfigIsAppliedToEveryPublishedTrack)
+{
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_publish_config"));
+  FakeRoomSession session;
+
+  VideoPublishConfig publish_config;
+  publish_config.codec = VideoPublishCodec::H264;
+  publish_config.max_bitrate_bps = 900000;
+  publish_config.max_framerate = 24.0;
+  publish_config.simulcast = VideoPublishSimulcast::Enabled;
+  VideoStreamManager manager(*node, session, nullptr, publish_config);
+
+  const std::string first_topic = "/camera/publish_config/one";
+  const std::string second_topic = "/camera/publish_config/two";
+  const auto first_spec = makeRosSpec(first_topic, "ros.video.camera.publish_config.one");
+  const auto second_spec = makeRosSpec(second_topic, "ros.video.camera.publish_config.two");
+  auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
+  auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  EXPECT_EQ(manager.ensureStream(first_spec), first_spec.track_name);
+  EXPECT_EQ(manager.ensureStream(second_spec), second_spec.track_name);
+  ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
+  ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
+
+  ASSERT_TRUE(publishUntil(executor, first_publisher, makeRgbImage(2, 2), [&session]() {
+    return session.state->published_video_configs.size() == 1U;
+  }));
+  ASSERT_TRUE(publishUntil(executor, second_publisher, makeRgbImage(4, 4), [&session]() {
+    return session.state->published_video_configs.size() == 2U;
+  }));
+
+  ASSERT_EQ(session.state->published_video_track_names.size(), 2U);
+  EXPECT_EQ(session.state->published_video_track_names[0], first_spec.track_name);
+  EXPECT_EQ(session.state->published_video_track_names[1], second_spec.track_name);
+  ASSERT_EQ(session.state->published_video_configs.size(), 2U);
+  for (const auto & config : session.state->published_video_configs) {
+    EXPECT_EQ(config.codec, publish_config.codec);
+    EXPECT_EQ(config.max_bitrate_bps, publish_config.max_bitrate_bps);
+    EXPECT_DOUBLE_EQ(config.max_framerate, publish_config.max_framerate);
+    EXPECT_EQ(config.simulcast, publish_config.simulcast);
   }
 }
 

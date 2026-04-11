@@ -1,11 +1,11 @@
-# Video sources and sidecars
+# Video sources
 
-The bridge treats every video subscription as a request to resolve one canonical `SidecarLaunchSpec` and keep one managed publisher process alive for that spec's `sidecar_key`.
+The bridge resolves each video subscription to one canonical in-process `VideoStreamSpec` and keeps one shared `VideoStreamManager` stream alive for that spec's `stream_key`.
 
-That path starts from one of two inputs:
+Video requests start from one of two inputs:
 
 - a ROS topic whose resolved interface type is a supported video type
-- an `external` target backed by a configured `videos.*` pipeline entry
+- an `external` target backed by a configured `video.custom_sources.*` entry
 
 ## What becomes a video stream
 
@@ -16,22 +16,38 @@ ROS topics become video only when their resolved interface type is one of:
 - `sensor_msgs/msg/Image`
 - `sensor_msgs/msg/CompressedImage`
 
-Those two ROS types choose the pipeline alias and ingest mode:
+Those two ROS types choose only the ingest mode:
 
-| Interface type | Pipeline alias | Ingest mode |
-| --- | --- | --- |
-| `sensor_msgs/msg/Image` | `image` | `raw_image` |
-| `sensor_msgs/msg/CompressedImage` | `compressed_image` | `compressed_image` |
+| Interface type | Ingest mode |
+| --- | --- |
+| `sensor_msgs/msg/Image` | `raw_image` |
+| `sensor_msgs/msg/CompressedImage` | `compressed_image` |
 
 All other ROS topic types stay on the CDR data-track path.
 
+## Public config shape
+
+Use root-level `video_topic_rule_ids`, `video_custom_source_ids`, and the matching `video.topic_rules.<id>.*` / `video.custom_sources.<id>.*` entries.
+
+`video_topic_rule_ids` and `video_custom_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly to `video.topic_rules.ids` and `video.custom_sources.ids` yet.
+
+Each topic rule has:
+
+- `pattern`: required
+- `transform`: optional
+
+Each custom source has:
+
+- `source`: required
+- `transform`: optional
+
 ## ROS topic rules
 
-`videos.<id>.kind=ros` entries named in `video_ids` become topic-matching rules. Each rule has:
+`video.topic_rules.<id>` entries named in `video_topic_rule_ids` become topic-matching rules. Each rule has:
 
 - an `id`
 - a normalized topic pattern
-- one or more pipeline templates keyed by `image`, `compressed_image`, or `default`
+- one optional `transform` fragment
 
 Rule selection works like this:
 
@@ -40,123 +56,86 @@ Rule selection works like this:
 - choose the longest matching pattern
 - keep the first declared rule when two matching patterns have the same length
 
-Pipeline selection works like this:
-
-1. use the interface-specific alias, `image` or `compressed_image`
-2. fall back to `default`
-
-If neither pipeline exists, resolution fails.
-
-In ROS pipeline templates, every `{topic}` placeholder is replaced with the normalized topic name before the final command is tokenized.
+ROS `transform` is a pure middle-stage fragment. The bridge does not interpolate `{topic}` or any other placeholders.
 
 ### Built-in ROS fallback
 
-If no user rule matches, the built-in `default_ros` rule handles both supported ROS video types. Its defaults start from:
+If no user rule matches, the built-in `default_ros` rule handles both supported ROS video types.
 
-- `rosrawimagesrc` for `sensor_msgs/msg/Image`
-- `roscompressedimagesrc ! jpegdec` for `sensor_msgs/msg/CompressedImage`
-
-Both defaults add:
-
-- a small leaky queue
-- `videorate` capped at `12/1`
-- `videoconvert`
-- `vp8enc`
+Its `transform` is empty, so the default behavior is bridge-managed ingress plus bridge-managed tail, with no extra processing stages.
 
 ## Configured external sources
 
-`videos.<id>.kind=pipeline` entries named in `video_ids` become configured external sources.
+`video.custom_sources.<id>` entries named in `video_custom_source_ids` become configured external sources.
 
 Rules:
 
-- only the `default` pipeline alias is accepted
+- `source` is required and must be non-empty
+- `transform` is optional
 - duplicate ids that normalize to the same external name are rejected at startup
 - lookup uses the normalized external name
 
 That means values such as `front_rtsp`, `/front_rtsp`, and `/front_rtsp/` all collapse to the same canonical external name, `"/front_rtsp"`.
 
-Configured external pipelines are tokenized as-is. They do not interpolate `{topic}`.
+## Runtime pipeline composition
 
-## Sidecar prerequisites
-
-Bridge-managed video sidecars depend on a few runtime requirements:
-
-| Requirement | Why it matters |
-| --- | --- |
-| `livekit.api_key` and `livekit.api_secret` | Sidecars mint their own publisher tokens |
-| `gstreamer-publisher` on `PATH` | The bridge launches it as the managed publisher process |
-| `GST_PLUGIN_PATH` including this package's installed plugin directory for source builds | Lets `gstreamer-publisher` find `rosrawimagesrc` and `roscompressedimagesrc` |
-
-The packaged runtime image and the repo dev container set up the GStreamer plugin path for you. Source builds need to export it before starting the bridge so child sidecar processes inherit it.
-
-## Sidecar lifecycle
-
-`VideoSidecarSupervisor` owns one child process per resolved `sidecar_key`. `SubscriptionRegistry` calls `ensureSidecar()` when a video subscription is created or renewed.
-
-Three rules matter most:
-
-- the map is keyed by `sidecar_key`, so normalized requests share one child
-- publisher identity is derived once per key and reused across respawns
-- calling `ensureSidecar()` again for an already-running sidecar reuses the child instead of starting a second one
-
-Publisher identities are deterministic:
-
-- ROS topics use `<bridge_identity>-video-<topic slug>`
-- configured external sources use `<bridge_identity>-video-source-<external slug>`
-
-The command shape is:
+The bridge always appends its own output tail:
 
 ```text
-gstreamer-publisher --url <livekit_url> --token <publisher_token> -- <source_pipeline...>
+queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=RGBA ! appsink
 ```
 
-The supervisor does not run its own background poll loop. Maintenance happens when the runtime calls `maintainSidecars()` during lease sweeping.
+Composition by source kind:
 
-Each maintenance cycle:
+- ROS raw image topic: `appsrc(caps from Image) ! <transform> ! <bridge tail>`
+- ROS compressed image topic: `appsrc(image/jpeg|image/png) ! jpegdec|pngdec ! <transform> ! <bridge tail>`
+- external source: `<source> ! <transform> ! <bridge tail>`
 
-1. reaps exited children
-2. restarts unhealthy publishers when a health check callback is configured
-3. restarts children whose minted publisher token is approaching expiry
+That means:
 
-Restart behavior is intentionally conservative:
+- ROS `transform` should describe only optional processing stages
+- external `source` should begin with the ingress stage, such as RTSP, V4L2, or a test source
+- `transform` should not create `appsrc` or `appsink`; the bridge owns those endpoints
 
-- replacement argv and token are prepared before the current child is killed
-- if command building or token minting fails, the current child is left running
-- health checks are ignored during startup grace
-- a sidecar restarts only after enough consecutive failed health checks
-- token refresh lead time is clamped to at most half of the token TTL
+At startup the bridge uses GStreamer itself to parse and structurally validate configured `source` and `transform` fragments. That catches malformed syntax and forbidden endpoint ownership early, but runtime failures such as bad URIs, negotiation problems, EOS, or source outages can still happen only when the stream starts.
 
-Bridge-managed sidecars exist only when the bridge can mint publisher tokens. A static `livekit.token` without `livekit.api_key` and `livekit.api_secret` is enough for the bridge itself to join LiveKit, but not enough to launch sidecars.
+## Global LiveKit publish policy
 
-Subscription status for video uses `publisher_identity`. `track_name` is empty for video today.
+Video encoding is configured globally, not per source.
 
-## Shutdown and process groups
+These startup-only parameters map onto LiveKit track publish options for every video stream:
 
-Each sidecar child calls `setpgid(0, 0)` after `fork()`, so it runs in its own process group.
+- `video.publish.codec`
+- `video.publish.max_bitrate_bps`
+- `video.publish.max_framerate`
+- `video.publish.simulcast`
 
-On stop or shutdown, the supervisor:
+When those values stay at their defaults, the bridge does not force an override and the LiveKit SDK uses its own defaults.
 
-- sends `SIGTERM` to the process group
-- waits briefly for exit
-- escalates to `SIGKILL` if the process group is still alive
-- falls back to signaling the direct child only if process-group signaling fails because the group no longer exists
+In the default ROS case with no override and no publish overrides:
 
-That keeps wrapper scripts and grandchildren from being left behind.
+- the bridge publishes the incoming frame resolution as-is
+- frame cadence follows the source
+- codec, bitrate, framerate, and simulcast follow LiveKit SDK defaults
 
-## Built-in ROS GStreamer sources
+## Shared stream lifecycle
 
-The built-in `rosrawimagesrc` and `roscompressedimagesrc` elements are the default source stage for ROS-backed video.
+`VideoStreamManager` owns one in-process runtime per resolved `stream_key`.
 
-Shared behavior:
+Important behavior:
 
-- each element creates its own ROS node and subscription on `NULL -> READY`
-- each uses `SensorDataQoS()` unless `ros-reliable=true`
-- each keeps at most one queued message, so delivery is latest-frame-wins
-- `getcaps()` waits for the first message, derives caps from that sample, and then drops that sampled frame
-- once caps are fixed, neither element renegotiates mid-stream
-- `unlock()` wakes blocked `getcaps()` and `create()` calls; `unlock_stop()` clears the flushing state again
+- the map is keyed by normalized `stream_key`, so equivalent requests share one stream
+- calling `ensureStream()` again for an existing key reuses the current runtime
+- when the last requester lease disappears, the shared runtime is torn down
 
-`rosrawimagesrc` supports only these ROS image encodings:
+Failure handling differs slightly by source kind:
+
+- ROS streams recreate their internal pipeline when image dimensions or compressed format change
+- external streams restart after pipeline EOS or error, with a short backoff
+
+## ROS input constraints
+
+For `sensor_msgs/msg/Image`, the bridge accepts only ROS encodings that `rosEncodingToGstFormat()` maps to a known GStreamer raw format:
 
 - `mono8`
 - `mono16`
@@ -167,6 +146,4 @@ Shared behavior:
 - `yuv422`
 - `yuv422_yuy2`
 
-If a later `sensor_msgs/msg/Image` message changes width, height, or encoding after caps negotiation, `create()` returns `GST_FLOW_ERROR` instead of renegotiating.
-
-`roscompressedimagesrc` supports only JPEG and PNG payloads. It accepts either plain `jpeg` or `png` `CompressedImage.format` values or image_transport-style codec sections such as `rgb8; jpeg compressed bgr8` and `bgr8; png compressed bgr8`. Once the first frame picks JPEG or PNG, a later format change also becomes `GST_FLOW_ERROR`.
+For `sensor_msgs/msg/CompressedImage`, the bridge accepts only JPEG and PNG payloads. It understands either plain codec names such as `jpeg` and `png` or image_transport-style format strings such as `rgb8; jpeg compressed bgr8`.

@@ -14,7 +14,8 @@ The important boundary is simple:
 - `RoomSession`: background connect and reconnect loop plus the active LiveKit room
 - `RosExecutorQueue`: custom waitable that wakes the ROS executor and drains queued work on that executor thread
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
-- `SubscriptionRegistry`: shared lease state, data tracks, CDR replay bookkeeping, and optional video sidecar bindings
+- `SubscriptionRegistry`: shared lease state, data tracks, CDR replay bookkeeping, and video stream bindings
+- `VideoStreamManager`: one shared in-process video runtime per resolved stream key
 - `RosTopicPublisher`: best-effort topic ingress with a bounded publisher cache
 - `RpcRouter` and `ControlPacketRouter`: the LiveKit-facing entry points
 
@@ -90,6 +91,6 @@ Immediate failures such as shutdown, bad requests, quota limits, or client creat
 3. unregister RPC methods from the active session
 4. stop `RoomSession` so no new SDK callbacks can enqueue ROS work
 5. shut down `RosExecutorQueue`
-6. shut down `SubscriptionRegistry`, unpublish CDR tracks, stop sidecars, shut down `RosServiceCaller`, and clear topic publishers
+6. shut down `SubscriptionRegistry`, unpublish CDR tracks, stop video streams, shut down `RosServiceCaller`, and clear topic publishers
 
 The key invariant is that the session stops before the executor queue is torn down. Already accepted work may still be draining at that point, so the runtime also checks the shutdown flag inside queued lambdas.

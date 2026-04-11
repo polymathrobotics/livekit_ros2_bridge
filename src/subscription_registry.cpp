@@ -71,9 +71,9 @@ std::optional<std::string> tryResolveVideoStreamKey(
 {
   try {
     if (target.kind == SubscriptionTargetKind::External) {
-      return resolvePipelineVideoLaunchSpec(video_config, target.name).stream_key;
+      return resolveExternalVideoStreamSpec(video_config, target.name).stream_key;
     }
-    return resolveRosVideoLaunchSpec(video_config, target.name, interface_type).stream_key;
+    return resolveRosVideoStreamSpec(video_config, target.name, interface_type).stream_key;
   } catch (...) {
     return std::nullopt;
   }
@@ -111,7 +111,7 @@ SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & ent
   return SubscriptionRequest{{target.kind, normalized}, entry.preferred_interval_ms};
 }
 
-std::string ensureVideoStream(VideoStreamManager & video_stream_manager, const SidecarLaunchSpec & spec)
+std::string ensureVideoStream(VideoStreamManager & video_stream_manager, const VideoStreamSpec & spec)
 {
   try {
     return video_stream_manager.ensureStream(spec);
@@ -326,10 +326,9 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
 
-  const SidecarLaunchSpec video_stream_spec =
-    target.kind == SubscriptionTargetKind::External
-      ? resolvePipelineVideoLaunchSpec(*video_config_, target.name)
-      : resolveRosVideoLaunchSpec(*video_config_, target.name, interface_type);
+  const VideoStreamSpec video_stream_spec = target.kind == SubscriptionTargetKind::External
+                                              ? resolveExternalVideoStreamSpec(*video_config_, target.name)
+                                              : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
   assignVideoMetadata(sub, video_stream_spec, ensureVideoStream(videoStreamManager(), video_stream_spec));
   return sub;
 }
@@ -352,7 +351,7 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
 }
 
 void SubscriptionRegistry::assignVideoMetadata(
-  SubscriptionState & sub, const SidecarLaunchSpec & video_stream_spec, std::string track_name)
+  SubscriptionState & sub, const VideoStreamSpec & video_stream_spec, std::string track_name)
 {
   sub.source_kind = videoSourceKindToString(video_stream_spec.source_kind);
   sub.ingest_mode = video_stream_spec.ingest_mode;
@@ -434,7 +433,7 @@ VideoStreamManager & SubscriptionRegistry::videoStreamManager() const
   return *video_stream_manager_;
 }
 
-const SidecarLaunchSpec & SubscriptionRegistry::videoStreamSpec(const SubscriptionState & sub) const
+const VideoStreamSpec & SubscriptionRegistry::videoStreamSpec(const SubscriptionState & sub) const
 {
   if (!sub.video_stream_spec.has_value()) {
     throw std::logic_error("video subscription invariant violated: video stream spec is required");

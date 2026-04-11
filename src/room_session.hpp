@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include "video_config.hpp"
+
 namespace livekit
 {
 class LocalDataTrack;
@@ -179,7 +181,9 @@ public:
   virtual std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) = 0;
   virtual void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
   virtual std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) = 0;
+    const std::string & track_name,
+    const std::shared_ptr<livekit::VideoSource> & source,
+    const VideoPublishConfig & publish_config) = 0;
   virtual void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) = 0;
 };
 

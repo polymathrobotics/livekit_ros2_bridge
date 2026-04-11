@@ -136,7 +136,7 @@ private:
     std::string selected_config_key;
     std::string degraded_reason;
     std::string video_track_name;
-    std::optional<SidecarLaunchSpec> video_stream_spec;
+    std::optional<VideoStreamSpec> video_stream_spec;
     std::map<std::string, RequesterLease> requesters;
     std::optional<DataTrackResource> data_track_resource;
 
@@ -172,8 +172,7 @@ private:
     const std::string & interface_type,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
-  void assignVideoMetadata(
-    SubscriptionState & sub, const SidecarLaunchSpec & video_stream_spec, std::string track_name);
+  void assignVideoMetadata(SubscriptionState & sub, const VideoStreamSpec & video_stream_spec, std::string track_name);
   DataTrackResource createPendingDataTrackResource(
     const std::string & topic,
     const std::string & interface_type,
@@ -182,7 +181,7 @@ private:
   void publishPendingCdrTrack(
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
   VideoStreamManager & videoStreamManager() const;
-  const SidecarLaunchSpec & videoStreamSpec(const SubscriptionState & sub) const;
+  const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
   void removeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
     RequesterLeaseRemovalReason reason,

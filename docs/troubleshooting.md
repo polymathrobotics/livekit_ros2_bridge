@@ -11,7 +11,7 @@ This page covers the common failures people hit during setup, connection, subscr
 | Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, session ownership mismatch |
 | Service call rejected or times out | `rpc_request_rejected`, `service_call_failed`, `service_calls_settled` | missing caller identity, access denied, bad payload, request build failure, timeout, requester disconnect |
 | CDR topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `cdr_track_pending`, `cdr_track_published`, `cdr_track_publish_failed`, `cdr_track_delivery_failed`, `cdr_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
-| Video source never appears | `subscription_renew_failed`, `subscription_qos_resolved`, `video_stream_subscription_started`, `video_stream_pipeline_starting`, `video_stream_push_failed`, `video_stream_pipeline_failed` | QoS mismatch, invalid source pipeline, unsupported image encoding, unhealthy source pipeline |
+| Video source never appears | `subscription_renew_failed`, `subscription_qos_resolved`, `video_stream_subscription_started`, `video_stream_pipeline_starting`, `video_stream_push_failed`, `video_stream_pipeline_failed` | QoS mismatch, invalid video source or transform config, unsupported image encoding, unhealthy source pipeline |
 
 ## Startup and connection issues
 
@@ -29,7 +29,7 @@ Common causes:
 - missing auth configuration
 - only one of `livekit.api_key` or `livekit.api_secret` is set
 - `livekit.token_ttl_seconds <= 0` while API credentials are enabled
-- invalid `videos.*` configuration
+- invalid `video.topic_rules.*` or `video.custom_sources.*` configuration
 
 Start with [runtime-configuration.md](./runtime-configuration.md).
 
@@ -109,12 +109,12 @@ Useful log events:
 | --- | --- |
 | `forbidden` | the subscribe policy denied a topic |
 | `not_found` | the topic or external source could not be resolved, or the topic type was ambiguous |
-| `unavailable` | a required runtime dependency could not start, usually a video sidecar |
+| `unavailable` | a required runtime dependency could not start or keep running, usually a video stream pipeline |
 
 Remember:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- configured `external` sources do not use those rules; they depend on which `videos.*` entries exist
+- configured `external` sources do not use those rules; they depend on which `video_custom_source_ids` and `video.custom_sources.*` entries exist
 
 For the heartbeat and status contract, read [subscriptions.md](./subscriptions.md).
 
@@ -135,7 +135,7 @@ Useful log events:
 
 Check these first:
 
-- the `videos.*` entry exists and matches what the client requested
+- the relevant `video.topic_rules.*` or `video.custom_sources.*` entry exists and matches what the client requested
 - configured source names normalize like ROS resource names
 - the bridge logged `subscription_qos_resolved` for that ROS topic
 - the resolved `reliability` and `durability` match the publisher
@@ -147,7 +147,7 @@ Common QoS example:
 
 Example:
 
-- `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`
+- `video.custom_sources.front_rtsp.source: ...` is requested as `external: "/front_rtsp"`
 
 Useful log events:
 
@@ -170,11 +170,12 @@ All other ROS topic types stay on the CDR data-track path.
 
 Common causes:
 
-- sidecar startup failed
-- the bridge was started without API credentials, so the sidecar supervisor was never created
-- `gstreamer-publisher` or the configured source pipeline could not be launched
+- the configured external source fragment could not be composed into a valid runtime pipeline
+- the ROS image encoding or compressed-image format is unsupported
+- the source pipeline reached EOS or an error state before it could produce frames
+- a LiveKit video track publish failed
 
-For video rule resolution and sidecar behavior, read [video-sources.md](./video-sources.md).
+For video rule resolution and runtime behavior, read [video-sources.md](./video-sources.md).
 
 ## Topic publish and service-call issues
 
@@ -226,7 +227,7 @@ Useful commands:
 
 ```bash
 just test
-just test -- --ctest-args -R test_runtime
+just test --ctest-args -R test_runtime
 ```
 
 Useful log event:

@@ -17,7 +17,7 @@ The policy is operation-specific, not requester-specific. Requester identity sti
 | Subscribe | `access.rules.subscribe.allow`, `access.rules.subscribe.deny` | topic entries in `ros.subscriptions.heartbeat`, `ros.topics.list` |
 | Service | `access.rules.service.allow`, `access.rules.service.deny` | `ros.services.call`, `ros.services.list` |
 
-Configured `external` video sources are the exception. They are controlled by which `videos.*` entries exist, not by `access.rules.subscribe.*`.
+Configured `external` video sources are the exception. They are controlled by which `video_custom_source_ids` and `video.custom_sources.*` entries exist, not by `access.rules.subscribe.*`.
 
 ## Name normalization and patterns
 
@@ -76,7 +76,7 @@ Important details:
 
 - a forbidden topic becomes a per-stream `forbidden` error in `ros.subscriptions.status`
 - `ros.topics.list` uses the same subscribe policy, so callers only see topics they could subscribe to
-- configured `external` sources are normalized and resolved through `videos.*`, but they do not use subscribe rules
+- configured `external` sources are normalized and resolved through `video.custom_sources.*`, but they do not use subscribe rules
 
 For the heartbeat and status contract, read [subscriptions.md](./subscriptions.md).
 

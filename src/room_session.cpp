@@ -64,6 +64,51 @@ const char * requesterIdentityForLog(const livekit::RpcInvocationData & invocati
   return invocation.caller_identity.empty() ? kUnknownLogValue : invocation.caller_identity.c_str();
 }
 
+std::optional<livekit::VideoCodec> toLiveKitVideoCodec(const VideoPublishCodec codec)
+{
+  switch (codec) {
+    case VideoPublishCodec::Auto:
+      return std::nullopt;
+    case VideoPublishCodec::Vp8:
+      return static_cast<livekit::VideoCodec>(0);
+    case VideoPublishCodec::H264:
+      return static_cast<livekit::VideoCodec>(1);
+    case VideoPublishCodec::Av1:
+      return static_cast<livekit::VideoCodec>(2);
+    case VideoPublishCodec::Vp9:
+      return static_cast<livekit::VideoCodec>(3);
+    case VideoPublishCodec::H265:
+      return static_cast<livekit::VideoCodec>(4);
+  }
+
+  return std::nullopt;
+}
+
+void applyVideoPublishConfig(livekit::TrackPublishOptions & options, const VideoPublishConfig & publish_config)
+{
+  if (publish_config.max_bitrate_bps > 0 || publish_config.max_framerate > 0.0) {
+    livekit::VideoEncodingOptions encoding;
+    encoding.max_bitrate = publish_config.max_bitrate_bps;
+    encoding.max_framerate = publish_config.max_framerate;
+    options.video_encoding = encoding;
+  }
+
+  if (const auto codec = toLiveKitVideoCodec(publish_config.codec); codec.has_value()) {
+    options.video_codec = *codec;
+  }
+
+  switch (publish_config.simulcast) {
+    case VideoPublishSimulcast::Auto:
+      break;
+    case VideoPublishSimulcast::Enabled:
+      options.simulcast = true;
+      break;
+    case VideoPublishSimulcast::Disabled:
+      options.simulcast = false;
+      break;
+  }
+}
+
 livekit::LocalParticipant::RpcHandler makeLiveKitRpcHandler(const std::string & method_name, const RpcHandler & handler)
 {
   return [method_name, handler](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
@@ -278,7 +323,9 @@ public:
   }
 
   std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> & source) override
+    const std::string & track_name,
+    const std::shared_ptr<livekit::VideoSource> & source,
+    const VideoPublishConfig & publish_config) override
   {
     if (track_name.empty()) {
       throw std::invalid_argument("Video track name is required.");
@@ -305,7 +352,11 @@ public:
     auto published_track = std::make_shared<PublishedVideoTrack>();
     published_track->track_name = track_name;
 
-    auto local_track = participant->publishVideoTrack(track_name, source, livekit::TrackSource::SOURCE_CAMERA);
+    auto local_track = livekit::LocalVideoTrack::createLocalVideoTrack(track_name, source);
+    livekit::TrackPublishOptions options;
+    options.source = livekit::TrackSource::SOURCE_CAMERA;
+    applyVideoPublishConfig(options, publish_config);
+    participant->publishTrack(local_track, options);
     if (local_track == nullptr || local_track->publication() == nullptr) {
       throw std::runtime_error("Failed to publish video track '" + track_name + "'.");
     }
