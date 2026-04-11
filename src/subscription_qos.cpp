@@ -16,6 +16,7 @@
 
 #include <optional>
 
+#include "rclcpp/version.h"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
@@ -190,6 +191,10 @@ const char * reliabilityPolicyToString(rclcpp::ReliabilityPolicy policy)
       return "reliable";
     case rclcpp::ReliabilityPolicy::BestEffort:
       return "best_effort";
+#if RCLCPP_VERSION_GTE(28, 0, 0)
+    case rclcpp::ReliabilityPolicy::BestAvailable:
+      return "best_available";
+#endif
     case rclcpp::ReliabilityPolicy::SystemDefault:
       return "system_default";
     case rclcpp::ReliabilityPolicy::Unknown:
@@ -206,6 +211,10 @@ const char * durabilityPolicyToString(rclcpp::DurabilityPolicy policy)
       return "volatile";
     case rclcpp::DurabilityPolicy::TransientLocal:
       return "transient_local";
+#if RCLCPP_VERSION_GTE(28, 0, 0)
+    case rclcpp::DurabilityPolicy::BestAvailable:
+      return "best_available";
+#endif
     case rclcpp::DurabilityPolicy::SystemDefault:
       return "system_default";
     case rclcpp::DurabilityPolicy::Unknown:
