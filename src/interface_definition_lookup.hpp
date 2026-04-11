@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -35,5 +36,9 @@ struct InterfaceDefinition
 /// transitive message dependencies. The requested schema is always returned first, followed by
 /// unique dependencies in first-discovery order during recursive traversal.
 std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
+
+// Test-only helpers for validating negative-cache behavior.
+void setInterfaceDefinitionLookupAttemptHookForTest(std::function<void(const std::string &)> hook);
+void resetInterfaceDefinitionLookupStateForTest();
 
 }  // namespace livekit_ros2_bridge

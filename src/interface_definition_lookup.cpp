@@ -15,8 +15,11 @@
 #include "interface_definition_lookup.hpp"
 
 #include <cctype>
+#include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -24,6 +27,7 @@
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "ament_index_cpp/version.h"
+#include "utils/bounded_lru_cache.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -33,6 +37,7 @@ namespace
 
 constexpr char kSchemaEncodingRos2Msg[] = "ros2msg";
 constexpr char kServiceDefinitionSeparator[] = "---";
+constexpr std::size_t kInvalidInterfaceTypeCacheCapacity = 256U;
 
 // ROS 2 primitive types that do not need dependency resolution.
 const std::set<std::string> kPrimitiveTypes = {
@@ -64,6 +69,38 @@ std::string readInterfaceDefinitionFile(const std::string & path)
   std::ostringstream contents;
   contents << file.rdbuf();
   return contents.str();
+}
+
+using FailureCache = BoundedLruCache<std::string, std::exception_ptr>;
+
+FailureCache & invalidInterfaceTypeCache()
+{
+  static FailureCache cache(kInvalidInterfaceTypeCacheCapacity);
+  return cache;
+}
+
+std::mutex & interfaceDefinitionLookupAttemptHookMutex()
+{
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::function<void(const std::string &)> & interfaceDefinitionLookupAttemptHook()
+{
+  static std::function<void(const std::string &)> hook;
+  return hook;
+}
+
+void noteInterfaceDefinitionLookupAttempt(const std::string & interface_type)
+{
+  std::function<void(const std::string &)> hook;
+  {
+    std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
+    hook = interfaceDefinitionLookupAttemptHook();
+  }
+  if (hook) {
+    hook(interface_type);
+  }
 }
 
 [[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
@@ -112,6 +149,25 @@ std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
   }
   const std::string relative_schema_path = kind + "/" + name + "." + kind;
   return share_dir + "/" + relative_schema_path;
+}
+
+std::string loadInterfaceDefinition(const std::string & interface_type)
+{
+  if (const auto failure = invalidInterfaceTypeCache().get(interface_type); failure.has_value()) {
+    std::rethrow_exception(*failure);
+  }
+  noteInterfaceDefinitionLookupAttempt(interface_type);
+
+  try {
+    const std::string path = resolveInterfaceDefinitionPath(interface_type);
+    return readInterfaceDefinitionFile(path);
+  } catch (const std::invalid_argument &) {
+    invalidInterfaceTypeCache().insertOrAssign(interface_type, std::current_exception());
+    throw;
+  } catch (const std::runtime_error &) {
+    invalidInterfaceTypeCache().insertOrAssign(interface_type, std::current_exception());
+    throw;
+  }
 }
 
 /// Extract the base type from a field type string, stripping array suffixes.
@@ -204,8 +260,7 @@ void collectDependencies(
   }
   visited.insert(interface_type);
 
-  const std::string path = resolveInterfaceDefinitionPath(interface_type);
-  const std::string definition = readInterfaceDefinitionFile(path);
+  const std::string definition = loadInterfaceDefinition(interface_type);
 
   // Record each schema before recursing so callers can keep the requested type first and the
   // remaining entries in the same first-discovery order used for dependency traversal.
@@ -224,6 +279,20 @@ std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & 
   std::vector<InterfaceDefinition> entries;
   collectDependencies(interface_type, visited, entries);
   return entries;
+}
+
+void setInterfaceDefinitionLookupAttemptHookForTest(std::function<void(const std::string &)> hook)
+{
+  std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
+  interfaceDefinitionLookupAttemptHook() = std::move(hook);
+}
+
+void resetInterfaceDefinitionLookupStateForTest()
+{
+  invalidInterfaceTypeCache().clear();
+
+  std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
+  interfaceDefinitionLookupAttemptHook() = nullptr;
 }
 
 }  // namespace livekit_ros2_bridge

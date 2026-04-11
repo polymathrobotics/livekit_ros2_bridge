@@ -63,6 +63,7 @@ public:
 
 private:
   void setPollCallbackHooksForTest(std::function<void()> on_enter, std::function<void()> on_exit);
+  void setTypeSupportResolveHookForTest(std::function<void(const std::string &)> hook);
 
   class Impl;
   std::unique_ptr<Impl> impl_;

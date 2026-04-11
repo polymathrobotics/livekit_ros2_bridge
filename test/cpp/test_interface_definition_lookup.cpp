@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <functional>
 #include <set>
 #include <stdexcept>
+#include <string>
 
 #include "gtest/gtest.h"
 #include "interface_definition_lookup.hpp"
@@ -32,6 +34,19 @@ std::set<std::string> dependencyTypes(const std::vector<InterfaceDefinition> & d
     types.insert(it->interface_type);
   }
   return types;
+}
+
+std::string expectRuntimeErrorMessage(const std::function<void()> & action)
+{
+  try {
+    action();
+    ADD_FAILURE() << "Expected std::runtime_error";
+  } catch (const std::runtime_error & exc) {
+    return exc.what();
+  } catch (...) {
+    ADD_FAILURE() << "Expected std::runtime_error";
+  }
+  return "";
 }
 
 TEST(LookupInterfaceDefinitionTest, LooksUpSimpleMessageWithoutDependencies)
@@ -92,6 +107,27 @@ TEST(LookupInterfaceDefinitionTest, RejectsMalformedType)
 TEST(LookupInterfaceDefinitionTest, RejectsUnknownPackage)
 {
   EXPECT_THROW(lookupInterfaceDefinitions("nonexistent_pkg/msg/Foo"), std::runtime_error);
+}
+
+TEST(LookupInterfaceDefinitionTest, CachesInvalidLookupFailures)
+{
+  resetInterfaceDefinitionLookupStateForTest();
+
+  int attempts = 0;
+  setInterfaceDefinitionLookupAttemptHookForTest([&attempts](const std::string & interface_type) {
+    ++attempts;
+    EXPECT_EQ(interface_type, "nonexistent_pkg/msg/Foo");
+  });
+
+  const std::string first_error =
+    expectRuntimeErrorMessage([]() { static_cast<void>(lookupInterfaceDefinitions("nonexistent_pkg/msg/Foo")); });
+  const std::string second_error =
+    expectRuntimeErrorMessage([]() { static_cast<void>(lookupInterfaceDefinitions("nonexistent_pkg/msg/Foo")); });
+
+  EXPECT_EQ(attempts, 1);
+  EXPECT_EQ(second_error, first_error);
+
+  resetInterfaceDefinitionLookupStateForTest();
 }
 
 TEST(LookupInterfaceDefinitionTest, RejectsUnknownMessage)

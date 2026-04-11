@@ -563,6 +563,39 @@ TEST_F(RosServiceCallerTest, RejectsUnresolvableServiceType)
   caller.shutdown();
 }
 
+TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
+{
+  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_invalid_type_cache_node");
+
+  RosServiceCaller caller(*caller_node);
+
+  int resolution_attempts = 0;
+  caller.setTypeSupportResolveHookForTest([&resolution_attempts](const std::string & service_type) {
+    ++resolution_attempts;
+    EXPECT_EQ(service_type, "nonexistent_pkg/srv/Foo");
+  });
+
+  ServiceCallRequest request;
+  request.service = "/no_such_service";
+  request.interface_type = "nonexistent_pkg/srv/Foo";
+  std_srvs::srv::SetBool::Request ros_request;
+  ros_request.data = false;
+  request.request = serializeMessage(ros_request);
+  request.timeout_ms = 100;
+
+  auto first_future = caller.call("requester-1", request);
+  const std::string first_error = expectRuntimeErrorMessage(first_future);
+  EXPECT_NE(first_error.find("Failed creating service client:"), std::string::npos);
+
+  auto second_future = caller.call("requester-1", request);
+  const std::string second_error = expectRuntimeErrorMessage(second_future);
+
+  EXPECT_EQ(resolution_attempts, 1);
+  EXPECT_EQ(second_error, first_error);
+
+  caller.shutdown();
+}
+
 TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_shutdown_quiesce_node");
