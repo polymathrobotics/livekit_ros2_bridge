@@ -176,13 +176,11 @@ public:
     rclcpp::Node & node,
     RoomSession & session,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config,
-    VideoPublishConfig publish_config)
+    const SubscriptionQosConfig * subscription_qos_config)
   : node_(node)
   , session_(session)
   , spec_(std::move(spec))
   , subscription_qos_config_(subscription_qos_config)
-  , publish_config_(std::move(publish_config))
   {}
 
   ~StreamRecord()
@@ -755,7 +753,7 @@ private:
     }
 
     video_source_ = std::make_shared<livekit::VideoSource>(width, height);
-    published_track_ = session_.publishVideoTrack(spec_.track_name, video_source_, publish_config_);
+    published_track_ = session_.publishVideoTrack(spec_.track_name, video_source_, spec_.publish_config);
     published_width_ = width;
     published_height_ = height;
 
@@ -863,18 +861,13 @@ private:
   int published_width_ = 0;
   int published_height_ = 0;
   const SubscriptionQosConfig * subscription_qos_config_;
-  VideoPublishConfig publish_config_;
 };
 
 VideoStreamManager::VideoStreamManager(
-  rclcpp::Node & node,
-  RoomSession & session,
-  const SubscriptionQosConfig * subscription_qos_config,
-  VideoPublishConfig publish_config)
+  rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , session_(session)
 , subscription_qos_config_(subscription_qos_config)
-, publish_config_(std::move(publish_config))
 {
   ensureGstreamerInitialized();
 }
@@ -895,7 +888,7 @@ std::string VideoStreamManager::ensureStream(const VideoStreamSpec & spec)
 
     auto [it, inserted] = streams_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_, publish_config_);
+      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_);
     }
     record = it->second;
   }

@@ -35,11 +35,13 @@ Each topic rule has:
 
 - `pattern`: required
 - `transform`: optional
+- `publish.*`: optional partial overrides for `video.publish.*`
 
 Each custom source has:
 
 - `source`: required
 - `transform`: optional
+- `publish.*`: optional partial overrides for `video.publish.*`
 
 ## ROS topic rules
 
@@ -48,6 +50,7 @@ Each custom source has:
 - an `id`
 - a normalized topic pattern
 - one optional `transform` fragment
+- zero or more optional `publish.*` overrides
 
 Rule selection works like this:
 
@@ -72,6 +75,7 @@ Rules:
 
 - `source` is required and must be non-empty
 - `transform` is optional
+- `publish.*` fields are optional and may override any subset of `video.publish.*`
 - duplicate ids that normalize to the same external name are rejected at startup
 - lookup uses the normalized external name
 
@@ -99,18 +103,29 @@ That means:
 
 At startup the bridge uses GStreamer itself to parse and structurally validate configured `source` and `transform` fragments. That catches malformed syntax and forbidden endpoint ownership early, but runtime failures such as bad URIs, negotiation problems, EOS, or source outages can still happen only when the stream starts.
 
-## Global LiveKit publish policy
+## LiveKit publish defaults and overrides
 
-Video encoding is configured globally, not per source.
-
-These startup-only parameters map onto LiveKit track publish options for every video stream:
+These startup-only parameters define the default LiveKit track publish options for video streams:
 
 - `video.publish.codec`
 - `video.publish.max_bitrate_bps`
 - `video.publish.max_framerate`
 - `video.publish.simulcast`
 
-When those values stay at their defaults, the bridge does not force an override and the LiveKit SDK uses its own defaults.
+Each `video.topic_rules.<id>` and `video.custom_sources.<id>` entry may optionally override any subset of those fields with:
+
+- `video.topic_rules.<id>.publish.codec`
+- `video.topic_rules.<id>.publish.max_bitrate_bps`
+- `video.topic_rules.<id>.publish.max_framerate`
+- `video.topic_rules.<id>.publish.simulcast`
+- `video.custom_sources.<id>.publish.codec`
+- `video.custom_sources.<id>.publish.max_bitrate_bps`
+- `video.custom_sources.<id>.publish.max_framerate`
+- `video.custom_sources.<id>.publish.simulcast`
+
+Entry overrides merge per field with `video.publish.*`, so omitted entry fields inherit the default. Explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior.
+
+When both the default and the entry override stay at their defaults, the bridge does not force an override and the LiveKit SDK uses its own defaults.
 
 In the default ROS case with no override and no publish overrides:
 

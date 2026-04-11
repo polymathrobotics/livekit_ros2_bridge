@@ -317,22 +317,24 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   }
 }
 
-TEST_F(VideoStreamManagerTest, GlobalPublishConfigIsAppliedToEveryPublishedTrack)
+TEST_F(VideoStreamManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedTrack)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_publish_config"));
   FakeRoomSession session;
-
-  VideoPublishConfig publish_config;
-  publish_config.codec = VideoPublishCodec::H264;
-  publish_config.max_bitrate_bps = 900000;
-  publish_config.max_framerate = 24.0;
-  publish_config.simulcast = VideoPublishSimulcast::Enabled;
-  VideoStreamManager manager(*node, session, nullptr, publish_config);
+  VideoStreamManager manager(*node, session);
 
   const std::string first_topic = "/camera/publish_config/one";
   const std::string second_topic = "/camera/publish_config/two";
-  const auto first_spec = makeRosSpec(first_topic, "ros.video.camera.publish_config.one");
-  const auto second_spec = makeRosSpec(second_topic, "ros.video.camera.publish_config.two");
+  auto first_spec = makeRosSpec(first_topic, "ros.video.camera.publish_config.one");
+  first_spec.publish_config.codec = VideoPublishCodec::H264;
+  first_spec.publish_config.max_bitrate_bps = 900000;
+  first_spec.publish_config.max_framerate = 24.0;
+  first_spec.publish_config.simulcast = VideoPublishSimulcast::Enabled;
+  auto second_spec = makeRosSpec(second_topic, "ros.video.camera.publish_config.two");
+  second_spec.publish_config.codec = VideoPublishCodec::Vp9;
+  second_spec.publish_config.max_bitrate_bps = 250000;
+  second_spec.publish_config.max_framerate = 12.0;
+  second_spec.publish_config.simulcast = VideoPublishSimulcast::Disabled;
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
 
@@ -355,12 +357,14 @@ TEST_F(VideoStreamManagerTest, GlobalPublishConfigIsAppliedToEveryPublishedTrack
   EXPECT_EQ(session.state->published_video_track_names[0], first_spec.track_name);
   EXPECT_EQ(session.state->published_video_track_names[1], second_spec.track_name);
   ASSERT_EQ(session.state->published_video_configs.size(), 2U);
-  for (const auto & config : session.state->published_video_configs) {
-    EXPECT_EQ(config.codec, publish_config.codec);
-    EXPECT_EQ(config.max_bitrate_bps, publish_config.max_bitrate_bps);
-    EXPECT_DOUBLE_EQ(config.max_framerate, publish_config.max_framerate);
-    EXPECT_EQ(config.simulcast, publish_config.simulcast);
-  }
+  EXPECT_EQ(session.state->published_video_configs[0].codec, first_spec.publish_config.codec);
+  EXPECT_EQ(session.state->published_video_configs[0].max_bitrate_bps, first_spec.publish_config.max_bitrate_bps);
+  EXPECT_DOUBLE_EQ(session.state->published_video_configs[0].max_framerate, first_spec.publish_config.max_framerate);
+  EXPECT_EQ(session.state->published_video_configs[0].simulcast, first_spec.publish_config.simulcast);
+  EXPECT_EQ(session.state->published_video_configs[1].codec, second_spec.publish_config.codec);
+  EXPECT_EQ(session.state->published_video_configs[1].max_bitrate_bps, second_spec.publish_config.max_bitrate_bps);
+  EXPECT_DOUBLE_EQ(session.state->published_video_configs[1].max_framerate, second_spec.publish_config.max_framerate);
+  EXPECT_EQ(session.state->published_video_configs[1].simulcast, second_spec.publish_config.simulcast);
 }
 
 }  // namespace livekit_ros2_bridge

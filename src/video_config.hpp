@@ -79,12 +79,14 @@ struct RosTopicRule
   std::string pattern;
   std::string id;
   std::string transform;
+  VideoPublishConfig publish;
 };
 
 struct ConfiguredExternalSource
 {
   std::string source;
   std::string transform;
+  VideoPublishConfig publish;
 };
 
 struct VideoConfig
@@ -116,6 +118,8 @@ struct VideoStreamSpec
   std::string source_description;
   // Optional GStreamer transform fragment inserted after ingress and before the bridge tail.
   std::string transform_description;
+  // Resolved LiveKit publish config after applying any per-entry overrides to video.publish.*.
+  VideoPublishConfig publish_config;
 };
 
 VideoConfig makeDefaultVideoConfig();

@@ -22,6 +22,25 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+VideoPublishConfig makePublishConfig(
+  VideoPublishCodec codec, std::uint64_t max_bitrate_bps, double max_framerate, VideoPublishSimulcast simulcast)
+{
+  VideoPublishConfig config;
+  config.codec = codec;
+  config.max_bitrate_bps = max_bitrate_bps;
+  config.max_framerate = max_framerate;
+  config.simulcast = simulcast;
+  return config;
+}
+
+void expectPublishConfigEq(const VideoPublishConfig & actual, const VideoPublishConfig & expected)
+{
+  EXPECT_EQ(actual.codec, expected.codec);
+  EXPECT_EQ(actual.max_bitrate_bps, expected.max_bitrate_bps);
+  EXPECT_DOUBLE_EQ(actual.max_framerate, expected.max_framerate);
+  EXPECT_EQ(actual.simulcast, expected.simulcast);
+}
+
 RosTopicRule makeRosRule(const char * id, const char * pattern, const char * transform)
 {
   RosTopicRule rule;
@@ -51,6 +70,7 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
   EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
   EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
+  expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
 TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
@@ -67,14 +87,17 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
   EXPECT_EQ(spec.ingest_mode, kCompressedImageIngestMode);
   EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
   EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
+  expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
 TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  const RosTopicRule broad_rule = makeRosRule("broad", "/camera/*", "videoconvert ! broad-filter");
-  const RosTopicRule specific_rule = makeRosRule("specific", "/camera/front/*", "videoconvert ! specific-filter");
+  RosTopicRule broad_rule = makeRosRule("broad", "/camera/*", "videoconvert ! broad-filter");
+  broad_rule.publish = makePublishConfig(VideoPublishCodec::Vp8, 500000, 30.0, VideoPublishSimulcast::Disabled);
+  RosTopicRule specific_rule = makeRosRule("specific", "/camera/front/*", "videoconvert ! specific-filter");
+  specific_rule.publish = makePublishConfig(VideoPublishCodec::H264, 800000, 15.0, VideoPublishSimulcast::Enabled);
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), broad_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), specific_rule);
@@ -84,6 +107,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
   EXPECT_EQ(spec.selected_config_key, "specific");
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
   EXPECT_EQ(spec.transform_description, "videoconvert ! specific-filter");
+  expectPublishConfigEq(spec.publish_config, specific_rule.publish);
 }
 
 TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
@@ -100,6 +124,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
 
   EXPECT_EQ(spec.selected_config_key, "first");
   EXPECT_EQ(spec.transform_description, "videoconvert ! first-filter");
+  expectPublishConfigEq(spec.publish_config, first_rule.publish);
 }
 
 TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
@@ -113,6 +138,7 @@ TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
 
   EXPECT_EQ(spec.selected_config_key, "user_default");
   EXPECT_EQ(spec.transform_description, "videoconvert ! user-filter");
+  expectPublishConfigEq(spec.publish_config, user_rule.publish);
 }
 
 TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholders)
@@ -123,6 +149,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholde
   const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.transform_description, "{topic}");
+  expectPublishConfigEq(spec.publish_config, config.ros_topic_rules.front().publish);
 }
 
 TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
@@ -132,6 +159,7 @@ TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
   ConfiguredExternalSource source;
   source.source = "videotestsrc is-live=true pattern=black";
   source.transform = "videobalance saturation=0.0";
+  source.publish = makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
   config.external_sources.emplace("/sources/front", std::move(source));
 
   const auto spec = resolveExternalVideoStreamSpec(config, "  /sources/front/ ");
@@ -144,6 +172,8 @@ TEST(VideoConfigTest, ResolveExternalVideoStreamSpecNormalizesExternalName)
   EXPECT_EQ(spec.selected_config_key, "/sources/front");
   EXPECT_EQ(spec.source_description, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(spec.transform_description, "videobalance saturation=0.0");
+  expectPublishConfigEq(
+    spec.publish_config, makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled));
 }
 
 TEST(VideoConfigTest, ResolveExternalVideoStreamSpecRejectsUnknownExternalName)

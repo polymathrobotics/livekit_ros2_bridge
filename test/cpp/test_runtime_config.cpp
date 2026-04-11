@@ -112,6 +112,19 @@ void expectRuntimeConfigErrorContains(
   }
 }
 
+void expectPublishConfigEq(
+  const VideoPublishConfig & actual,
+  VideoPublishCodec codec,
+  std::uint64_t max_bitrate_bps,
+  double max_framerate,
+  VideoPublishSimulcast simulcast)
+{
+  EXPECT_EQ(actual.codec, codec);
+  EXPECT_EQ(actual.max_bitrate_bps, max_bitrate_bps);
+  EXPECT_DOUBLE_EQ(actual.max_framerate, max_framerate);
+  EXPECT_EQ(actual.simulcast, simulcast);
+}
+
 }  // namespace
 
 class RuntimeConfigTest : public ::testing::Test
@@ -348,6 +361,76 @@ TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)
   ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
   EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().id, "front");
   EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().transform, "");
+  expectPublishConfigEq(
+    startup_config.video_config.ros_topic_rules.front().publish,
+    VideoPublishCodec::Auto,
+    0U,
+    0.0,
+    VideoPublishSimulcast::Auto);
+}
+
+TEST_F(RuntimeConfigTest, RosVideoPublishOverrideCanSetSingleFieldWithoutTransform)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video.publish.codec", "h264");
+  options.append_parameter_override("video.publish.max_bitrate_bps", 900000);
+  options.append_parameter_override("video.publish.max_framerate", 24.0);
+  options.append_parameter_override("video.publish.simulcast", "enabled");
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.topic_rules.front.pattern", "/camera/front/*");
+  options.append_parameter_override("video.topic_rules.front.publish.max_framerate", 15.0);
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_ros_publish_override", options);
+
+  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
+  const auto & rule = startup_config.video_config.ros_topic_rules.front();
+  EXPECT_EQ(rule.id, "front");
+  EXPECT_EQ(rule.transform, "");
+  expectPublishConfigEq(rule.publish, VideoPublishCodec::H264, 900000U, 15.0, VideoPublishSimulcast::Enabled);
+}
+
+TEST_F(RuntimeConfigTest, CustomVideoPublishOverrideCanSetSingleFieldWithoutTransform)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video.publish.codec", "vp8");
+  options.append_parameter_override("video.publish.max_bitrate_bps", 500000);
+  options.append_parameter_override("video.publish.max_framerate", 30.0);
+  options.append_parameter_override("video.publish.simulcast", "disabled");
+  options.append_parameter_override("video_custom_source_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.custom_sources.front.source", "videotestsrc pattern=ball");
+  options.append_parameter_override("video.custom_sources.front.publish.codec", "h265");
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_custom_publish_override", options);
+
+  ASSERT_EQ(startup_config.video_config.external_sources.size(), 1U);
+  const auto & source = startup_config.video_config.external_sources.at("/front");
+  EXPECT_EQ(source.transform, "");
+  expectPublishConfigEq(source.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
+}
+
+TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video.publish.codec", "h264");
+  options.append_parameter_override("video.publish.max_bitrate_bps", 900000);
+  options.append_parameter_override("video.publish.max_framerate", 24.0);
+  options.append_parameter_override("video.publish.simulcast", "enabled");
+  options.append_parameter_override("video_topic_rule_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.topic_rules.front.pattern", "/camera/front/*");
+  options.append_parameter_override("video.topic_rules.front.publish.codec", "auto");
+  options.append_parameter_override("video.topic_rules.front.publish.max_bitrate_bps", 0);
+  options.append_parameter_override("video.topic_rules.front.publish.max_framerate", 0.0);
+  options.append_parameter_override("video.topic_rules.front.publish.simulcast", "auto");
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_publish_override_reset", options);
+
+  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
+  expectPublishConfigEq(
+    startup_config.video_config.ros_topic_rules.front().publish,
+    VideoPublishCodec::Auto,
+    0U,
+    0.0,
+    VideoPublishSimulcast::Auto);
 }
 
 TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)

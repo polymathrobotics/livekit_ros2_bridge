@@ -63,8 +63,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(
     node_, runtime_config.access_policy, runtime_config.loaded_params.publish.max_topics);
-  video_stream_manager_ =
-    std::make_unique<VideoStreamManager>(node_, *room_session_, &subscription_qos_config_, video_config_.publish);
+  video_stream_manager_ = std::make_unique<VideoStreamManager>(node_, *room_session_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
     node_,

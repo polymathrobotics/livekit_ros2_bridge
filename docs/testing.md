@@ -47,7 +47,7 @@ Good entry points:
 - `test_subscription_registry.cpp`: lease sharing, interval handling, CDR replay, and video stream interactions
 - `test_rpc_router.cpp`: RPC request parsing, graph filtering, and error mapping
 - `test_runtime_config.cpp`: auth modes, parameter validation, and video rule/source loading
-- `test_video_stream_manager.cpp`: ROS ingress, external pipelines, and global video publish settings
+- `test_video_stream_manager.cpp`: ROS ingress, external pipelines, and per-stream video publish settings
 
 ## Common harness pattern
 

@@ -141,14 +141,17 @@ Common parameters:
 | `video_custom_source_ids` | the custom source ids to load from `video.custom_sources.<id>` |
 | `video.topic_rules.<id>.pattern` | topic pattern for this ROS video rule |
 | `video.topic_rules.<id>.transform` | optional transform fragment for this ROS video rule |
+| `video.topic_rules.<id>.publish.*` | optional partial LiveKit publish overrides for this ROS video rule |
 | `video.custom_sources.<id>.source` | external ingress fragment for this configured source |
 | `video.custom_sources.<id>.transform` | optional transform fragment for this configured source |
+| `video.custom_sources.<id>.publish.*` | optional partial LiveKit publish overrides for this configured source |
 
 Rules:
 
 - `video.topic_rules.<id>.pattern` is required
 - `video.custom_sources.<id>.source` is required
 - `transform` is optional for both entry types
+- `publish.*` is optional for both entry types and can override any subset of `video.publish.*`
 - duplicate `video_topic_rule_ids` entries are rejected
 - duplicate `video_custom_source_ids` entries are rejected
 - configured source ids normalize to the external names clients request
@@ -156,18 +159,20 @@ Rules:
 Examples:
 
 - `video.topic_rules.front_camera.pattern: "/camera/front/*"` matches ROS topics according to that pattern
+- `video.topic_rules.front_camera.publish.max_framerate: 15.0` overrides only framerate for that rule
 - `video.custom_sources.front_rtsp.source: "uridecodebin uri=rtsp://..."` creates a configured external source requested as `external: "/front_rtsp"`
+- `video.custom_sources.front_rtsp.publish.codec: "h264"` overrides only codec for that source
 
 `video_topic_rule_ids` and `video_custom_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly under `video.topic_rules.ids` and `video.custom_sources.ids` yet.
 
-Global LiveKit video publish options are also startup-only:
+Default LiveKit video publish options are also startup-only:
 
 - `video.publish.codec`
 - `video.publish.max_bitrate_bps`
 - `video.publish.max_framerate`
 - `video.publish.simulcast`
 
-Those settings apply to every video track publish. Leave them at their defaults to use SDK-selected behavior.
+Those settings provide the default for every video track publish. Leave them at their defaults to use SDK-selected behavior, or override any subset per entry with `video.topic_rules.<id>.publish.*` or `video.custom_sources.<id>.publish.*`.
 
 ## Runtime image
 

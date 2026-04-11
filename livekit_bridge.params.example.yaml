@@ -47,11 +47,13 @@ livekit_ros2_bridge:
     # Keep the IDs at the root for now because generate_parameter_library 0.6
     # in the current test matrix cannot move them cleanly under
     # `video.topic_rules.ids` / `video.custom_sources.ids` yet.
-    # Topic rules use `transform` for optional processing stages only.
-    # Custom sources use `source` for ingress and `transform` for optional processing.
+    # Topic rules use required `pattern`, optional `transform`, and optional
+    # `publish.*` overrides.
+    # Custom sources use required `source`, optional `transform`, and optional
+    # `publish.*` overrides.
     # The bridge always appends its own queue/convert/RGBA/appsink tail.
     #
-    # Optional global LiveKit publish policy:
+    # Optional default LiveKit publish policy:
     # video.publish.codec: "auto"  # or "vp8", "h264", "av1", "vp9", "h265"
     # video.publish.max_bitrate_bps: 0
     # video.publish.max_framerate: 0.0
@@ -61,9 +63,11 @@ livekit_ros2_bridge:
     # video_custom_source_ids: ["back_rtsp", "usb_cam"]
     #
     # video.topic_rules.front_camera.pattern: "/camera/front/*"
+    # video.topic_rules.front_camera.publish.max_framerate: 15.0
     # video.topic_rules.front_camera.transform: "videoscale ! video/x-raw,width=1280,height=720"
     #
     # video.custom_sources.back_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
+    # video.custom_sources.back_rtsp.publish.codec: "h264"
     # video.custom_sources.back_rtsp.transform: ""
     #
     # video.custom_sources.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"

@@ -74,6 +74,7 @@ VideoConfig makeDefaultVideoConfig()
   default_rule.pattern = "/*";
   default_rule.id = video_defaults::kDefaultRosProfileId;
   default_rule.transform = video_defaults::kDefaultRosTransform;
+  default_rule.publish = config.publish;
   config.ros_topic_rules.push_back(std::move(default_rule));
 
   return config;
@@ -138,6 +139,7 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   spec.ingest_mode = std::string(source_classification->ingest_mode);
   spec.selected_config_key = matched_rule->id;
   spec.transform_description = matched_rule->transform;
+  spec.publish_config = matched_rule->publish;
   return spec;
 }
 
@@ -165,6 +167,7 @@ VideoStreamSpec resolveExternalVideoStreamSpec(const VideoConfig & config, const
   spec.source_description = source.source;
   spec.transform_description = source.transform;
   spec.ingest_mode = kExternalIngestMode;
+  spec.publish_config = source.publish;
 
   return spec;
 }

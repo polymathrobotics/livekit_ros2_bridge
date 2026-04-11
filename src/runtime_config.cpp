@@ -261,6 +261,107 @@ VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulca
   throw std::runtime_error("unsupported video.publish.simulcast '" + raw_simulcast + "'");
 }
 
+struct VideoPublishOverride
+{
+  std::optional<VideoPublishCodec> codec;
+  std::optional<std::uint64_t> max_bitrate_bps;
+  std::optional<double> max_framerate;
+  std::optional<VideoPublishSimulcast> simulcast;
+};
+
+VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
+{
+  try {
+    return parseVideoPublishCodec(raw_codec);
+  } catch (const std::runtime_error &) {
+    throw std::runtime_error("unsupported " + field_name + " '" + raw_codec + "'");
+  }
+}
+
+VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
+{
+  try {
+    return parseVideoPublishSimulcast(raw_simulcast);
+  } catch (const std::runtime_error &) {
+    throw std::runtime_error("unsupported " + field_name + " '" + raw_simulcast + "'");
+  }
+}
+
+std::optional<VideoPublishCodec> parseOptionalVideoPublishCodec(
+  const std::string & raw_codec, const std::string & field_name)
+{
+  const std::string codec = trim(raw_codec);
+  if (codec.empty()) {
+    return std::nullopt;
+  }
+  return parseVideoPublishCodec(codec, field_name);
+}
+
+std::optional<VideoPublishSimulcast> parseOptionalVideoPublishSimulcast(
+  const std::string & raw_simulcast, const std::string & field_name)
+{
+  const std::string simulcast = trim(raw_simulcast);
+  if (simulcast.empty()) {
+    return std::nullopt;
+  }
+  return parseVideoPublishSimulcast(simulcast, field_name);
+}
+
+VideoPublishConfig parseVideoPublishConfig(const Params & params)
+{
+  VideoPublishConfig config;
+  config.codec = parseVideoPublishCodec(trim(params.video.publish.codec), "video.publish.codec");
+  config.max_bitrate_bps = static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps);
+  config.max_framerate = params.video.publish.max_framerate;
+  config.simulcast = parseVideoPublishSimulcast(trim(params.video.publish.simulcast), "video.publish.simulcast");
+  return config;
+}
+
+template <typename EntryT>
+VideoPublishOverride parseVideoPublishOverride(const EntryT & entry, const std::string & context)
+{
+  VideoPublishOverride config;
+
+  if (
+    const auto codec = parseOptionalVideoPublishCodec(entry.publish.codec, context + " publish.codec");
+    codec.has_value())
+  {
+    config.codec = *codec;
+  }
+  if (entry.publish.max_bitrate_bps >= 0) {
+    config.max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
+  }
+  if (entry.publish.max_framerate >= 0.0) {
+    config.max_framerate = entry.publish.max_framerate;
+  }
+  if (
+    const auto simulcast = parseOptionalVideoPublishSimulcast(entry.publish.simulcast, context + " publish.simulcast");
+    simulcast.has_value())
+  {
+    config.simulcast = *simulcast;
+  }
+
+  return config;
+}
+
+VideoPublishConfig mergeVideoPublishConfig(const VideoPublishConfig & defaults, const VideoPublishOverride & override)
+{
+  VideoPublishConfig merged = defaults;
+  if (override.codec.has_value()) {
+    merged.codec = *override.codec;
+  }
+  if (override.max_bitrate_bps.has_value()) {
+    merged.max_bitrate_bps = *override.max_bitrate_bps;
+  }
+  if (override.max_framerate.has_value()) {
+    merged.max_framerate = *override.max_framerate;
+  }
+  if (override.simulcast.has_value()) {
+    merged.simulcast = *override.simulcast;
+  }
+  return merged;
+}
+
 std::string composeVideoPipelineDescription(const std::string & prefix, const std::string & transform)
 {
   std::string pipeline = prefix;
@@ -447,10 +548,10 @@ const typename EntryMap::mapped_type & requireUniqueGeneratedEntry(
 VideoConfig loadVideoConfig(const Params & params)
 {
   VideoConfig config = makeDefaultVideoConfig();
-  config.publish.codec = parseVideoPublishCodec(params.video.publish.codec);
-  config.publish.max_bitrate_bps = static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps);
-  config.publish.max_framerate = params.video.publish.max_framerate;
-  config.publish.simulcast = parseVideoPublishSimulcast(params.video.publish.simulcast);
+  config.publish = parseVideoPublishConfig(params);
+  for (auto & rule : config.ros_topic_rules) {
+    rule.publish = config.publish;
+  }
 
   // Rebuild user rules ahead of the built-in catch-all so longest-match selection
   // still works and same-length ties stay first-declared.
@@ -479,6 +580,8 @@ VideoConfig loadVideoConfig(const Params & params)
     rule.pattern = pattern;
     rule.id = entry_id;
     rule.transform = transform;
+    rule.publish =
+      mergeVideoPublishConfig(config.publish, parseVideoPublishOverride(entry, "video topic rule '" + entry_id + "'"));
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
@@ -509,6 +612,8 @@ VideoConfig loadVideoConfig(const Params & params)
     ConfiguredExternalSource source;
     source.source = source_fragment;
     source.transform = transform;
+    source.publish = mergeVideoPublishConfig(
+      config.publish, parseVideoPublishOverride(entry, "video custom source '" + entry_id + "'"));
     config.external_sources.emplace(normalized_external_name, std::move(source));
   }
 
