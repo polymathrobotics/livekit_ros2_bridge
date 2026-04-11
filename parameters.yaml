@@ -73,36 +73,6 @@ livekit_ros2_bridge:
           type: string_array
           default_value: []
           description: "Denylist patterns for service targets."
-  subscription:
-    qos_overrides:
-      __map_subscription_qos_overrides_ids:
-        pattern:
-          type: string
-          default_value: ""
-          description: "ROS topic pattern to match for this subscriber QoS override."
-        reliability:
-          type: string
-          default_value: "auto"
-          description: "Subscriber reliability override: auto, reliable, or best_effort."
-          validation:
-            one_of<>: [["auto", "reliable", "best_effort"]]
-        durability:
-          type: string
-          default_value: "auto"
-          description: "Subscriber durability override: auto, volatile, or transient_local."
-          validation:
-            one_of<>: [["auto", "volatile", "transient_local"]]
-  subscription_qos_overrides_ids:
-    type: string_array
-    default_value: []
-    description: "QoS override ids defined under subscription.qos_overrides.<id>."
-  publish:
-    max_topics:
-      type: int
-      default_value: 50
-      description: "Maximum active ROS publishers created by bridge ingress."
-      validation:
-        gt_eq<>: [0]
   # Keep video_topic_rule_ids at the root for now. generate_parameter_library 0.6.x,
   # which is still part of our supported test matrix, does not support moving this
   # cleanly to video.topic_rules.ids across all distros. Move it once GPL 0.7+ is
@@ -216,3 +186,33 @@ livekit_ros2_bridge:
             description: "Optional LiveKit simulcast override for this configured video source. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
+  publish:
+    max_topics:
+      type: int
+      default_value: 50
+      description: "Maximum active ROS publishers created by bridge ingress."
+      validation:
+        gt_eq<>: [0]
+  subscription_qos_overrides_ids:
+    type: string_array
+    default_value: []
+    description: "QoS override ids defined under subscription.qos_overrides.<id>."
+  subscription:
+    qos_overrides:
+      __map_subscription_qos_overrides_ids:
+        pattern:
+          type: string
+          default_value: ""
+          description: "ROS topic pattern to match for this subscriber QoS override."
+        reliability:
+          type: string
+          default_value: "auto"
+          description: "Subscriber reliability override: auto, reliable, or best_effort."
+          validation:
+            one_of<>: [["auto", "reliable", "best_effort"]]
+        durability:
+          type: string
+          default_value: "auto"
+          description: "Subscriber durability override: auto, volatile, or transient_local."
+          validation:
+            one_of<>: [["auto", "volatile", "transient_local"]]
