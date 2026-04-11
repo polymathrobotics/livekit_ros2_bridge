@@ -40,8 +40,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr int kUnlimitedTopicCacheSize = 0;
-
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
 {
@@ -218,8 +216,7 @@ TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
-
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   message.percentage = 0.75F;
@@ -230,15 +227,6 @@ TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
   EXPECT_EQ(harness.publisherCount(topic), 1U);
-}
-
-TEST(TopicPublisherTest, ConstructorRejectsNegativeMaxTopicsAndAcceptsUnlimitedZero)
-{
-  TopicPublisherHarness harness;
-  const auto empty_access_policy = AccessPolicy(AccessPolicyConfig{});
-
-  EXPECT_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, -1), std::invalid_argument);
-  EXPECT_NO_THROW(RosTopicPublisher(harness.publisherNode(), empty_access_policy, kUnlimitedTopicCacheSize));
 }
 
 TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
@@ -255,7 +243,7 @@ TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/allowed"}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/allowed"}));
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -288,7 +276,7 @@ TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   ASSERT_TRUE(harness.waitForTopicType(first_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(harness.waitForTopicType(second_topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/*"}), 1);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/*"}), 1U);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -349,7 +337,7 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
 
   bool force_first_publish_failure = true;
   bool subscriber_ready_before_publish = false;
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
   publisher.setBeforePublishHookForTest([&]() {
     subscriber_ready_before_publish =
       harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; });
@@ -390,7 +378,7 @@ TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
 
   std_msgs::msg::String wrong_message;
   wrong_message.data = "not a BatteryState";
@@ -415,7 +403,7 @@ TEST(TopicPublisherTest, ShutdownPreventsPublisherRecreationAndRepeatedShutdownI
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}), 50);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;

@@ -16,8 +16,6 @@
 
 #include <chrono>
 #include <cstring>
-#include <limits>
-#include <stdexcept>
 #include <utility>
 
 #include "rclcpp/logging.hpp"
@@ -32,8 +30,8 @@ namespace
 {
 
 constexpr std::size_t kPublisherDepth = 10U;
+constexpr std::size_t kMaxCachedPublishers = 50U;
 constexpr auto kPublishLogThrottleMs = 5000;
-constexpr int kUnlimitedTopicCacheSize = 0;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
 rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
@@ -47,24 +45,17 @@ rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & 
   return serialized;
 }
 
-std::size_t publisherCacheCapacity(int max_topics)
-{
-  if (max_topics < 0) {
-    throw std::invalid_argument("max_topics must be >= 0");
-  }
-  if (max_topics == kUnlimitedTopicCacheSize) {
-    return std::numeric_limits<std::size_t>::max();
-  }
-  return static_cast<std::size_t>(max_topics);
-}
-
 }  // namespace
 
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, int max_topics)
+RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
+: RosTopicPublisher(node, std::move(access_policy), kMaxCachedPublishers)
+{}
+
+RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers)
 : node_(node)
 , access_policy_(std::move(access_policy))
-, max_topics_(max_topics)
-, publishers_(publisherCacheCapacity(max_topics))
+, max_cached_publishers_(max_cached_publishers)
+, publishers_(max_cached_publishers)
 {}
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
@@ -202,7 +193,7 @@ void RosTopicPublisher::publishWithPublisherCache(
       .kv("evicted_topic", evicted_entry->key)
       .kv("count", count)
       .kv("policy", "lru")
-      .kv("max_topics", max_topics_)
+      .kv("max_topics", static_cast<int>(max_cached_publishers_))
       .warn();
   }
 }

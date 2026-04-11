@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -37,7 +38,8 @@ namespace livekit_ros2_bridge
 class RosTopicPublisher final
 {
 public:
-  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, int max_topics);
+  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy);
+  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers);
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and
   // publisher errors are logged and ignored without throwing to the caller.
@@ -64,7 +66,7 @@ private:
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
-  int max_topics_ = 0;
+  std::size_t max_cached_publishers_ = 0U;
   std::atomic<bool> is_shutdown_{false};
   BoundedLruCache<std::string, PublisherCacheEntry> publishers_;
   std::function<void()> before_publish_hook_for_test_;

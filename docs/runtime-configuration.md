@@ -96,12 +96,10 @@ This is useful when a publisher is not visible yet at subscription-creation time
 
 ## Publish cache limit
 
-`publish.max_topics` controls how many active ROS publishers the bridge keeps cached for `ros.topics.publish`.
+The bridge keeps up to `50` active ROS publishers cached for `ros.topics.publish`.
 
 Important behavior:
 
-- default: `50`
-- `0` means no limit
 - the bridge creates generic publishers on demand
 - when the cache grows past the limit, the least recently used cached publisher is evicted after the current publish succeeds
 

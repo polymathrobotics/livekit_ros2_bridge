@@ -1,5 +1,9 @@
 ---
 livekit_ros2_bridge:
+  # Keep mapping id lists at the root for now. generate_parameter_library 0.6.x,
+  # which is still part of our supported test matrix, does not support moving
+  # these cleanly into nested *.ids parameters across all distros. Move them once
+  # GPL 0.7+ is baseline everywhere in the matrix.
   livekit:
     url:
       type: string
@@ -19,6 +23,7 @@ livekit_ros2_bridge:
       description: "LiveKit startup token. The bridge uses this token for room connection attempts and does not mint replacement tokens."
       validation:
         not_empty<>: null
+
   access:
     rules:
       publish:
@@ -48,22 +53,16 @@ livekit_ros2_bridge:
           type: string_array
           default_value: []
           description: "Denylist patterns for service targets."
-  # Keep video_topic_rule_ids at the root for now. generate_parameter_library 0.6.x,
-  # which is still part of our supported test matrix, does not support moving this
-  # cleanly to video.topic_rules.ids across all distros. Move it once GPL 0.7+ is
-  # baseline everywhere in the matrix.
+
   video_topic_rule_ids:
     type: string_array
     default_value: []
     description: "Video topic rule ids defined under video.topic_rules.<id>."
-  # Keep video_configured_source_ids at the root for now. generate_parameter_library
-  # 0.6.x, which is still part of our supported test matrix, does not support
-  # moving this cleanly to video.configured_sources.ids across all distros. Move it
-  # once GPL 0.7+ is baseline everywhere in the matrix.
   video_configured_source_ids:
     type: string_array
     default_value: []
     description: "Video configured source ids defined under video.configured_sources.<id>."
+
   video:
     publish:
       codec:
@@ -161,17 +160,12 @@ livekit_ros2_bridge:
             description: "Optional LiveKit simulcast override for this configured video source. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
-  publish:
-    max_topics:
-      type: int
-      default_value: 50
-      description: "Maximum active ROS publishers created by bridge ingress."
-      validation:
-        gt_eq<>: [0]
+
   subscription_qos_overrides_ids:
     type: string_array
     default_value: []
     description: "QoS override ids defined under subscription.qos_overrides.<id>."
+
   subscription:
     qos_overrides:
       __map_subscription_qos_overrides_ids:
