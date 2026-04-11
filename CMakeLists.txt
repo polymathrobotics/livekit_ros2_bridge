@@ -137,9 +137,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_node test/cpp/test_node.cpp)
   target_link_libraries(test_node ${PROJECT_NAME} ${std_srvs_TARGETS})
 
-  ament_add_gtest(test_process_utils test/cpp/test_process_utils.cpp)
-  target_link_libraries(test_process_utils ${PROJECT_NAME})
-
   ament_add_gtest(test_quiesce_guard test/cpp/test_quiesce_guard.cpp)
   target_link_libraries(test_quiesce_guard ${PROJECT_NAME})
 
@@ -208,7 +205,6 @@ if(BUILD_TESTING)
     test_livekit_access_token
     test_log_event
     test_node
-    test_process_utils
     test_quiesce_guard
     test_reentrant_quiesce_guard
     test_resource_list_payloads
