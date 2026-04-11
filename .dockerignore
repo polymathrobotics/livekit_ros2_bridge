@@ -31,7 +31,6 @@ README.md
 docs/
 justfile
 scripts/
-test/
 
 # Local runtime config
 livekit_bridge.params.example.yaml

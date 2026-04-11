@@ -3,6 +3,7 @@
 ARG ROS_DISTRO=humble
 ARG ROS_BUILDER_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-builder-ubuntu
 ARG ROS_RUNTIME_IMAGE=polymathrobotics/ros:${ROS_DISTRO}-ready-ubuntu
+ARG LIVEKIT_SDK_DISTRO=""
 
 FROM ${ROS_BUILDER_IMAGE} AS toolchain-base
 
@@ -32,7 +33,9 @@ RUN chmod +x /usr/local/bin/gather-rosdeps \
      && ROSDEP_DEPENDENCY_TYPES="exec" \
      gather-rosdeps /tmp/rosdep-scripts/install-runtime-rosdeps.sh src/livekit_ros2_bridge
 
-FROM toolchain-base AS runtime-builder
+FROM toolchain-base AS build
+
+ARG LIVEKIT_SDK_DISTRO
 
 WORKDIR /opt/ros_ws
 
@@ -51,19 +54,53 @@ RUN source "/opt/ros/${ROS_DISTRO}/setup.bash" \
      && colcon build \
      --merge-install \
      --packages-up-to livekit_ros2_bridge \
-     --cmake-args -DBUILD_TESTING=OFF
+     --cmake-args -DBUILD_TESTING=OFF "-DLIVEKIT_SDK_DISTRO=${LIVEKIT_SDK_DISTRO}"
 
-FROM toolchain-base AS dev
+FROM toolchain-base AS dev-deps
+
+WORKDIR /opt/ros_ws
+
+COPY --from=deps-scripts /tmp/rosdep-scripts/install-dev-rosdeps.sh /tmp/install-dev-rosdeps.sh
+
+RUN apt-get update \
+     && /tmp/install-dev-rosdeps.sh \
+     && rm -rf /var/lib/apt/lists/*
+
+FROM dev-deps AS test
+
+ARG LIVEKIT_SDK_DISTRO
+
+WORKDIR /opt/ros_ws
+
+COPY CMakeLists.txt package.xml parameters.yaml src/livekit_ros2_bridge/
+COPY cmake src/livekit_ros2_bridge/cmake
+COPY include src/livekit_ros2_bridge/include
+COPY src src/livekit_ros2_bridge/src
+COPY test src/livekit_ros2_bridge/test
+
+RUN source "/opt/ros/${ROS_DISTRO}/setup.bash" \
+     && colcon build \
+     --merge-install \
+     --packages-up-to livekit_ros2_bridge \
+     --cmake-args -DBUILD_TESTING=ON "-DLIVEKIT_SDK_DISTRO=${LIVEKIT_SDK_DISTRO}" \
+     && { \
+       test_exit=0; \
+       colcon test \
+       --merge-install \
+       --packages-select livekit_ros2_bridge \
+       --return-code-on-test-failure \
+       || test_exit=$?; \
+       colcon test-result --verbose; \
+       exit "${test_exit}"; \
+     }
+
+FROM dev-deps AS dev
 
 ARG ROS_DISTRO
 
 ENV CCACHE_DIR=/ccache
 
-COPY --from=deps-scripts /tmp/rosdep-scripts/install-dev-rosdeps.sh /tmp/install-dev-rosdeps.sh
-COPY --from=runtime-builder /opt/ros_ws/install /opt/livekit_ros2_bridge/install
-
 RUN apt-get update \
-     && /tmp/install-dev-rosdeps.sh \
      && apt-get install -y --no-install-recommends \
      ros-${ROS_DISTRO}-ros2cli \
      ros-${ROS_DISTRO}-ros2cli-common-extensions \
@@ -95,6 +132,6 @@ RUN mkdir -p /config \
      && /tmp/install-runtime-rosdeps.sh \
      && rm -rf /var/lib/apt/lists/*
 
-COPY --from=runtime-builder /opt/ros_ws/install /opt/livekit_ros2_bridge/install
+COPY --from=build /opt/ros_ws/install /opt/livekit_ros2_bridge/install
 
 ENTRYPOINT ["/opt/livekit_ros2_bridge/runtime-entrypoint.sh"]

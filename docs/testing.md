@@ -12,6 +12,23 @@ just test
 
 The `just` wrapper builds first, then runs the suite inside the repository's dev-container workflow.
 
+To run the same `colcon` unit-test suite across every supported ROS distro with
+ephemeral Docker builds:
+
+```bash
+just test-matrix
+```
+
+You can scope the matrix to specific distros:
+
+```bash
+just test-matrix jazzy rolling
+```
+
+That path uses the `docker buildx bake` `test-*` targets, so each run starts
+from a clean image instead of reusing the stateful local dev container. It is
+also the same cross-distro path used by CI.
+
 To narrow to one `ament_add_gtest` target:
 
 ```bash
