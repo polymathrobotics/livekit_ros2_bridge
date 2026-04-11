@@ -238,7 +238,7 @@ TEST_F(RuntimeConfigTest, MissingTokenConfigurationThrows)
 TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromUnifiedParams)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front_camera", "front_rtsp"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front_camera", "front_rtsp"});
   options.append_parameter_override("videos.front_camera.kind", "ros");
   options.append_parameter_override("videos.front_camera.pattern", "/camera/front/*");
   options.append_parameter_override(
@@ -264,7 +264,7 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromUnifiedParams)
 TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera", "front"});
+  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera", "front"});
   options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
   options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "best_effort");
   options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
@@ -292,19 +292,21 @@ TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams
 TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera", "camera"});
+  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera", "camera"});
   options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
   options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
   options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
 
   expectRuntimeConfigError(
-    "startup_config_duplicate_subscription_qos_override_id", options, "duplicate subscribe.qos_overrides id 'camera'");
+    "startup_config_duplicate_subscription_qos_override_id",
+    options,
+    "duplicate subscription QoS override id 'camera'");
 }
 
 TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsEmptyPattern)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera"});
   options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "   ");
   options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "auto");
   options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
@@ -316,7 +318,7 @@ TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsEmptyPattern)
 TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscribe.qos_overrides.ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription_qos_override_ids", std::vector<std::string>{"camera"});
   options.append_parameter_override("subscribe.qos_overrides.camera.pattern", "/camera/*");
   options.append_parameter_override("subscribe.qos_overrides.camera.reliability", "sometimes");
   options.append_parameter_override("subscribe.qos_overrides.camera.durability", "auto");
@@ -330,7 +332,7 @@ TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParam
 TEST_F(RuntimeConfigTest, RosVideoEntryAcceptsDefaultPipelineAlias)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "ros");
   options.append_parameter_override("videos.front.pattern", "/camera/front/*");
   options.append_parameter_override(
@@ -347,7 +349,7 @@ TEST_F(RuntimeConfigTest, RosVideoEntryAcceptsDefaultPipelineAlias)
 TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front", "front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front", "front"});
   options.append_parameter_override("videos.front.kind", "ros");
   options.append_parameter_override("videos.front.pattern", "/camera/front/*");
   options.append_parameter_override(
@@ -359,7 +361,7 @@ TEST_F(RuntimeConfigTest, DuplicateVideoEntryIdReportsSectionSpecificError)
 TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersAreRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
 
   expectRuntimeConfigErrorContains(
     "startup_config_missing_video_entry_params", options, "parameter 'videos.front.kind' is not initialized");
@@ -368,7 +370,7 @@ TEST_F(RuntimeConfigTest, MissingGeneratedVideoEntryParametersAreRejectedByParam
 TEST_F(RuntimeConfigTest, RosVideoEntryWithoutPipelinesIsRejected)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "ros");
   options.append_parameter_override("videos.front.pattern", "/camera/front/*");
 
@@ -378,7 +380,7 @@ TEST_F(RuntimeConfigTest, RosVideoEntryWithoutPipelinesIsRejected)
 TEST_F(RuntimeConfigTest, RosVideoEntryRejectsUnsupportedPipelineAlias)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "ros");
   options.append_parameter_override("videos.front.pattern", "/camera/front/*");
   options.append_parameter_override(
@@ -393,7 +395,7 @@ TEST_F(RuntimeConfigTest, RosVideoEntryRejectsUnsupportedPipelineAlias)
 TEST_F(RuntimeConfigTest, VideoEntryRejectsDuplicatePipelineAliases)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "ros");
   options.append_parameter_override("videos.front.pattern", "/camera/front/*");
   options.append_parameter_override(
@@ -421,7 +423,7 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
     params_file << "    livekit.url: ws://test:7880\n";
     params_file << "    livekit.room: robot-room\n";
     params_file << "    livekit.token: static-token\n";
-    params_file << "    videos.ids: ['/front_rtsp', '/front_rtsp/']\n";
+    params_file << "    video_ids: ['/front_rtsp', '/front_rtsp/']\n";
     params_file << "    \"videos./front_rtsp.kind\": pipeline\n";
     params_file << "    \"videos./front_rtsp.pipelines\": ['default=videotestsrc is-live=true pattern=ball']\n";
     params_file << "    \"videos./front_rtsp/.kind\": pipeline\n";
@@ -438,7 +440,7 @@ TEST_F(RuntimeConfigTest, DuplicateConfiguredSourceIdReportsSectionSpecificError
 TEST_F(RuntimeConfigTest, PipelineVideoEntryRejectsMissingDefaultAlias)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "pipeline");
 
   expectRuntimeConfigError(
@@ -450,7 +452,7 @@ TEST_F(RuntimeConfigTest, PipelineVideoEntryRejectsMissingDefaultAlias)
 TEST_F(RuntimeConfigTest, UnsupportedVideoEntryKindIsRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("videos.ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("videos.front.kind", "gstream");
   options.append_parameter_override(
     "videos.front.pipelines", std::vector<std::string>{"default=videotestsrc pattern=ball"});

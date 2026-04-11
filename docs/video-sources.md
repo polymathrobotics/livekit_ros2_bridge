@@ -27,7 +27,7 @@ All other ROS topic types stay on the CDR data-track path.
 
 ## ROS topic rules
 
-`videos.<id>.kind=ros` entries become topic-matching rules. Each rule has:
+`videos.<id>.kind=ros` entries named in `video_ids` become topic-matching rules. Each rule has:
 
 - an `id`
 - a normalized topic pattern
@@ -65,7 +65,7 @@ Both defaults add:
 
 ## Configured external sources
 
-`videos.<id>.kind=pipeline` entries become configured external sources.
+`videos.<id>.kind=pipeline` entries named in `video_ids` become configured external sources.
 
 Rules:
 

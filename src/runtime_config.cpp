@@ -293,7 +293,7 @@ void requireUniqueEntryKey(std::unordered_set<std::string> & seen_keys, const st
 }
 
 template <typename EntryMap>
-const typename EntryMap::mapped_type & requireUniqueGeneratedVideoEntry(
+const typename EntryMap::mapped_type & requireUniqueGeneratedEntry(
   std::unordered_set<std::string> & seen_ids,
   const std::string & entry_id,
   const EntryMap & ids_map,
@@ -323,9 +323,9 @@ VideoConfig loadVideoConfig(const Params & params)
 
   std::unordered_set<std::string> seen_entry_ids;
   std::unordered_set<std::string> seen_external_names;
-  for (const auto & entry_id : params.videos.ids) {
-    const auto & entry = requireUniqueGeneratedVideoEntry(
-      seen_entry_ids, entry_id, params.videos.ids_map, "video entry id", "video entry");
+  for (const auto & entry_id : params.video_ids) {
+    const auto & entry = requireUniqueGeneratedEntry(
+      seen_entry_ids, entry_id, params.videos.video_ids_map, "video entry id", "video entry");
 
     PipelineMap pipelines = parsePipelineEntries(entry_id, entry.pipelines);
 
@@ -387,13 +387,13 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
   SubscriptionQosConfig config;
 
   std::unordered_set<std::string> seen_override_ids;
-  for (const auto & override_id : params.subscribe.qos_overrides.ids) {
-    const auto & entry = requireUniqueGeneratedVideoEntry(
+  for (const auto & override_id : params.subscription_qos_override_ids) {
+    const auto & entry = requireUniqueGeneratedEntry(
       seen_override_ids,
       override_id,
-      params.subscribe.qos_overrides.ids_map,
-      "subscribe.qos_overrides id",
-      "subscribe.qos_overrides entry");
+      params.subscribe.qos_overrides.subscription_qos_override_ids_map,
+      "subscription QoS override id",
+      "subscription QoS override entry");
 
     TopicSubscriptionQosOverride override_entry;
     override_entry.id = override_id;

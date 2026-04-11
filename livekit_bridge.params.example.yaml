@@ -45,14 +45,14 @@ livekit_ros2_bridge:
     # Each source must have a `kind`:
     # - `ros` matches one or more ROS topics by pattern
     # - `pipeline` runs an in-process GStreamer source pipeline that you provide
-    # Set `videos.ids` to the source names you want to enable.
+    # Set `video_ids` to the source names you want to enable.
     # Each `pipelines` entry is written as `alias=pipeline`.
     # ROS sources can use the aliases `image`, `compressed_image`, or `default`.
     # For ROS sources, the bridge owns ingress and egress, so the pipeline should
     # only describe optional transform stages.
     # Pipeline sources should use the `default` alias and must resolve to one raw video output.
     #
-    # videos.ids: ["front_camera", "back_rtsp", "usb_cam"]
+    # video_ids: ["front_camera", "back_rtsp", "usb_cam"]
     #
     # videos.front_camera.kind: "ros"
     # videos.front_camera.pattern: "/camera/front/*"

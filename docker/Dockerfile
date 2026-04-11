@@ -13,11 +13,7 @@ ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
 
-COPY docker/configure-ros-apt.sh /usr/local/bin/configure-ros-apt
-
-RUN chmod +x /usr/local/bin/configure-ros-apt \
-     && /usr/local/bin/configure-ros-apt \
-     && rosdep update --rosdistro "${ROS_DISTRO}"
+RUN rosdep update --rosdistro "${ROS_DISTRO}"
 
 FROM toolchain-base AS deps-scripts
 
@@ -88,14 +84,12 @@ ENV ROS_DISTRO=${ROS_DISTRO}
 
 WORKDIR /opt/livekit_ros2_bridge
 
-COPY docker/configure-ros-apt.sh /usr/local/bin/configure-ros-apt
 COPY docker/runtime-entrypoint.sh /opt/livekit_ros2_bridge/runtime-entrypoint.sh
 COPY --from=deps-scripts /tmp/rosdep-scripts/install-runtime-rosdeps.sh /tmp/install-runtime-rosdeps.sh
 
 # ca-certificates is needed for LiveKit connections
 RUN mkdir -p /config \
-     && chmod +x /usr/local/bin/configure-ros-apt /opt/livekit_ros2_bridge/runtime-entrypoint.sh /tmp/install-runtime-rosdeps.sh \
-     && /usr/local/bin/configure-ros-apt \
+     && chmod +x /opt/livekit_ros2_bridge/runtime-entrypoint.sh /tmp/install-runtime-rosdeps.sh \
      && apt-get update \
      && apt-get install -y --no-install-recommends ca-certificates \
      && /tmp/install-runtime-rosdeps.sh \

@@ -85,11 +85,11 @@ If you use this repository's dev-container workflow, `just build` runs the packa
 
    For the full parameter model, read [docs/runtime-configuration.md](./docs/runtime-configuration.md). For rule matching and deny precedence, read [docs/access-control.md](./docs/access-control.md).
 
-   ROS topic subscriptions resolve subscriber `reliability` and `durability` from visible publishers when the bridge creates the subscription. Use `subscribe.qos_overrides.*` when you need to pin those fields for a topic pattern.
+   ROS topic subscriptions resolve subscriber `reliability` and `durability` from visible publishers when the bridge creates the subscription. Use `subscription_qos_override_ids` together with `subscribe.qos_overrides.*` when you need to pin those fields for a topic pattern.
 
-3. If you want video, add `videos.*` entries in the same file. `kind: ros` entries match ROS image topics and provide optional transform stages. `kind: pipeline` entries define configured external sources that must resolve to one raw video stream; the configured id becomes the external name clients request after normalization. For example, `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
+3. If you want video, add `video_ids` plus matching `videos.*` entries in the same file. `kind: ros` entries match ROS image topics and provide optional transform stages. `kind: pipeline` entries define configured external sources that must resolve to one raw video stream; the configured id becomes the external name clients request after normalization. For example, `videos.front_camera.kind: pipeline` is requested as `external: "/front_camera"`. The full video model is in [docs/video-sources.md](./docs/video-sources.md).
 
-   This matters for camera topics coming from bridges like `ros_gz_bridge`, which often publish `RELIABLE`. If the publisher is not visible yet when the subscription is created, add a `subscribe.qos_overrides` entry for that topic pattern.
+   This matters for camera topics coming from bridges like `ros_gz_bridge`, which often publish `RELIABLE`. If the publisher is not visible yet when the subscription is created, add a `subscription_qos_override_ids` entry and matching `subscribe.qos_overrides.*` parameters for that topic pattern.
 
 4. Run the node.
 

@@ -75,11 +75,7 @@ livekit_ros2_bridge:
           description: "Denylist patterns for service targets."
   subscribe:
     qos_overrides:
-      ids:
-        type: string_array
-        default_value: []
-        description: "QoS override ids defined under subscribe.qos_overrides.<id>."
-      __map_ids:
+      __map_subscription_qos_override_ids:
         pattern:
           type: string
           default_value: ""
@@ -96,6 +92,10 @@ livekit_ros2_bridge:
           description: "Subscriber durability override: auto, volatile, or transient_local."
           validation:
             one_of<>: [["auto", "volatile", "transient_local"]]
+  subscription_qos_override_ids:
+    type: string_array
+    default_value: []
+    description: "QoS override ids defined under subscribe.qos_overrides.<id>."
   publish:
     max_topics:
       type: int
@@ -103,12 +103,12 @@ livekit_ros2_bridge:
       description: "Maximum active ROS publishers created by bridge ingress."
       validation:
         gt_eq<>: [0]
+  video_ids:
+    type: string_array
+    default_value: []
+    description: "Video entry ids defined under videos.<id>."
   videos:
-    ids:
-      type: string_array
-      default_value: []
-      description: "Video entry ids defined under videos.<id>."
-    __map_ids:
+    __map_video_ids:
       kind:
         type: string
         description: "Video entry kind: ros (topic pattern) or pipeline (GStreamer source pipeline)."

@@ -90,11 +90,11 @@ QoS is resolved only when the subscription is created or recreated later. It is 
 
 ### QoS override parameters
 
-Use `subscribe.qos_overrides.*` to pin subscriber QoS fields for ROS topic subscriptions.
+Use `subscription_qos_override_ids` together with `subscribe.qos_overrides.*` to pin subscriber QoS fields for ROS topic subscriptions.
 
 | Parameter | Meaning |
 | --- | --- |
-| `subscribe.qos_overrides.ids` | the override ids to load |
+| `subscription_qos_override_ids` | the override ids to load |
 | `subscribe.qos_overrides.<id>.pattern` | ROS topic pattern to match |
 | `subscribe.qos_overrides.<id>.reliability` | `auto`, `reliable`, or `best_effort` |
 | `subscribe.qos_overrides.<id>.durability` | `auto`, `volatile`, or `transient_local` |
@@ -112,7 +112,7 @@ Example:
 ```yaml
 livekit_ros2_bridge:
   ros__parameters:
-    subscribe.qos_overrides.ids: ["gazebo_cameras"]
+    subscription_qos_override_ids: ["gazebo_cameras"]
     subscribe.qos_overrides.gazebo_cameras.pattern: "/front_camera/*"
     subscribe.qos_overrides.gazebo_cameras.reliability: "reliable"
     subscribe.qos_overrides.gazebo_cameras.durability: "auto"
@@ -139,7 +139,7 @@ Common parameters:
 
 | Parameter | Meaning |
 | --- | --- |
-| `videos.ids` | the entry ids to load |
+| `video_ids` | the entry ids to load |
 | `videos.<id>.kind` | `ros` or `pipeline` |
 | `videos.<id>.pattern` | topic pattern for `ros` entries |
 | `videos.<id>.pipelines` | `alias=pipeline` strings |
@@ -148,7 +148,7 @@ Rules by kind:
 
 - `kind: ros` supports the pipeline aliases `image`, `compressed_image`, and `default`
 - `kind: pipeline` supports only the `default` alias
-- duplicate `videos.ids` entries are rejected
+- duplicate `video_ids` entries are rejected
 - configured source ids normalize to the external names clients request
 
 Examples:
