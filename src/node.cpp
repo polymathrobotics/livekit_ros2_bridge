@@ -71,8 +71,6 @@ Node::Node(const rclcpp::NodeOptions & options)
       .error();
     throw;
   }
-
-  LogEvent(get_logger(), "node_ready").kv("phase", "startup").kvOr("room", room, "<unset>").info();
 }
 
 Node::~Node()

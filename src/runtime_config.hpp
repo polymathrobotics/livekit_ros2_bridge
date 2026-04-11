@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,9 +33,16 @@ namespace livekit_ros2_bridge
 // runtime and reconnect loop.
 struct RuntimeConfig
 {
+  struct HealthConfig
+  {
+    bool fail_fast_enabled = true;
+    std::chrono::milliseconds fail_fast_disconnect_grace{std::chrono::minutes(10)};
+  };
+
   Params loaded_params;
   RoomConnectionConfig connect_config;
   std::string access_token;
+  HealthConfig health_config;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos_config;
   VideoConfig video_config;

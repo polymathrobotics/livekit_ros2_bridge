@@ -507,6 +507,7 @@ private:
   {
     RoomConnectionConfig config;
     std::string access_token;
+    std::function<void()> connected_callback;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       config = config_;
@@ -588,6 +589,7 @@ private:
       reconnect_requested_ = false;
       participant_disconnects_enabled_ = true;
       rpc_methods_registered = registerAllRpcMethodsLocked();
+      connected_callback = callbacks_.on_connected;
     }
 
     if (!rpc_methods_registered) {
@@ -607,6 +609,9 @@ private:
       .kv("sid", room_sid)
       .kv("identity", identity)
       .info();
+    if (connected_callback) {
+      connected_callback();
+    }
     return true;
   }
 
@@ -654,6 +659,8 @@ private:
   void requestReconnect(const char * reason)
   {
     std::string room_name;
+    std::string reconnect_reason = reason;
+    std::function<void(const std::string &)> reconnect_requested_callback;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (reconnect_requested_) {
@@ -664,6 +671,7 @@ private:
       reconnect_requested_ = true;
       last_reconnect_reason_ = reason;
       room_name = config_.room;
+      reconnect_requested_callback = callbacks_.on_reconnect_requested;
       condition_.notify_all();
     }
 
@@ -672,6 +680,9 @@ private:
       .kv("reason", reason)
       .kvOr("room", room_name, kUnsetLogValue)
       .warn();
+    if (reconnect_requested_callback) {
+      reconnect_requested_callback(reconnect_reason);
+    }
   }
 
   std::string lastReconnectReason() const

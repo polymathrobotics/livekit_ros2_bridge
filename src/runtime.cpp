@@ -15,7 +15,9 @@
 #include "runtime.hpp"
 
 #include <chrono>
+#include <cstdlib>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "cdr_track_publisher.hpp"
@@ -39,17 +41,33 @@ namespace
 constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
 constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
+constexpr auto kFailFastEvaluationInterval = std::chrono::milliseconds(250);
+constexpr auto kFailFastExitDelay = std::chrono::milliseconds(100);
 }  // namespace
 
-Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config)
+Runtime::Runtime(
+  rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config, RuntimeHooks hooks)
 : node_(node)
 , room_session_(std::move(session))
 , video_config_(std::move(runtime_config.video_config))
 , subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
 , room_(runtime_config.connect_config.room)
+, hooks_(std::move(hooks))
+, fail_fast_enabled_(runtime_config.health_config.fail_fast_enabled)
+, fail_fast_disconnect_grace_(runtime_config.health_config.fail_fast_disconnect_grace)
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
+  }
+  if (!hooks_.shutdown_hook) {
+    hooks_.shutdown_hook = []() {
+      if (rclcpp::ok()) {
+        rclcpp::shutdown();
+      }
+    };
+  }
+  if (!hooks_.exit_hook) {
+    hooks_.exit_hook = [](int exit_code) { std::_Exit(exit_code); };
   }
 
   LogEvent(node_.get_logger(), "runtime_startup_begin").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
@@ -102,11 +120,18 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
       subscription_registry_->sweepExpiredLeases();
     });
   });
+  if (fail_fast_enabled_) {
+    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    disconnect_deadline_ = SteadyClock::now() + fail_fast_disconnect_grace_;
+  }
+  fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
 
   room_session_->start(
     runtime_config.connect_config,
     runtime_config.access_token,
     RoomSessionCallbacks{
+      [this]() { handleRoomConnected(); },
+      [this](const std::string & reason) { handleReconnectRequested(reason); },
       [this]() {
         submitExecutorWork([this]() {
           cdr_track_publisher_->unpublishAll();
@@ -137,8 +162,18 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, Runt
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
-
-  LogEvent(node_.get_logger(), "runtime_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
+  bool emit_ready_logs = false;
+  {
+    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    rpc_methods_ready_ = true;
+    if (connected_ && !ready_once_) {
+      ready_once_ = true;
+      emit_ready_logs = true;
+    }
+  }
+  if (emit_ready_logs) {
+    emitReadyLogs();
+  }
 }
 
 Runtime::~Runtime()
@@ -155,6 +190,7 @@ void Runtime::shutdown()
   LogEvent(node_.get_logger(), "runtime_shutdown_start").kv("phase", "shutdown").kvOr("room", room_, "<unset>").info();
 
   lease_gc_timer_.reset();
+  fail_fast_timer_.reset();
 
   if (rpc_router_ != nullptr && room_session_ != nullptr) {
     rpc_router_->unregisterRpcMethods(*room_session_);
@@ -192,6 +228,95 @@ void Runtime::shutdown()
 bool Runtime::isShuttingDown() const
 {
   return shutting_down_.load();
+}
+
+void Runtime::handleRoomConnected()
+{
+  if (isShuttingDown()) {
+    return;
+  }
+
+  bool emit_ready_logs = false;
+  {
+    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    connected_ = true;
+    disconnect_deadline_.reset();
+    last_reconnect_reason_.clear();
+    if (rpc_methods_ready_ && !ready_once_) {
+      ready_once_ = true;
+      emit_ready_logs = true;
+    }
+  }
+
+  if (emit_ready_logs) {
+    emitReadyLogs();
+  }
+}
+
+void Runtime::handleReconnectRequested(const std::string & reason)
+{
+  if (isShuttingDown()) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(connection_state_mutex_);
+  connected_ = false;
+  last_reconnect_reason_ = reason;
+  if (fail_fast_enabled_) {
+    disconnect_deadline_ = SteadyClock::now() + fail_fast_disconnect_grace_;
+  } else {
+    disconnect_deadline_.reset();
+  }
+}
+
+void Runtime::evaluateFailFast()
+{
+  if (!fail_fast_enabled_ || isShuttingDown()) {
+    return;
+  }
+
+  std::string disconnect_reason;
+  bool ready_once = false;
+  {
+    std::lock_guard<std::mutex> lock(connection_state_mutex_);
+    if (fail_fast_triggered_ || connected_ || !disconnect_deadline_.has_value()) {
+      return;
+    }
+    if (SteadyClock::now() < *disconnect_deadline_) {
+      return;
+    }
+
+    fail_fast_triggered_ = true;
+    ready_once = ready_once_;
+    if (ready_once_) {
+      disconnect_reason = last_reconnect_reason_.empty() ? "reconnect_timeout" : last_reconnect_reason_;
+    } else {
+      disconnect_reason = "initial_connect_timeout";
+    }
+  }
+
+  requestFailFastExit(disconnect_reason, ready_once);
+}
+
+void Runtime::emitReadyLogs()
+{
+  LogEvent(node_.get_logger(), "runtime_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "node_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
+}
+
+void Runtime::requestFailFastExit(const std::string & disconnect_reason, bool ready_once)
+{
+  LogEvent(node_.get_logger(), "runtime_fail_fast_triggered")
+    .kv("phase", ready_once ? "reconnect" : "startup")
+    .kv("reason", "disconnect_grace_expired")
+    .kv("disconnect_reason", disconnect_reason)
+    .kvOr("room", room_, "<unset>")
+    .kv("grace_seconds", fail_fast_disconnect_grace_.count() / 1000.0)
+    .kv("ready_once", ready_once)
+    .error();
+  hooks_.shutdown_hook();
+  std::this_thread::sleep_for(kFailFastExitDelay);
+  hooks_.exit_hook(EXIT_FAILURE);
 }
 
 void Runtime::submitExecutorWork(std::function<void()> fn)

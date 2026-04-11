@@ -24,6 +24,19 @@ livekit_ros2_bridge:
       validation:
         not_empty<>: null
 
+  health:
+    fail_fast:
+      enabled:
+        type: bool
+        default_value: true
+        description: "Exit non-zero when the bridge stays disconnected longer than the configured grace window."
+      disconnect_grace_seconds:
+        type: double
+        default_value: 600.0
+        description: "Maximum continuous disconnected time before fail-fast exits the process."
+        validation:
+          gt_eq<>: [0.0]
+
   access:
     rules:
       publish:

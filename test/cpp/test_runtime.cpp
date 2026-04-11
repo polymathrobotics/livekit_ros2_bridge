@@ -97,6 +97,15 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
+void spinExecutorFor(rclcpp::executors::SingleThreadedExecutor & executor, std::chrono::milliseconds duration)
+{
+  const auto deadline = std::chrono::steady_clock::now() + duration;
+  while (std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(kRuntimeTestPollInterval);
+  }
+}
+
 class ScopedPathEnvPrepend
 {
 public:
@@ -131,7 +140,8 @@ struct RuntimeHarness
 };
 
 template <typename ConfigureSessionT>
-RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, ConfigureSessionT configure_session)
+RuntimeHarness makeRuntimeHarness(
+  const rclcpp::NodeOptions & options, ConfigureSessionT configure_session, RuntimeHooks hooks = {})
 {
   RuntimeHarness harness;
   harness.node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), options);
@@ -142,13 +152,36 @@ RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, Configure
   configure_session(*session);
 
   RuntimeConfig startup_config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
-  harness.runtime = std::make_unique<Runtime>(*harness.node, std::move(session), std::move(startup_config));
+  harness.runtime =
+    std::make_unique<Runtime>(*harness.node, std::move(session), std::move(startup_config), std::move(hooks));
   return harness;
 }
 
 RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options)
 {
   return makeRuntimeHarness(options, [](FakeRoomSession &) {});
+}
+
+RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, RuntimeHooks hooks)
+{
+  return makeRuntimeHarness(options, [](FakeRoomSession &) {}, std::move(hooks));
+}
+
+struct FailFastExitCapture
+{
+  std::atomic<int> exit_call_count{0};
+  std::atomic<int> exit_code{-1};
+};
+
+RuntimeHooks makeFailFastHooks(FailFastExitCapture & capture)
+{
+  RuntimeHooks hooks;
+  hooks.shutdown_hook = []() {};
+  hooks.exit_hook = [&capture](int exit_code) {
+    capture.exit_code.store(exit_code);
+    capture.exit_call_count.fetch_add(1);
+  };
+  return hooks;
 }
 
 }  // namespace
@@ -172,9 +205,119 @@ TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
   EXPECT_TRUE(harness.state->started);
   EXPECT_EQ(harness.state->registered_rpc_methods, expected_methods);
   EXPECT_EQ(harness.state->rpc_handlers.size(), expected_methods.size());
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_session_reset));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_participant_disconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_control_packet_received));
+}
+
+TEST_F(RuntimeTest, FailFastExitsWhenInitialConnectNeverSucceeds)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+
+  const bool exit_triggered =
+    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2));
+  EXPECT_TRUE(exit_triggered);
+  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
+}
+
+TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+  harness.fake_session->emitConnected();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+
+  EXPECT_EQ(capture.exit_call_count.load(), 0);
+}
+
+TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+  harness.fake_session->emitConnected();
+  harness.fake_session->emitReconnectRequested("room_disconnected");
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+
+  const bool exit_triggered =
+    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2));
+  EXPECT_TRUE(exit_triggered);
+  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
+}
+
+TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+  harness.fake_session->emitConnected();
+  harness.fake_session->emitReconnectRequested("room_disconnected");
+  harness.fake_session->emitConnected();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+
+  EXPECT_EQ(capture.exit_call_count.load(), 0);
+}
+
+TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedSession)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.enabled", false);
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+
+  EXPECT_EQ(capture.exit_call_count.load(), 0);
+}
+
+TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+
+  FailFastExitCapture capture;
+  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  ASSERT_NE(harness.runtime, nullptr);
+  harness.runtime.reset();
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+
+  EXPECT_EQ(capture.exit_call_count.load(), 0);
 }
 
 TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)

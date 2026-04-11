@@ -15,8 +15,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 
 #include "rclcpp/node.hpp"
@@ -37,6 +40,14 @@ class SubscriptionRegistry;
 class RosTopicPublisher;
 class VideoStreamManager;
 
+struct RuntimeHooks
+{
+  // Optional test hook to override process-wide ROS shutdown during fail-fast.
+  std::function<void()> shutdown_hook;
+  // Optional test hook to override process exit during fail-fast.
+  std::function<void(int)> exit_hook;
+};
+
 // Wires one RoomSession to the ROS-facing publishers, RPC handlers, and in-process video streams
 // for a node.
 // Construction performs eager startup; destruction shuts the room session down before the ROS
@@ -44,7 +55,8 @@ class VideoStreamManager;
 class Runtime final
 {
 public:
-  Runtime(rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config);
+  Runtime(
+    rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config, RuntimeHooks hooks = {});
   ~Runtime();
 
   // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
@@ -56,6 +68,11 @@ private:
   using SteadyClock = std::chrono::steady_clock;
 
   bool isShuttingDown() const;
+  void handleRoomConnected();
+  void handleReconnectRequested(const std::string & reason);
+  void evaluateFailFast();
+  void emitReadyLogs();
+  void requestFailFastExit(const std::string & disconnect_reason, bool ready_once);
   // Drops new ingress once shutdown starts. Work accepted before shutdown may still execute if it
   // reaches the ROS executor before the queue is shut down.
   void submitExecutorWork(std::function<void()> fn);
@@ -75,8 +92,19 @@ private:
   VideoConfig video_config_;
   SubscriptionQosConfig subscription_qos_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
+  rclcpp::TimerBase::SharedPtr fail_fast_timer_;
   std::string room_;
+  RuntimeHooks hooks_;
+  const bool fail_fast_enabled_;
+  const std::chrono::milliseconds fail_fast_disconnect_grace_;
   std::atomic<bool> shutting_down_{false};
+  mutable std::mutex connection_state_mutex_;
+  bool connected_ = false;
+  bool ready_once_ = false;
+  bool rpc_methods_ready_ = false;
+  bool fail_fast_triggered_ = false;
+  std::optional<SteadyClock::time_point> disconnect_deadline_;
+  std::string last_reconnect_reason_;
   EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_shutdown_execute_drop_throttle_{std::chrono::seconds(5)};

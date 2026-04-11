@@ -126,6 +126,27 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
   EXPECT_EQ(startup_config.access_token, "static-token");
 }
 
+TEST_F(RuntimeConfigTest, FailFastDefaultsEnableTenMinuteGraceWindow)
+{
+  const RuntimeConfig startup_config =
+    loadRuntimeConfigForNode("startup_config_fail_fast_defaults", makeStaticTokenOptions());
+
+  EXPECT_TRUE(startup_config.health_config.fail_fast_enabled);
+  EXPECT_EQ(startup_config.health_config.fail_fast_disconnect_grace, std::chrono::minutes(10));
+}
+
+TEST_F(RuntimeConfigTest, FailFastOverridesLoadFromParameters)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.fail_fast.enabled", false);
+  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 12.5);
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_fail_fast_overrides", options);
+
+  EXPECT_FALSE(startup_config.health_config.fail_fast_enabled);
+  EXPECT_EQ(startup_config.health_config.fail_fast_disconnect_grace, std::chrono::milliseconds(12500));
+}
+
 TEST_F(RuntimeConfigTest, MissingTokenConfigurationThrows)
 {
   expectRuntimeConfigErrorContains("startup_config_missing_token", makeBaseOptions(), "livekit.token");

@@ -29,6 +29,25 @@ Startup fails if `livekit.token` is empty.
 
 The bridge reuses the configured startup token when it creates a fresh room connection. If that token expires, later reconnect attempts will fail until something outside the bridge restarts it with a fresh token.
 
+## Fail-fast health parameters
+
+The bridge can fail fast when it stays disconnected for too long. This is intended for external supervisors that restart the process and provide a fresh startup token.
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `health.fail_fast.enabled` | `true` | Enables non-zero exit after the disconnected grace window expires |
+| `health.fail_fast.disconnect_grace_seconds` | `600.0` | Maximum continuous disconnected time before the bridge exits |
+
+Important behavior:
+
+- the grace window starts at startup before the first successful LiveKit connection
+- the grace window is cleared after a successful connection
+- each reconnect episode arms a fresh grace window
+- when the grace window expires, the bridge logs the failure and exits non-zero
+- clean shutdown does not trigger fail-fast
+
+This is separate from static config validation. Missing `livekit.url`, `livekit.room`, or `livekit.token` still fail immediately at startup without waiting for the grace window.
+
 ## Access policy parameters
 
 Access rules are also startup-only:

@@ -62,6 +62,15 @@ RoomConnectionConfig loadConnectConfig(const Params & params)
   return config;
 }
 
+RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
+{
+  RuntimeConfig::HealthConfig config;
+  config.fail_fast_enabled = params.health.fail_fast.enabled;
+  config.fail_fast_disconnect_grace = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::duration<double>(params.health.fail_fast.disconnect_grace_seconds));
+  return config;
+}
+
 std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
@@ -570,6 +579,7 @@ RuntimeConfig loadRuntimeConfig(
 
     runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params);
     runtime_config.access_token = runtime_config.loaded_params.livekit.token;
+    runtime_config.health_config = loadHealthConfig(runtime_config.loaded_params);
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
     runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
     runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
@@ -578,6 +588,9 @@ RuntimeConfig loadRuntimeConfig(
       .kv("phase", "startup")
       .kvOr("room", runtime_config.connect_config.room, kUnsetLogValue)
       .kv("auth_mode", "static_token")
+      .kv("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
+      .kv(
+        "fail_fast_disconnect_grace_seconds", runtime_config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
       .info();
 
     return runtime_config;

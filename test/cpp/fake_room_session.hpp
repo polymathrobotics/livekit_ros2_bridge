@@ -175,6 +175,20 @@ public:
     }
   }
 
+  void emitConnected() const
+  {
+    if (state->callbacks.on_connected) {
+      state->callbacks.on_connected();
+    }
+  }
+
+  void emitReconnectRequested(const std::string & reason) const
+  {
+    if (state->callbacks.on_reconnect_requested) {
+      state->callbacks.on_reconnect_requested(reason);
+    }
+  }
+
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
     if (state->callbacks.on_participant_disconnected) {

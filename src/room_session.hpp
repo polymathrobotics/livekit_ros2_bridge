@@ -103,6 +103,11 @@ struct PublishedVideoTrack
 
 struct RoomSessionCallbacks
 {
+  // Called when a room connection becomes active.
+  std::function<void()> on_connected;
+  // Called when the current room connection begins a reconnect episode. The reason is a stable
+  // internal string such as `room_disconnected` or `connection_state_disconnected`.
+  std::function<void(const std::string &)> on_reconnect_requested;
   // Called after a connected session has been torn down and any per-connection room state should
   // be rebuilt on the next connect.
   std::function<void()> on_session_reset;
