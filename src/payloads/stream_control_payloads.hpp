@@ -23,6 +23,9 @@
 namespace livekit_ros2_bridge
 {
 
+// Control-path subscription heartbeats carry lease-backed demands and report status. RPC
+// request/response naming stays separate for RPC payloads such as service calls.
+
 /// Stable subscription target discriminators used in heartbeat and subscription-status payloads.
 enum class SubscriptionTargetKind
 {
@@ -37,20 +40,20 @@ struct SubscriptionTarget
   std::string name;
 };
 
-/// A single requested stream plus any non-zero delivery preference overrides.
-struct SubscriptionRequest
+/// A single lease-backed subscription demand plus any non-zero delivery preference overrides.
+struct SubscriptionDemand
 {
   SubscriptionTarget target;
   std::optional<int> preferred_interval_ms;
 };
 
-/// Parsed form of a subscriptions heartbeat.
+/// Parsed form of a subscriptions heartbeat carrying one demand set for a requester.
 struct SubscriptionHeartbeat
 {
   /// Optional trimmed session identifier. Missing, null, or blank values are treated as absent.
   std::optional<std::string> session_id;
-  /// Requested subscriptions in first-seen order after coalescing duplicate canonical targets.
-  std::vector<SubscriptionRequest> subscriptions;
+  /// Subscription demands in first-seen order after coalescing duplicate canonical targets.
+  std::vector<SubscriptionDemand> subscriptions;
 };
 
 enum class StreamDeliveryKind
@@ -75,10 +78,10 @@ struct StreamStatus
 };
 
 /// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
-/// Each subscription entry must contain required `kind` and `name` strings, plus an optional
+/// Each heartbeat demand must contain required `kind` and `name` strings, plus an optional
 /// `delivery_preferences.interval_ms` integer. `topic` names are normalized as ROS names,
 /// `configured_source` names are trimmed only, duplicate canonical targets are coalesced, and
-/// duplicate intervals keep the smallest non-zero value.
+/// duplicate demand intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
 /// Serialize one active stream-status entry. Data deliveries include

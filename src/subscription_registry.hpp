@@ -50,7 +50,9 @@ enum class RequesterLeaseRemovalReason
   kLeaseExpired
 };
 
-// Owns requester leases and shared subscription coordination across data and video.
+// Owns requester leases and shared subscription coordination across data and video. Multiple
+// heartbeat demands for one canonical target collapse into one shared runtime and one applied
+// delivery state.
 // For data topics, the registry owns one DataStreamInstance per shared topic lease set, and each
 // instance owns its one DataTrackPublisher for the LiveKit publication.
 class SubscriptionRegistry final
@@ -66,7 +68,7 @@ public:
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
   StreamStatus renewSubscription(
-    const std::string & requester_identity, const SubscriptionRequest & entry, Clock::time_point expiry);
+    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   StreamStatus renewSubscription(
     const std::string & requester_identity,
     const std::string & topic,
@@ -126,12 +128,12 @@ private:
   void renewExistingLease(
     SubscriptionState & sub, const std::string & requester_identity, const RequesterLease & requester_lease);
   SubscriptionState createVideoSubscription(
-    const SubscriptionRequest & entry,
+    const SubscriptionDemand & demand,
     const std::string & interface_type,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
   SubscriptionState createDataSubscription(
-    const SubscriptionRequest & entry,
+    const SubscriptionDemand & demand,
     const std::string & interface_type,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);

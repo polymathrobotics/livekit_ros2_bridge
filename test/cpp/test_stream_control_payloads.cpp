@@ -28,24 +28,24 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-void expectSingleSubscription(
+void expectSingleDemand(
   const nlohmann::json & body,
   SubscriptionTargetKind expected_kind,
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto update = parseSubscriptionHeartbeat(body);
-  ASSERT_EQ(update.subscriptions.size(), 1U);
+  const auto heartbeat = parseSubscriptionHeartbeat(body);
+  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
 
-  const SubscriptionRequest & entry = update.subscriptions[0];
-  EXPECT_EQ(entry.target.kind, expected_kind);
-  EXPECT_EQ(entry.target.name, expected_name);
-  EXPECT_EQ(entry.preferred_interval_ms, expected_interval_ms);
+  const SubscriptionDemand & demand = heartbeat.subscriptions[0];
+  EXPECT_EQ(demand.target.kind, expected_kind);
+  EXPECT_EQ(demand.target.name, expected_name);
+  EXPECT_EQ(demand.preferred_interval_ms, expected_interval_ms);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsNormalizedTopicAndInterval)
 {
-  expectSingleSubscription(
+  expectSingleDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"topic","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
@@ -55,7 +55,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsNormalizedTopicAndInterval
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterval)
 {
-  expectSingleSubscription(
+  expectSingleDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
@@ -65,7 +65,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterva
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatDefaultsIntervalToNullopt)
 {
-  expectSingleSubscription(
+  expectSingleDemand(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/camera"}]})"),
     SubscriptionTargetKind::Topic,
     "/camera",
@@ -136,7 +136,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOversizedIntervals)
   const nlohmann::json body = {
     {"subscriptions",
      {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", oversized_interval_ms}}}}}}};
-  expectSingleSubscription(body, SubscriptionTargetKind::Topic, "/lidar", expected_clamped_interval_ms);
+  expectSingleDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_clamped_interval_ms);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)

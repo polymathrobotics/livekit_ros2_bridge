@@ -111,10 +111,11 @@ TEST(ControlPacketRouterTest, RoutesHeartbeatPayloads)
   EXPECT_FALSE(probe.publish_call.has_value());
   EXPECT_EQ(probe.heartbeat_call->requester_identity, "participant-1");
   ASSERT_EQ(probe.heartbeat_call->heartbeat.subscriptions.size(), 1U);
-  EXPECT_EQ(probe.heartbeat_call->heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(probe.heartbeat_call->heartbeat.subscriptions[0].target.name, "/battery");
-  ASSERT_TRUE(probe.heartbeat_call->heartbeat.subscriptions[0].preferred_interval_ms.has_value());
-  EXPECT_EQ(*probe.heartbeat_call->heartbeat.subscriptions[0].preferred_interval_ms, 125);
+  const auto & demand = probe.heartbeat_call->heartbeat.subscriptions[0];
+  EXPECT_EQ(demand.target.kind, SubscriptionTargetKind::Topic);
+  EXPECT_EQ(demand.target.name, "/battery");
+  ASSERT_TRUE(demand.preferred_interval_ms.has_value());
+  EXPECT_EQ(*demand.preferred_interval_ms, 125);
   ASSERT_TRUE(probe.heartbeat_call->heartbeat.session_id.has_value());
   EXPECT_EQ(*probe.heartbeat_call->heartbeat.session_id, "session-1");
 }

@@ -92,9 +92,9 @@ const char * subscriptionKindToString(SubscriptionTargetKind target_kind)
   return target_kind == SubscriptionTargetKind::Topic ? "topic" : "configured_source";
 }
 
-SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & entry)
+SubscriptionDemand normalizeSubscriptionDemand(const SubscriptionDemand & demand)
 {
-  const auto & target = entry.target;
+  const auto & target = demand.target;
   const std::string canonical_name = target.kind == SubscriptionTargetKind::Topic
                                        ? normalizeRosResourceName(target.name)
                                        : trimConfiguredSourceName(target.name);
@@ -105,7 +105,7 @@ SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & ent
         : "heartbeat subscription target name must trim to a non-empty configured_source name");
   }
 
-  return SubscriptionRequest{{target.kind, canonical_name}, entry.preferred_interval_ms};
+  return SubscriptionDemand{{target.kind, canonical_name}, demand.preferred_interval_ms};
 }
 
 std::string ensureVideoStreamRunning(VideoStreamRegistry & video_stream_registry, const VideoStreamSpec & spec)
@@ -134,16 +134,16 @@ SubscriptionRegistry::SubscriptionRegistry(
 {}
 
 StreamStatus SubscriptionRegistry::renewSubscription(
-  const std::string & requester_identity, const SubscriptionRequest & entry, Clock::time_point expiry)
+  const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry)
 {
   requireRequesterIdentity(requester_identity);
-  const SubscriptionRequest normalized = normalizeSubscriptionRequest(entry);
-  const auto & target = normalized.target;
+  const SubscriptionDemand normalized_demand = normalizeSubscriptionDemand(demand);
+  const auto & target = normalized_demand.target;
   if (is_shutdown_.load()) {
     throw StreamUnavailableError("Subscription registry is shut down.");
   }
 
-  const int preferred_interval_ms = sanitizePreferredIntervalMs(normalized.preferred_interval_ms.value_or(0));
+  const int preferred_interval_ms = sanitizePreferredIntervalMs(normalized_demand.preferred_interval_ms.value_or(0));
   const std::string subscription_key = makeSubscriptionKey(target.kind, target.name);
   const RequesterLease requester_lease{preferred_interval_ms, expiry};
 
@@ -172,13 +172,13 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   std::string interface_type;
   try {
     if (target.kind == SubscriptionTargetKind::ConfiguredSource) {
-      sub = createVideoSubscription(normalized, "", requester_identity, requester_lease);
+      sub = createVideoSubscription(normalized_demand, "", requester_identity, requester_lease);
     } else {
       interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), target.name, "topic");
       if (classifyRosVideoInterfaceType(interface_type).has_value()) {
-        sub = createVideoSubscription(normalized, interface_type, requester_identity, requester_lease);
+        sub = createVideoSubscription(normalized_demand, interface_type, requester_identity, requester_lease);
       } else {
-        sub = createDataSubscription(normalized, interface_type, requester_identity, requester_lease);
+        sub = createDataSubscription(normalized_demand, interface_type, requester_identity, requester_lease);
       }
     }
   } catch (const std::exception & exc) {
@@ -228,7 +228,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   Clock::time_point expiry)
 {
   return renewSubscription(
-    requester_identity, SubscriptionRequest{{SubscriptionTargetKind::Topic, topic}, preferred_interval_ms}, expiry);
+    requester_identity, SubscriptionDemand{{SubscriptionTargetKind::Topic, topic}, preferred_interval_ms}, expiry);
 }
 
 void SubscriptionRegistry::markRequesterForDataTrackRepublish(
@@ -315,12 +315,12 @@ void SubscriptionRegistry::renewExistingLease(
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscription(
-  const SubscriptionRequest & entry,
+  const SubscriptionDemand & demand,
   const std::string & interface_type,
   const std::string & requester_identity,
   const RequesterLease & requester_lease)
 {
-  const auto & target = entry.target;
+  const auto & target = demand.target;
   SubscriptionState sub;
   sub.target_kind = target.kind;
   sub.resource = target.name;
@@ -335,12 +335,12 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
 }
 
 SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscription(
-  const SubscriptionRequest & entry,
+  const SubscriptionDemand & demand,
   const std::string & interface_type,
   const std::string & requester_identity,
   const RequesterLease & requester_lease)
 {
-  const auto & target = entry.target;
+  const auto & target = demand.target;
   SubscriptionState sub;
   sub.target_kind = target.kind;
   sub.resource = target.name;

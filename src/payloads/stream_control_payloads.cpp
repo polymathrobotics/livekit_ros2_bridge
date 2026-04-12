@@ -134,14 +134,14 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
   return {kind, std::move(name)};
 }
 
-SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
+SubscriptionDemand parseSubscriptionDemand(const nlohmann::json & entry)
 {
-  SubscriptionRequest result;
-  result.target = parseSubscriptionTarget(entry);
+  SubscriptionDemand demand;
+  demand.target = parseSubscriptionTarget(entry);
 
   const auto prefs_it = entry.find("delivery_preferences");
   if (prefs_it == entry.end()) {
-    return result;
+    return demand;
   }
 
   if (!prefs_it->is_object()) {
@@ -150,20 +150,20 @@ SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
 
   const int interval = parsePreferredIntervalMs(*prefs_it);
   if (interval == kNoPreferredIntervalOverrideMs) {
-    return result;
+    return demand;
   }
 
-  result.preferred_interval_ms = interval;
-  return result;
+  demand.preferred_interval_ms = interval;
+  return demand;
 }
 
 }  // namespace
 
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 {
-  SubscriptionHeartbeat update;
+  SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_key;
-  update.session_id =
+  heartbeat.session_id =
     parseOptionalNonEmptyTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
   const auto subs_it = body.find("subscriptions");
   if (subs_it == body.end()) {
@@ -179,25 +179,25 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
       throw std::invalid_argument("heartbeat subscription entries must be objects");
     }
 
-    SubscriptionRequest entry = parseSubscriptionRequest(entry_json);
-    const std::string index_key = makeSubscriptionTargetKey(entry.target);
-    const auto [it, inserted] = index_by_key.emplace(index_key, update.subscriptions.size());
+    SubscriptionDemand demand = parseSubscriptionDemand(entry_json);
+    const std::string index_key = makeSubscriptionTargetKey(demand.target);
+    const auto [it, inserted] = index_by_key.emplace(index_key, heartbeat.subscriptions.size());
     if (inserted) {
-      update.subscriptions.push_back(std::move(entry));
+      heartbeat.subscriptions.push_back(std::move(demand));
       continue;
     }
 
-    auto & existing = update.subscriptions[it->second];
-    // Heartbeats are treated as a set keyed by canonical target; repeated requests tighten the
+    auto & existing = heartbeat.subscriptions[it->second];
+    // Heartbeats carry a demand set keyed by canonical target; repeated demands tighten the
     // interval so the bridge keeps the most demanding subscriber cadence.
-    if (entry.preferred_interval_ms.has_value() && existing.preferred_interval_ms.has_value()) {
-      existing.preferred_interval_ms = std::min(*existing.preferred_interval_ms, *entry.preferred_interval_ms);
-    } else if (entry.preferred_interval_ms.has_value()) {
-      existing.preferred_interval_ms = entry.preferred_interval_ms;
+    if (demand.preferred_interval_ms.has_value() && existing.preferred_interval_ms.has_value()) {
+      existing.preferred_interval_ms = std::min(*existing.preferred_interval_ms, *demand.preferred_interval_ms);
+    } else if (demand.preferred_interval_ms.has_value()) {
+      existing.preferred_interval_ms = demand.preferred_interval_ms;
     }
   }
 
-  return update;
+  return heartbeat;
 }
 
 nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)

@@ -257,7 +257,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
 
   const auto topic_response = registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
-    "bob", SubscriptionRequest{{SubscriptionTargetKind::ConfiguredSource, "/sources/front"}, std::nullopt}, kFarFuture);
+    "bob", SubscriptionDemand{{SubscriptionTargetKind::ConfiguredSource, "/sources/front"}, std::nullopt}, kFarFuture);
 
   EXPECT_EQ(topic_response.delivery_kind, StreamDeliveryKind::kVideo);
   EXPECT_EQ(topic_response.track_name, "ros.video.camera.front");

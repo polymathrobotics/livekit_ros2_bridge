@@ -33,7 +33,7 @@ class RoomConnection;
 class SubscriptionRegistry;
 
 // Resolves heartbeat lease ownership, including anonymous renewals that present a still-leased
-// wire `session_id`, then renews the requested subscriptions and publishes one subscription-status
+// wire `session_id`, then renews the heartbeat demand set and publishes one subscription-status
 // envelope back.
 class SubscriptionHeartbeatProcessor final
 {
@@ -44,9 +44,9 @@ public:
     AccessPolicy access_policy,
     rclcpp::Clock::SharedPtr clock);
 
-  // Renews every requested stream for the resolved requester identity. Anonymous heartbeats are
+  // Renews every subscription demand for the resolved requester identity. Anonymous heartbeats are
   // accepted only when the wire session_id already maps to an active requester lease.
-  void process(const std::string & requester_identity, const SubscriptionHeartbeat & update);
+  void process(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
   // Expires only the client session leases used for anonymous-heartbeat fallback.
   void pruneExpiredClientSessionLeases();
 
@@ -63,7 +63,7 @@ private:
   // unexpired client session lease.
   std::optional<std::string> resolveRequesterIdentity(
     const std::string & requester_identity,
-    const SubscriptionHeartbeat & update,
+    const SubscriptionHeartbeat & heartbeat,
     std::chrono::steady_clock::time_point requester_lease_expiry);
   // Renews a client session lease for exactly one requester identity until requester_lease_expiry.
   // Conflicts are rejected so a delayed or replayed heartbeat cannot steal another requester's

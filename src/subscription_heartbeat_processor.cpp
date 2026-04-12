@@ -83,19 +83,19 @@ SubscriptionHeartbeatProcessor::SubscriptionHeartbeatProcessor(
 {}
 
 void SubscriptionHeartbeatProcessor::process(
-  const std::string & requester_identity, const SubscriptionHeartbeat & update)
+  const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
 {
   const auto requester_lease_expiry = std::chrono::steady_clock::now() + kRequesterLeaseDuration;
   const std::optional<std::string> resolved_requester_identity =
-    resolveRequesterIdentity(requester_identity, update, requester_lease_expiry);
+    resolveRequesterIdentity(requester_identity, heartbeat, requester_lease_expiry);
   if (!resolved_requester_identity.has_value()) {
     return;
   }
 
   nlohmann::json subscription_entries = nlohmann::json::array();
 
-  for (const auto & entry : update.subscriptions) {
-    const auto & target = entry.target;
+  for (const auto & demand : heartbeat.subscriptions) {
+    const auto & target = demand.target;
 
     if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
     {
@@ -106,7 +106,7 @@ void SubscriptionHeartbeatProcessor::process(
 
     try {
       auto stream_status =
-        subscription_registry_.renewSubscription(*resolved_requester_identity, entry, requester_lease_expiry);
+        subscription_registry_.renewSubscription(*resolved_requester_identity, demand, requester_lease_expiry);
       subscription_entries.push_back(serializeStreamStatus(stream_status));
     } catch (const StreamUnavailableError & exc) {
       appendSubscriptionError(subscription_entries, target, "unavailable", exc.what());
@@ -120,7 +120,7 @@ void SubscriptionHeartbeatProcessor::process(
   // because the previous publication belonged to the disconnected participant_session.
   subscription_registry_.republishDataTracksForRequester(*resolved_requester_identity);
   publishSubscriptionStatus(
-    *resolved_requester_identity, update.session_id, requester_lease_expiry, subscription_entries);
+    *resolved_requester_identity, heartbeat.session_id, requester_lease_expiry, subscription_entries);
 }
 
 void SubscriptionHeartbeatProcessor::pruneExpiredClientSessionLeases()
@@ -142,30 +142,30 @@ void SubscriptionHeartbeatProcessor::pruneExpiredClientSessionLeases()
 
 std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdentity(
   const std::string & requester_identity,
-  const SubscriptionHeartbeat & update,
+  const SubscriptionHeartbeat & heartbeat,
   std::chrono::steady_clock::time_point requester_lease_expiry)
 {
   if (!requester_identity.empty()) {
-    if (update.session_id.has_value()) {
-      if (!renewClientSessionLease(*update.session_id, requester_identity, requester_lease_expiry)) {
+    if (heartbeat.session_id.has_value()) {
+      if (!renewClientSessionLease(*heartbeat.session_id, requester_identity, requester_lease_expiry)) {
         return std::nullopt;
       }
     }
     return requester_identity;
   }
 
-  if (!update.session_id.has_value()) {
+  if (!heartbeat.session_id.has_value()) {
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
       .field("reason", "anonymous_requester_without_client_session")
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
 
-  const auto lease_it = client_session_leases_.find(*update.session_id);
+  const auto lease_it = client_session_leases_.find(*heartbeat.session_id);
   if (lease_it == client_session_leases_.end()) {
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
       .field("reason", "unknown_session_id")
-      .field("session_id", *update.session_id)
+      .field("session_id", *heartbeat.session_id)
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
@@ -176,7 +176,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   // it.
   lease_it->second.expiry = requester_lease_expiry;
   LogEvent(kHeartbeatProcessorLogger, "heartbeat_client_session_fallback")
-    .field("session_id", *update.session_id)
+    .field("session_id", *heartbeat.session_id)
     .field("requester_identity", lease_it->second.requester_identity)
     .field("reason", "anonymous_requester")
     .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);

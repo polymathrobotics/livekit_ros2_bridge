@@ -199,20 +199,34 @@ Examples:
 
 ### Control topics
 
+Within this project, the control-path vocabulary is:
+
+- `request` / `response` for RPCs
+- `command` for fire-and-forget execution requests
+- `heartbeat` for lease-renewal envelopes
+- `demand` for one lease-backed subscription declaration carried by a heartbeat
+- `status` for the bridge's reported outcome
+
 For fire-and-forget control traffic, prefer:
 
 - `Command`
 - `Heartbeat`
+- `Demand`
 - `Status`
-- `Entry`
 - `Update`
 
 Avoid introducing new internal `Request` names for fire-and-forget control payloads unless the wire contract already forces that name.
+
+Use `demand` for a lease-backed subscription declaration carried by a heartbeat. A demand names one
+requested subscription target plus any delivery preferences for that target.
+Multiple demands for the same canonical target aggregate into one shared runtime and one applied
+delivery state.
 
 Examples:
 
 - `TopicPublishCommand`
 - `SubscriptionHeartbeat`
+- `SubscriptionDemand`
 - `StreamStatus`
 
 ## Access control and lookup
