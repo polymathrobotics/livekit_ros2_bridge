@@ -7,6 +7,7 @@ The repository README is the fast path for deciding whether this package fits an
 | Understand how a client should use the bridge | [integration.md](./integration.md) |
 | Understand the LiveKit-facing contract | [protocol.md](./protocol.md) |
 | Implement heartbeat and stream handling correctly | [subscriptions.md](./subscriptions.md) |
+| Understand the implementation naming model | [naming.md](./naming.md) |
 | Configure auth, access rules, publish limits, and video entries | [runtime-configuration.md](./runtime-configuration.md) |
 | Understand allow and deny behavior | [access-control.md](./access-control.md) |
 | Configure ROS-backed and configured video sources | [video-sources.md](./video-sources.md) |
@@ -20,4 +21,4 @@ If you are building a LiveKit client, start with [integration.md](./integration.
 
 If you are enabling video delivery, read [video-sources.md](./video-sources.md), [runtime-configuration.md](./runtime-configuration.md), and [troubleshooting.md](./troubleshooting.md).
 
-If you are reading or changing the implementation, start with [runtime-architecture.md](./runtime-architecture.md), then [subscriptions.md](./subscriptions.md), and [testing.md](./testing.md).
+If you are reading or changing the implementation, start with [runtime-architecture.md](./runtime-architecture.md), then [naming.md](./naming.md), [subscriptions.md](./subscriptions.md), and [testing.md](./testing.md).
