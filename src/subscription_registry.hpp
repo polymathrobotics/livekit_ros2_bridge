@@ -16,12 +16,9 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -29,10 +26,9 @@
 #include <variant>
 #include <vector>
 
+#include "data_stream_instance.hpp"
 #include "payloads/stream_control_payloads.hpp"
-#include "rclcpp/generic_subscription.hpp"
 #include "rclcpp/node.hpp"
-#include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
 #include "utils/quiesce_guard.hpp"
 #include "video_stream_spec.hpp"
@@ -41,12 +37,6 @@ namespace livekit_ros2_bridge
 {
 
 class VideoStreamRegistry;
-
-using SendDataMessageFn =
-  std::function<void(const std::string & track_name, const std::uint8_t * data, std::size_t size)>;
-
-using PublishDataTrackFn = std::function<void(const std::string & track_name, std::size_t generation)>;
-using UnpublishDataTrackFn = std::function<void(const std::string & track_name)>;
 
 struct StreamUnavailableError : std::runtime_error
 {
@@ -59,8 +49,9 @@ enum class RequesterLeaseRemovalReason
   kLeaseExpired
 };
 
-// Owns requester leases, data-track republish bookkeeping, and the shared stream resources they
-// keep alive.
+// Owns requester leases and shared subscription coordination across data and video.
+// DataStreamInstance owns each shared topic-level data runtime, while DataTrackPublisher remains
+// the LiveKit transport edge for those registry-coordinated streams.
 class SubscriptionRegistry final
 {
 public:
@@ -103,30 +94,10 @@ public:
   void onDataTrackFailed(const std::string & track_name);
 
 private:
-  enum class DataTrackState
-  {
-    kNone,
-    kPending,
-    kPublished,
-    kFailed
-  };
-
   struct RequesterLease
   {
     int preferred_interval_ms = 0;
     Clock::time_point expiry;
-  };
-
-  struct DataTrackResource
-  {
-    std::shared_ptr<rclcpp::GenericSubscription> subscription_handle;
-    std::optional<Clock::time_point> last_sent_time;
-    std::string track_name;
-    int applied_interval_ms = 0;
-    DataTrackState data_track_state = DataTrackState::kNone;
-    // Snapshot of registry_generation_ when this track name was reserved. Publish completions must
-    // match it so stale callbacks cannot claim a recycled subscription after reset or re-create.
-    std::size_t generation = 0;
   };
 
   struct VideoTrackResource
@@ -141,7 +112,8 @@ private:
     std::string resource;
     std::string interface_type;
     std::map<std::string, RequesterLease> requesters;
-    std::variant<DataTrackResource, VideoTrackResource> resource_state = DataTrackResource{};
+    std::variant<std::shared_ptr<DataStreamInstance>, VideoTrackResource> resource_state =
+      std::shared_ptr<DataStreamInstance>{};
   };
 
   using SubscriptionStateMap = std::unordered_map<std::string, SubscriptionState>;
@@ -150,7 +122,6 @@ private:
 
   static StreamStatus makeStreamStatus(const SubscriptionState & sub);
   static int computeAppliedIntervalMs(const std::map<std::string, RequesterLease> & requesters);
-  static std::string deriveTrackName(const std::string & normalized_topic);
   static std::string makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource);
 
   void renewExistingLease(
@@ -166,15 +137,14 @@ private:
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
   void assignVideoMetadata(SubscriptionState & sub, VideoStreamSpec stream_spec, std::string track_name);
-  DataTrackResource createPendingDataTrackResource(
+  std::shared_ptr<DataStreamInstance> createDataStreamInstance(
     const std::string & topic,
     const std::string & interface_type,
-    const std::map<std::string, RequesterLease> & requesters,
-    const std::string & requester_identity);
-  void publishPendingDataTrack(
-    const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
+    const std::map<std::string, RequesterLease> & requesters);
   VideoStreamRegistry & videoStreamRegistry() const;
   const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
+  static DataStreamInstance * dataStreamInstance(SubscriptionState & sub);
+  static const DataStreamInstance * dataStreamInstance(const SubscriptionState & sub);
   void revokeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
     RequesterLeaseRemovalReason reason,
@@ -182,8 +152,6 @@ private:
   SubscriptionStateMap::iterator findByTrackName(const std::string & track_name);
   SubscriptionStateMap::iterator pruneRequesterState(
     SubscriptionStateMap::iterator it, RequesterLeaseRemovalReason reason);
-  void handleSerializedMessage(const std::string & topic, const rclcpp::SerializedMessage & message);
-  bool shouldSkipDueToInterval(DataTrackResource & resource);
   void destroyResource(SubscriptionState & sub);
   void clearSubscriptions();
 
