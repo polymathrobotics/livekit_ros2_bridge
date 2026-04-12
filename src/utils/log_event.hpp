@@ -41,31 +41,31 @@ public:
   }
 
   template <typename T>
-  LogEvent & kv(std::string_view key, const T & value)
+  LogEvent & field(std::string_view key, const T & value)
   {
     stream_ << " " << key << "=" << value;
     return *this;
   }
 
-  LogEvent & kv(std::string_view key, const char * value)
+  LogEvent & field(std::string_view key, const char * value)
   {
     stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent & fieldOr(std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=" << (value.empty() ? fallback : value);
     return *this;
   }
 
-  LogEvent & kvOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue)
   {
     stream_ << " " << key << "=";
     if (value == nullptr || value[0] == '\0') {

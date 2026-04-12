@@ -326,11 +326,11 @@ protected:
     first_sample_logged_ = false;
 
     LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_starting")
-      .kv("stream_key", spec_.stream_key)
-      .kv("track_name", spec_.track_name)
-      .kv("ingest_mode", spec_.ingest_mode)
-      .kv("expect_appsrc", expect_appsrc)
-      .kv("pipeline", pipeline_description)
+      .field("stream_key", spec_.stream_key)
+      .field("track_name", spec_.track_name)
+      .field("ingest_mode", spec_.ingest_mode)
+      .field("expect_appsrc", expect_appsrc)
+      .field("pipeline", pipeline_description)
       .info();
 
     GError * raw_error = nullptr;
@@ -379,9 +379,9 @@ protected:
     const GstStateChangeReturn change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
     if (change != GST_STATE_CHANGE_FAILURE) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_playing")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("state_change", static_cast<int>(change))
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("state_change", static_cast<int>(change))
         .info();
       return;
     }
@@ -456,9 +456,9 @@ private:
       frame = copySampleToPackedI420(sample.get());
     } catch (const std::exception & exc) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_sample_unpack_failed")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("error", exc.what())
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
         .warn();
       return GST_FLOW_ERROR;
     }
@@ -478,12 +478,12 @@ private:
 
       if (!first_sample_logged_) {
         LogEvent(kVideoStreamManagerLogger, "video_stream_sample_received")
-          .kv("stream_key", spec_.stream_key)
-          .kv("track_name", spec_.track_name)
-          .kv("width", frame.width)
-          .kv("height", frame.height)
-          .kv("bytes", frame.data.size())
-          .kv("timestamp_us", timestamp_us)
+          .field("stream_key", spec_.stream_key)
+          .field("track_name", spec_.track_name)
+          .field("width", frame.width)
+          .field("height", frame.height)
+          .field("bytes", frame.data.size())
+          .field("timestamp_us", timestamp_us)
           .info();
         first_sample_logged_ = true;
       }
@@ -494,9 +494,9 @@ private:
       return GST_FLOW_OK;
     } catch (const std::exception & exc) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_capture_failed")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("error", exc.what())
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
         .warn();
       return GST_FLOW_ERROR;
     }
@@ -532,9 +532,9 @@ private:
     }
 
     LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_failed")
-      .kv("stream_key", spec_.stream_key)
-      .kv("track_name", spec_.track_name)
-      .kv("reason", reason)
+      .field("stream_key", spec_.stream_key)
+      .field("track_name", spec_.track_name)
+      .field("reason", reason)
       .warn();
 
     if (failure_recovery_pending_) {
@@ -570,9 +570,9 @@ private:
       restartAfterFailureLocked();
     } catch (const std::exception & exc) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_restart_failed")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("error", exc.what())
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
         .warn();
     }
   }
@@ -630,18 +630,18 @@ private:
       resolveTopicSubscriptionQos(node_, spec_.ros_topic, base_qos, subscription_qos_config_);
 
     LogEvent(kVideoStreamManagerLogger, "subscription_qos_resolved")
-      .kv("resource", spec_.ros_topic)
-      .kv("kind", "topic")
-      .kv("delivery", "video")
-      .kv("interface_type", spec_.interface_type)
-      .kv("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
-      .kv("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
-      .kv("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-      .kv("used_publisher_info", resolved_qos.used_publisher_info)
-      .kv("mixed_reliability", resolved_qos.mixed_reliability)
-      .kv("mixed_durability", resolved_qos.mixed_durability)
-      .kv("override_id", resolved_qos.matched_override_id)
-      .kv("override_pattern", resolved_qos.matched_override_pattern)
+      .field("resource", spec_.ros_topic)
+      .field("kind", "topic")
+      .field("delivery", "video")
+      .field("interface_type", spec_.interface_type)
+      .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
+      .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
+      .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
+      .field("used_publisher_info", resolved_qos.used_publisher_info)
+      .field("mixed_reliability", resolved_qos.mixed_reliability)
+      .field("mixed_durability", resolved_qos.mixed_durability)
+      .field("override_id", resolved_qos.matched_override_id)
+      .field("override_pattern", resolved_qos.matched_override_pattern)
       .info();
 
     auto weak_self =
@@ -653,10 +653,10 @@ private:
         }
       });
     LogEvent(kVideoStreamManagerLogger, "video_stream_subscription_started")
-      .kv("stream_key", spec_.stream_key)
-      .kv("track_name", spec_.track_name)
-      .kv("topic", spec_.ros_topic)
-      .kv("interface_type", spec_.interface_type)
+      .field("stream_key", spec_.stream_key)
+      .field("track_name", spec_.track_name)
+      .field("topic", spec_.ros_topic)
+      .field("interface_type", spec_.interface_type)
       .info();
   }
 
@@ -670,12 +670,12 @@ private:
     try {
       if (!first_input_logged_) {
         LogEvent(kVideoStreamManagerLogger, "video_stream_input_received")
-          .kv("stream_key", spec_.stream_key)
-          .kv("track_name", spec_.track_name)
-          .kv("encoding", message->encoding)
-          .kv("width", message->width)
-          .kv("height", message->height)
-          .kv("step", message->step)
+          .field("stream_key", spec_.stream_key)
+          .field("track_name", spec_.track_name)
+          .field("encoding", message->encoding)
+          .field("width", message->width)
+          .field("height", message->height)
+          .field("step", message->step)
           .info();
         first_input_logged_ = true;
       }
@@ -689,9 +689,9 @@ private:
       pushRawImageLocked(*message, config);
     } catch (const std::exception & exc) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_push_failed")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("error", exc.what())
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
         .warn();
       stopPipelineLocked();
     }
@@ -815,18 +815,18 @@ private:
       resolveTopicSubscriptionQos(node_, spec_.ros_topic, base_qos, subscription_qos_config_);
 
     LogEvent(kVideoStreamManagerLogger, "subscription_qos_resolved")
-      .kv("resource", spec_.ros_topic)
-      .kv("kind", "topic")
-      .kv("delivery", "video")
-      .kv("interface_type", spec_.interface_type)
-      .kv("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
-      .kv("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
-      .kv("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-      .kv("used_publisher_info", resolved_qos.used_publisher_info)
-      .kv("mixed_reliability", resolved_qos.mixed_reliability)
-      .kv("mixed_durability", resolved_qos.mixed_durability)
-      .kv("override_id", resolved_qos.matched_override_id)
-      .kv("override_pattern", resolved_qos.matched_override_pattern)
+      .field("resource", spec_.ros_topic)
+      .field("kind", "topic")
+      .field("delivery", "video")
+      .field("interface_type", spec_.interface_type)
+      .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
+      .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
+      .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
+      .field("used_publisher_info", resolved_qos.used_publisher_info)
+      .field("mixed_reliability", resolved_qos.mixed_reliability)
+      .field("mixed_durability", resolved_qos.mixed_durability)
+      .field("override_id", resolved_qos.matched_override_id)
+      .field("override_pattern", resolved_qos.matched_override_pattern)
       .info();
 
     auto weak_self = std::weak_ptr<CompressedRosVideoIngestor>(
@@ -838,10 +838,10 @@ private:
         }
       });
     LogEvent(kVideoStreamManagerLogger, "video_stream_subscription_started")
-      .kv("stream_key", spec_.stream_key)
-      .kv("track_name", spec_.track_name)
-      .kv("topic", spec_.ros_topic)
-      .kv("interface_type", spec_.interface_type)
+      .field("stream_key", spec_.stream_key)
+      .field("track_name", spec_.track_name)
+      .field("topic", spec_.ros_topic)
+      .field("interface_type", spec_.interface_type)
       .info();
   }
 
@@ -855,10 +855,10 @@ private:
     try {
       if (!first_input_logged_) {
         LogEvent(kVideoStreamManagerLogger, "video_stream_input_received")
-          .kv("stream_key", spec_.stream_key)
-          .kv("track_name", spec_.track_name)
-          .kv("format", message->format)
-          .kv("bytes", message->data.size())
+          .field("stream_key", spec_.stream_key)
+          .field("track_name", spec_.track_name)
+          .field("format", message->format)
+          .field("bytes", message->data.size())
           .info();
         first_input_logged_ = true;
       }
@@ -876,9 +876,9 @@ private:
       pushCompressedImageLocked(*message);
     } catch (const std::exception & exc) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_push_failed")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("error", exc.what())
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
         .warn();
       stopPipelineLocked();
     }

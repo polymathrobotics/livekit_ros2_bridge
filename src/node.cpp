@@ -30,22 +30,22 @@ namespace livekit_ros2_bridge
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
-  LogEvent(get_logger(), "node_startup_begin").kv("phase", "startup").info();
+  LogEvent(get_logger(), "node_startup_begin").field("phase", "startup").info();
   RuntimeConfig runtime_config = [this]() {
     try {
       return loadRuntimeConfig(get_node_parameters_interface());
     } catch (const std::exception & exc) {
       LogEvent(get_logger(), "node_startup_failed")
-        .kv("phase", "startup")
-        .kv("reason", "runtime_config_load_failed")
-        .kv("error", exc.what())
+        .field("phase", "startup")
+        .field("reason", "runtime_config_load_failed")
+        .field("error", exc.what())
         .error();
       throw;
     } catch (...) {
       LogEvent(get_logger(), "node_startup_failed")
-        .kv("phase", "startup")
-        .kv("reason", "runtime_config_load_failed")
-        .kv("error", "unknown_exception")
+        .field("phase", "startup")
+        .field("reason", "runtime_config_load_failed")
+        .field("error", "unknown_exception")
         .error();
       throw;
     }
@@ -56,18 +56,18 @@ Node::Node(const rclcpp::NodeOptions & options)
     runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
   } catch (const std::exception & exc) {
     LogEvent(get_logger(), "node_startup_failed")
-      .kv("phase", "startup")
-      .kv("reason", "runtime_initialization_failed")
-      .kvOr("room", room, "<unset>")
-      .kv("error", exc.what())
+      .field("phase", "startup")
+      .field("reason", "runtime_initialization_failed")
+      .fieldOr("room", room, "<unset>")
+      .field("error", exc.what())
       .error();
     throw;
   } catch (...) {
     LogEvent(get_logger(), "node_startup_failed")
-      .kv("phase", "startup")
-      .kv("reason", "runtime_initialization_failed")
-      .kvOr("room", room, "<unset>")
-      .kv("error", "unknown_exception")
+      .field("phase", "startup")
+      .field("reason", "runtime_initialization_failed")
+      .fieldOr("room", room, "<unset>")
+      .field("error", "unknown_exception")
       .error();
     throw;
   }
@@ -75,9 +75,9 @@ Node::Node(const rclcpp::NodeOptions & options)
 
 Node::~Node()
 {
-  LogEvent(get_logger(), "node_shutdown_start").kv("phase", "shutdown").info();
+  LogEvent(get_logger(), "node_shutdown_start").field("phase", "shutdown").info();
   runtime_.reset();
-  LogEvent(get_logger(), "node_shutdown_complete").kv("phase", "shutdown").info();
+  LogEvent(get_logger(), "node_shutdown_complete").field("phase", "shutdown").info();
 }
 
 }  // namespace livekit_ros2_bridge

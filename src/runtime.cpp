@@ -70,7 +70,10 @@ Runtime::Runtime(
     hooks_.exit_hook = [](int exit_code) { std::_Exit(exit_code); };
   }
 
-  LogEvent(node_.get_logger(), "runtime_startup_begin").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_startup_begin")
+    .field("phase", "startup")
+    .fieldOr("room", room_, "<unset>")
+    .info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   cdr_track_publisher_ = std::make_unique<CdrTrackPublisher>(*room_session_, node_.get_clock());
@@ -155,9 +158,9 @@ Runtime::Runtime(
     kReconnectMaxBackoff);
   if (!rpc_router_->registerRpcMethods(*room_session_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
-      .kv("phase", "startup")
-      .kv("reason", "required_rpc_registration_failed")
-      .kvOr("room", room_, "<unset>")
+      .field("phase", "startup")
+      .field("reason", "required_rpc_registration_failed")
+      .fieldOr("room", room_, "<unset>")
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
@@ -187,7 +190,10 @@ void Runtime::shutdown()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start").kv("phase", "shutdown").kvOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_start")
+    .field("phase", "shutdown")
+    .fieldOr("room", room_, "<unset>")
+    .info();
 
   lease_gc_timer_.reset();
   fail_fast_timer_.reset();
@@ -220,8 +226,8 @@ void Runtime::shutdown()
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_complete")
-    .kv("phase", "shutdown")
-    .kvOr("room", room_, "<unset>")
+    .field("phase", "shutdown")
+    .fieldOr("room", room_, "<unset>")
     .info();
 }
 
@@ -300,19 +306,19 @@ void Runtime::evaluateFailFast()
 
 void Runtime::emitReadyLogs()
 {
-  LogEvent(node_.get_logger(), "runtime_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
-  LogEvent(node_.get_logger(), "node_ready").kv("phase", "startup").kvOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_ready").field("phase", "startup").fieldOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "node_ready").field("phase", "startup").fieldOr("room", room_, "<unset>").info();
 }
 
 void Runtime::requestFailFastExit(const std::string & disconnect_reason, bool ready_once)
 {
   LogEvent(node_.get_logger(), "runtime_fail_fast_triggered")
-    .kv("phase", ready_once ? "reconnect" : "startup")
-    .kv("reason", "disconnect_grace_expired")
-    .kv("disconnect_reason", disconnect_reason)
-    .kvOr("room", room_, "<unset>")
-    .kv("grace_seconds", fail_fast_disconnect_grace_.count() / 1000.0)
-    .kv("ready_once", ready_once)
+    .field("phase", ready_once ? "reconnect" : "startup")
+    .field("reason", "disconnect_grace_expired")
+    .field("disconnect_reason", disconnect_reason)
+    .fieldOr("room", room_, "<unset>")
+    .field("grace_seconds", fail_fast_disconnect_grace_.count() / 1000.0)
+    .field("ready_once", ready_once)
     .error();
   hooks_.shutdown_hook();
   std::this_thread::sleep_for(kFailFastExitDelay);
@@ -324,9 +330,9 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
   auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
     if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
       LogEvent(node_.get_logger(), "executor_work_dropped")
-        .kv("reason", reason)
-        .kv("stage", stage)
-        .kv("count", count)
+        .field("reason", reason)
+        .field("stage", stage)
+        .field("count", count)
         .warn();
     }
   };
@@ -343,9 +349,9 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
     auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
       if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
         LogEvent(node_.get_logger(), "executor_work_dropped")
-          .kv("reason", reason)
-          .kv("stage", stage)
-          .kv("count", count)
+          .field("reason", reason)
+          .field("stage", stage)
+          .field("count", count)
           .warn();
       }
     };
@@ -364,10 +370,10 @@ void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) 
   auto logControlPacketDrop = [this, &packet](const char * reason, EventThrottle & throttle) {
     if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
       LogEvent(node_.get_logger(), "control_packet_dropped")
-        .kv("reason", reason)
-        .kv("control_topic", packet.control_topic)
-        .kvOr("requester_identity", packet.requester_identity)
-        .kv("count", count)
+        .field("reason", reason)
+        .field("control_topic", packet.control_topic)
+        .fieldOr("requester_identity", packet.requester_identity)
+        .field("count", count)
         .warn();
     }
   };

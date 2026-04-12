@@ -205,15 +205,15 @@ void RosExecutorQueue::wake_executor()
     waitable->wake_executor();
   } catch (const std::exception & exc) {
     LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .kv("reason", "exception")
-      .kv("action", "shutdown")
-      .kv("error", exc.what())
+      .field("reason", "exception")
+      .field("action", "shutdown")
+      .field("error", exc.what())
       .error();
     shutdown();
   } catch (...) {
     LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .kv("reason", "unknown_error")
-      .kv("action", "shutdown")
+      .field("reason", "unknown_error")
+      .field("action", "shutdown")
       .error();
     shutdown();
   }
@@ -249,9 +249,9 @@ void RosExecutorQueue::shutdown()
 
   if (canceled_count > 0U) {
     LogEvent(kRosExecutorQueueLogger, "executor_queue_settled")
-      .kv("reason", "shutdown")
-      .kv("action", "cancel_pending")
-      .kv("count", canceled_count)
+      .field("reason", "shutdown")
+      .field("action", "cancel_pending")
+      .field("count", canceled_count)
       .warn();
   }
 
@@ -291,14 +291,14 @@ void RosExecutorQueue::drain()
       task.run();
     } catch (const std::exception & exc) {
       LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .kv("reason", "exception")
-        .kv("action", "continue")
-        .kv("error", exc.what())
+        .field("reason", "exception")
+        .field("action", "continue")
+        .field("error", exc.what())
         .error();
     } catch (...) {
       LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .kv("reason", "unknown_exception")
-        .kv("action", "continue")
+        .field("reason", "unknown_exception")
+        .field("action", "continue")
         .error();
     }
   }

@@ -38,14 +38,14 @@ void unpublishTrackSafely(
 {
   try {
     session.unpublishCdrTrack(track);
-    LogEvent(kCdrTrackPublisherLogger, "cdr_track_unpublished").kv("track_name", track_name).info();
+    LogEvent(kCdrTrackPublisherLogger, "cdr_track_unpublished").field("track_name", track_name).info();
   } catch (const std::exception & exc) {
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_unpublish_failed")
-      .kv("track_name", track_name)
-      .kv("error", exc.what())
+      .field("track_name", track_name)
+      .field("error", exc.what())
       .warn();
   } catch (...) {
-    LogEvent(kCdrTrackPublisherLogger, "cdr_track_unpublish_failed").kv("track_name", track_name).warn();
+    LogEvent(kCdrTrackPublisherLogger, "cdr_track_unpublish_failed").field("track_name", track_name).warn();
   }
 }
 }  // namespace
@@ -67,14 +67,14 @@ void CdrTrackPublisher::pushMessage(const std::string & track_name, const std::u
       // CDR forwarding is intentionally best-effort. Dropping here keeps the ROS subscription
       // callback non-blocking even when the participant is not draining the LiveKit queue.
       LogEvent(kCdrTrackPublisherLogger, "cdr_track_delivery_dropped")
-        .kv("track_name", track_name)
-        .kv("reason", "queue_full")
+        .field("track_name", track_name)
+        .field("reason", "queue_full")
         .warnThrottle(*clock_, kPushFailureLogThrottlePeriod);
       return;
     }
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_push_failed")
-      .kv("track_name", track_name)
-      .kv("error", result.error().message)
+      .field("track_name", track_name)
+      .field("error", result.error().message)
       .warnThrottle(*clock_, kPushFailureLogThrottlePeriod);
   }
 }
@@ -90,30 +90,30 @@ void CdrTrackPublisher::publishTrack(
     const bool publish_still_current = subscription_registry.onCdrTrackPublished(track_name, generation);
     if (!publish_still_current) {
       LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_reclaimed")
-        .kv("track_name", track_name)
-        .kv("generation", generation)
-        .kv("reason", "stale_registry_state")
+        .field("track_name", track_name)
+        .field("generation", generation)
+        .field("reason", "stale_registry_state")
         .info();
       unpublishTrackSafely(session_, track_name, track);
       return;
     }
     published_tracks_[track_name] = std::move(track);
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_completed")
-      .kv("track_name", track_name)
-      .kv("generation", generation)
+      .field("track_name", track_name)
+      .field("generation", generation)
       .info();
   } catch (const std::exception & exc) {
     subscription_registry.onCdrTrackFailed(track_name);
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_error")
-      .kv("track_name", track_name)
-      .kv("generation", generation)
-      .kv("error", exc.what())
+      .field("track_name", track_name)
+      .field("generation", generation)
+      .field("error", exc.what())
       .warn();
   } catch (...) {
     subscription_registry.onCdrTrackFailed(track_name);
     LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_error")
-      .kv("track_name", track_name)
-      .kv("generation", generation)
+      .field("track_name", track_name)
+      .field("generation", generation)
       .warn();
   }
 }

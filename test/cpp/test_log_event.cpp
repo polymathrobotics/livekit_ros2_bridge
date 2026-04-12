@@ -48,19 +48,19 @@ public:
 TEST(LogEventTest, BuildsStructuredMessageInFieldOrder)
 {
   const std::string message = LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-                                .kv("count", 3U)
-                                .kv("success", true)
-                                .kv("status", "ok")
+                                .field("count", 3U)
+                                .field("success", true)
+                                .field("status", "ok")
                                 .str();
 
   EXPECT_EQ(message, "event=sample_event count=3 success=true status=ok");
 }
 
-TEST(LogEventTest, KvOrUsesFallbackForEmptyValues)
+TEST(LogEventTest, FieldOrUsesFallbackForEmptyValues)
 {
   const std::string message = LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-                                .kvOr("missing", std::string{}, "<unset>")
-                                .kvOr("present", std::string("value"))
+                                .fieldOr("missing", std::string{}, "<unset>")
+                                .fieldOr("present", std::string("value"))
                                 .str();
 
   EXPECT_EQ(message, "event=sample_event missing=<unset> present=value");
@@ -72,7 +72,7 @@ TEST(LogEventTest, WarnThrottleSmokeTest)
   rclcpp::Clock clock(RCL_SYSTEM_TIME);
 
   LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-    .kv("detail", "value")
+    .field("detail", "value")
     .warnThrottle(clock, std::chrono::milliseconds(0));
 
   SUCCEED();

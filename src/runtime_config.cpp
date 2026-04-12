@@ -585,29 +585,29 @@ RuntimeConfig loadRuntimeConfig(
     runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
-      .kv("phase", "startup")
-      .kvOr("room", runtime_config.connect_config.room, kUnsetLogValue)
-      .kv("auth_mode", "static_token")
-      .kv("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
-      .kv(
+      .field("phase", "startup")
+      .fieldOr("room", runtime_config.connect_config.room, kUnsetLogValue)
+      .field("auth_mode", "static_token")
+      .field("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
+      .field(
         "fail_fast_disconnect_grace_seconds", runtime_config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
       .info();
 
     return runtime_config;
   } catch (const std::exception & exc) {
     LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
-      .kv("phase", "startup")
-      .kv("reason", "config_validation_failed")
-      .kv("room", room)
-      .kv("error", exc.what())
+      .field("phase", "startup")
+      .field("reason", "config_validation_failed")
+      .field("room", room)
+      .field("error", exc.what())
       .error();
     throw;
   } catch (...) {
     LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
-      .kv("phase", "startup")
-      .kv("reason", "config_validation_failed")
-      .kv("room", room)
-      .kv("error", "unknown_exception")
+      .field("phase", "startup")
+      .field("reason", "config_validation_failed")
+      .field("room", room)
+      .field("error", "unknown_exception")
       .error();
     throw;
   }

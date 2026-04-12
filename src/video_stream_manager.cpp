@@ -99,8 +99,8 @@ public:
     }
     if (published_track) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_track_unpublishing")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
         .info();
       session_.unpublishVideoTrack(published_track);
     }
@@ -151,12 +151,12 @@ private:
     const bool republishing = published_track_ != nullptr;
     if (published_track_) {
       LogEvent(kVideoStreamManagerLogger, "video_stream_track_replacing")
-        .kv("stream_key", spec_.stream_key)
-        .kv("track_name", spec_.track_name)
-        .kv("previous_width", published_width_)
-        .kv("previous_height", published_height_)
-        .kv("next_width", width)
-        .kv("next_height", height)
+        .field("stream_key", spec_.stream_key)
+        .field("track_name", spec_.track_name)
+        .field("previous_width", published_width_)
+        .field("previous_height", published_height_)
+        .field("next_width", width)
+        .field("next_height", height)
         .info();
       session_.unpublishVideoTrack(published_track_);
       published_track_.reset();
@@ -169,10 +169,10 @@ private:
 
     LogEvent(
       kVideoStreamManagerLogger, republishing ? "video_stream_track_republished" : "video_stream_track_published")
-      .kv("stream_key", spec_.stream_key)
-      .kv("track_name", spec_.track_name)
-      .kv("width", width)
-      .kv("height", height)
+      .field("stream_key", spec_.stream_key)
+      .field("track_name", spec_.track_name)
+      .field("width", width)
+      .field("height", height)
       .info();
   }
 

@@ -578,23 +578,23 @@ void RosServiceCaller::Impl::logPendingSettlementSummary(
 
   if (warn) {
     LogEvent(logger, "service_calls_settled")
-      .kv("reason", reason)
-      .kv("action", action)
-      .kv("service", service)
-      .kv("interface_type", interface_type)
-      .kv("requester_identity", requester_identity)
-      .kv("count", count)
+      .field("reason", reason)
+      .field("action", action)
+      .field("service", service)
+      .field("interface_type", interface_type)
+      .field("requester_identity", requester_identity)
+      .field("count", count)
       .warn();
     return;
   }
 
   LogEvent(logger, "service_calls_settled")
-    .kv("reason", reason)
-    .kv("action", action)
-    .kv("service", service)
-    .kv("interface_type", interface_type)
-    .kv("requester_identity", requester_identity)
-    .kv("count", count)
+    .field("reason", reason)
+    .field("action", action)
+    .field("service", service)
+    .field("interface_type", interface_type)
+    .field("requester_identity", requester_identity)
+    .field("count", count)
     .info();
 }
 
@@ -637,11 +637,11 @@ void RosServiceCaller::Impl::drainResponses()
       if (call_it == pending_calls.end()) {
         if (const std::size_t count = late_response_drop_throttle.recordAndCheck(); count > 0U) {
           LogEvent(kRosServiceCallerLogger, "service_response_dropped")
-            .kv("reason", "late_or_unknown_pending_call")
-            .kv("service", cached->service_name)
-            .kv("interface_type", cached->service_type_name)
-            .kv("sequence_number", static_cast<long long>(header.sequence_number))
-            .kv("count", count)
+            .field("reason", "late_or_unknown_pending_call")
+            .field("service", cached->service_name)
+            .field("interface_type", cached->service_type_name)
+            .field("sequence_number", static_cast<long long>(header.sequence_number))
+            .field("count", count)
             .warn();
         }
         continue;
@@ -739,12 +739,12 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
   } catch (const std::exception & exc) {
     if (inflight.has_value()) {
       LogEvent(kRosServiceCallerLogger, "service_call_failed")
-        .kv("reason", "start_failed")
-        .kv("service", request.service)
-        .kv("interface_type", interface_type)
-        .kv("requester_identity", requester_identity)
-        .kv("action", "fail_future")
-        .kv("error", exc.what())
+        .field("reason", "start_failed")
+        .field("service", request.service)
+        .field("interface_type", interface_type)
+        .field("requester_identity", requester_identity)
+        .field("action", "fail_future")
+        .field("error", exc.what())
         .error();
     }
     result_promise.set_exception(std::current_exception());
@@ -754,11 +754,11 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
   const PendingCallKey pending_call_key{cached, sequence_number};
   if (impl_->pending_calls.find(pending_call_key) != impl_->pending_calls.end()) {
     LogEvent(kRosServiceCallerLogger, "service_call_failed")
-      .kv("reason", "duplicate_pending_key")
-      .kv("service", request.service)
-      .kv("interface_type", interface_type)
-      .kv("requester_identity", requester_identity)
-      .kv("action", "fail_future")
+      .field("reason", "duplicate_pending_key")
+      .field("service", request.service)
+      .field("interface_type", interface_type)
+      .field("requester_identity", requester_identity)
+      .field("action", "fail_future")
       .error();
     result_promise.set_exception(std::make_exception_ptr(std::runtime_error("Duplicate pending service call key.")));
     return result_future;

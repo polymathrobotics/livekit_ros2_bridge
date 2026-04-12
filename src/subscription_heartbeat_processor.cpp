@@ -127,8 +127,8 @@ void SubscriptionHeartbeatProcessor::sweepExpiredSessionLeases()
     }
 
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_expired")
-      .kv("session_id", it->first)
-      .kv("requester_identity", it->second.requester_identity)
+      .field("session_id", it->first)
+      .field("requester_identity", it->second.requester_identity)
       .info();
     it = session_leases_.erase(it);
   }
@@ -150,7 +150,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
 
   if (!update.session_id.has_value()) {
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
-      .kv("reason", "anonymous_requester_without_session")
+      .field("reason", "anonymous_requester_without_session")
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
@@ -158,8 +158,8 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   const auto lease_it = session_leases_.find(*update.session_id);
   if (lease_it == session_leases_.end()) {
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_dropped")
-      .kv("reason", "unknown_session_id")
-      .kv("session_id", *update.session_id)
+      .field("reason", "unknown_session_id")
+      .field("session_id", *update.session_id)
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
     return std::nullopt;
   }
@@ -169,9 +169,9 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   // authenticated browser tab and continue renewing that tab's leases instead of dropping them.
   lease_it->second.expiry = expiry;
   LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_fallback")
-    .kv("session_id", *update.session_id)
-    .kv("requester_identity", lease_it->second.requester_identity)
-    .kv("reason", "anonymous_requester")
+    .field("session_id", *update.session_id)
+    .field("requester_identity", lease_it->second.requester_identity)
+    .field("reason", "anonymous_requester")
     .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   return lease_it->second.requester_identity;
 }
@@ -183,8 +183,8 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   if (it == session_leases_.end()) {
     session_leases_.emplace(session_id, SessionLease{requester_identity, expiry});
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_bound")
-      .kv("session_id", session_id)
-      .kv("requester_identity", requester_identity)
+      .field("session_id", session_id)
+      .field("requester_identity", requester_identity)
       .info();
     return true;
   }
@@ -192,11 +192,11 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   if (it->second.requester_identity != requester_identity) {
     if (const std::size_t count = session_conflict_throttle_.recordAndCheck(); count > 0U) {
       LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_conflict")
-        .kv("reason", "requester_identity_mismatch")
-        .kv("session_id", session_id)
-        .kv("requester_identity", requester_identity)
-        .kv("existing_requester_identity", it->second.requester_identity)
-        .kv("count", count)
+        .field("reason", "requester_identity_mismatch")
+        .field("session_id", session_id)
+        .field("requester_identity", requester_identity)
+        .field("existing_requester_identity", it->second.requester_identity)
+        .field("count", count)
         .warn();
     }
     return false;
@@ -238,9 +238,9 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
     room_session_.publishControlPacket(packet);
   } catch (const std::exception & exc) {
     LogEvent(kHeartbeatProcessorLogger, "subscription_status_publish_failed")
-      .kv("requester_identity", requester_identity)
-      .kv("control_topic", packet.control_topic)
-      .kv("error", exc.what())
+      .field("requester_identity", requester_identity)
+      .field("control_topic", packet.control_topic)
+      .field("error", exc.what())
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   }
 }

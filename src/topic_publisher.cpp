@@ -66,22 +66,22 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   // intentionally best-effort: invalid or late commands are dropped after logging.
   if (is_shutdown_.load()) {
     LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .kv("reason", "shutdown")
-      .kv("resource", "topics")
-      .kv("topic", topic)
-      .kv("requester_identity", requester_identity)
-      .kv("interface_type", command.interface_type)
+      .field("reason", "shutdown")
+      .field("resource", "topics")
+      .field("topic", topic)
+      .field("requester_identity", requester_identity)
+      .field("interface_type", command.interface_type)
       .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(kPublishLogThrottleMs));
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
     LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .kv("reason", "forbidden")
-      .kv("resource", "topics")
-      .kv("topic", topic)
-      .kv("requester_identity", requester_identity)
-      .kv("interface_type", command.interface_type)
+      .field("reason", "forbidden")
+      .field("resource", "topics")
+      .field("topic", topic)
+      .field("requester_identity", requester_identity)
+      .field("interface_type", command.interface_type)
       .warn();
     return;
   }
@@ -91,12 +91,12 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
   } catch (const std::exception & exc) {
     LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .kv("reason", "invalid_request")
-      .kv("resource", "topics")
-      .kv("topic", topic)
-      .kv("requester_identity", requester_identity)
-      .kv("interface_type", command.interface_type)
-      .kv("error", exc.what())
+      .field("reason", "invalid_request")
+      .field("resource", "topics")
+      .field("topic", topic)
+      .field("requester_identity", requester_identity)
+      .field("interface_type", command.interface_type)
+      .field("error", exc.what())
       .warn();
     return;
   }
@@ -107,12 +107,12 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     publishWithPublisherCache(topic, interface_type, serialized);
   } catch (const std::exception & exc) {
     LogEvent(kTopicPublisherLogger, "publish_request_failed")
-      .kv("reason", "internal")
-      .kv("resource", "topics")
-      .kv("topic", topic)
-      .kv("requester_identity", requester_identity)
-      .kv("interface_type", interface_type)
-      .kv("error", exc.what())
+      .field("reason", "internal")
+      .field("resource", "topics")
+      .field("topic", topic)
+      .field("requester_identity", requester_identity)
+      .field("interface_type", interface_type)
+      .field("error", exc.what())
       .error();
     return;
   }
@@ -126,9 +126,9 @@ void RosTopicPublisher::shutdown()
 
   const std::size_t cached_publishers = publishers_.size();
   LogEvent(kTopicPublisherLogger, "topic_publisher_state_changed")
-    .kv("reason", "shutdown")
-    .kv("action", "clear_cached_publishers")
-    .kv("cached_publishers", cached_publishers)
+    .field("reason", "shutdown")
+    .field("action", "clear_cached_publishers")
+    .field("cached_publishers", cached_publishers)
     .info();
 
   publishers_.clear();
@@ -188,12 +188,12 @@ void RosTopicPublisher::publishWithPublisherCache(
 
   if (const std::size_t count = publisher_cache_eviction_throttle_.recordAndCheck(); count > 0U) {
     LogEvent(kTopicPublisherLogger, "publisher_cache_evicted")
-      .kv("reason", "max_topics_exceeded")
-      .kv("topic", topic)
-      .kv("evicted_topic", evicted_entry->key)
-      .kv("count", count)
-      .kv("policy", "lru")
-      .kv("max_topics", static_cast<int>(max_cached_publishers_))
+      .field("reason", "max_topics_exceeded")
+      .field("topic", topic)
+      .field("evicted_topic", evicted_entry->key)
+      .field("count", count)
+      .field("policy", "lru")
+      .field("max_topics", static_cast<int>(max_cached_publishers_))
       .warn();
   }
 }

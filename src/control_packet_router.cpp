@@ -61,10 +61,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
       body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
     } catch (const std::exception & exc) {
       LogEvent(logger_, "control_packet_rejected")
-        .kv("reason", "malformed_heartbeat")
-        .kv("control_topic", packet.control_topic)
-        .kvOr("requester_identity", packet.requester_identity)
-        .kv("error", exc.what())
+        .field("reason", "malformed_heartbeat")
+        .field("control_topic", packet.control_topic)
+        .fieldOr("requester_identity", packet.requester_identity)
+        .field("error", exc.what())
         .warnThrottle(*clock_, rejection_log_interval);
       return;
     }
@@ -73,10 +73,10 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
       handlers_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
     } catch (const std::exception & exc) {
       LogEvent(logger_, "control_packet_rejected")
-        .kv("reason", "invalid_heartbeat")
-        .kv("control_topic", packet.control_topic)
-        .kvOr("requester_identity", packet.requester_identity)
-        .kv("error", exc.what())
+        .field("reason", "invalid_heartbeat")
+        .field("control_topic", packet.control_topic)
+        .fieldOr("requester_identity", packet.requester_identity)
+        .field("error", exc.what())
         .warnThrottle(*clock_, rejection_log_interval);
     }
     return;
@@ -85,9 +85,9 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
   if (packet.control_topic == protocol::kControlTopicPublish) {
     if (packet.requester_identity.empty()) {
       LogEvent(logger_, "control_packet_rejected")
-        .kv("reason", "missing_requester_identity")
-        .kv("control_topic", packet.control_topic)
-        .kvOr("requester_identity", packet.requester_identity)
+        .field("reason", "missing_requester_identity")
+        .field("control_topic", packet.control_topic)
+        .fieldOr("requester_identity", packet.requester_identity)
         .warnThrottle(*clock_, rejection_log_interval);
       return;
     }
@@ -96,19 +96,19 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
       handlers_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
     } catch (const std::exception & exc) {
       LogEvent(logger_, "control_packet_rejected")
-        .kv("reason", "invalid_publish_command")
-        .kv("control_topic", packet.control_topic)
-        .kvOr("requester_identity", packet.requester_identity)
-        .kv("error", exc.what())
+        .field("reason", "invalid_publish_command")
+        .field("control_topic", packet.control_topic)
+        .fieldOr("requester_identity", packet.requester_identity)
+        .field("error", exc.what())
         .warnThrottle(*clock_, rejection_log_interval);
     }
     return;
   }
 
   LogEvent(logger_, "control_packet_dropped")
-    .kv("reason", "unsupported_control_topic")
-    .kv("control_topic", packet.control_topic)
-    .kvOr("requester_identity", packet.requester_identity)
+    .field("reason", "unsupported_control_topic")
+    .field("control_topic", packet.control_topic)
+    .fieldOr("requester_identity", packet.requester_identity)
     .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
 }
 
