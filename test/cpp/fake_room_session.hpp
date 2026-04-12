@@ -29,7 +29,7 @@
 namespace livekit_ros2_bridge
 {
 
-constexpr char kUnknownCdrTrackName[] = "<unknown>";
+constexpr char kUnknownDataTrackName[] = "<unknown>";
 
 struct FakeRoomSessionState
 {
@@ -41,17 +41,17 @@ struct FakeRoomSessionState
   std::vector<std::string> unregistered_rpc_methods;
   std::vector<std::string> event_log;
   std::vector<OutgoingControlPacket> published_outgoing_control_packets;
-  std::vector<std::string> published_cdr_track_names;
-  std::vector<std::string> unpublished_cdr_track_names;
+  std::vector<std::string> published_data_track_names;
+  std::vector<std::string> unpublished_data_track_names;
   std::vector<std::string> published_video_track_names;
   std::vector<VideoPublishConfig> published_video_configs;
   std::vector<std::string> unpublished_video_track_names;
-  std::vector<std::string> unpublish_attempted_cdr_track_names;
-  std::vector<std::string> unpublish_rejected_cdr_track_names;
+  std::vector<std::string> unpublish_attempted_data_track_names;
+  std::vector<std::string> unpublish_rejected_data_track_names;
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
   std::function<void(const RoomSessionCallbacks & callbacks)> stop_hook;
-  std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_cdr_track_handler;
+  std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   bool throw_on_publish_control_packet = false;
   int publish_control_packet_call_count = 0;
 };
@@ -109,31 +109,31 @@ public:
     state->published_outgoing_control_packets.push_back(packet);
   }
 
-  std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) override
+  std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
   {
-    state->event_log.push_back("publish_cdr_track:" + name);
-    state->published_cdr_track_names.push_back(name);
-    auto track = state->publish_cdr_track_handler ? state->publish_cdr_track_handler(name) : makeSyntheticCdrTrack();
+    state->event_log.push_back("publish_data_track:" + name);
+    state->published_data_track_names.push_back(name);
+    auto track = state->publish_data_track_handler ? state->publish_data_track_handler(name) : makeSyntheticDataTrack();
     if (track != nullptr) {
-      cdr_track_names_[track.get()] = name;
+      data_track_names_[track.get()] = name;
     }
     return track;
   }
 
-  void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
+  void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
-    const std::string name = lookupCdrTrackName(track);
-    state->unpublish_attempted_cdr_track_names.push_back(name);
+    const std::string name = lookupDataTrackName(track);
+    state->unpublish_attempted_data_track_names.push_back(name);
     const bool unpublish_rejected =
       std::find(
-        state->unpublish_rejected_cdr_track_names.begin(), state->unpublish_rejected_cdr_track_names.end(), name) !=
-      state->unpublish_rejected_cdr_track_names.end();
+        state->unpublish_rejected_data_track_names.begin(), state->unpublish_rejected_data_track_names.end(), name) !=
+      state->unpublish_rejected_data_track_names.end();
     if (unpublish_rejected) {
       throw std::runtime_error("simulated unpublish failure");
     }
-    state->event_log.push_back("unpublish_cdr_track");
-    state->unpublished_cdr_track_names.push_back(name);
-    cdr_track_names_.erase(track.get());
+    state->event_log.push_back("unpublish_data_track");
+    state->unpublished_data_track_names.push_back(name);
+    data_track_names_.erase(track.get());
   }
 
   std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
@@ -206,20 +206,20 @@ public:
   std::shared_ptr<FakeRoomSessionState> state;
 
 private:
-  std::shared_ptr<livekit::LocalDataTrack> makeSyntheticCdrTrack()
+  std::shared_ptr<livekit::LocalDataTrack> makeSyntheticDataTrack()
   {
     auto owner = std::make_shared<int>(next_track_id_++);
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   }
 
-  std::string lookupCdrTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
+  std::string lookupDataTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
-    const auto it = cdr_track_names_.find(track.get());
-    return it == cdr_track_names_.end() ? kUnknownCdrTrackName : it->second;
+    const auto it = data_track_names_.find(track.get());
+    return it == data_track_names_.end() ? kUnknownDataTrackName : it->second;
   }
 
   int next_track_id_ = 1;
-  std::map<const livekit::LocalDataTrack *, std::string> cdr_track_names_;
+  std::map<const livekit::LocalDataTrack *, std::string> data_track_names_;
 };
 
 }  // namespace livekit_ros2_bridge

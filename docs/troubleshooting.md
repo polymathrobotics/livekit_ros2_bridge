@@ -10,7 +10,7 @@ This page covers the common failures people hit during setup, connection, subscr
 | Room never stabilizes | `room_token_load_failed`, `room_connect_failed`, `room_reconnect_backoff` | bad or expired token, empty token, unreachable LiveKit URL |
 | Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, session ownership mismatch |
 | Service call rejected or times out | `rpc_request_rejected`, `service_call_failed`, `service_calls_settled` | missing caller identity, access denied, bad payload, request build failure, timeout, requester disconnect |
-| CDR topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `cdr_track_pending`, `cdr_track_published`, `cdr_track_publish_failed`, `cdr_track_delivery_failed`, `cdr_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
+| Data-track topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `data_track_pending`, `data_track_published`, `data_track_publish_failed`, `data_track_delivery_failed`, `data_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
 | Video source never appears | `subscription_renew_failed`, `subscription_qos_resolved`, `video_stream_subscription_started`, `video_stream_pipeline_starting`, `video_stream_push_failed`, `video_stream_pipeline_failed` | QoS mismatch, invalid video source or transform config, unsupported image encoding, unhealthy source pipeline |
 
 ## Startup and connection issues
@@ -113,15 +113,15 @@ Remember:
 
 For the heartbeat and status contract, read [subscriptions.md](./subscriptions.md).
 
-### A browser refresh breaks CDR streams until the next heartbeat
+### A browser refresh breaks data tracks until the next heartbeat
 
 That is expected.
 
-The bridge can keep the lease state alive across a refresh, but CDR publications belong to the previous participant session. After the next successful heartbeat, the bridge may unpublish and republish the same deterministic `track_name` so the new participant session sees it again.
+The bridge can keep the lease state alive across a refresh, but data-track publications belong to the previous participant session. After the next successful heartbeat, the bridge may unpublish and republish the same deterministic `track_name` so the new participant session sees it again.
 
 Useful log events:
 
-- `event=cdr_track_replay`
+- `event=data_track_republish`
 - `event=heartbeat_session_fallback`
 
 ## Video issues
@@ -159,7 +159,7 @@ Only two ROS topic types go down the video path:
 - `sensor_msgs/msg/Image`
 - `sensor_msgs/msg/CompressedImage`
 
-All other ROS topic types stay on the CDR data-track path.
+All other ROS topic types stay on the data-track path carrying ROS CDR payloads.
 
 ### A video subscription returns `unavailable`
 

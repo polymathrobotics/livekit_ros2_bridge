@@ -23,7 +23,7 @@ Those two ROS types choose only the ingest mode:
 | `sensor_msgs/msg/Image` | `raw_image` |
 | `sensor_msgs/msg/CompressedImage` | `compressed_image` |
 
-All other ROS topic types stay on the CDR data-track path.
+All other ROS topic types stay on the data-track path carrying ROS CDR payloads.
 
 ## Public config shape
 

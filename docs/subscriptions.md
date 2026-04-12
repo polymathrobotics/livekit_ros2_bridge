@@ -44,7 +44,7 @@ The heartbeat parser treats `subscriptions` as a set keyed by canonical target:
 - `interval_ms: 0` means no preference
 - negative `interval_ms` values are accepted by the parser but clamped to `0` when the lease is applied
 
-For CDR data-track subscriptions, the bridge later computes one applied interval per shared stream by taking the minimum requested interval across all current requesters.
+For data-track subscriptions carrying ROS CDR payloads, the bridge later computes one applied interval per shared stream by taking the minimum requested interval across all current requesters.
 
 ## Requester identity and `session_id`
 
@@ -187,15 +187,15 @@ Important behavior:
 - `lease_expires_in_ms` reflects the remaining time at the moment the status packet is serialized
 - data-track delivery uses one applied interval per shared topic, based on the smallest current requester interval
 
-## Reconnect and CDR replay
+## Reconnect and data-track republish
 
 Browser refresh and transport reconnect are not treated the same way.
 
-When a requester disconnects outside reconnect handling, the bridge can keep that requester's leases alive. If that requester still owns published CDR tracks, the next successful heartbeat may force those tracks through an unpublish and republish cycle under the same deterministic `track_name`.
+When a requester disconnects outside reconnect handling, the bridge can keep that requester's leases alive. If that requester still owns published data tracks, the next successful heartbeat may force those tracks through an unpublish and republish cycle under the same deterministic `track_name`.
 
 That replay exists because LiveKit data-track publications belong to a participant session. The lease may still be valid even though the old publication belonged to the disconnected session.
 
 Two practical consequences:
 
-- the first few ROS samples can be dropped while a CDR track is still pending publication
+- the first few ROS samples can be dropped while a data track is still pending publication
 - later samples can still be dropped if the LiveKit data-track queue is full

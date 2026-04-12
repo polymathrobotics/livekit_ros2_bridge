@@ -125,16 +125,16 @@ std::string ensureVideoStreamRunning(VideoStreamManager & video_stream_manager, 
 
 SubscriptionRegistry::SubscriptionRegistry(
   rclcpp::Node & node,
-  SendCdrMessageFn send_cdr_fn,
-  PublishCdrTrackFn publish_cdr_track_fn,
-  UnpublishCdrTrackFn unpublish_cdr_track_fn,
+  SendDataMessageFn send_data_fn,
+  PublishDataTrackFn publish_data_track_fn,
+  UnpublishDataTrackFn unpublish_data_track_fn,
   VideoStreamManager * video_stream_manager,
   const VideoConfig * video_config,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
-, send_cdr_fn_(std::move(send_cdr_fn))
-, publish_cdr_track_fn_(std::move(publish_cdr_track_fn))
-, unpublish_cdr_track_fn_(std::move(unpublish_cdr_track_fn))
+, send_data_fn_(std::move(send_data_fn))
+, publish_data_track_fn_(std::move(publish_data_track_fn))
+, unpublish_data_track_fn_(std::move(unpublish_data_track_fn))
 , video_stream_manager_(video_stream_manager)
 , default_video_config_(makeDefaultVideoConfig())
 , video_config_(video_config == nullptr ? &default_video_config_ : video_config)
@@ -229,7 +229,8 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     requester_identity, SubscriptionRequest{{SubscriptionTargetKind::Topic, topic}, preferred_interval_ms}, expiry);
 }
 
-void SubscriptionRegistry::markRequesterForCdrReplay(const std::string & requester_identity, std::size_t generation)
+void SubscriptionRegistry::markRequesterForDataTrackRepublish(
+  const std::string & requester_identity, std::size_t generation)
 {
   if (is_shutdown_.load()) {
     return;
@@ -242,48 +243,48 @@ void SubscriptionRegistry::markRequesterForCdrReplay(const std::string & request
   for (const auto & [subscription_key, sub] : subscriptions_) {
     (void)subscription_key;
     const auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
-    if (data == nullptr || data->cdr_track_state != CdrTrackState::kPublished) {
+    if (data == nullptr || data->data_track_state != DataTrackState::kPublished) {
       continue;
     }
     if (sub.requesters.find(requester_identity) == sub.requesters.end()) {
       continue;
     }
 
-    requesters_needing_cdr_replay_.insert(requester_identity);
+    requesters_needing_data_track_republish_.insert(requester_identity);
     return;
   }
 }
 
-void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & requester_identity)
+void SubscriptionRegistry::republishDataTracksForRequester(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
     return;
   }
   requireRequesterIdentity(requester_identity);
-  if (requesters_needing_cdr_replay_.erase(requester_identity) == 0U) {
+  if (requesters_needing_data_track_republish_.erase(requester_identity) == 0U) {
     return;
   }
 
   for (auto & [subscription_key, sub] : subscriptions_) {
     (void)subscription_key;
     auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
-    if (data == nullptr || data->cdr_track_state != CdrTrackState::kPublished) {
+    if (data == nullptr || data->data_track_state != DataTrackState::kPublished) {
       continue;
     }
     if (sub.requesters.find(requester_identity) == sub.requesters.end()) {
       continue;
     }
 
-    LogEvent(kSubscriptionRegistryLogger, "cdr_track_replay")
+    LogEvent(kSubscriptionRegistryLogger, "data_track_republish")
       .field("resource", sub.resource)
       .field("kind", "topic")
       .field("track_name", data->track_name)
       .field("requester_identity", requester_identity)
       .info();
-    unpublish_cdr_track_fn_(data->track_name);
-    data->cdr_track_state = CdrTrackState::kNone;
+    unpublish_data_track_fn_(data->track_name);
+    data->data_track_state = DataTrackState::kNone;
     data->last_sent_time.reset();
-    publishPendingCdrTrack(sub.resource, *data, requester_identity);
+    publishPendingDataTrack(sub.resource, *data, requester_identity);
   }
 }
 
@@ -297,13 +298,14 @@ void SubscriptionRegistry::renewExistingLease(
   if (auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     sub.requesters = std::move(updated_requesters);
     data->applied_interval_ms = computeAppliedIntervalMs(sub.requesters);
-    if (!requester_already_present && data->cdr_track_state == CdrTrackState::kPublished) {
+    if (!requester_already_present && data->data_track_state == DataTrackState::kPublished) {
       // A new requester can receive stream status before LiveKit surfaces the existing published
-      // data track to that participant session, so queue one replay when the requester first joins.
-      requesters_needing_cdr_replay_.insert(requester_identity);
+      // data track to that participant session, so queue one republish when the requester first
+      // joins.
+      requesters_needing_data_track_republish_.insert(requester_identity);
     }
-    if (data->cdr_track_state == CdrTrackState::kNone || data->cdr_track_state == CdrTrackState::kFailed) {
-      publishPendingCdrTrack(sub.resource, *data, requester_identity);
+    if (data->data_track_state == DataTrackState::kNone || data->data_track_state == DataTrackState::kFailed) {
+      publishPendingDataTrack(sub.resource, *data, requester_identity);
     }
     return;
   }
@@ -370,7 +372,7 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   data.track_name = deriveTrackName(topic);
   data.applied_interval_ms = computeAppliedIntervalMs(requesters);
   data.generation = registry_generation_.load();
-  publishPendingCdrTrack(topic, data, requester_identity);
+  publishPendingDataTrack(topic, data, requester_identity);
 
   LogEvent(kSubscriptionRegistryLogger, "subscription_qos_resolved")
     .field("resource", topic)
@@ -406,17 +408,17 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
   return data;
 }
 
-void SubscriptionRegistry::publishPendingCdrTrack(
+void SubscriptionRegistry::publishPendingDataTrack(
   const std::string & topic, DataTrackResource & data, const std::string & requester_identity)
 {
-  data.cdr_track_state = CdrTrackState::kPending;
-  LogEvent(kSubscriptionRegistryLogger, "cdr_track_pending")
+  data.data_track_state = DataTrackState::kPending;
+  LogEvent(kSubscriptionRegistryLogger, "data_track_pending")
     .field("resource", topic)
     .field("kind", "topic")
     .field("track_name", data.track_name)
     .field("requester_identity", requester_identity)
     .info();
-  publish_cdr_track_fn_(data.track_name, data.generation);
+  publish_data_track_fn_(data.track_name, data.generation);
 }
 
 VideoStreamManager & SubscriptionRegistry::videoStreamManager() const
@@ -483,10 +485,10 @@ void SubscriptionRegistry::resetSessionState()
   LogEvent(kSubscriptionRegistryLogger, "subscription_registry_reset_begin")
     .field("resource", "subscriptions")
     .field("subscription_count", subscriptions_.size())
-    .field("pending_cdr_replays", requesters_needing_cdr_replay_.size())
+    .field("pending_data_track_republishes", requesters_needing_data_track_republish_.size())
     .info();
   const std::size_t callback_generation = message_callback_gate_.close();
-  requesters_needing_cdr_replay_.clear();
+  requesters_needing_data_track_republish_.clear();
   clearSubscriptions();
   message_callback_gate_.open(callback_generation);
 }
@@ -499,13 +501,13 @@ void SubscriptionRegistry::shutdown()
   LogEvent(kSubscriptionRegistryLogger, "subscription_registry_shutdown_begin")
     .field("resource", "subscriptions")
     .field("subscription_count", subscriptions_.size())
-    .field("pending_cdr_replays", requesters_needing_cdr_replay_.size())
+    .field("pending_data_track_republishes", requesters_needing_data_track_republish_.size())
     .info();
   (void)message_callback_gate_.close();
   clearSubscriptions();
 }
 
-bool SubscriptionRegistry::onCdrTrackPublished(const std::string & track_name, std::size_t generation)
+bool SubscriptionRegistry::onDataTrackPublished(const std::string & track_name, std::size_t generation)
 {
   if (is_shutdown_.load()) {
     return false;
@@ -516,14 +518,14 @@ bool SubscriptionRegistry::onCdrTrackPublished(const std::string & track_name, s
   }
   auto & sub = it->second;
   auto * data = std::get_if<DataTrackResource>(&sub.resource_state);
-  if (data == nullptr || data->cdr_track_state != CdrTrackState::kPending) {
+  if (data == nullptr || data->data_track_state != DataTrackState::kPending) {
     return false;
   }
   if (data->generation != generation) {
     return false;
   }
-  data->cdr_track_state = CdrTrackState::kPublished;
-  LogEvent(kSubscriptionRegistryLogger, "cdr_track_published")
+  data->data_track_state = DataTrackState::kPublished;
+  LogEvent(kSubscriptionRegistryLogger, "data_track_published")
     .field("resource", sub.resource)
     .field("kind", "topic")
     .field("track_name", data->track_name)
@@ -531,7 +533,7 @@ bool SubscriptionRegistry::onCdrTrackPublished(const std::string & track_name, s
   return true;
 }
 
-void SubscriptionRegistry::onCdrTrackFailed(const std::string & track_name)
+void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
 {
   if (is_shutdown_.load()) {
     return;
@@ -545,12 +547,12 @@ void SubscriptionRegistry::onCdrTrackFailed(const std::string & track_name)
   if (data == nullptr) {
     return;
   }
-  LogEvent(kSubscriptionRegistryLogger, "cdr_track_publish_failed")
+  LogEvent(kSubscriptionRegistryLogger, "data_track_publish_failed")
     .field("resource", sub.resource)
     .field("kind", "topic")
     .field("track_name", data->track_name)
     .warn();
-  data->cdr_track_state = CdrTrackState::kFailed;
+  data->data_track_state = DataTrackState::kFailed;
 }
 
 StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & sub)
@@ -560,7 +562,7 @@ StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & su
   stream_status.interface_type = sub.interface_type;
   if (const auto * data = std::get_if<DataTrackResource>(&sub.resource_state)) {
     stream_status.delivery_kind = StreamDeliveryKind::kData;
-    if (data->cdr_track_state == CdrTrackState::kPending || data->cdr_track_state == CdrTrackState::kPublished) {
+    if (data->data_track_state == DataTrackState::kPending || data->data_track_state == DataTrackState::kPublished) {
       stream_status.track_name = data->track_name;
     }
     stream_status.applied_interval_ms = data->applied_interval_ms;
@@ -639,7 +641,7 @@ void SubscriptionRegistry::revokeRequesterLeasesIf(
         .info();
 
       removed_any = true;
-      requesters_needing_cdr_replay_.erase(requester_identity);
+      requesters_needing_data_track_republish_.erase(requester_identity);
       req_it = sub.requesters.erase(req_it);
     }
 
@@ -719,15 +721,15 @@ void SubscriptionRegistry::handleSerializedMessage(const std::string & topic, co
     return;
   }
 
-  if (data->cdr_track_state != CdrTrackState::kPending && data->cdr_track_state != CdrTrackState::kPublished) {
+  if (data->data_track_state != DataTrackState::kPending && data->data_track_state != DataTrackState::kPublished) {
     return;
   }
 
   const auto & rcl_msg = message.get_rcl_serialized_message();
   try {
-    send_cdr_fn_(data->track_name, rcl_msg.buffer, rcl_msg.buffer_length);
+    send_data_fn_(data->track_name, rcl_msg.buffer, rcl_msg.buffer_length);
   } catch (const std::exception & exc) {
-    LogEvent(kSubscriptionRegistryLogger, "cdr_track_delivery_failed")
+    LogEvent(kSubscriptionRegistryLogger, "data_track_delivery_failed")
       .field("resource", sub.resource)
       .field("kind", "topic")
       .field("track_name", data->track_name)
@@ -767,10 +769,10 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
       .field("interface_type", sub.interface_type)
       .field("track_name", data->track_name)
       .info();
-    if (data->cdr_track_state == CdrTrackState::kPublished) {
-      unpublish_cdr_track_fn_(data->track_name);
+    if (data->data_track_state == DataTrackState::kPublished) {
+      unpublish_data_track_fn_(data->track_name);
     }
-    data->cdr_track_state = CdrTrackState::kNone;
+    data->data_track_state = DataTrackState::kNone;
     data->subscription_handle.reset();
     sub.resource_state = DataTrackResource{};
     // Track names are deterministic per topic, so destroying a data subscription must advance the
@@ -793,7 +795,7 @@ void SubscriptionRegistry::clearSubscriptions()
 {
   auto subscriptions = std::move(subscriptions_);
   subscriptions_.clear();
-  requesters_needing_cdr_replay_.clear();
+  requesters_needing_data_track_republish_.clear();
 
   for (auto & entry : subscriptions) {
     destroyResource(entry.second);

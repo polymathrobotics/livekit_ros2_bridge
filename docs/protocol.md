@@ -196,7 +196,7 @@ Behavior:
 - `session_id` fallback behavior
 - lease timing
 - per-stream error reasons
-- CDR replay after reconnect
+- data-track republish after reconnect
 
 ## Error handling
 

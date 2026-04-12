@@ -251,12 +251,12 @@ public:
     participant->publishData(packet.payload, true, packet.recipient_identities, packet.control_topic);
   }
 
-  std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) override
+  std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
   {
     std::shared_ptr<livekit::Room> room;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      // Keep the Room alive after releasing the mutex because publishCdrTrack()
+      // Keep the Room alive after releasing the mutex because publishDataTrack()
       // may block in the SDK while reconnect/teardown clears room_ on another thread.
       // The tradeoff is that teardown can be delayed briefly, but we avoid
       // holding the session mutex across a potentially slow SDK call.
@@ -274,12 +274,12 @@ public:
 
     auto result = participant->publishDataTrack(name);
     if (!result) {
-      throw std::runtime_error("Failed to publish CDR track '" + name + "': " + result.error().message);
+      throw std::runtime_error("Failed to publish data track '" + name + "': " + result.error().message);
     }
     return result.value();
   }
 
-  void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
+  void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto * participant = localParticipantLocked();

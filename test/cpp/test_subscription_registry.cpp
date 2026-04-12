@@ -147,17 +147,17 @@ VideoConfig makeConfiguredVideoConfig()
   return config;
 }
 
-SendCdrMessageFn noopCdrSend()
+SendDataMessageFn noopDataSend()
 {
   return [](const std::string &, const std::uint8_t *, std::size_t) {};
 }
 
-PublishCdrTrackFn noopCdrPublish()
+PublishDataTrackFn noopDataTrackPublish()
 {
   return [](const std::string &, std::size_t) {};
 }
 
-UnpublishCdrTrackFn noopCdrUnpublish()
+UnpublishDataTrackFn noopDataTrackUnpublish()
 {
   return [](const std::string &) {};
 }
@@ -192,9 +192,9 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDataTrackForNonVideoTopic
   std::vector<std::string> published_track_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_track_names](const std::string & name, std::size_t) { published_track_names.push_back(name); },
-    noopCdrUnpublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   const auto response = registry.renewSubscription("alice", requested_topic, 0, kFarFuture);
@@ -228,9 +228,9 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionNormalizesRawHeartbeatTopicSubsc
   std::vector<std::string> published_track_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_track_names](const std::string & name, std::size_t) { published_track_names.push_back(name); },
-    noopCdrUnpublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   const auto raw_response = registry.renewSubscription("alice", raw_subscription, kFarFuture);
@@ -263,8 +263,8 @@ TEST(SubscriptionRegistryTest, SendsRawCdrFramesOnGenericSubscription)
     [&cdr_frames](const std::string & name, const std::uint8_t * data, std::size_t size) {
       cdr_frames.push_back({name, std::vector<std::uint8_t>(data, data + size)});
     },
-    noopCdrPublish(),
-    noopCdrUnpublish(),
+    noopDataTrackPublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
@@ -295,8 +295,8 @@ TEST(SubscriptionRegistryTest, BestEffortPublisherDeliversToDataSubscription)
     [&cdr_frames](const std::string & name, const std::uint8_t * data, std::size_t size) {
       cdr_frames.push_back({name, std::vector<std::uint8_t>(data, data + size)});
     },
-    noopCdrPublish(),
-    noopCdrUnpublish(),
+    noopDataTrackPublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
@@ -322,8 +322,8 @@ TEST(SubscriptionRegistryTest, AppliesMinimumRequesterInterval)
     [&cdr_frames](const std::string & name, const std::uint8_t * data, std::size_t size) {
       cdr_frames.push_back({name, std::vector<std::uint8_t>(data, data + size)});
     },
-    noopCdrPublish(),
-    noopCdrUnpublish(),
+    noopDataTrackPublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   registry.renewSubscription("alice", topic, 300, kFarFuture);
@@ -354,7 +354,7 @@ TEST(SubscriptionRegistryTest, ClampsNegativeRequesterIntervalToZero)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   const auto first_response = registry.renewSubscription("alice", topic, -25, kFarFuture);
   const auto second_response = registry.renewSubscription("bob", topic, 150, kFarFuture);
@@ -378,7 +378,8 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesVideoSubscription)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager);
+  SubscriptionRegistry registry(
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager);
 
   const auto response = registry.renewSubscription("alice", requested_topic, 0, kFarFuture);
   const auto second_response = registry.renewSubscription("bob", topic, 0, kFarFuture);
@@ -399,7 +400,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   const VideoConfig video_config = makeConfiguredVideoConfig();
 
   SubscriptionRegistry registry(
-    *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
 
   const auto response = registry.renewSubscription(
     "alice",
@@ -428,7 +429,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionTrimsRawConfiguredSourceHeartbea
     {SubscriptionTargetKind::ConfiguredSource, configured_source_name}, std::nullopt};
 
   SubscriptionRegistry registry(
-    *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
 
   const auto raw_response = registry.renewSubscription("alice", raw_subscription, kFarFuture);
   const auto canonical_response = registry.renewSubscription("bob", canonical_subscription, kFarFuture);
@@ -461,7 +462,7 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   ASSERT_TRUE(waitForTopicType(executor, node, shared_name, "sensor_msgs/msg/BatteryState"));
 
   SubscriptionRegistry registry(
-    *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
 
   const auto topic_response = registry.renewSubscription("alice", shared_name, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
@@ -487,7 +488,7 @@ TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoStreamManager)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
   EXPECT_THROW(registry.renewSubscription("alice", topic, 0, kFarFuture), StreamUnavailableError);
 }
 
@@ -517,8 +518,8 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
-    noopCdrPublish(),
+    noopDataSend(),
+    noopDataTrackPublish(),
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     &video_stream_manager);
 
@@ -527,8 +528,8 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   registry.renewSubscription("bob", shared_data_topic, 250, kFarFuture);
   const auto shared_video = registry.renewSubscription("alice", shared_video_topic, 0, kFarFuture);
   registry.renewSubscription("bob", shared_video_topic, 0, kFarFuture);
-  ASSERT_TRUE(registry.onCdrTrackPublished(alice_only.track_name, 0));
-  ASSERT_TRUE(registry.onCdrTrackPublished(shared_data.track_name, 0));
+  ASSERT_TRUE(registry.onDataTrackPublished(alice_only.track_name, 0));
+  ASSERT_TRUE(registry.onDataTrackPublished(shared_data.track_name, 0));
 
   registry.revokeRequesterLeases("alice");
 
@@ -546,7 +547,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   EXPECT_EQ(shared_video_after_disconnect.track_name, shared_video.track_name);
 }
 
-TEST(SubscriptionRegistryTest, ParticipantRefreshReplaysPublishedCdrTrackWithoutDroppingLease)
+TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_refresh_replay_test");
@@ -562,17 +563,17 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshReplaysPublishedCdrTrackWithout
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
 
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);
-  EXPECT_TRUE(registry.onCdrTrackPublished(response.track_name, 0));
+  EXPECT_TRUE(registry.onDataTrackPublished(response.track_name, 0));
 
-  registry.markRequesterForCdrReplay("alice", 0);
-  registry.replayCdrTracksForRequester("alice");
+  registry.markRequesterForDataTrackRepublish("alice", 0);
+  registry.republishDataTracksForRequester("alice");
 
   EXPECT_TRUE(registry.hasSubscription(topic));
   ASSERT_EQ(unpublished_names.size(), 1U);
@@ -581,7 +582,7 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshReplaysPublishedCdrTrackWithout
   EXPECT_EQ(published_names[0], published_names[1]);
 }
 
-TEST(SubscriptionRegistryTest, NewRequesterReplaysAlreadyPublishedCdrTrack)
+TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_replay_test");
@@ -597,19 +598,19 @@ TEST(SubscriptionRegistryTest, NewRequesterReplaysAlreadyPublishedCdrTrack)
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
 
   const auto first_response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);
-  EXPECT_TRUE(registry.onCdrTrackPublished(first_response.track_name, 0));
+  EXPECT_TRUE(registry.onDataTrackPublished(first_response.track_name, 0));
 
   const auto second_response = registry.renewSubscription("bob", topic, 250, kFarFuture);
   EXPECT_EQ(second_response.track_name, first_response.track_name);
 
-  registry.replayCdrTracksForRequester("bob");
+  registry.republishDataTracksForRequester("bob");
 
   EXPECT_TRUE(registry.hasSubscription(topic));
   ASSERT_EQ(unpublished_names.size(), 1U);
@@ -634,7 +635,7 @@ TEST(SubscriptionRegistryTest, DisconnectAndExpiryPrunePathsRecomputeSurvivingDa
   ASSERT_TRUE(waitForTopicType(executor, node, disconnect_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(waitForTopicType(executor, node, expiry_topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   const auto past = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   const auto disconnect_initial = registry.renewSubscription("alice", disconnect_topic, 50, kFarFuture);
@@ -675,7 +676,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   std::vector<std::string> unpublished_track_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_track_names](const std::string & name, std::size_t) { published_track_names.push_back(name); },
     [&unpublished_track_names](const std::string & name) { unpublished_track_names.push_back(name); },
     &video_stream_manager);
@@ -684,7 +685,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   ASSERT_EQ(published_track_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_track_names[0]);
-  EXPECT_TRUE(registry.onCdrTrackPublished(published_track_names[0], 0));
+  EXPECT_TRUE(registry.onDataTrackPublished(published_track_names[0], 0));
 
   const auto image = makeRgbImage();
   ASSERT_TRUE(publishUntil(
@@ -716,7 +717,7 @@ TEST(SubscriptionRegistryTest, UnpublishesDataTrackWhenLastRequesterExpires)
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
@@ -725,7 +726,7 @@ TEST(SubscriptionRegistryTest, UnpublishesDataTrackWhenLastRequesterExpires)
   const auto response = registry.renewSubscription("alice", topic, 0, past);
   ASSERT_EQ(published_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_names[0]);
-  registry.onCdrTrackPublished(published_names[0], 0);
+  registry.onDataTrackPublished(published_names[0], 0);
 
   registry.pruneExpiredLeases();
 
@@ -734,7 +735,7 @@ TEST(SubscriptionRegistryTest, UnpublishesDataTrackWhenLastRequesterExpires)
   EXPECT_EQ(unpublished_names[0], published_names[0]);
 }
 
-TEST(SubscriptionRegistryTest, PruneExpiredLeasesDoesNotUnpublishPendingCdrTrack)
+TEST(SubscriptionRegistryTest, PruneExpiredLeasesDoesNotUnpublishPendingDataTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_pending_sweep_test");
@@ -750,7 +751,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesDoesNotUnpublishPendingCdrTrack
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
@@ -765,13 +766,13 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesDoesNotUnpublishPendingCdrTrack
   EXPECT_TRUE(unpublished_names.empty());
 }
 
-TEST(SubscriptionRegistryTest, OnCdrTrackPublishedReturnsFalseForUnknownTrack)
+TEST(SubscriptionRegistryTest, OnDataTrackPublishedReturnsFalseForUnknownTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_unknown_track_test");
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
-  EXPECT_FALSE(registry.onCdrTrackPublished("ros.data.no.such.topic", 0));
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
+  EXPECT_FALSE(registry.onDataTrackPublished("ros.data.no.such.topic", 0));
 }
 
 TEST(SubscriptionRegistryTest, HasSubscriptionReturnsFalseForWhitespaceTopic)
@@ -779,13 +780,13 @@ TEST(SubscriptionRegistryTest, HasSubscriptionReturnsFalseForWhitespaceTopic)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_whitespace_topic_test");
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   EXPECT_FALSE(registry.hasSubscription("   "));
   EXPECT_FALSE(registry.hasSubscription(""));
 }
 
-TEST(SubscriptionRegistryTest, CdrDeliveryLogsAndContinuesOnUnexpectedError)
+TEST(SubscriptionRegistryTest, DataTrackDeliveryLogsAndContinuesOnUnexpectedError)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_send_error_test");
@@ -803,8 +804,8 @@ TEST(SubscriptionRegistryTest, CdrDeliveryLogsAndContinuesOnUnexpectedError)
       ++send_call_count;
       throw std::runtime_error("unexpected send error");
     },
-    noopCdrPublish(),
-    noopCdrUnpublish(),
+    noopDataTrackPublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
@@ -822,7 +823,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionThrowsOnEmptyRequesterIdentity)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   expectInvalidArgumentMessage(
     [&registry]() { (void)registry.renewSubscription("", "/some/topic", 0, kFarFuture); },
@@ -834,12 +835,12 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsThrowOnEmptyRequesterIden
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_methods_test");
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   expectInvalidArgumentMessage(
-    [&registry]() { registry.markRequesterForCdrReplay("", 0); }, "requester_identity is required");
+    [&registry]() { registry.markRequesterForDataTrackRepublish("", 0); }, "requester_identity is required");
   expectInvalidArgumentMessage(
-    [&registry]() { registry.replayCdrTracksForRequester(""); }, "requester_identity is required");
+    [&registry]() { registry.republishDataTracksForRequester(""); }, "requester_identity is required");
   expectInvalidArgumentMessage([&registry]() { registry.revokeRequesterLeases(""); }, "requester_identity is required");
 }
 
@@ -848,7 +849,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionThrowsOnInvalidTopic)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_invalid_topic_test");
 
-  SubscriptionRegistry registry(*node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), nullptr);
+  SubscriptionRegistry registry(*node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), nullptr);
 
   EXPECT_THROW(registry.renewSubscription("alice", "   ", 0, kFarFuture), std::invalid_argument);
   EXPECT_THROW(registry.renewSubscription("alice", "", 0, kFarFuture), std::invalid_argument);
@@ -863,7 +864,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
   const VideoConfig video_config = makeConfiguredVideoConfig();
 
   SubscriptionRegistry registry(
-    *node, noopCdrSend(), noopCdrPublish(), noopCdrUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
 
   const auto expect_invalid_argument = [&](const SubscriptionRequest & subscription, const char * expected_message) {
     expectInvalidArgumentMessage(
@@ -905,14 +906,14 @@ TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPub
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     &video_stream_manager);
 
   registry.renewSubscription("alice", published_topic, 0, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);
-  registry.onCdrTrackPublished(published_names[0], 0);
+  registry.onDataTrackPublished(published_names[0], 0);
 
   registry.renewSubscription("alice", pending_topic, 0, kFarFuture);
   ASSERT_EQ(published_names.size(), 2U);
@@ -946,9 +947,9 @@ TEST(SubscriptionRegistryTest, ShutdownPreventsLeaseRecreation)
   std::vector<std::string> published_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
-    noopCdrUnpublish(),
+    noopDataTrackUnpublish(),
     nullptr);
 
   registry.renewSubscription("alice", topic, 0, kFarFuture);
@@ -998,7 +999,7 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_names[0]);
-  EXPECT_TRUE(registry.onCdrTrackPublished(published_names[0], 0));
+  EXPECT_TRUE(registry.onDataTrackPublished(published_names[0], 0));
 
   std::thread spin_thread([&executor]() { executor.spin(); });
 
@@ -1062,7 +1063,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateDrainsInFlightSerializedMessageC
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);
   EXPECT_EQ(response.track_name, published_names[0]);
-  EXPECT_TRUE(registry.onCdrTrackPublished(published_names[0], 0));
+  EXPECT_TRUE(registry.onDataTrackPublished(published_names[0], 0));
 
   std::thread spin_thread([&executor]() { executor.spin(); });
 
@@ -1092,7 +1093,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateDrainsInFlightSerializedMessageC
   EXPECT_EQ(published_names.size(), 2U);
   if (published_names.size() == 2U) {
     EXPECT_EQ(next_response.track_name, published_names[1]);
-    EXPECT_TRUE(registry.onCdrTrackPublished(published_names[1], registry.registryGeneration()));
+    EXPECT_TRUE(registry.onDataTrackPublished(published_names[1], registry.registryGeneration()));
   }
   publisher->publish(makeBatteryState());
   EXPECT_TRUE(waitUntil([&send_call_count]() { return send_call_count.load() == 2; }));
@@ -1118,7 +1119,7 @@ TEST(SubscriptionRegistryTest, StalePublishFromDestroyedSubscriptionStealsNewSub
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
@@ -1140,10 +1141,10 @@ TEST(SubscriptionRegistryTest, StalePublishFromDestroyedSubscriptionStealsNewSub
   const std::size_t new_generation = registry.registryGeneration();
   EXPECT_NE(new_generation, 0U);
 
-  const bool old_publish_accepted = registry.onCdrTrackPublished(track_name, 0);
+  const bool old_publish_accepted = registry.onDataTrackPublished(track_name, 0);
   EXPECT_FALSE(old_publish_accepted);
 
-  const bool new_publish_accepted = registry.onCdrTrackPublished(track_name, new_generation);
+  const bool new_publish_accepted = registry.onDataTrackPublished(track_name, new_generation);
   EXPECT_TRUE(new_publish_accepted);
 }
 
@@ -1163,14 +1164,14 @@ TEST(SubscriptionRegistryTest, StaleDisconnectAfterLeaseExpiryDoesNotTriggerRepl
   std::vector<std::string> unpublished_names;
   SubscriptionRegistry registry(
     *node,
-    noopCdrSend(),
+    noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
     nullptr);
 
   const auto past = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   const auto first_response = registry.renewSubscription("alice", topic, 0, past);
-  ASSERT_TRUE(registry.onCdrTrackPublished(first_response.track_name, 0));
+  ASSERT_TRUE(registry.onDataTrackPublished(first_response.track_name, 0));
 
   const std::size_t old_generation = registry.registryGeneration();
 
@@ -1180,12 +1181,12 @@ TEST(SubscriptionRegistryTest, StaleDisconnectAfterLeaseExpiryDoesNotTriggerRepl
 
   const std::size_t new_generation = registry.registryGeneration();
   const auto second_response = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  ASSERT_TRUE(registry.onCdrTrackPublished(second_response.track_name, new_generation));
+  ASSERT_TRUE(registry.onDataTrackPublished(second_response.track_name, new_generation));
   const std::size_t published_count_before = published_names.size();
   const std::size_t unpublished_count_before = unpublished_names.size();
 
-  registry.markRequesterForCdrReplay("alice", old_generation);
-  registry.replayCdrTracksForRequester("alice");
+  registry.markRequesterForDataTrackRepublish("alice", old_generation);
+  registry.republishDataTracksForRequester("alice");
   EXPECT_EQ(unpublished_names.size(), unpublished_count_before);
   EXPECT_EQ(published_names.size(), published_count_before);
 }

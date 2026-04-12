@@ -412,13 +412,13 @@ TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
   EXPECT_EQ(observer->count_publishers("/battery/cmd"), 1U);
 }
 
-TEST_F(RuntimeTest, ParticipantRefreshReplaysPublishedCdrTrackOnNextHeartbeat)
+TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
   auto harness = makeRuntimeHarness(options, [](FakeRoomSession & session) {
-    session.state->publish_cdr_track_handler = [](const std::string &) {
+    session.state->publish_data_track_handler = [](const std::string &) {
       return std::shared_ptr<livekit::LocalDataTrack>{};
     };
   });
@@ -442,7 +442,7 @@ TEST_F(RuntimeTest, ParticipantRefreshReplaysPublishedCdrTrackOnNextHeartbeat)
       "participant-1",
     });
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 1U; }));
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
   harness.fake_session->emitParticipantDisconnected("participant-1");
   harness.fake_session->emitIncomingControlPacket(
@@ -452,20 +452,20 @@ TEST_F(RuntimeTest, ParticipantRefreshReplaysPublishedCdrTrackOnNextHeartbeat)
       "participant-1",
     });
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 2U; }));
-  EXPECT_EQ(harness.state->published_cdr_track_names[0], harness.state->published_cdr_track_names[1]);
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
+  EXPECT_EQ(harness.state->published_data_track_names[0], harness.state->published_data_track_names[1]);
   EXPECT_NE(
-    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_cdr_track"),
+    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_data_track"),
     harness.state->event_log.end());
 }
 
-TEST_F(RuntimeTest, NewParticipantReplaysPublishedCdrTrackOnFirstHeartbeat)
+TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
   auto harness = makeRuntimeHarness(options, [](FakeRoomSession & session) {
-    session.state->publish_cdr_track_handler = [](const std::string &) {
+    session.state->publish_data_track_handler = [](const std::string &) {
       return std::shared_ptr<livekit::LocalDataTrack>{};
     };
   });
@@ -489,7 +489,7 @@ TEST_F(RuntimeTest, NewParticipantReplaysPublishedCdrTrackOnFirstHeartbeat)
       "participant-1",
     });
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 1U; }));
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
   harness.fake_session->emitIncomingControlPacket(
     IncomingControlPacket{
@@ -498,10 +498,10 @@ TEST_F(RuntimeTest, NewParticipantReplaysPublishedCdrTrackOnFirstHeartbeat)
       "participant-2",
     });
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_cdr_track_names.size() == 2U; }));
-  EXPECT_EQ(harness.state->published_cdr_track_names[0], harness.state->published_cdr_track_names[1]);
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
+  EXPECT_EQ(harness.state->published_data_track_names[0], harness.state->published_data_track_names[1]);
   EXPECT_NE(
-    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_cdr_track"),
+    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_data_track"),
     harness.state->event_log.end());
 }
 
@@ -618,7 +618,7 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   executor_thread.join();
 
   EXPECT_TRUE(harness.state->published_outgoing_control_packets.empty());
-  EXPECT_TRUE(harness.state->published_cdr_track_names.empty());
+  EXPECT_TRUE(harness.state->published_data_track_names.empty());
 }
 
 TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptions)
@@ -633,7 +633,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   std::atomic<bool> publish_started_once{false};
   auto harness = makeRuntimeHarness(
     options, [&publish_started_promise, &release_publish, &publish_started_once](FakeRoomSession & session) {
-      session.state->publish_cdr_track_handler =
+      session.state->publish_data_track_handler =
         [&publish_started_promise, &release_publish, &publish_started_once](const std::string &) {
           if (!publish_started_once.exchange(true)) {
             publish_started_promise.set_value();
@@ -707,7 +707,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   executor.cancel();
   executor_thread.join();
 
-  EXPECT_EQ(harness.state->published_cdr_track_names.size(), 1U);
+  EXPECT_EQ(harness.state->published_data_track_names.size(), 1U);
 }
 
 }  // namespace livekit_ros2_bridge

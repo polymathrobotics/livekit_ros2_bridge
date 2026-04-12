@@ -139,8 +139,8 @@ public:
   virtual bool registerRpcMethod(const std::string & method_name, RpcHandler handler) = 0;
   virtual bool unregisterRpcMethod(const std::string & method_name) = 0;
   virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;
-  virtual std::shared_ptr<livekit::LocalDataTrack> publishCdrTrack(const std::string & name) = 0;
-  virtual void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
+  virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
+  virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
   virtual std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & track_name,
     const std::shared_ptr<livekit::VideoSource> & source,

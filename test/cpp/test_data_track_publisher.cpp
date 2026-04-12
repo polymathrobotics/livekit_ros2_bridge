@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "cdr_track_publisher.hpp"
+#include "data_track_publisher.hpp"
 #include "fake_room_session.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
@@ -35,7 +35,7 @@ namespace
 using test_support::ScopedRclcppInit;
 using test_support::waitForTopicType;
 
-TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPublishError)
+TEST(DataTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPublishError)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("test_publish_track_failure_node");
@@ -56,10 +56,10 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
     nullptr);
 
   FakeRoomSession session;
-  session.state->publish_cdr_track_handler = [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+  session.state->publish_data_track_handler = [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     throw std::runtime_error("simulated publish failure");
   };
-  CdrTrackPublisher publisher(session, node->get_clock());
+  DataTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
   const auto response = registry.renewSubscription("alice", topic, 0, expiry);
@@ -67,9 +67,9 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_EQ(response.track_name, publish_requests[0]);
 
   EXPECT_NO_THROW(publisher.publishTrack(publish_requests[0], 0, registry));
-  ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->published_cdr_track_names[0], publish_requests[0]);
-  EXPECT_TRUE(session.state->unpublish_attempted_cdr_track_names.empty());
+  ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_data_track_names[0], publish_requests[0]);
+  EXPECT_TRUE(session.state->unpublish_attempted_data_track_names.empty());
 
   const auto retry_response = registry.renewSubscription("alice", topic, 0, expiry);
   ASSERT_EQ(publish_requests.size(), 2U);
@@ -77,10 +77,10 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_EQ(publish_requests[1], publish_requests[0]);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_TRUE(session.state->unpublish_attempted_cdr_track_names.empty());
+  EXPECT_TRUE(session.state->unpublish_attempted_data_track_names.empty());
 }
 
-TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrack)
+TEST(DataTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("test_stale_track_node");
@@ -100,7 +100,7 @@ TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrac
     nullptr);
 
   FakeRoomSession session;
-  CdrTrackPublisher publisher(session, node->get_clock());
+  DataTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
   const auto response = registry.renewSubscription("alice", topic, 0, expiry);
@@ -111,18 +111,18 @@ TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrac
 
   publisher.publishTrack(response.track_name, 0, registry);
 
-  ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->published_cdr_track_names[0], response.track_name);
-  ASSERT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names[0], response.track_name);
-  ASSERT_EQ(session.state->unpublished_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response.track_name);
+  ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->published_data_track_names[0], response.track_name);
+  ASSERT_EQ(session.state->unpublish_attempted_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_data_track_names[0], response.track_name);
+  ASSERT_EQ(session.state->unpublished_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublished_data_track_names[0], response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_data_track_names.size(), 1U);
 }
 
-TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
+TEST(DataTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("test_unpublish_track_node");
@@ -142,24 +142,24 @@ TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
     nullptr);
 
   FakeRoomSession session;
-  CdrTrackPublisher publisher(session, node->get_clock());
+  DataTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
   const auto response = registry.renewSubscription("alice", topic, 0, expiry);
   publisher.publishTrack(response.track_name, 0, registry);
 
-  session.state->unpublish_rejected_cdr_track_names.push_back(response.track_name);
+  session.state->unpublish_rejected_data_track_names.push_back(response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  ASSERT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names[0], response.track_name);
-  EXPECT_TRUE(session.state->unpublished_cdr_track_names.empty());
+  ASSERT_EQ(session.state->unpublish_attempted_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_data_track_names[0], response.track_name);
+  EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_data_track_names.size(), 1U);
 }
 
-TEST(CdrTrackPublisherTest, UnpublishAllUnpublishesAcceptedTracksAndContinuesOnError)
+TEST(DataTrackPublisherTest, UnpublishAllUnpublishesAcceptedTracksAndContinuesOnError)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("test_clear_tracks_node");
@@ -183,7 +183,7 @@ TEST(CdrTrackPublisherTest, UnpublishAllUnpublishesAcceptedTracksAndContinuesOnE
     nullptr);
 
   FakeRoomSession session;
-  CdrTrackPublisher publisher(session, node->get_clock());
+  DataTrackPublisher publisher(session, node->get_clock());
 
   const auto expiry = std::chrono::steady_clock::now() + std::chrono::hours(1);
   const auto response_a = registry.renewSubscription("alice", topic_a, 0, expiry);
@@ -191,21 +191,21 @@ TEST(CdrTrackPublisherTest, UnpublishAllUnpublishesAcceptedTracksAndContinuesOnE
   publisher.publishTrack(response_a.track_name, 0, registry);
   publisher.publishTrack(response_b.track_name, 0, registry);
 
-  session.state->unpublish_rejected_cdr_track_names.push_back(response_b.track_name);
+  session.state->unpublish_rejected_data_track_names.push_back(response_b.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
 
-  auto attempts = session.state->unpublish_attempted_cdr_track_names;
+  auto attempts = session.state->unpublish_attempted_data_track_names;
   std::sort(attempts.begin(), attempts.end());
   ASSERT_EQ(attempts.size(), 2U);
   EXPECT_EQ(attempts[0], response_a.track_name);
   EXPECT_EQ(attempts[1], response_b.track_name);
 
-  ASSERT_EQ(session.state->unpublished_cdr_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response_a.track_name);
+  ASSERT_EQ(session.state->unpublished_data_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublished_data_track_names[0], response_a.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 2U);
+  EXPECT_EQ(session.state->unpublish_attempted_data_track_names.size(), 2U);
 }
 
 }  // namespace

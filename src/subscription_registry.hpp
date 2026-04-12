@@ -42,11 +42,11 @@ namespace livekit_ros2_bridge
 
 class VideoStreamManager;
 
-using SendCdrMessageFn =
+using SendDataMessageFn =
   std::function<void(const std::string & track_name, const std::uint8_t * data, std::size_t size)>;
 
-using PublishCdrTrackFn = std::function<void(const std::string & track_name, std::size_t generation)>;
-using UnpublishCdrTrackFn = std::function<void(const std::string & track_name)>;
+using PublishDataTrackFn = std::function<void(const std::string & track_name, std::size_t generation)>;
+using UnpublishDataTrackFn = std::function<void(const std::string & track_name)>;
 
 struct StreamUnavailableError : std::runtime_error
 {
@@ -59,7 +59,8 @@ enum class RequesterLeaseRemovalReason
   kLeaseExpired
 };
 
-// Owns requester leases, CDR replay bookkeeping, and the shared stream resources they keep alive.
+// Owns requester leases, data-track republish bookkeeping, and the shared stream resources they
+// keep alive.
 class SubscriptionRegistry final
 {
 public:
@@ -67,9 +68,9 @@ public:
 
   SubscriptionRegistry(
     rclcpp::Node & node,
-    SendCdrMessageFn send_cdr_fn,
-    PublishCdrTrackFn publish_cdr_track_fn,
-    UnpublishCdrTrackFn unpublish_cdr_track_fn,
+    SendDataMessageFn send_data_fn,
+    PublishDataTrackFn publish_data_track_fn,
+    UnpublishDataTrackFn unpublish_data_track_fn,
     VideoStreamManager * video_stream_manager,
     const VideoConfig * video_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
@@ -84,11 +85,12 @@ public:
 
   // Participant disconnect callbacks can lag behind lease expiry or a same-topic resubscribe. The
   // caller supplies the registry generation observed for that session; only a matching generation
-  // marks the requester identity for CDR replay on the next heartbeat-confirmed reconnect.
-  void markRequesterForCdrReplay(const std::string & requester_identity, std::size_t generation);
-  // Replays currently published CDR tracks for a requester once a fresh heartbeat proves the
+  // marks the requester identity for data-track republish on the next heartbeat-confirmed
+  // reconnect.
+  void markRequesterForDataTrackRepublish(const std::string & requester_identity, std::size_t generation);
+  // Republishes currently published data tracks for a requester once a fresh heartbeat proves the
   // requester has rejoined and still owns those subscriptions.
-  void replayCdrTracksForRequester(const std::string & requester_identity);
+  void republishDataTracksForRequester(const std::string & requester_identity);
   void revokeRequesterLeases(const std::string & requester_identity);
   void pruneExpiredLeases();
   bool hasSubscription(
@@ -96,12 +98,12 @@ public:
   void resetSessionState();
   void shutdown();
 
-  bool onCdrTrackPublished(const std::string & track_name, std::size_t generation);
+  bool onDataTrackPublished(const std::string & track_name, std::size_t generation);
   std::size_t registryGeneration() const;
-  void onCdrTrackFailed(const std::string & track_name);
+  void onDataTrackFailed(const std::string & track_name);
 
 private:
-  enum class CdrTrackState
+  enum class DataTrackState
   {
     kNone,
     kPending,
@@ -121,7 +123,7 @@ private:
     std::optional<Clock::time_point> last_sent_time;
     std::string track_name;
     int applied_interval_ms = 0;
-    CdrTrackState cdr_track_state = CdrTrackState::kNone;
+    DataTrackState data_track_state = DataTrackState::kNone;
     // Snapshot of registry_generation_ when this track name was reserved. Publish completions must
     // match it so stale callbacks cannot claim a recycled subscription after reset or re-create.
     std::size_t generation = 0;
@@ -169,7 +171,7 @@ private:
     const std::string & interface_type,
     const std::map<std::string, RequesterLease> & requesters,
     const std::string & requester_identity);
-  void publishPendingCdrTrack(
+  void publishPendingDataTrack(
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
   VideoStreamManager & videoStreamManager() const;
   const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
@@ -186,9 +188,9 @@ private:
   void clearSubscriptions();
 
   rclcpp::Node & node_;
-  SendCdrMessageFn send_cdr_fn_;
-  PublishCdrTrackFn publish_cdr_track_fn_;
-  UnpublishCdrTrackFn unpublish_cdr_track_fn_;
+  SendDataMessageFn send_data_fn_;
+  PublishDataTrackFn publish_data_track_fn_;
+  UnpublishDataTrackFn unpublish_data_track_fn_;
   VideoStreamManager * video_stream_manager_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
@@ -200,9 +202,9 @@ private:
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> registry_generation_{0};
   SubscriptionStateMap subscriptions_;
-  // Requesters whose next confirmed heartbeat should force currently published CDR tracks through
-  // an unpublish/publish cycle so the rejoined participant session sees them again.
-  std::unordered_set<std::string> requesters_needing_cdr_replay_;
+  // Requesters whose next confirmed heartbeat should force currently published data tracks
+  // through an unpublish/publish cycle so the rejoined participant session sees them again.
+  std::unordered_set<std::string> requesters_needing_data_track_republish_;
 };
 
 }  // namespace livekit_ros2_bridge

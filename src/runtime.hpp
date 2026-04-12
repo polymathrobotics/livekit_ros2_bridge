@@ -31,7 +31,7 @@ namespace livekit_ros2_bridge
 {
 
 class RpcRouter;
-class CdrTrackPublisher;
+class DataTrackPublisher;
 class ControlPacketRouter;
 class SubscriptionHeartbeatProcessor;
 class RosExecutorQueue;
@@ -85,7 +85,7 @@ private:
   std::unique_ptr<RoomSession> room_session_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
   std::unique_ptr<RpcRouter> rpc_router_;
-  std::unique_ptr<CdrTrackPublisher> cdr_track_publisher_;
+  std::unique_ptr<DataTrackPublisher> data_track_publisher_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
   std::unique_ptr<VideoStreamManager> video_stream_manager_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;

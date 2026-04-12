@@ -44,7 +44,7 @@ Good entry points:
 
 - `test_runtime.cpp`: end-to-end runtime wiring around `FakeRoomSession`
 - `test_subscription_heartbeat_processor.cpp`: heartbeat parsing, status envelopes, access control, and video-source edge cases
-- `test_subscription_registry.cpp`: lease sharing, interval handling, CDR replay, and video stream interactions
+- `test_subscription_registry.cpp`: lease sharing, interval handling, data-track republish, and video stream interactions
 - `test_rpc_router.cpp`: RPC request parsing, graph filtering, and error mapping
 - `test_runtime_config.cpp`: auth modes, parameter validation, and video rule/source loading
 - `test_video_stream_manager.cpp`: ROS ingress, configured-source pipelines, and per-stream video publish settings
@@ -77,7 +77,7 @@ Use it when you need to verify:
 
 - which RPC methods were registered or unregistered
 - which control packets were published, and to which recipients
-- which CDR tracks were published, unpublished, or rejected
+- which data tracks were published, unpublished, or rejected
 - which callbacks `Runtime` installed
 - how reconnect-like events behave when injected with `emitSessionReset()`, `emitParticipantDisconnected()`, or `emitIncomingControlPacket(...)`
 

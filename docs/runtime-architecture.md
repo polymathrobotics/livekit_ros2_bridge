@@ -14,7 +14,7 @@ The important boundary is simple:
 - `RoomSession`: background connect and reconnect loop plus the active LiveKit room
 - `RosExecutorQueue`: custom waitable that wakes the ROS executor and drains queued work on that executor thread
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
-- `SubscriptionRegistry`: shared lease state, data tracks, CDR replay bookkeeping, and video stream bindings
+- `SubscriptionRegistry`: shared lease state, data-track republish bookkeeping, and video stream bindings
 - `VideoStreamManager`: one shared in-process video runtime per resolved stream key
 - `RosTopicPublisher`: best-effort topic ingress with a bounded publisher cache
 - `RpcRouter` and `ControlPacketRouter`: the LiveKit-facing entry points
@@ -36,7 +36,7 @@ The flow looks like this:
 
 Construction is eager rather than lazy:
 
-1. `Runtime` builds `RosExecutorQueue`, `CdrTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
+1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
 3. It starts `RoomSession` with callbacks for session reset, participant disconnect, and incoming control packets.
 4. After the session thread is running, it registers the LiveKit RPC methods.
@@ -54,11 +54,11 @@ That order matters. The ROS-side helpers exist before the session can emit callb
 
 The reset contract is per connection, not per `Runtime` instance:
 
-- `on_session_reset` unpublishes CDR tracks, resets `SubscriptionRegistry`, and fails pending service calls
+- `on_session_reset` unpublishes data tracks, resets `SubscriptionRegistry`, and fails pending service calls
 - participant disconnect callbacks are suppressed during transport reconnect so transient reconnects do not look like permanent departures
-- when a requester really disconnects outside reconnect handling, the bridge keeps the lease state, marks that requester for CDR replay, and cancels only that requester's pending service calls
+- when a requester really disconnects outside reconnect handling, the bridge keeps the lease state, marks that requester for data-track republish, and cancels only that requester's pending service calls
 
-That is why browser refresh can keep lease state alive while still forcing CDR publications to be rebuilt for the new participant session.
+That is why browser refresh can keep lease state alive while still forcing data-track publications to be rebuilt for the new participant session.
 
 ## Why service calls span two phases
 
@@ -91,6 +91,6 @@ Immediate failures such as shutdown, bad requests, quota limits, or client creat
 3. unregister RPC methods from the active session
 4. stop `RoomSession` so no new SDK callbacks can enqueue ROS work
 5. shut down `RosExecutorQueue`
-6. shut down `SubscriptionRegistry`, unpublish CDR tracks, stop video streams, shut down `RosServiceCaller`, and clear topic publishers
+6. shut down `SubscriptionRegistry`, unpublish data tracks, stop video streams, shut down `RosServiceCaller`, and clear topic publishers
 
 The key invariant is that the session stops before the executor queue is torn down. Already accepted work may still be draining at that point, so the runtime also checks the shutdown flag inside queued lambdas.

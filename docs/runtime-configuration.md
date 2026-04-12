@@ -95,7 +95,7 @@ Use `subscription_qos_overrides_ids` together with `subscription.qos_overrides.*
 Override rules:
 
 - overrides apply only to ROS topic subscriptions
-- they affect both CDR data-track and ROS video subscriptions
+- they affect both data-track and ROS video subscriptions
 - longest matching pattern wins
 - same-length ties keep declaration order
 - `auto` defers to publisher inspection for that field

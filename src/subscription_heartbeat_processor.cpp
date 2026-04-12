@@ -114,7 +114,7 @@ void SubscriptionHeartbeatProcessor::process(
   // Refreshing the page reuses the requester identity before the old lease expires. We keep
   // that lease alive, but the rejoined participant still needs a fresh data-track publication
   // because the previous publication belonged to the disconnected participant session.
-  subscription_registry_.replayCdrTracksForRequester(*resolved_requester_identity);
+  subscription_registry_.republishDataTracksForRequester(*resolved_requester_identity);
   publishSubscriptionStatus(*resolved_requester_identity, update.session_id, requester_lease_expiry, streams);
 }
 
