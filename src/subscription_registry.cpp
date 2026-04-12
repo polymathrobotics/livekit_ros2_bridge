@@ -342,9 +342,10 @@ void SubscriptionRegistry::assignVideoMetadata(
 std::shared_ptr<DataStreamInstance> SubscriptionRegistry::createDataStreamInstance(
   DataStreamSpec spec, const std::map<std::string, RequesterLease> & requesters)
 {
-  auto instance = DataStreamInstance::create(
-    std::move(spec), node_, room_connection_, *this, message_callback_gate_, subscription_qos_config_);
+  auto instance = std::shared_ptr<DataStreamInstance>(new DataStreamInstance(
+    std::move(spec), node_, room_connection_, *this, message_callback_gate_, subscription_qos_config_));
   instance->updateAppliedIntervalMs(computeAppliedIntervalMs(requesters));
+  instance->initializeSubscription();
   return instance;
 }
 

@@ -59,20 +59,6 @@ DataStreamSpec makeDataStreamSpec(std::string topic, std::string interface_type)
   return spec;
 }
 
-std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
-  DataStreamSpec spec,
-  rclcpp::Node & node,
-  RoomConnection & room_connection,
-  DataTrackPublicationObserver & publication_observer,
-  QuiesceGate & message_callback_gate,
-  const SubscriptionQosConfig * subscription_qos_config)
-{
-  auto instance = std::shared_ptr<DataStreamInstance>(new DataStreamInstance(
-    std::move(spec), node, room_connection, publication_observer, message_callback_gate, subscription_qos_config));
-  instance->initializeSubscription();
-  return instance;
-}
-
 DataStreamInstance::DataStreamInstance(
   DataStreamSpec spec,
   rclcpp::Node & node,
@@ -88,6 +74,11 @@ DataStreamInstance::DataStreamInstance(
 , message_callback_gate_(message_callback_gate)
 , subscription_qos_config_(subscription_qos_config)
 {}
+
+DataStreamInstance::~DataStreamInstance()
+{
+  shutdown();
+}
 
 const std::string & DataStreamInstance::trackName() const
 {

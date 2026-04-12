@@ -36,6 +36,7 @@ namespace livekit_ros2_bridge
 struct SubscriptionQosConfig;
 class QuiesceGate;
 class RoomConnection;
+class SubscriptionRegistry;
 
 struct DataStreamSpec
 {
@@ -71,19 +72,11 @@ public:
     kFailed
   };
 
-  static std::shared_ptr<DataStreamInstance> create(
-    DataStreamSpec spec,
-    rclcpp::Node & node,
-    RoomConnection & room_connection,
-    DataTrackPublicationObserver & publication_observer,
-    QuiesceGate & message_callback_gate,
-    const SubscriptionQosConfig * subscription_qos_config = nullptr);
-
   DataStreamInstance(const DataStreamInstance &) = delete;
   DataStreamInstance & operator=(const DataStreamInstance &) = delete;
   DataStreamInstance(DataStreamInstance &&) = delete;
   DataStreamInstance & operator=(DataStreamInstance &&) = delete;
-  ~DataStreamInstance() = default;
+  ~DataStreamInstance();
 
   const std::string & trackName() const;
   int appliedIntervalMs() const;
@@ -97,6 +90,8 @@ public:
   void shutdown();
 
 private:
+  friend class SubscriptionRegistry;
+
   DataStreamInstance(
     DataStreamSpec spec,
     rclcpp::Node & node,
