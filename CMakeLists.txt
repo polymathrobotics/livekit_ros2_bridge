@@ -68,7 +68,7 @@ add_library(${PROJECT_NAME} SHARED
   src/subscription_heartbeat_processor.cpp
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
-  src/topic_publisher.cpp
+  src/ros_topic_writer.cpp
   src/utils/base64.cpp
   src/video_stream_config.cpp
   src/video_frame_source.cpp
@@ -199,8 +199,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_topic_publish_command test/cpp/test_topic_publish_command.cpp)
   target_link_libraries(test_topic_publish_command ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
-  ament_add_gtest(test_topic_publisher test/cpp/test_topic_publisher.cpp)
-  target_link_libraries(test_topic_publisher ${PROJECT_NAME} ${std_msgs_TARGETS} ${test_msgs_TARGETS})
+  ament_add_gtest(test_ros_topic_writer test/cpp/test_ros_topic_writer.cpp)
+  target_link_libraries(test_ros_topic_writer ${PROJECT_NAME} ${std_msgs_TARGETS} ${test_msgs_TARGETS})
 
   ament_add_gtest(test_video_stream_spec test/cpp/test_video_stream_spec.cpp)
   target_link_libraries(test_video_stream_spec ${PROJECT_NAME})
@@ -241,7 +241,7 @@ if(BUILD_TESTING)
     test_subscription_heartbeat_processor
     test_subscription_registry
     test_topic_publish_command
-    test_topic_publisher
+    test_ros_topic_writer
     test_video_stream_spec
     test_video_stream_registry
     test_video_track_publisher

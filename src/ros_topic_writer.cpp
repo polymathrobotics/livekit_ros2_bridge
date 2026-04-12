@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "topic_publisher.hpp"
+#include "ros_topic_writer.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -31,8 +31,8 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 constexpr std::size_t kMaxCachedPublishers = 50U;
-constexpr auto kPublishLogThrottleMs = 5000;
-const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
+constexpr auto kWriteLogThrottleMs = 5000;
+const auto kTopicWriterLogger = rclcpp::get_logger("topic_writer");
 
 rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
 {
@@ -47,36 +47,37 @@ rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> 
 
 }  // namespace
 
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
-: RosTopicPublisher(node, std::move(access_policy), kMaxCachedPublishers)
+RosTopicWriter::RosTopicWriter(rclcpp::Node & node, AccessPolicy access_policy)
+: RosTopicWriter(node, std::move(access_policy), kMaxCachedPublishers)
 {}
 
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers)
+RosTopicWriter::RosTopicWriter(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers)
 : node_(node)
 , access_policy_(std::move(access_policy))
 , max_cached_publishers_(max_cached_publishers)
 , cached_publishers_(max_cached_publishers)
 {}
 
-void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
+void RosTopicWriter::write(const std::string & requester_identity, const TopicPublishCommand & command)
 {
   const std::string & topic = command.topic;
 
-  // Publish commands come from a streaming control path, so this component is
-  // intentionally best-effort: invalid or late commands are dropped after logging.
+  // Publish commands come from a streaming control path, so this LiveKit -> ROS
+  // ingress writer is intentionally best-effort: invalid or late commands are
+  // dropped after logging.
   if (is_shutdown_.load()) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+    LogEvent(kTopicWriterLogger, "publish_request_rejected")
       .field("reason", "shutdown")
       .field("resource", "topics")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
       .field("interface_type", command.interface_type)
-      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(kPublishLogThrottleMs));
+      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(kWriteLogThrottleMs));
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+    LogEvent(kTopicWriterLogger, "publish_request_rejected")
       .field("reason", "forbidden")
       .field("resource", "topics")
       .field("topic", topic)
@@ -90,7 +91,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
   } catch (const std::exception & exc) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
+    LogEvent(kTopicWriterLogger, "publish_request_rejected")
       .field("reason", "invalid_request")
       .field("resource", "topics")
       .field("topic", topic)
@@ -104,9 +105,9 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   rclcpp::SerializedMessage serialized = wrapSerializedPayload(command.cdr_payload);
 
   try {
-    publishWithResolvedPublisher(topic, interface_type, serialized);
+    writeWithResolvedPublisher(topic, interface_type, serialized);
   } catch (const std::exception & exc) {
-    LogEvent(kTopicPublisherLogger, "publish_request_failed")
+    LogEvent(kTopicWriterLogger, "publish_request_failed")
       .field("reason", "internal")
       .field("resource", "topics")
       .field("topic", topic)
@@ -118,14 +119,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   }
 }
 
-void RosTopicPublisher::shutdown()
+void RosTopicWriter::shutdown()
 {
   if (is_shutdown_.exchange(true)) {
     return;
   }
 
   const std::size_t cached_publishers = cached_publishers_.size();
-  LogEvent(kTopicPublisherLogger, "topic_publisher_state_changed")
+  LogEvent(kTopicWriterLogger, "topic_writer_state_changed")
     .field("reason", "shutdown")
     .field("action", "clear_cached_publishers")
     .field("cached_publishers", cached_publishers)
@@ -134,7 +135,7 @@ void RosTopicPublisher::shutdown()
   cached_publishers_.clear();
 }
 
-std::string RosTopicPublisher::resolveTopicTypeOrThrow(
+std::string RosTopicWriter::resolveTopicTypeOrThrow(
   const std::string & topic, const std::string & requested_interface_type) const
 {
   std::string expected_type;
@@ -153,7 +154,7 @@ std::string RosTopicPublisher::resolveTopicTypeOrThrow(
   return expected_type;
 }
 
-void RosTopicPublisher::publishWithResolvedPublisher(
+void RosTopicWriter::writeWithResolvedPublisher(
   const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized)
 {
   const auto cached_publisher = cached_publishers_.peek(topic);
@@ -166,8 +167,8 @@ void RosTopicPublisher::publishWithResolvedPublisher(
     resolved_publisher = cached_publisher->publisher;
   }
 
-  if (before_publish_hook_for_test_) {
-    before_publish_hook_for_test_();
+  if (before_write_hook_for_test_) {
+    before_write_hook_for_test_();
   }
   resolved_publisher->publish(serialized);
 
@@ -187,7 +188,7 @@ void RosTopicPublisher::publishWithResolvedPublisher(
   }
 
   if (const std::size_t count = evicted_publisher_warning_throttle_.recordAndTakePendingCount(); count > 0U) {
-    LogEvent(kTopicPublisherLogger, "publisher_cache_evicted")
+    LogEvent(kTopicWriterLogger, "publisher_cache_evicted")
       .field("reason", "max_topics_exceeded")
       .field("topic", topic)
       .field("evicted_topic", evicted_publisher->key)
@@ -198,9 +199,9 @@ void RosTopicPublisher::publishWithResolvedPublisher(
   }
 }
 
-void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
+void RosTopicWriter::setBeforeWriteHookForTest(std::function<void()> hook)
 {
-  before_publish_hook_for_test_ = std::move(hook);
+  before_write_hook_for_test_ = std::move(hook);
 }
 
 }  // namespace livekit_ros2_bridge

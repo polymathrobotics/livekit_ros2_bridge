@@ -36,7 +36,7 @@ class SubscriptionHeartbeatProcessor;
 class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionRegistry;
-class RosTopicPublisher;
+class RosTopicWriter;
 class VideoStreamRegistry;
 
 struct FailFastCallbacks
@@ -47,10 +47,10 @@ struct FailFastCallbacks
   std::function<void(int)> exit_callback;
 };
 
-// Wires one RoomSession to the ROS-facing publishers, RPC handlers, and in-process video streams
-// for a node.
+// Wires one RoomSession to the ROS-facing ingress helpers, publication owners,
+// RPC handlers, and in-process video streams for a node.
 // Construction performs eager startup; destruction shuts the room session down before the ROS
-// ingress pipeline is torn down.
+// ingress helpers are torn down.
 class Runtime final
 {
 public:
@@ -84,7 +84,7 @@ private:
   std::unique_ptr<RoomSession> room_session_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
   std::unique_ptr<RpcRouter> rpc_router_;
-  std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
+  std::unique_ptr<RosTopicWriter> ros_topic_writer_;
   std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;

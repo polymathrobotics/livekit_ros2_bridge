@@ -5,7 +5,7 @@
 The important boundary is simple:
 
 - LiveKit callbacks and reconnect logic run outside the ROS executor
-- ROS graph access, topic publication, subscription maintenance, and service request creation are funneled back through `RosExecutorQueue`
+- ROS graph access, topic writes, subscription maintenance, and service request creation are funneled back through `RosExecutorQueue`
 
 ## Main owners
 
@@ -16,7 +16,7 @@ The important boundary is simple:
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
 - `SubscriptionRegistry`: shared lease state, data-track republish bookkeeping, and video stream bindings
 - `VideoStreamRegistry`: one shared in-process video runtime per resolved stream key
-- `RosTopicPublisher`: best-effort topic ingress with a bounded publisher cache
+- `RosTopicWriter`: best-effort LiveKit -> ROS topic ingress with a bounded ROS publisher cache
 - `RpcRouter` and `ControlPacketRouter`: the LiveKit-facing entry points
 
 ## Event flow
@@ -28,7 +28,7 @@ The flow looks like this:
 1. `RoomSession` receives a control packet, RPC, disconnect event, or reconnect event.
 2. `Runtime::submitExecutorWork()` queues executor-affine work onto `RosExecutorQueue`.
 3. `RosExecutorQueue::drain()` runs that work on the ROS executor thread.
-4. ROS-facing helpers do the actual graph lookups, topic publication, lease renewal, or service request creation.
+4. ROS-facing helpers do the actual graph lookups, topic writes, lease renewal, or service request creation.
 
 `submitExecutorWork()` rejects new work once shutdown starts, and it checks again at execution time in case shutdown raced with enqueue.
 
@@ -36,7 +36,7 @@ The flow looks like this:
 
 Construction is eager rather than lazy:
 
-1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
+1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicWriter`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
 3. It starts `RoomSession` with callbacks for session reset, participant disconnect, and incoming control packets.
 4. After the session thread is running, it registers the LiveKit RPC methods.
@@ -91,6 +91,6 @@ Immediate failures such as shutdown, bad requests, quota limits, or client creat
 3. unregister RPC methods from the active session
 4. stop `RoomSession` so no new SDK callbacks can enqueue ROS work
 5. shut down `RosExecutorQueue`
-6. shut down `SubscriptionRegistry`, unpublish data tracks, stop video streams, shut down `RosServiceCaller`, and clear topic publishers
+6. shut down `SubscriptionRegistry`, unpublish data tracks, stop video streams, shut down `RosServiceCaller`, and clear cached ROS topic publishers
 
 The key invariant is that the session stops before the executor queue is torn down. Already accepted work may still be draining at that point, so the runtime also checks the shutdown flag inside queued lambdas.
