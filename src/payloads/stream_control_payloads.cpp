@@ -45,7 +45,7 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
       return "configured_source";
   }
 
-  throw std::invalid_argument("stream status target kind is invalid");
+  throw std::invalid_argument("subscription status target kind is invalid");
 }
 
 SubscriptionTargetKind parseSubscriptionTargetKind(std::string_view raw_kind)
@@ -66,16 +66,16 @@ std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
   return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
 }
 
-const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
+const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind delivery_kind)
 {
   switch (delivery_kind) {
-    case StreamDeliveryKind::kData:
+    case SubscriptionDeliveryKind::kData:
       return protocol::kDeliveryKindData;
-    case StreamDeliveryKind::kVideo:
+    case SubscriptionDeliveryKind::kVideo:
       return protocol::kDeliveryKindVideo;
   }
 
-  throw std::invalid_argument("stream status delivery kind is invalid");
+  throw std::invalid_argument("subscription status delivery kind is invalid");
 }
 
 int parsePreferredIntervalMs(const nlohmann::json & prefs)
@@ -200,38 +200,39 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
   return heartbeat;
 }
 
-nlohmann::json serializeStreamStatus(const StreamStatus & stream_status)
+nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscription_status)
 {
-  const char * kind_str = subscriptionTargetKindString(stream_status.target.kind);
+  const char * kind_str = subscriptionTargetKindString(subscription_status.target.kind);
 
   nlohmann::json entry = {
     {"kind", kind_str},
-    {"name", stream_status.target.name},
+    {"name", subscription_status.target.name},
     {"status", "active"},
   };
 
-  if (!stream_status.degraded_reason.empty()) {
-    entry["degraded_reason"] = stream_status.degraded_reason;
+  if (!subscription_status.degraded_reason.empty()) {
+    entry["degraded_reason"] = subscription_status.degraded_reason;
   }
-  if (!stream_status.interface_type.empty()) {
-    entry["interface_type"] = stream_status.interface_type;
+  if (!subscription_status.interface_type.empty()) {
+    entry["interface_type"] = subscription_status.interface_type;
   }
 
-  switch (stream_status.delivery_kind) {
-    case StreamDeliveryKind::kVideo:
+  switch (subscription_status.delivery_kind) {
+    case SubscriptionDeliveryKind::kVideo:
       entry["delivery"] = {
-        {"kind", streamDeliveryKindString(stream_status.delivery_kind)}, {"track_name", stream_status.track_name}};
+        {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
+        {"track_name", subscription_status.track_name}};
       return entry;
-    case StreamDeliveryKind::kData:
+    case SubscriptionDeliveryKind::kData:
       entry["delivery"] = {
-        {"kind", streamDeliveryKindString(stream_status.delivery_kind)},
-        {"track_name", stream_status.track_name},
+        {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
+        {"track_name", subscription_status.track_name},
         {"content_type", protocol::kDataContentTypeCdr},
-        {"interval_ms", stream_status.applied_interval_ms}};
+        {"interval_ms", subscription_status.applied_interval_ms}};
       return entry;
   }
 
-  throw std::invalid_argument("stream status delivery kind is invalid");
+  throw std::invalid_argument("subscription status delivery kind is invalid");
 }
 
 }  // namespace livekit_ros2_bridge

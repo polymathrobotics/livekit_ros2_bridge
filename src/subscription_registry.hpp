@@ -67,9 +67,9 @@ public:
     const VideoStreamConfig * video_stream_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
-  StreamStatus renewSubscription(
+  SubscriptionStatus renewSubscription(
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
-  StreamStatus renewSubscription(
+  SubscriptionStatus renewSubscription(
     const std::string & requester_identity,
     const std::string & topic,
     int preferred_interval_ms,
@@ -121,7 +121,8 @@ private:
   using RequesterIdentityLeasePredicate =
     std::function<bool(const std::string & requester_identity, const RequesterLease &)>;
 
-  static StreamStatus makeStreamStatus(const SubscriptionState & sub);
+  // Build the control-path subscription status object from shared runtime subscription state.
+  static SubscriptionStatus makeSubscriptionStatus(const SubscriptionState & sub);
   static int computeAppliedIntervalMs(const std::map<std::string, RequesterLease> & requesters);
   static std::string makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource);
 

@@ -148,11 +148,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
      {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["name"], "/battery_state");
-  EXPECT_EQ(stream["status"], "error");
-  EXPECT_EQ(stream["error"]["reason"], "forbidden");
+  const auto subscription_status = extractSinglePublishedSubscription(*state_, "requester-1");
+  EXPECT_EQ(subscription_status["kind"], "topic");
+  EXPECT_EQ(subscription_status["name"], "/battery_state");
+  EXPECT_EQ(subscription_status["status"], "error");
+  EXPECT_EQ(subscription_status["error"]["reason"], "forbidden");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
@@ -165,11 +165,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
      {{{"kind", "topic"}, {"name", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["name"], "/nonexistent_topic");
-  EXPECT_EQ(stream["status"], "error");
-  EXPECT_EQ(stream["error"]["reason"], "not_found");
+  const auto subscription_status = extractSinglePublishedSubscription(*state_, "requester-1");
+  EXPECT_EQ(subscription_status["kind"], "topic");
+  EXPECT_EQ(subscription_status["name"], "/nonexistent_topic");
+  EXPECT_EQ(subscription_status["status"], "error");
+  EXPECT_EQ(subscription_status["error"]["reason"], "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnavailable)
@@ -186,11 +186,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
   const nlohmann::json body = {{"subscriptions", {{{"kind", "topic"}, {"name", "/camera/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "topic");
-  EXPECT_EQ(stream["name"], "/camera/front");
-  EXPECT_EQ(stream["status"], "error");
-  EXPECT_EQ(stream["error"]["reason"], "unavailable");
+  const auto subscription_status = extractSinglePublishedSubscription(*state_, "requester-1");
+  EXPECT_EQ(subscription_status["kind"], "topic");
+  EXPECT_EQ(subscription_status["name"], "/camera/front");
+  EXPECT_EQ(subscription_status["status"], "error");
+  EXPECT_EQ(subscription_status["error"]["reason"], "unavailable");
   (void)publisher;
 }
 
@@ -206,13 +206,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "configured_source");
-  EXPECT_EQ(stream["name"], "/sources/front");
-  EXPECT_EQ(stream["status"], "active");
-  EXPECT_EQ(stream["delivery"]["kind"], protocol::kDeliveryKindVideo);
-  EXPECT_EQ(stream["delivery"]["track_name"], "ros.video.configured_source.%2Fsources%2Ffront");
-  EXPECT_FALSE(stream.contains("error"));
+  const auto subscription_status = extractSinglePublishedSubscription(*state_, "requester-1");
+  EXPECT_EQ(subscription_status["kind"], "configured_source");
+  EXPECT_EQ(subscription_status["name"], "/sources/front");
+  EXPECT_EQ(subscription_status["status"], "active");
+  EXPECT_EQ(subscription_status["delivery"]["kind"], protocol::kDeliveryKindVideo);
+  EXPECT_EQ(subscription_status["delivery"]["track_name"], "ros.video.configured_source.%2Fsources%2Ffront");
+  EXPECT_FALSE(subscription_status.contains("error"));
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
@@ -226,11 +226,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
   const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/missing"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
-  EXPECT_EQ(stream["kind"], "configured_source");
-  EXPECT_EQ(stream["name"], "/sources/missing");
-  EXPECT_EQ(stream["status"], "error");
-  EXPECT_EQ(stream["error"]["reason"], "not_found");
+  const auto subscription_status = extractSinglePublishedSubscription(*state_, "requester-1");
+  EXPECT_EQ(subscription_status["kind"], "configured_source");
+  EXPECT_EQ(subscription_status["name"], "/sources/missing");
+  EXPECT_EQ(subscription_status["status"], "error");
+  EXPECT_EQ(subscription_status["error"]["reason"], "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)

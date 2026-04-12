@@ -186,15 +186,15 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsConfiguredSourceSlashVariants
   EXPECT_EQ(update.subscriptions[1].target.name, "front_camera/");
 }
 
-TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForVideoDelivery)
 {
-  StreamStatus stream_status;
-  stream_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
-  stream_status.interface_type = "sensor_msgs/msg/Image";
-  stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.track_name = "ros.video.camera.image";
+  SubscriptionStatus subscription_status;
+  subscription_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
+  subscription_status.interface_type = "sensor_msgs/msg/Image";
+  subscription_status.delivery_kind = SubscriptionDeliveryKind::kVideo;
+  subscription_status.track_name = "ros.video.camera.image";
 
-  const auto entry = serializeStreamStatus(stream_status);
+  const auto entry = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
     entry,
@@ -211,14 +211,14 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForVideoDelivery)
     }));
 }
 
-TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForConfiguredSourceDelivery)
 {
-  StreamStatus stream_status;
-  stream_status.target = {SubscriptionTargetKind::ConfiguredSource, "/sources/front"};
-  stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-  stream_status.track_name = "ros.video.configured_source.%2Fsources%2Ffront";
+  SubscriptionStatus subscription_status;
+  subscription_status.target = {SubscriptionTargetKind::ConfiguredSource, "/sources/front"};
+  subscription_status.delivery_kind = SubscriptionDeliveryKind::kVideo;
+  subscription_status.track_name = "ros.video.configured_source.%2Fsources%2Ffront";
 
-  const auto entry = serializeStreamStatus(stream_status);
+  const auto entry = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
     entry,
@@ -234,16 +234,16 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForConfiguredSourceDelivery
     }));
 }
 
-TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForDataTrackDelivery)
 {
-  StreamStatus stream_status;
-  stream_status.target = {SubscriptionTargetKind::Topic, "/lidar/points"};
-  stream_status.interface_type = "sensor_msgs/msg/PointCloud2";
-  stream_status.applied_interval_ms = 0;
-  stream_status.delivery_kind = StreamDeliveryKind::kData;
-  stream_status.track_name = "ros.data.lidar.points";
+  SubscriptionStatus subscription_status;
+  subscription_status.target = {SubscriptionTargetKind::Topic, "/lidar/points"};
+  subscription_status.interface_type = "sensor_msgs/msg/PointCloud2";
+  subscription_status.applied_interval_ms = 0;
+  subscription_status.delivery_kind = SubscriptionDeliveryKind::kData;
+  subscription_status.track_name = "ros.data.lidar.points";
 
-  const auto entry = serializeStreamStatus(stream_status);
+  const auto entry = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
     entry,
@@ -262,13 +262,13 @@ TEST(StreamControlPayloadsTest, SerializeStreamStatusForDataTrackDelivery)
     }));
 }
 
-TEST(StreamControlPayloadsTest, SerializeStreamStatusRejectsUnknownDeliveryKind)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusRejectsUnknownDeliveryKind)
 {
-  StreamStatus stream_status;
-  stream_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
-  stream_status.delivery_kind = static_cast<StreamDeliveryKind>(99);
+  SubscriptionStatus subscription_status;
+  subscription_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
+  subscription_status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
-  EXPECT_THROW((void)serializeStreamStatus(stream_status), std::invalid_argument);
+  EXPECT_THROW((void)serializeSubscriptionStatus(subscription_status), std::invalid_argument);
 }
 
 }  // namespace

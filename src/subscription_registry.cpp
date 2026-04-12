@@ -36,16 +36,16 @@ constexpr char kTopicSubscriptionKeyPrefix[] = "topic:";
 constexpr char kConfiguredSourceSubscriptionKeyPrefix[] = "configured_source:";
 const auto kSubscriptionRegistryLogger = rclcpp::get_logger("subscription_registry");
 
-const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
+const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind delivery_kind)
 {
   switch (delivery_kind) {
-    case StreamDeliveryKind::kData:
+    case SubscriptionDeliveryKind::kData:
       return protocol::kDeliveryKindData;
-    case StreamDeliveryKind::kVideo:
+    case SubscriptionDeliveryKind::kVideo:
       return protocol::kDeliveryKindVideo;
   }
 
-  throw std::invalid_argument("stream delivery kind is invalid");
+  throw std::invalid_argument("subscription delivery kind is invalid");
 }
 
 const std::string & requireRequesterIdentity(const std::string & requester_identity)
@@ -133,7 +133,7 @@ SubscriptionRegistry::SubscriptionRegistry(
 , subscription_qos_config_(subscription_qos_config)
 {}
 
-StreamStatus SubscriptionRegistry::renewSubscription(
+SubscriptionStatus SubscriptionRegistry::renewSubscription(
   const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry)
 {
   requireRequesterIdentity(requester_identity);
@@ -165,7 +165,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
       event.field("error", exc.what()).warn();
       throw;
     }
-    return makeStreamStatus(it->second);
+    return makeSubscriptionStatus(it->second);
   }
 
   SubscriptionState sub;
@@ -206,11 +206,11 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     data->start(requester_identity);
   }
 
-  StreamStatus stream_status = makeStreamStatus(inserted_it->second);
+  SubscriptionStatus subscription_status = makeSubscriptionStatus(inserted_it->second);
   LogEvent event(kSubscriptionRegistryLogger, "subscription_created");
   event.field("resource", resource)
     .field("kind", subscriptionKindToString(target_kind))
-    .field("delivery", streamDeliveryKindString(stream_status.delivery_kind))
+    .field("delivery", subscriptionDeliveryKindString(subscription_status.delivery_kind))
     .field("requester_identity", requester_identity);
   if (const auto * video = std::get_if<VideoTrackResource>(&inserted_it->second.resource_state)) {
     event.field("stream_key", video->stream_spec.stream_key).field("track_name", video->track_name);
@@ -218,10 +218,10 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     event.field("track_name", data->trackName());
   }
   event.info();
-  return stream_status;
+  return subscription_status;
 }
 
-StreamStatus SubscriptionRegistry::renewSubscription(
+SubscriptionStatus SubscriptionRegistry::renewSubscription(
   const std::string & requester_identity,
   const std::string & topic,
   int preferred_interval_ms,
@@ -298,7 +298,7 @@ void SubscriptionRegistry::renewExistingLease(
     sub.requesters = std::move(updated_requesters);
     data->updateAppliedIntervalMs(computeAppliedIntervalMs(sub.requesters));
     if (!requester_already_present && data->state() == DataStreamInstance::State::kPublished) {
-      // A new requester can receive stream status before LiveKit surfaces the existing published
+      // A new requester can receive subscription status before LiveKit surfaces the existing published
       // data track to that participant session, so queue one republish when the requester first
       // joins.
       requesters_needing_data_track_republish_.insert(requester_identity);
@@ -503,26 +503,26 @@ void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
   data->onPublishFailed();
 }
 
-StreamStatus SubscriptionRegistry::makeStreamStatus(const SubscriptionState & sub)
+SubscriptionStatus SubscriptionRegistry::makeSubscriptionStatus(const SubscriptionState & sub)
 {
-  StreamStatus stream_status;
-  stream_status.target = {sub.target_kind, sub.resource};
-  stream_status.interface_type = sub.interface_type;
+  SubscriptionStatus subscription_status;
+  subscription_status.target = {sub.target_kind, sub.resource};
+  subscription_status.interface_type = sub.interface_type;
   if (const auto * data = dataStreamInstance(sub)) {
-    stream_status.delivery_kind = StreamDeliveryKind::kData;
+    subscription_status.delivery_kind = SubscriptionDeliveryKind::kData;
     if (data->state() == DataStreamInstance::State::kPending || data->state() == DataStreamInstance::State::kPublished)
     {
-      stream_status.track_name = data->trackName();
+      subscription_status.track_name = data->trackName();
     }
-    stream_status.applied_interval_ms = data->appliedIntervalMs();
+    subscription_status.applied_interval_ms = data->appliedIntervalMs();
   } else {
     const auto & video = std::get<VideoTrackResource>(sub.resource_state);
-    stream_status.delivery_kind = StreamDeliveryKind::kVideo;
-    stream_status.track_name = video.track_name;
-    stream_status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
+    subscription_status.delivery_kind = SubscriptionDeliveryKind::kVideo;
+    subscription_status.track_name = video.track_name;
+    subscription_status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
   }
 
-  return stream_status;
+  return subscription_status;
 }
 
 int SubscriptionRegistry::computeAppliedIntervalMs(const std::map<std::string, RequesterLease> & requesters)

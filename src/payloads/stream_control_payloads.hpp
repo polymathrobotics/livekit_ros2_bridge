@@ -33,7 +33,7 @@ enum class SubscriptionTargetKind
   ConfiguredSource,
 };
 
-/// A canonical subscription identifier shared by heartbeat parsing and stream-status serialization.
+/// A canonical subscription identifier shared by heartbeat parsing and subscription-status serialization.
 struct SubscriptionTarget
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -56,14 +56,16 @@ struct SubscriptionHeartbeat
   std::vector<SubscriptionDemand> subscriptions;
 };
 
-enum class StreamDeliveryKind
+/// Delivery mode reported in control-path subscription status. Runtime stream concepts keep
+/// `stream` naming when they refer to shared runtime resources.
+enum class SubscriptionDeliveryKind
 {
   kData,
   kVideo,
 };
 
-/// Stream status entry serialized onto `ros.subscriptions.status`.
-struct StreamStatus
+/// Control-path subscription status entry serialized onto `ros.subscriptions.status`.
+struct SubscriptionStatus
 {
   SubscriptionTarget target;
   /// Omitted from the payload when empty.
@@ -72,7 +74,7 @@ struct StreamStatus
   std::string interface_type;
   /// Serialized only for `data` delivery as `delivery.interval_ms`.
   int applied_interval_ms = 0;
-  StreamDeliveryKind delivery_kind = StreamDeliveryKind::kData;
+  SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;
   /// Serialized for both delivery modes.
   std::string track_name;
 };
@@ -84,8 +86,8 @@ struct StreamStatus
 /// duplicate demand intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
-/// Serialize one active stream-status entry. Data deliveries include
+/// Serialize one active subscription status entry. Data deliveries include
 /// `content_type="application/x-ros-cdr"` and `delivery.interval_ms`.
-nlohmann::json serializeStreamStatus(const StreamStatus & stream_status);
+nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscription_status);
 
 }  // namespace livekit_ros2_bridge

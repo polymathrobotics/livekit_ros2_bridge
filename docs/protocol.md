@@ -196,6 +196,7 @@ Behavior:
 - `session_id` fallback behavior
 - lease timing
 - per-subscription error reasons
+- the `SubscriptionStatus` control-path model used for each reported target outcome
 - data-track republish after reconnect
 
 ## Error handling

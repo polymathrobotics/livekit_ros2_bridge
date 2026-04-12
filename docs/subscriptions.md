@@ -47,7 +47,7 @@ The heartbeat parser treats `subscriptions` as a set keyed by canonical `kind` +
 - `interval_ms: 0` means no preference
 - negative `interval_ms` values are accepted by the parser but clamped to `0` when the lease is applied
 
-For data-track subscriptions carrying ROS CDR payloads, the bridge later computes one applied interval per shared stream by taking the minimum requested interval across all current requesters.
+For data-track subscriptions carrying ROS CDR payloads, the bridge later computes one applied interval per shared subscription delivery by taking the minimum requested interval across all current requesters.
 
 ## Requester identity and `session_id`
 
@@ -59,7 +59,7 @@ Behavior:
 - if that heartbeat also includes `session_id`, the bridge binds the `session_id` to that requester for 45 seconds
 - a later heartbeat with an empty `requester_identity` is accepted only if it includes a known, unexpired `session_id`
 - a `session_id` cannot be rebound to a different requester until the existing lease expires
-- session leases are separate from stream leases
+- session leases are separate from subscription leases
 
 Anonymous heartbeats without a known `session_id` are dropped. A heartbeat with an empty `subscriptions` array renews nothing and produces no status packet.
 
@@ -99,6 +99,10 @@ Envelope rules:
 - the bridge publishes no status packet when the heartbeat produces an empty `subscriptions` array
 
 ## Subscription entries
+
+Each entry in `ros.subscriptions.status` is a subscription status object. It reports the
+bridge's control-path outcome for one requested target and is distinct from the bridge's internal
+runtime stream objects.
 
 Active entries always include:
 
@@ -163,8 +167,8 @@ Video deliveries use the same deterministic track-name surface the bridge publis
 
 Notes:
 
-- `configured_source` targets are always video streams
-- ROS topics become video streams only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
+- `configured_source` targets are always delivered by video stream runtime resources
+- ROS topics become video stream deliveries only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
 - video `track_name` is deterministic and stable for the canonical target name
 - configured-source video track names percent-encode any byte outside RFC 3986 unreserved characters, so ids that differ by `/` or `:` stay distinct
 

@@ -105,9 +105,9 @@ void SubscriptionHeartbeatProcessor::process(
     }
 
     try {
-      auto stream_status =
+      auto subscription_status =
         subscription_registry_.renewSubscription(*resolved_requester_identity, demand, requester_lease_expiry);
-      subscription_entries.push_back(serializeStreamStatus(stream_status));
+      subscription_entries.push_back(serializeSubscriptionStatus(subscription_status));
     } catch (const StreamUnavailableError & exc) {
       appendSubscriptionError(subscription_entries, target, "unavailable", exc.what());
     } catch (const std::exception & exc) {

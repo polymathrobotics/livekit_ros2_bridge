@@ -31,7 +31,7 @@ inline constexpr char kRpcTopicsList[] = "ros.topics.list";
 // Stable content-type literal for ROS 2 CDR payload objects.
 inline constexpr char kDataContentTypeCdr[] = "application/x-ros-cdr";
 
-// Stable delivery.kind values in stream status payloads.
+// Stable delivery.kind values in subscription status payloads.
 inline constexpr char kDeliveryKindVideo[] = "video";
 inline constexpr char kDeliveryKindData[] = "data";
 

@@ -167,7 +167,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
 
   EXPECT_EQ(first.target.name, topic);
   EXPECT_EQ(first.interface_type, "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(first.delivery_kind, StreamDeliveryKind::kData);
+  EXPECT_EQ(first.delivery_kind, SubscriptionDeliveryKind::kData);
   EXPECT_EQ(first.track_name, "ros.data.battery.state");
   EXPECT_EQ(second.track_name, first.track_name);
   ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
@@ -259,9 +259,9 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   const auto source_response = registry.renewSubscription(
     "bob", SubscriptionDemand{{SubscriptionTargetKind::ConfiguredSource, "/sources/front"}, std::nullopt}, kFarFuture);
 
-  EXPECT_EQ(topic_response.delivery_kind, StreamDeliveryKind::kVideo);
+  EXPECT_EQ(topic_response.delivery_kind, SubscriptionDeliveryKind::kVideo);
   EXPECT_EQ(topic_response.track_name, "ros.video.camera.front");
-  EXPECT_EQ(source_response.delivery_kind, StreamDeliveryKind::kVideo);
+  EXPECT_EQ(source_response.delivery_kind, SubscriptionDeliveryKind::kVideo);
   EXPECT_EQ(source_response.track_name, "ros.video.configured_source.%2Fsources%2Ffront");
 }
 
