@@ -73,6 +73,7 @@ add_library(${PROJECT_NAME} SHARED
   src/video_ingestor.cpp
   src/video_stream_registry.cpp
   src/video_stream_spec.cpp
+  src/video_track_publisher.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"
@@ -202,6 +203,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_video_stream_registry test/cpp/test_video_stream_registry.cpp)
   target_link_libraries(test_video_stream_registry ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
+  ament_add_gtest(test_video_track_publisher test/cpp/test_video_track_publisher.cpp)
+  target_link_libraries(test_video_track_publisher ${PROJECT_NAME})
+
   set(livekit_ros2_bridge_test_targets
     test_access_policy
     test_base64
@@ -234,6 +238,7 @@ if(BUILD_TESTING)
     test_topic_publisher
     test_video_stream_spec
     test_video_stream_registry
+    test_video_track_publisher
   )
   foreach(test_target IN LISTS livekit_ros2_bridge_test_targets)
     target_include_directories(${test_target} PRIVATE
