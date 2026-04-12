@@ -27,6 +27,31 @@ namespace
 {
 using test_support::ScopedRclcppInit;
 
+class NoOpVideoStreamLifecycleObserver final : public VideoStreamLifecycleObserver
+{
+public:
+  void onVideoTrackPublished(int, int, bool) override
+  {}
+
+  void onVideoTrackUnpublishing() override
+  {}
+
+  void onVideoStreamSampleUnpackFailed(const std::string &) override
+  {}
+
+  void onVideoStreamCaptureFailed(const std::string &) override
+  {}
+
+  void onVideoStreamPipelineFailed(const std::string &) override
+  {}
+
+  void onVideoStreamRestartFailed(const std::string &) override
+  {}
+
+  void onVideoStreamPushFailed(const std::string &) override
+  {}
+};
+
 VideoStreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
 {
   VideoStreamSpec spec;
@@ -48,7 +73,9 @@ TEST(VideoTrackPublisherTest, PublishesOnFirstFrame)
 {
   ScopedRclcppInit init;
   FakeRoomConnection session;
-  VideoTrackPublisher publisher(session, makeSpec("stream:first_frame", "ros.video.camera.first_frame"));
+  NoOpVideoStreamLifecycleObserver lifecycle_observer;
+  VideoTrackPublisher publisher(
+    session, makeSpec("stream:first_frame", "ros.video.camera.first_frame"), lifecycle_observer);
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
 
@@ -61,7 +88,9 @@ TEST(VideoTrackPublisherTest, SameSizeFramesReuseCurrentPublication)
 {
   ScopedRclcppInit init;
   FakeRoomConnection session;
-  VideoTrackPublisher publisher(session, makeSpec("stream:same_size", "ros.video.camera.same_size"));
+  NoOpVideoStreamLifecycleObserver lifecycle_observer;
+  VideoTrackPublisher publisher(
+    session, makeSpec("stream:same_size", "ros.video.camera.same_size"), lifecycle_observer);
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 2000);
@@ -75,7 +104,8 @@ TEST(VideoTrackPublisherTest, DimensionChangeRepublishesTrack)
 {
   ScopedRclcppInit init;
   FakeRoomConnection session;
-  VideoTrackPublisher publisher(session, makeSpec("stream:resize", "ros.video.camera.resize"));
+  NoOpVideoStreamLifecycleObserver lifecycle_observer;
+  VideoTrackPublisher publisher(session, makeSpec("stream:resize", "ros.video.camera.resize"), lifecycle_observer);
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
   publisher.handleFrame(4, 4, makeI420Frame(4, 4), 2000);
@@ -96,7 +126,8 @@ TEST(VideoTrackPublisherTest, ShutdownUnpublishesActiveTrack)
 {
   ScopedRclcppInit init;
   FakeRoomConnection session;
-  VideoTrackPublisher publisher(session, makeSpec("stream:shutdown", "ros.video.camera.shutdown"));
+  NoOpVideoStreamLifecycleObserver lifecycle_observer;
+  VideoTrackPublisher publisher(session, makeSpec("stream:shutdown", "ros.video.camera.shutdown"), lifecycle_observer);
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
   publisher.shutdown();

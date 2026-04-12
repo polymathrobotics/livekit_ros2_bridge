@@ -18,6 +18,7 @@
 #include <mutex>
 #include <string>
 
+#include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
 namespace rclcpp
@@ -30,13 +31,12 @@ namespace livekit_ros2_bridge
 
 struct SubscriptionQosConfig;
 class RoomConnection;
-class VideoFrameSource;
 class VideoTrackPublisher;
 
 // VideoStreamRegistry owns one VideoStreamInstance per resolved stream key.
 // Each instance owns one live runtime: the input-side VideoFrameSource plus the paired
 // VideoTrackPublisher for the matching LiveKit video publication.
-class VideoStreamInstance final
+class VideoStreamInstance final : public VideoStreamLifecycleObserver
 {
 public:
   VideoStreamInstance(
@@ -51,10 +51,20 @@ public:
   VideoStreamInstance(VideoStreamInstance &&) = delete;
   VideoStreamInstance & operator=(VideoStreamInstance &&) = delete;
 
+  void onVideoTrackPublished(int width, int height, bool republished) override;
+  void onVideoTrackUnpublishing() override;
+  void onVideoStreamSampleUnpackFailed(const std::string & error) override;
+  void onVideoStreamCaptureFailed(const std::string & error) override;
+  void onVideoStreamPipelineFailed(const std::string & reason) override;
+  void onVideoStreamRestartFailed(const std::string & error) override;
+  void onVideoStreamPushFailed(const std::string & error) override;
+
   std::string ensureRunning();
   void shutdown();
 
 private:
+  void logRuntimeError(const char * event_name, const std::string & error);
+
   std::shared_ptr<VideoFrameSource> createFrameSourceLocked();
 
   rclcpp::Node & node_;
@@ -62,6 +72,10 @@ private:
   const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
+  bool has_published_track_ = false;
+  int published_width_ = 0;
+  int published_height_ = 0;
+  std::string last_runtime_error_;
   std::shared_ptr<VideoFrameSource> frame_source_;
   std::unique_ptr<VideoTrackPublisher> video_track_publisher_;
 };

@@ -14,49 +14,31 @@
 
 #pragma once
 
-#include <cstdint>
 #include <memory>
-#include <vector>
 
 #include "rclcpp/node.hpp"
 #include "subscription_qos.hpp"
+#include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class VideoFrameSink
-{
-public:
-  virtual ~VideoFrameSink() = default;
-
-  virtual void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
-};
-
-// VideoStreamInstance owns one frame source on the input side and wires it to a
-// VideoTrackPublisher through this sink interface. Sources produce frames into the sink.
-class VideoFrameSource
-{
-public:
-  virtual ~VideoFrameSource() = default;
-
-  virtual void ensureRunning() = 0;
-  virtual void shutdown() = 0;
-};
-
 std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  VideoFrameSink & frame_sink);
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer);
 
 std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  VideoFrameSink & frame_sink);
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer);
 
 std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink);
+  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer);
 
 }  // namespace livekit_ros2_bridge

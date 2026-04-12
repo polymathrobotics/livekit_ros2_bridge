@@ -271,9 +271,11 @@ class BridgeOwnedVideoPipelineFrameSource : public VideoFrameSource,
                                             public std::enable_shared_from_this<BridgeOwnedVideoPipelineFrameSource>
 {
 public:
-  BridgeOwnedVideoPipelineFrameSource(VideoStreamSpec spec, VideoFrameSink & frame_sink)
+  BridgeOwnedVideoPipelineFrameSource(
+    VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
   : spec_(std::move(spec))
   , frame_sink_(frame_sink)
+  , lifecycle_observer_(lifecycle_observer)
   {}
 
   virtual ~BridgeOwnedVideoPipelineFrameSource() = default;
@@ -440,6 +442,7 @@ protected:
 
   VideoStreamSpec spec_;
   VideoFrameSink & frame_sink_;
+  VideoStreamLifecycleObserver & lifecycle_observer_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_recovery_pending_ = false;
@@ -460,11 +463,7 @@ private:
     try {
       frame = copySampleToPackedI420(sample.get());
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_sample_unpack_failed")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      lifecycle_observer_.onVideoStreamSampleUnpackFailed(exc.what());
       return GST_FLOW_ERROR;
     }
 
@@ -498,11 +497,7 @@ private:
       frame_sink_.handleFrame(frame.width, frame.height, std::move(frame.data), timestamp_us);
       return GST_FLOW_OK;
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_capture_failed")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      lifecycle_observer_.onVideoStreamCaptureFailed(exc.what());
       return GST_FLOW_ERROR;
     }
   }
@@ -536,11 +531,7 @@ private:
       return;
     }
 
-    LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_failed")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .field("reason", reason)
-      .warn();
+    lifecycle_observer_.onVideoStreamPipelineFailed(reason);
 
     if (failure_recovery_pending_) {
       return;
@@ -574,11 +565,7 @@ private:
     try {
       restartAfterFailureLocked();
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_restart_failed")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      lifecycle_observer_.onVideoStreamRestartFailed(exc.what());
     }
   }
 };
@@ -590,8 +577,9 @@ public:
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
-    VideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
+    VideoFrameSink & frame_sink,
+    VideoStreamLifecycleObserver & lifecycle_observer)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -694,11 +682,7 @@ private:
 
       pushRawImageLocked(*message, config);
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_push_failed")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      lifecycle_observer_.onVideoStreamPushFailed(exc.what());
       stopPipelineLocked();
     }
   }
@@ -776,8 +760,9 @@ public:
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
-    VideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
+    VideoFrameSink & frame_sink,
+    VideoStreamLifecycleObserver & lifecycle_observer)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -882,11 +867,7 @@ private:
 
       pushCompressedImageLocked(*message);
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_push_failed")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      lifecycle_observer_.onVideoStreamPushFailed(exc.what());
       stopPipelineLocked();
     }
   }
@@ -947,8 +928,9 @@ private:
 class ConfiguredSourceVideoFrameSource final : public BridgeOwnedVideoPipelineFrameSource
 {
 public:
-  ConfiguredSourceVideoFrameSource(VideoStreamSpec spec, VideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
+  ConfiguredSourceVideoFrameSource(
+    VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
   {}
 
   void ensureRunning() override
@@ -1011,24 +993,28 @@ std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  VideoFrameSink & frame_sink)
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer)
 {
-  return std::make_shared<RawRosVideoFrameSource>(node, std::move(spec), subscription_qos_config, frame_sink);
+  return std::make_shared<RawRosVideoFrameSource>(
+    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer);
 }
 
 std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  VideoFrameSink & frame_sink)
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer)
 {
-  return std::make_shared<CompressedRosVideoFrameSource>(node, std::move(spec), subscription_qos_config, frame_sink);
+  return std::make_shared<CompressedRosVideoFrameSource>(
+    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer);
 }
 
 std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink)
+  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
 {
-  return std::make_shared<ConfiguredSourceVideoFrameSource>(std::move(spec), frame_sink);
+  return std::make_shared<ConfiguredSourceVideoFrameSource>(std::move(spec), frame_sink, lifecycle_observer);
 }
 
 }  // namespace livekit_ros2_bridge

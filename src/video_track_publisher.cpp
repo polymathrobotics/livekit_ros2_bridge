@@ -18,22 +18,14 @@
 
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
-#include "rclcpp/logging.hpp"
-#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
-
-namespace
-{
-
-const auto kVideoStreamRegistryLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
-
-}  // namespace
-
-VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec)
+VideoTrackPublisher::VideoTrackPublisher(
+  RoomConnection & room_connection, VideoStreamSpec spec, VideoStreamLifecycleObserver & lifecycle_observer)
 : room_connection_(room_connection)
 , spec_(std::move(spec))
+, lifecycle_observer_(lifecycle_observer)
 {}
 
 void VideoTrackPublisher::handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
@@ -68,10 +60,7 @@ void VideoTrackPublisher::shutdown()
   }
 
   if (published_track) {
-    LogEvent(kVideoStreamRegistryLogger, "video_stream_track_unpublishing")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .info();
+    lifecycle_observer_.onVideoTrackUnpublishing();
     room_connection_.unpublishVideoTrack(published_track);
   }
 }
@@ -86,14 +75,6 @@ void VideoTrackPublisher::ensurePublishedTrackLocked(int width, int height)
 
   const bool republishing = published_track_ != nullptr;
   if (published_track_) {
-    LogEvent(kVideoStreamRegistryLogger, "video_stream_track_replacing")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .field("previous_width", published_width_)
-      .field("previous_height", published_height_)
-      .field("next_width", width)
-      .field("next_height", height)
-      .info();
     room_connection_.unpublishVideoTrack(published_track_);
     published_track_.reset();
   }
@@ -102,13 +83,7 @@ void VideoTrackPublisher::ensurePublishedTrackLocked(int width, int height)
   published_track_ = room_connection_.publishVideoTrack(spec_.track_name, video_source_, spec_.publish_config);
   published_width_ = width;
   published_height_ = height;
-
-  LogEvent(kVideoStreamRegistryLogger, republishing ? "video_stream_track_republished" : "video_stream_track_published")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("width", width)
-    .field("height", height)
-    .info();
+  lifecycle_observer_.onVideoTrackPublished(width, height, republishing);
 }
 
 }  // namespace livekit_ros2_bridge
