@@ -21,7 +21,6 @@
 #include <utility>
 
 #include "control_packet_router.hpp"
-#include "data_track_publisher.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
 #include "rpc_router.hpp"
@@ -79,24 +78,11 @@ Runtime::Runtime(
     .info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
-  data_track_publisher_ = std::make_unique<DataTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_session_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_,
-    [this](const std::string & track_name, const std::uint8_t * data, std::size_t size) {
-      data_track_publisher_->pushMessage(track_name, data, size);
-    },
-    [this](const std::string & track_name, std::size_t generation) {
-      submitExecutorWork([this, track_name, generation]() {
-        data_track_publisher_->publishTrack(track_name, generation, *subscription_registry_);
-      });
-    },
-    [this](const std::string & track_name) { data_track_publisher_->unpublishTrack(track_name); },
-    video_stream_registry_.get(),
-    &video_config_,
-    &subscription_qos_config_);
+    node_, *room_session_, video_stream_registry_.get(), &video_config_, &subscription_qos_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_session_, runtime_config.access_policy, node_.get_clock());
@@ -140,7 +126,6 @@ Runtime::Runtime(
       [this](const std::string & reason) { handleReconnectRequested(reason); },
       [this]() {
         submitExecutorWork([this]() {
-          data_track_publisher_->unpublishAll();
           subscription_registry_->resetSessionState();
           ros_service_caller_->resetSessionState();
         });
@@ -214,9 +199,6 @@ void Runtime::shutdown()
   }
   if (subscription_registry_ != nullptr) {
     subscription_registry_->shutdown();
-  }
-  if (data_track_publisher_ != nullptr) {
-    data_track_publisher_->unpublishAll();
   }
   if (video_stream_registry_ != nullptr) {
     video_stream_registry_->shutdown();

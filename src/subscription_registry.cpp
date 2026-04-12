@@ -121,16 +121,12 @@ std::string ensureVideoStreamRunning(VideoStreamRegistry & video_stream_registry
 
 SubscriptionRegistry::SubscriptionRegistry(
   rclcpp::Node & node,
-  SendDataMessageFn send_data_fn,
-  PublishDataTrackFn publish_data_track_fn,
-  UnpublishDataTrackFn unpublish_data_track_fn,
+  RoomSession & room_session,
   VideoStreamRegistry * video_stream_registry,
   const VideoConfig * video_config,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
-, send_data_fn_(std::move(send_data_fn))
-, publish_data_track_fn_(std::move(publish_data_track_fn))
-, unpublish_data_track_fn_(std::move(unpublish_data_track_fn))
+, room_session_(room_session)
 , video_stream_registry_(video_stream_registry)
 , default_video_config_(makeDefaultVideoConfig())
 , video_config_(video_config == nullptr ? &default_video_config_ : video_config)
@@ -201,19 +197,27 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     throw;
   }
 
-  StreamStatus stream_status = makeStreamStatus(sub);
+  const std::string & resource = sub.resource;
+  const SubscriptionTargetKind target_kind = sub.target_kind;
+  subscriptions_.emplace(subscription_key, std::move(sub));
+  auto inserted_it = subscriptions_.find(subscription_key);
+
+  if (auto * data = dataStreamInstance(inserted_it->second)) {
+    data->start(requester_identity);
+  }
+
+  StreamStatus stream_status = makeStreamStatus(inserted_it->second);
   LogEvent event(kSubscriptionRegistryLogger, "subscription_created");
-  event.field("resource", sub.resource)
-    .field("kind", subscriptionKindToString(sub.target_kind))
+  event.field("resource", resource)
+    .field("kind", subscriptionKindToString(target_kind))
     .field("delivery", streamDeliveryKindString(stream_status.delivery_kind))
     .field("requester_identity", requester_identity);
-  if (const auto * video = std::get_if<VideoTrackResource>(&sub.resource_state)) {
+  if (const auto * video = std::get_if<VideoTrackResource>(&inserted_it->second.resource_state)) {
     event.field("stream_key", video->stream_spec.stream_key).field("track_name", video->track_name);
-  } else if (const auto * data = dataStreamInstance(sub)) {
+  } else if (const auto * data = dataStreamInstance(inserted_it->second)) {
     event.field("track_name", data->trackName());
   }
   event.info();
-  subscriptions_.emplace(subscription_key, std::move(sub));
   return stream_status;
 }
 
@@ -343,7 +347,6 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
   sub.resource_state = createDataStreamInstance(target.name, interface_type, sub.requesters);
-  std::get<std::shared_ptr<DataStreamInstance>>(sub.resource_state)->start(requester_identity);
   return sub;
 }
 
@@ -360,14 +363,13 @@ std::shared_ptr<DataStreamInstance> SubscriptionRegistry::createDataStreamInstan
 {
   return DataStreamInstance::create(
     node_,
+    room_session_,
+    *this,
     topic,
     interface_type,
     computeAppliedIntervalMs(requesters),
     registry_generation_.load(),
     message_callback_gate_,
-    send_data_fn_,
-    publish_data_track_fn_,
-    unpublish_data_track_fn_,
     subscription_qos_config_);
 }
 

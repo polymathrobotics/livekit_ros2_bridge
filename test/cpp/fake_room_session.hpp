@@ -31,6 +31,12 @@ namespace livekit_ros2_bridge
 
 constexpr char kUnknownDataTrackName[] = "<unknown>";
 
+struct PushedDataTrackFrame
+{
+  std::string track_name;
+  std::vector<std::uint8_t> payload;
+};
+
 struct FakeRoomSessionState
 {
   RoomSessionCallbacks callbacks;
@@ -42,6 +48,7 @@ struct FakeRoomSessionState
   std::vector<std::string> event_log;
   std::vector<OutgoingControlPacket> published_outgoing_control_packets;
   std::vector<std::string> published_data_track_names;
+  std::vector<PushedDataTrackFrame> pushed_data_track_frames;
   std::vector<std::string> unpublished_data_track_names;
   std::vector<std::string> published_video_track_names;
   std::vector<VideoPublishConfig> published_video_configs;
@@ -52,6 +59,8 @@ struct FakeRoomSessionState
   std::map<std::string, RpcHandler> rpc_handlers;
   std::function<void(const RoomSessionCallbacks & callbacks)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
+  std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
+    try_push_data_track_handler;
   bool throw_on_publish_control_packet = false;
   int publish_control_packet_call_count = 0;
 };
@@ -118,6 +127,19 @@ public:
       data_track_names_[track.get()] = name;
     }
     return track;
+  }
+
+  DataTrackPushResult tryPushDataTrack(
+    const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) override
+  {
+    const std::string name = lookupDataTrackName(track);
+    state->event_log.push_back("push_data_track:" + name);
+    const auto result = state->try_push_data_track_handler ? state->try_push_data_track_handler(name, payload)
+                                                           : DataTrackPushResult::success();
+    if (result) {
+      state->pushed_data_track_frames.push_back({name, std::move(payload)});
+    }
+    return result;
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override

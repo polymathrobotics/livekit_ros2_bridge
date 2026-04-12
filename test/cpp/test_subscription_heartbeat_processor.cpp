@@ -56,15 +56,6 @@ SubscriptionHeartbeat makeSubscriptionHeartbeat(const nlohmann::json & body)
   return parseSubscriptionHeartbeat(body);
 }
 
-void ignoreSerializedMessage(const std::string &, const std::uint8_t *, std::size_t)
-{}
-
-void ignoreTrackReservation(const std::string &, std::size_t)
-{}
-
-void ignoreTrackRelease(const std::string &)
-{}
-
 AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
 {
   AccessPolicyConfig config;
@@ -123,8 +114,7 @@ protected:
   SubscriptionRegistry makeRegistry(
     VideoStreamRegistry * video_stream_registry = nullptr, const VideoConfig * video_config = nullptr)
   {
-    return SubscriptionRegistry(
-      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, video_stream_registry, video_config);
+    return SubscriptionRegistry(*node_, *fake_session_, video_stream_registry, video_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;

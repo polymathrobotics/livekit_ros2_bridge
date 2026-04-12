@@ -17,10 +17,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+
+#include "data_track_publisher.hpp"
 
 namespace rclcpp
 {
@@ -34,15 +35,12 @@ namespace livekit_ros2_bridge
 
 struct SubscriptionQosConfig;
 class QuiesceGate;
+class RoomSession;
+class SubscriptionRegistry;
 
-using SendDataMessageFn =
-  std::function<void(const std::string & track_name, const std::uint8_t * data, std::size_t size)>;
-using PublishDataTrackFn = std::function<void(const std::string & track_name, std::size_t generation)>;
-using UnpublishDataTrackFn = std::function<void(const std::string & track_name)>;
-
-// SubscriptionRegistry decides whether a shared topic-level data delivery should exist.
-// DataStreamInstance owns the ROS subscription and runtime state for that shared delivery, while
-// DataTrackPublisher remains the LiveKit publication edge.
+// SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
+// when that topic needs a data delivery runtime. Each DataStreamInstance owns the ROS
+// subscription plus one DataTrackPublisher for the matching LiveKit data track.
 class DataStreamInstance final : public std::enable_shared_from_this<DataStreamInstance>
 {
 public:
@@ -58,14 +56,13 @@ public:
 
   static std::shared_ptr<DataStreamInstance> create(
     rclcpp::Node & node,
+    RoomSession & room_session,
+    SubscriptionRegistry & subscription_registry,
     std::string topic,
     std::string interface_type,
     int applied_interval_ms,
     std::size_t publish_generation,
     QuiesceGate & message_callback_gate,
-    SendDataMessageFn send_data_fn,
-    PublishDataTrackFn publish_data_track_fn,
-    UnpublishDataTrackFn unpublish_data_track_fn,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
   DataStreamInstance(const DataStreamInstance &) = delete;
@@ -88,14 +85,13 @@ public:
 private:
   DataStreamInstance(
     rclcpp::Node & node,
+    RoomSession & room_session,
+    SubscriptionRegistry & subscription_registry,
     std::string topic,
     std::string interface_type,
     int applied_interval_ms,
     std::size_t publish_generation,
     QuiesceGate & message_callback_gate,
-    SendDataMessageFn send_data_fn,
-    PublishDataTrackFn publish_data_track_fn,
-    UnpublishDataTrackFn unpublish_data_track_fn,
     const SubscriptionQosConfig * subscription_qos_config);
 
   void initializeSubscription();
@@ -110,14 +106,13 @@ private:
   std::shared_ptr<rclcpp::GenericSubscription> subscription_handle_;
   std::optional<Clock::time_point> last_sent_time_;
   std::string track_name_;
+  DataTrackPublisher data_track_publisher_;
   int applied_interval_ms_ = 0;
   State state_ = State::kNone;
   std::size_t generation_ = 0U;
   std::size_t callback_generation_ = 0U;
+  SubscriptionRegistry & subscription_registry_;
   QuiesceGate & message_callback_gate_;
-  SendDataMessageFn send_data_fn_;
-  PublishDataTrackFn publish_data_track_fn_;
-  UnpublishDataTrackFn unpublish_data_track_fn_;
   const SubscriptionQosConfig * subscription_qos_config_;
 };
 

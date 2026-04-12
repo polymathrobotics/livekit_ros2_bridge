@@ -25,6 +25,7 @@
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
+#include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
 #include "utils/quiesce_guard.hpp"
 #include "utils/scope_exit.hpp"
@@ -37,32 +38,30 @@ namespace
 
 constexpr std::size_t kDataSubscriptionDepth = 2U;
 constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
-const auto kDataStreamInstanceLogger = rclcpp::get_logger("subscription_registry");
+const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance");
 
 }  // namespace
 
 std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
   rclcpp::Node & node,
+  RoomSession & room_session,
+  SubscriptionRegistry & subscription_registry,
   std::string topic,
   std::string interface_type,
   int applied_interval_ms,
   std::size_t publish_generation,
   QuiesceGate & message_callback_gate,
-  SendDataMessageFn send_data_fn,
-  PublishDataTrackFn publish_data_track_fn,
-  UnpublishDataTrackFn unpublish_data_track_fn,
   const SubscriptionQosConfig * subscription_qos_config)
 {
   auto instance = std::shared_ptr<DataStreamInstance>(new DataStreamInstance(
     node,
+    room_session,
+    subscription_registry,
     std::move(topic),
     std::move(interface_type),
     applied_interval_ms,
     publish_generation,
     message_callback_gate,
-    std::move(send_data_fn),
-    std::move(publish_data_track_fn),
-    std::move(unpublish_data_track_fn),
     subscription_qos_config));
   instance->initializeSubscription();
   return instance;
@@ -70,26 +69,24 @@ std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
 
 DataStreamInstance::DataStreamInstance(
   rclcpp::Node & node,
+  RoomSession & room_session,
+  SubscriptionRegistry & subscription_registry,
   std::string topic,
   std::string interface_type,
   int applied_interval_ms,
   std::size_t publish_generation,
   QuiesceGate & message_callback_gate,
-  SendDataMessageFn send_data_fn,
-  PublishDataTrackFn publish_data_track_fn,
-  UnpublishDataTrackFn unpublish_data_track_fn,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , topic_(std::move(topic))
 , interface_type_(std::move(interface_type))
 , track_name_(deriveTrackName(topic_))
+, data_track_publisher_(room_session, track_name_, node_.get_clock())
 , applied_interval_ms_(applied_interval_ms)
 , generation_(publish_generation)
 , callback_generation_(message_callback_gate.currentGeneration())
+, subscription_registry_(subscription_registry)
 , message_callback_gate_(message_callback_gate)
-, send_data_fn_(std::move(send_data_fn))
-, publish_data_track_fn_(std::move(publish_data_track_fn))
-, unpublish_data_track_fn_(std::move(unpublish_data_track_fn))
 , subscription_qos_config_(subscription_qos_config)
 {}
 
@@ -128,7 +125,7 @@ void DataStreamInstance::republish(const std::string & requester_identity)
     return;
   }
 
-  unpublish_data_track_fn_(track_name_);
+  data_track_publisher_.unpublish();
   state_ = State::kNone;
   last_sent_time_.reset();
   publishPendingDataTrack(requester_identity);
@@ -164,10 +161,7 @@ void DataStreamInstance::onPublishFailed()
 
 void DataStreamInstance::shutdown()
 {
-  if (state_ == State::kPublished) {
-    unpublish_data_track_fn_(track_name_);
-  }
-
+  data_track_publisher_.shutdown();
   state_ = State::kNone;
   last_sent_time_.reset();
   subscription_handle_.reset();
@@ -230,7 +224,7 @@ void DataStreamInstance::handleSerializedMessage(const rclcpp::SerializedMessage
 
   const auto & rcl_msg = message.get_rcl_serialized_message();
   try {
-    send_data_fn_(track_name_, rcl_msg.buffer, rcl_msg.buffer_length);
+    data_track_publisher_.tryPush(rcl_msg.buffer, rcl_msg.buffer_length);
   } catch (const std::exception & exc) {
     LogEvent(kDataStreamInstanceLogger, "data_track_delivery_failed")
       .field("resource", topic_)
@@ -267,7 +261,10 @@ void DataStreamInstance::publishPendingDataTrack(const std::string & requester_i
     .field("track_name", track_name_)
     .field("requester_identity", requester_identity)
     .info();
-  publish_data_track_fn_(track_name_, generation_);
+  data_track_publisher_.publish(
+    generation_,
+    [this](std::size_t generation) { return subscription_registry_.onDataTrackPublished(track_name_, generation); },
+    [this]() { subscription_registry_.onDataTrackFailed(track_name_); });
 }
 
 std::string DataStreamInstance::deriveTrackName(const std::string & normalized_topic)

@@ -417,11 +417,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
-  auto harness = makeRuntimeHarness(options, [](FakeRoomSession & session) {
-    session.state->publish_data_track_handler = [](const std::string &) {
-      return std::shared_ptr<livekit::LocalDataTrack>{};
-    };
-  });
+  auto harness = makeRuntimeHarness(options);
   ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("participant_refresh_observer"));
@@ -464,11 +460,7 @@ TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
-  auto harness = makeRuntimeHarness(options, [](FakeRoomSession & session) {
-    session.state->publish_data_track_handler = [](const std::string &) {
-      return std::shared_ptr<livekit::LocalDataTrack>{};
-    };
-  });
+  auto harness = makeRuntimeHarness(options);
   ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("new_participant_replay_observer"));

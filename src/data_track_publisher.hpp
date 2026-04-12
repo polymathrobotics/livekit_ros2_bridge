@@ -16,9 +16,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
-#include <unordered_map>
 
 #include "rclcpp/clock.hpp"
 
@@ -31,30 +31,33 @@ namespace livekit_ros2_bridge
 {
 
 class RoomSession;
-class SubscriptionRegistry;
 
 // SubscriptionRegistry coordinates shared leases, DataStreamInstance owns each topic-level ROS
 // data runtime, and DataTrackPublisher only owns the LiveKit data-track publications.
 class DataTrackPublisher final
 {
 public:
-  DataTrackPublisher(RoomSession & session, rclcpp::Clock::SharedPtr clock);
+  using PublishAcceptedFn = std::function<bool(std::size_t generation)>;
+  using PublishFailedFn = std::function<void()>;
+
+  DataTrackPublisher(RoomSession & session, std::string track_name, rclcpp::Clock::SharedPtr clock);
 
   // Best-effort push to an already-published data track carrying ROS CDR payloads. Missing
   // tracks and backpressure are dropped so ROS message delivery never blocks waiting on LiveKit's
   // data-track queue.
-  void pushMessage(const std::string & track_name, const std::uint8_t * data, std::size_t size);
+  void tryPush(const std::uint8_t * data, std::size_t size);
   // Publishes the LiveKit data track for a registry-reserved track name. Completion is reported
   // back with the caller's generation so the registry can reject stale publishes after teardown.
-  void publishTrack(
-    const std::string & track_name, std::size_t generation, SubscriptionRegistry & subscription_registry);
-  void unpublishTrack(const std::string & track_name);
-  void unpublishAll();
+  void publish(
+    std::size_t generation, const PublishAcceptedFn & publish_accepted_fn, const PublishFailedFn & publish_failed_fn);
+  void unpublish();
+  void shutdown();
 
 private:
   RoomSession & session_;
+  std::string track_name_;
   rclcpp::Clock::SharedPtr clock_;
-  std::unordered_map<std::string, std::shared_ptr<livekit::LocalDataTrack>> published_tracks_;
+  std::shared_ptr<livekit::LocalDataTrack> published_track_;
 };
 
 }  // namespace livekit_ros2_bridge

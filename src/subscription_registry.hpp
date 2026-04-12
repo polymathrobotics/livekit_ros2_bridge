@@ -36,6 +36,7 @@
 namespace livekit_ros2_bridge
 {
 
+class RoomSession;
 class VideoStreamRegistry;
 
 struct StreamUnavailableError : std::runtime_error
@@ -50,8 +51,8 @@ enum class RequesterLeaseRemovalReason
 };
 
 // Owns requester leases and shared subscription coordination across data and video.
-// DataStreamInstance owns each shared topic-level data runtime, while DataTrackPublisher remains
-// the LiveKit transport edge for those registry-coordinated streams.
+// For data topics, the registry owns one DataStreamInstance per shared topic lease set, and each
+// instance owns its one DataTrackPublisher for the LiveKit publication.
 class SubscriptionRegistry final
 {
 public:
@@ -59,9 +60,7 @@ public:
 
   SubscriptionRegistry(
     rclcpp::Node & node,
-    SendDataMessageFn send_data_fn,
-    PublishDataTrackFn publish_data_track_fn,
-    UnpublishDataTrackFn unpublish_data_track_fn,
+    RoomSession & room_session,
     VideoStreamRegistry * video_stream_registry,
     const VideoConfig * video_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
@@ -156,9 +155,7 @@ private:
   void clearSubscriptions();
 
   rclcpp::Node & node_;
-  SendDataMessageFn send_data_fn_;
-  PublishDataTrackFn publish_data_track_fn_;
-  UnpublishDataTrackFn unpublish_data_track_fn_;
+  RoomSession & room_session_;
   VideoStreamRegistry * video_stream_registry_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;

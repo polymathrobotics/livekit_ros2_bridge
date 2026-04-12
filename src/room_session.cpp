@@ -44,6 +44,43 @@
 namespace livekit_ros2_bridge
 {
 
+DataTrackPushResult::DataTrackPushResult(std::optional<DataTrackPushError> error)
+: error_(std::move(error))
+{}
+
+DataTrackPushResult DataTrackPushResult::success()
+{
+  return DataTrackPushResult(std::nullopt);
+}
+
+DataTrackPushResult DataTrackPushResult::failure(DataTrackPushError error)
+{
+  return DataTrackPushResult(std::move(error));
+}
+
+bool DataTrackPushResult::ok() const noexcept
+{
+  return !error_.has_value();
+}
+
+bool DataTrackPushResult::hasError() const noexcept
+{
+  return error_.has_value();
+}
+
+DataTrackPushResult::operator bool() const noexcept
+{
+  return ok();
+}
+
+const DataTrackPushError & DataTrackPushResult::error() const
+{
+  if (!error_.has_value()) {
+    throw std::logic_error("DataTrackPushResult does not contain an error");
+  }
+  return *error_;
+}
+
 namespace
 {
 
@@ -277,6 +314,29 @@ public:
       throw std::runtime_error("Failed to publish data track '" + name + "': " + result.error().message);
     }
     return result.value();
+  }
+
+  DataTrackPushResult tryPushDataTrack(
+    const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) override
+  {
+    if (track == nullptr) {
+      return DataTrackPushResult::failure(
+        DataTrackPushError{DataTrackPushErrorCode::kInvalidHandle, "Local data track is unavailable."});
+    }
+
+    auto result = track->tryPush(std::move(payload));
+    if (result) {
+      return DataTrackPushResult::success();
+    }
+
+    const auto code = result.error().code;
+    return DataTrackPushResult::failure(
+      DataTrackPushError{
+        code == livekit::LocalDataTrackTryPushErrorCode::INVALID_HANDLE      ? DataTrackPushErrorCode::kInvalidHandle
+        : code == livekit::LocalDataTrackTryPushErrorCode::TRACK_UNPUBLISHED ? DataTrackPushErrorCode::kTrackUnpublished
+        : code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL        ? DataTrackPushErrorCode::kQueueFull
+                                                                             : DataTrackPushErrorCode::kInternal,
+        result.error().message});
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
