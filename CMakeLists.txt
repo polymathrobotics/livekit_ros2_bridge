@@ -72,6 +72,7 @@ add_library(${PROJECT_NAME} SHARED
   src/utils/base64.cpp
   src/video_config.cpp
   src/video_frame_source.cpp
+  src/video_stream_instance.cpp
   src/video_stream_registry.cpp
   src/video_stream_spec.cpp
   src/video_track_publisher.cpp

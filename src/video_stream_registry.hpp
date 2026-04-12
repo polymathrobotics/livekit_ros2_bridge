@@ -27,7 +27,9 @@
 namespace livekit_ros2_bridge
 {
 
-// Registry of shared in-process video instances keyed by resolved stream key.
+class VideoStreamInstance;
+
+// Registry of shared in-process video runtimes keyed by resolved stream key.
 class VideoStreamRegistry final
 {
 public:
@@ -40,8 +42,6 @@ public:
   void shutdown();
 
 private:
-  class VideoStreamInstance;
-
   rclcpp::Node & node_;
   RoomSession & session_;
   const SubscriptionQosConfig * subscription_qos_config_;

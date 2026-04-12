@@ -33,8 +33,8 @@ public:
   virtual void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
 };
 
-// VideoStreamRegistry's per-stream runtime owns one frame source on the input
-// side and wires it to a VideoTrackPublisher through this sink interface.
+// VideoStreamInstance owns one frame source on the input side and wires it to a
+// VideoTrackPublisher through this sink interface.
 class VideoFrameSource
 {
 public:
