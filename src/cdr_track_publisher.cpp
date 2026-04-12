@@ -33,7 +33,7 @@ namespace
 const auto kCdrTrackPublisherLogger = rclcpp::get_logger("cdr_track_publisher");
 constexpr auto kPushFailureLogThrottlePeriod = std::chrono::seconds(5);
 
-void unpublishTrackSafely(
+void unpublishTrackNoThrow(
   RoomSession & session, const std::string & track_name, const std::shared_ptr<livekit::LocalDataTrack> & track)
 {
   try {
@@ -87,14 +87,14 @@ void CdrTrackPublisher::publishTrack(
     // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
-    const bool publish_still_current = subscription_registry.onCdrTrackPublished(track_name, generation);
-    if (!publish_still_current) {
+    const bool publication_accepted = subscription_registry.onCdrTrackPublished(track_name, generation);
+    if (!publication_accepted) {
       LogEvent(kCdrTrackPublisherLogger, "cdr_track_publish_reclaimed")
         .field("track_name", track_name)
         .field("generation", generation)
         .field("reason", "stale_registry_state")
         .info();
-      unpublishTrackSafely(session_, track_name, track);
+      unpublishTrackNoThrow(session_, track_name, track);
       return;
     }
     published_tracks_[track_name] = std::move(track);
@@ -125,7 +125,7 @@ void CdrTrackPublisher::unpublishTrack(const std::string & track_name)
     return;
   }
 
-  unpublishTrackSafely(session_, track_name, it->second);
+  unpublishTrackNoThrow(session_, track_name, it->second);
   published_tracks_.erase(it);
 }
 
@@ -135,7 +135,7 @@ void CdrTrackPublisher::unpublishAll()
   published_tracks_.clear();
 
   for (const auto & entry : tracks) {
-    unpublishTrackSafely(session_, entry.first, entry.second);
+    unpublishTrackNoThrow(session_, entry.first, entry.second);
   }
 }
 

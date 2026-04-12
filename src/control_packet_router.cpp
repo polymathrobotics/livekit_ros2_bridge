@@ -32,21 +32,21 @@ namespace
 constexpr auto kControlPacketLogThrottleMs = 5000;
 }  // namespace
 
-ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
+ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Callbacks callbacks)
 : logger_(std::move(logger))
 , clock_(std::move(clock))
-, handlers_(std::move(handlers))
+, callbacks_(std::move(callbacks))
 {
   if (clock_ == nullptr) {
     throw std::invalid_argument("ControlPacketRouter requires a clock.");
   }
 
-  if (!handlers_.on_subscription_heartbeat) {
-    throw std::invalid_argument("ControlPacketRouter requires an on_subscription_heartbeat handler.");
+  if (!callbacks_.on_subscription_heartbeat) {
+    throw std::invalid_argument("ControlPacketRouter requires an on_subscription_heartbeat callback.");
   }
 
-  if (!handlers_.on_topic_publish_command) {
-    throw std::invalid_argument("ControlPacketRouter requires an on_topic_publish_command handler.");
+  if (!callbacks_.on_topic_publish_command) {
+    throw std::invalid_argument("ControlPacketRouter requires an on_topic_publish_command callback.");
   }
 }
 
@@ -70,7 +70,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     }
 
     try {
-      handlers_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
+      callbacks_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
     } catch (const std::exception & exc) {
       LogEvent(logger_, "control_packet_rejected")
         .field("reason", "invalid_heartbeat")
@@ -93,7 +93,7 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     }
 
     try {
-      handlers_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
+      callbacks_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
     } catch (const std::exception & exc) {
       LogEvent(logger_, "control_packet_rejected")
         .field("reason", "invalid_publish_command")

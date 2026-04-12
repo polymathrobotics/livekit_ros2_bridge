@@ -231,7 +231,7 @@ void RosExecutorQueue::shutdown()
     std::unique_lock<std::mutex> lock(mutex_);
     if (shutdown_) {
       lock.unlock();
-      drain_guard_.quiesce();
+      drain_gate_.awaitIdle();
       return;
     }
     shutdown_ = true;
@@ -241,7 +241,7 @@ void RosExecutorQueue::shutdown()
     waitables_interface = std::move(waitables_interface_);
     callback_group = std::move(callback_group_);
   }
-  drain_guard_.disable();
+  drain_gate_.close();
 
   if (waitables_interface && callback_group && waitable) {
     waitables_interface->remove_waitable(waitable, callback_group);
@@ -263,15 +263,15 @@ void RosExecutorQueue::shutdown()
 
   // Already-started drain work runs to completion; only tasks still in the
   // pending queue above are canceled during shutdown.
-  drain_guard_.quiesce();
+  drain_gate_.awaitIdle();
 }
 
 void RosExecutorQueue::drain()
 {
-  if (!drain_guard_.tryBeginWork()) {
+  if (!drain_gate_.tryEnter()) {
     return;
   }
-  ScopeExit finish_drain([this]() { drain_guard_.endWork(); });
+  ScopeExit finish_drain([this]() { drain_gate_.leave(); });
 
   while (true) {
     PendingTask task;

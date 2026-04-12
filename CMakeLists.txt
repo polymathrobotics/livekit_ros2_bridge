@@ -49,7 +49,7 @@ add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
   src/cdr_track_publisher.cpp
   src/control_packet_router.cpp
-  src/encoding_utils.cpp
+  src/ros_image_format_mapping.cpp
   src/interface_definition_lookup.cpp
   src/node.cpp
   src/payloads/cdr_payload.cpp

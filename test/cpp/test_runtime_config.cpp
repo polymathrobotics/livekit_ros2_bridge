@@ -121,8 +121,8 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
   const RuntimeConfig startup_config =
     loadRuntimeConfigForNode("startup_config_static_token", makeStaticTokenOptions());
 
-  EXPECT_EQ(startup_config.connect_config.url, "ws://test:7880");
-  EXPECT_EQ(startup_config.connect_config.room, "robot-room");
+  EXPECT_EQ(startup_config.room_connection_config.url, "ws://test:7880");
+  EXPECT_EQ(startup_config.room_connection_config.room, "robot-room");
   EXPECT_EQ(startup_config.access_token, "static-token");
 }
 
@@ -173,8 +173,10 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.transform, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("front_rtsp").source, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(startup_config.video_config.configured_sources.at("front_rtsp").transform, "videobalance saturation=0.0");
+    startup_config.video_config.configured_sources.at("front_rtsp").ingress_fragment,
+    "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(
+    startup_config.video_config.configured_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
@@ -315,9 +317,10 @@ TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldW
     loadRuntimeConfigForNode("startup_config_configured_source_publish_override", options);
 
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
-  const auto & source = startup_config.video_config.configured_sources.at("front");
-  EXPECT_EQ(source.transform, "");
-  expectPublishConfigEq(source.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
+  const auto & configured_pipeline = startup_config.video_config.configured_sources.at("front");
+  EXPECT_EQ(configured_pipeline.transform_fragment, "");
+  expectPublishConfigEq(
+    configured_pipeline.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
 }
 
 TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
@@ -436,9 +439,10 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctConfiguredSources)
 
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 2U);
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("/front_rtsp").source, "videotestsrc is-live=true pattern=ball");
+    startup_config.video_config.configured_sources.at("/front_rtsp").ingress_fragment,
+    "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("/front_rtsp/").source,
+    startup_config.video_config.configured_sources.at("/front_rtsp/").ingress_fragment,
     "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);

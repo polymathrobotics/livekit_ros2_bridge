@@ -69,7 +69,7 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_NO_THROW(publisher.publishTrack(publish_requests[0], 0, registry));
   ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
   EXPECT_EQ(session.state->published_cdr_track_names[0], publish_requests[0]);
-  EXPECT_TRUE(session.state->attempted_cdr_track_unpublish_names.empty());
+  EXPECT_TRUE(session.state->unpublish_attempted_cdr_track_names.empty());
 
   const auto retry_response = registry.renewSubscription("alice", topic, 0, expiry);
   ASSERT_EQ(publish_requests.size(), 2U);
@@ -77,7 +77,7 @@ TEST(CdrTrackPublisherTest, PublishTrackReportsFailureAndDoesNotRetainTrackOnPub
   EXPECT_EQ(publish_requests[1], publish_requests[0]);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_TRUE(session.state->attempted_cdr_track_unpublish_names.empty());
+  EXPECT_TRUE(session.state->unpublish_attempted_cdr_track_names.empty());
 }
 
 TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrack)
@@ -113,13 +113,13 @@ TEST(CdrTrackPublisherTest, PublishTrackImmediatelyReclaimsStaleSubscriptionTrac
 
   ASSERT_EQ(session.state->published_cdr_track_names.size(), 1U);
   EXPECT_EQ(session.state->published_cdr_track_names[0], response.track_name);
-  ASSERT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
-  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names[0], response.track_name);
+  ASSERT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names[0], response.track_name);
   ASSERT_EQ(session.state->unpublished_cdr_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
 }
 
 TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
@@ -148,18 +148,18 @@ TEST(CdrTrackPublisherTest, UnpublishTrackSwallowsSessionErrorAndRemovesTrack)
   const auto response = registry.renewSubscription("alice", topic, 0, expiry);
   publisher.publishTrack(response.track_name, 0, registry);
 
-  session.state->rejected_cdr_track_unpublish_names.push_back(response.track_name);
+  session.state->unpublish_rejected_cdr_track_names.push_back(response.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  ASSERT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
-  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names[0], response.track_name);
+  ASSERT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names[0], response.track_name);
   EXPECT_TRUE(session.state->unpublished_cdr_track_names.empty());
 
   EXPECT_NO_THROW(publisher.unpublishTrack(response.track_name));
-  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 1U);
+  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 1U);
 }
 
-TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
+TEST(CdrTrackPublisherTest, UnpublishAllUnpublishesAcceptedTracksAndContinuesOnError)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("test_clear_tracks_node");
@@ -191,11 +191,11 @@ TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
   publisher.publishTrack(response_a.track_name, 0, registry);
   publisher.publishTrack(response_b.track_name, 0, registry);
 
-  session.state->rejected_cdr_track_unpublish_names.push_back(response_b.track_name);
+  session.state->unpublish_rejected_cdr_track_names.push_back(response_b.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
 
-  auto attempts = session.state->attempted_cdr_track_unpublish_names;
+  auto attempts = session.state->unpublish_attempted_cdr_track_names;
   std::sort(attempts.begin(), attempts.end());
   ASSERT_EQ(attempts.size(), 2U);
   EXPECT_EQ(attempts[0], response_a.track_name);
@@ -205,7 +205,7 @@ TEST(CdrTrackPublisherTest, ClearUnpublishesAcceptedTracksAndContinuesOnError)
   EXPECT_EQ(session.state->unpublished_cdr_track_names[0], response_a.track_name);
 
   EXPECT_NO_THROW(publisher.unpublishAll());
-  EXPECT_EQ(session.state->attempted_cdr_track_unpublish_names.size(), 2U);
+  EXPECT_EQ(session.state->unpublish_attempted_cdr_track_names.size(), 2U);
 }
 
 }  // namespace

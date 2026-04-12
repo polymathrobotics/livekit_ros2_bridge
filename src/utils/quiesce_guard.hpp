@@ -21,80 +21,80 @@
 namespace livekit_ros2_bridge
 {
 
-// Coordinates callback shutdown/reset by blocking new work, draining in-flight work, and
-// advancing a generation so queued callbacks from the old session can self-reject on entry.
-class QuiesceGuard
+// Coordinates callback shutdown/reset by closing callback entry, draining in-flight entries, and
+// advancing a generation so queued callbacks from the old session can self-reject at the gate.
+class QuiesceGate
 {
 public:
-  QuiesceGuard() = default;
+  QuiesceGate() = default;
 
-  QuiesceGuard(const QuiesceGuard &) = delete;
-  QuiesceGuard & operator=(const QuiesceGuard &) = delete;
-  QuiesceGuard(QuiesceGuard &&) = delete;
-  QuiesceGuard & operator=(QuiesceGuard &&) = delete;
+  QuiesceGate(const QuiesceGate &) = delete;
+  QuiesceGate & operator=(const QuiesceGate &) = delete;
+  QuiesceGate(QuiesceGate &&) = delete;
+  QuiesceGate & operator=(QuiesceGate &&) = delete;
 
   // Callers capture this generation alongside queued work and must present the same generation
-  // back to tryBeginWork() before touching shared state.
+  // back to tryEnter() before touching shared state.
   std::size_t currentGeneration() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
     return generation_;
   }
 
-  // Starts one unit of work only when callback entry is enabled and the caller still matches the
+  // Admits one callback entry only when the gate is open and the caller still matches the
   // current generation.
-  bool tryBeginWork(std::size_t expected_generation)
+  bool tryEnter(std::size_t expected_generation)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!enabled_ || expected_generation != generation_) {
+    if (!is_open_ || expected_generation != generation_) {
       return false;
     }
 
-    ++active_count_;
+    ++active_entries_;
     return true;
   }
 
-  // Finishes one active work item and wakes any thread blocked in quiesce().
-  void endWork()
+  // Leaves one active callback entry and wakes any thread blocked in close().
+  void leave()
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (active_count_ == 0U) {
+      if (active_entries_ == 0U) {
         return;
       }
-      --active_count_;
+      --active_entries_;
     }
 
-    quiesced_.notify_all();
+    idle_.notify_all();
   }
 
-  // Stops new work from entering, advances the generation seen by queued callbacks, and waits
-  // until every already-active work item has called endWork().
-  std::size_t quiesce()
+  // Closes callback entry, advances the generation seen by queued callbacks, and waits until
+  // every already-admitted entry has called leave().
+  std::size_t close()
   {
     std::unique_lock<std::mutex> lock(mutex_);
-    enabled_ = false;
+    is_open_ = false;
     ++generation_;
-    quiesced_.wait(lock, [this]() { return active_count_ == 0U; });
+    idle_.wait(lock, [this]() { return active_entries_ == 0U; });
     return generation_;
   }
 
-  // Re-enables callback entry only when the caller still refers to the current generation.
-  void resume(std::size_t generation)
+  // Re-opens callback entry only when the caller still refers to the current generation.
+  void open(std::size_t generation)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (generation_ != generation) {
       return;
     }
 
-    enabled_ = true;
+    is_open_ = true;
   }
 
 private:
   mutable std::mutex mutex_;
-  std::condition_variable quiesced_;
-  bool enabled_ = true;
-  std::size_t active_count_ = 0U;
+  std::condition_variable idle_;
+  bool is_open_ = true;
+  std::size_t active_entries_ = 0U;
   std::size_t generation_ = 0U;
 };
 

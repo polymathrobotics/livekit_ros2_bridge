@@ -40,7 +40,7 @@ struct RuntimeConfig
   };
 
   Params loaded_params;
-  RoomConnectionConfig connect_config;
+  RoomConnectionConfig room_connection_config;
   std::string access_token;
   HealthConfig health_config;
   AccessPolicy access_policy;

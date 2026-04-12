@@ -27,48 +27,48 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-TEST(RequireUniqueInterfaceTypeTest, ReturnsTheOnlyType)
+TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyType)
 {
   std::map<std::string, std::vector<std::string>> names{
     {"/foo", {"bar/msg/Baz"}},
   };
-  EXPECT_EQ(requireUniqueInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
+  EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
 }
 
-TEST(RequireUniqueInterfaceTypeTest, ThrowsWhenNameNotFound)
+TEST(RequireSingleInterfaceTypeTest, ThrowsWhenNameNotFound)
 {
   std::map<std::string, std::vector<std::string>> names;
-  EXPECT_THROW(requireUniqueInterfaceType(names, "/foo", "topic"), std::invalid_argument);
+  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "topic"), std::invalid_argument);
 }
 
-TEST(RequireUniqueInterfaceTypeTest, ThrowsWhenMultipleTypes)
+TEST(RequireSingleInterfaceTypeTest, ThrowsWhenMultipleTypes)
 {
   std::map<std::string, std::vector<std::string>> names{
     {"/foo", {"a/msg/A", "b/msg/B"}},
   };
-  EXPECT_THROW(requireUniqueInterfaceType(names, "/foo", "topic"), std::invalid_argument);
+  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "topic"), std::invalid_argument);
 }
 
-TEST(RequireUniqueInterfaceTypeTest, ThrowsWhenTypesVectorEmpty)
+TEST(RequireSingleInterfaceTypeTest, ThrowsWhenTypesVectorEmpty)
 {
   std::map<std::string, std::vector<std::string>> names{
     {"/foo", {}},
   };
-  EXPECT_THROW(requireUniqueInterfaceType(names, "/foo", "service"), std::invalid_argument);
+  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "service"), std::invalid_argument);
 }
 
 TEST(ClassifyRosVideoInterfaceTypeTest, RawImageTypeIsVideo)
 {
-  const auto classification = classifyRosVideoInterfaceType(kImageInterfaceType);
-  ASSERT_TRUE(classification.has_value());
-  EXPECT_EQ(classification->ingest_mode, kRawImageIngestMode);
+  const auto interface_classification = classifyRosVideoInterfaceType(kImageInterfaceType);
+  ASSERT_TRUE(interface_classification.has_value());
+  EXPECT_EQ(interface_classification->ingest_mode, kRawImageIngestMode);
 }
 
 TEST(ClassifyRosVideoInterfaceTypeTest, CompressedImageTypeIsVideo)
 {
-  const auto classification = classifyRosVideoInterfaceType(kCompressedImageInterfaceType);
-  ASSERT_TRUE(classification.has_value());
-  EXPECT_EQ(classification->ingest_mode, kCompressedImageIngestMode);
+  const auto interface_classification = classifyRosVideoInterfaceType(kCompressedImageInterfaceType);
+  ASSERT_TRUE(interface_classification.has_value());
+  EXPECT_EQ(interface_classification->ingest_mode, kCompressedImageIngestMode);
 }
 
 TEST(ClassifyRosVideoInterfaceTypeTest, StringTypeIsNotVideo)

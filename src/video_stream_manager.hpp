@@ -35,19 +35,19 @@ public:
     rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config = nullptr);
   ~VideoStreamManager();
 
-  std::string ensureStream(const VideoStreamSpec & spec);
+  std::string ensureStreamRunning(const VideoStreamSpec & spec);
   void stopStream(const std::string & stream_key);
   void shutdown();
 
 private:
-  class StreamRecord;
+  class VideoStreamRuntime;
 
   rclcpp::Node & node_;
   RoomSession & session_;
   const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  std::unordered_map<std::string, std::shared_ptr<StreamRecord>> streams_;
+  std::unordered_map<std::string, std::shared_ptr<VideoStreamRuntime>> stream_runtimes_;
 };
 
 }  // namespace livekit_ros2_bridge

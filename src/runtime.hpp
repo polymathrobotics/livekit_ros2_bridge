@@ -40,12 +40,12 @@ class SubscriptionRegistry;
 class RosTopicPublisher;
 class VideoStreamManager;
 
-struct RuntimeHooks
+struct FailFastCallbacks
 {
-  // Optional test hook to override process-wide ROS shutdown during fail-fast.
-  std::function<void()> shutdown_hook;
-  // Optional test hook to override process exit during fail-fast.
-  std::function<void(int)> exit_hook;
+  // Optional test callback to override process-wide ROS shutdown during fail-fast.
+  std::function<void()> shutdown_callback;
+  // Optional test callback to override process exit during fail-fast.
+  std::function<void(int)> exit_callback;
 };
 
 // Wires one RoomSession to the ROS-facing publishers, RPC handlers, and in-process video streams
@@ -56,7 +56,10 @@ class Runtime final
 {
 public:
   Runtime(
-    rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config, RuntimeHooks hooks = {});
+    rclcpp::Node & node,
+    std::unique_ptr<RoomSession> session,
+    RuntimeConfig runtime_config,
+    FailFastCallbacks fail_fast_callbacks = {});
   ~Runtime();
 
   // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
@@ -72,7 +75,7 @@ private:
   void handleReconnectRequested(const std::string & reason);
   void evaluateFailFast();
   void emitReadyLogs();
-  void requestFailFastExit(const std::string & disconnect_reason, bool ready_once);
+  void terminateForFailFast(const std::string & disconnect_reason, bool ready_once);
   // Drops new ingress once shutdown starts. Work accepted before shutdown may still execute if it
   // reaches the ROS executor before the queue is shut down.
   void submitExecutorWork(std::function<void()> fn);
@@ -94,7 +97,7 @@ private:
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr fail_fast_timer_;
   std::string room_;
-  RuntimeHooks hooks_;
+  FailFastCallbacks fail_fast_callbacks_;
   const bool fail_fast_enabled_;
   const std::chrono::milliseconds fail_fast_disconnect_grace_;
   std::atomic<bool> shutting_down_{false};

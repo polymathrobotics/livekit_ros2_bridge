@@ -33,9 +33,9 @@
 #include <vector>
 
 #include "builtin_interfaces/msg/time.hpp"
-#include "encoding_utils.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
+#include "ros_image_format_mapping.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
@@ -136,7 +136,7 @@ GstClockTime rosStampToClockTime(const builtin_interfaces::msg::Time & stamp)
 
 RawSourceConfig makeRawSourceConfig(const sensor_msgs::msg::Image & message)
 {
-  const GstVideoFormat format = rosEncodingToGstFormat(message.encoding);
+  const GstVideoFormat format = rosImageEncodingToGstFormat(message.encoding);
   if (format == GST_VIDEO_FORMAT_UNKNOWN) {
     throw std::runtime_error("Unsupported ROS image encoding '" + message.encoding + "'.");
   }
@@ -160,12 +160,13 @@ std::string formatToCapsString(const RawSourceConfig & config)
          ",height=" + std::to_string(config.height) + ",framerate=0/1";
 }
 
-std::string composePipeline(const std::string & prefix, const std::string & middle)
+std::string composeBridgeOwnedVideoPipeline(
+  const std::string & ingress_fragment, const std::string & transform_fragment)
 {
-  std::string pipeline = prefix;
-  if (!middle.empty()) {
+  std::string pipeline = ingress_fragment;
+  if (!transform_fragment.empty()) {
     pipeline += " ! ";
-    pipeline += middle;
+    pipeline += transform_fragment;
   }
   pipeline += " ! queue max-size-buffers=2 leaky=downstream";
   pipeline += " ! videoconvert";
@@ -262,16 +263,16 @@ PackedI420Frame copySampleToPackedI420(GstSample * sample)
   return frame;
 }
 
-class GstreamerVideoIngestorBase : public IVideoIngestor,
-                                   public std::enable_shared_from_this<GstreamerVideoIngestorBase>
+class BridgeOwnedVideoPipelineIngestor : public IVideoIngestor,
+                                         public std::enable_shared_from_this<BridgeOwnedVideoPipelineIngestor>
 {
 public:
-  GstreamerVideoIngestorBase(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
+  BridgeOwnedVideoPipelineIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
   : spec_(std::move(spec))
   , frame_sink_(frame_sink)
   {}
 
-  virtual ~GstreamerVideoIngestorBase() = default;
+  virtual ~BridgeOwnedVideoPipelineIngestor() = default;
 
 protected:
   struct DetachedPipelineState
@@ -283,12 +284,12 @@ protected:
 
   static GstFlowReturn onNewSampleThunk(GstAppSink * sink, gpointer user_data)
   {
-    return static_cast<GstreamerVideoIngestorBase *>(user_data)->onNewSample(sink);
+    return static_cast<BridgeOwnedVideoPipelineIngestor *>(user_data)->onNewSample(sink);
   }
 
   static GstBusSyncReply onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
   {
-    static_cast<GstreamerVideoIngestorBase *>(user_data)->onBusMessage(message);
+    static_cast<BridgeOwnedVideoPipelineIngestor *>(user_data)->onBusMessage(message);
     return GST_BUS_PASS;
   }
 
@@ -359,11 +360,11 @@ protected:
     }
 
     GstAppSinkCallbacks callbacks{};
-    callbacks.new_sample = &GstreamerVideoIngestorBase::onNewSampleThunk;
+    callbacks.new_sample = &BridgeOwnedVideoPipelineIngestor::onNewSampleThunk;
     gst_app_sink_set_callbacks(GST_APP_SINK(sink.get()), &callbacks, this, nullptr);
 
     GstBusPtr bus(gst_element_get_bus(pipeline.get()));
-    gst_bus_set_sync_handler(bus.get(), &GstreamerVideoIngestorBase::onBusMessageThunk, this, nullptr);
+    gst_bus_set_sync_handler(bus.get(), &BridgeOwnedVideoPipelineIngestor::onBusMessageThunk, this, nullptr);
 
     pipeline_ = std::move(pipeline);
     appsink_.reset(GST_APP_SINK(sink.release()));
@@ -578,7 +579,7 @@ private:
   }
 };
 
-class RawRosVideoIngestor final : public GstreamerVideoIngestorBase
+class RawRosVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
 {
 public:
   RawRosVideoIngestor(
@@ -586,7 +587,7 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
     IVideoFrameSink & frame_sink)
-  : GstreamerVideoIngestorBase(std::move(spec), frame_sink)
+  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -637,7 +638,7 @@ private:
       .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
       .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
       .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-      .field("used_publisher_info", resolved_qos.used_publisher_info)
+      .field("used_publisher_qos", resolved_qos.used_publisher_qos)
       .field("mixed_reliability", resolved_qos.mixed_reliability)
       .field("mixed_durability", resolved_qos.mixed_durability)
       .field("override_id", resolved_qos.matched_override_id)
@@ -704,7 +705,7 @@ private:
     prefix += " is-live=true block=false format=time do-timestamp=true";
     prefix += " caps=";
     prefix += formatToCapsString(config);
-    startPipelineLocked(composePipeline(prefix, spec_.transform_description), true);
+    startPipelineLocked(composeBridgeOwnedVideoPipeline(prefix, spec_.transform_fragment), true);
     playPipelineLocked();
     raw_source_config_ = config;
   }
@@ -763,7 +764,7 @@ private:
   std::optional<RawSourceConfig> raw_source_config_;
 };
 
-class CompressedRosVideoIngestor final : public GstreamerVideoIngestorBase
+class CompressedRosVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
 {
 public:
   CompressedRosVideoIngestor(
@@ -771,7 +772,7 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
     IVideoFrameSink & frame_sink)
-  : GstreamerVideoIngestorBase(std::move(spec), frame_sink)
+  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -822,7 +823,7 @@ private:
       .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
       .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
       .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-      .field("used_publisher_info", resolved_qos.used_publisher_info)
+      .field("used_publisher_qos", resolved_qos.used_publisher_qos)
       .field("mixed_reliability", resolved_qos.mixed_reliability)
       .field("mixed_durability", resolved_qos.mixed_durability)
       .field("override_id", resolved_qos.matched_override_id)
@@ -890,7 +891,7 @@ private:
     prefix += kAppSrcName;
     prefix += " is-live=true block=false format=time do-timestamp=true";
     prefix += format == "png" ? " caps=image/png ! pngdec" : " caps=image/jpeg ! jpegdec";
-    startPipelineLocked(composePipeline(prefix, spec_.transform_description), true);
+    startPipelineLocked(composeBridgeOwnedVideoPipeline(prefix, spec_.transform_fragment), true);
     playPipelineLocked();
     compressed_format_ = format;
   }
@@ -937,11 +938,11 @@ private:
   std::string compressed_format_;
 };
 
-class ConfiguredSourceVideoIngestor final : public GstreamerVideoIngestorBase
+class ConfiguredSourceVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
 {
 public:
   ConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
-  : GstreamerVideoIngestorBase(std::move(spec), frame_sink)
+  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
   {}
 
   void ensureRunning() override
@@ -952,7 +953,7 @@ public:
     }
 
     if (pipeline_ == nullptr) {
-      startConfiguredSourcePipelineLocked();
+      startConfiguredSourceIngestLocked();
     }
   }
 
@@ -973,9 +974,9 @@ public:
   }
 
 private:
-  void startConfiguredSourcePipelineLocked()
+  void startConfiguredSourceIngestLocked()
   {
-    startPipelineLocked(composePipeline(spec_.source_description, spec_.transform_description));
+    startPipelineLocked(composeBridgeOwnedVideoPipeline(spec_.ingress_fragment, spec_.transform_fragment));
     playPipelineLocked();
   }
 
@@ -994,7 +995,7 @@ private:
 
   void restartAfterFailureLocked() override
   {
-    startConfiguredSourcePipelineLocked();
+    startConfiguredSourceIngestLocked();
   }
 };
 

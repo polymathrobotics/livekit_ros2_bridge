@@ -98,11 +98,11 @@ TEST(InterfacePayloadsTest, SerializesResponse)
   ASSERT_EQ(body["interfaces"].size(), 2u);
 
   EXPECT_EQ(body["interfaces"][0]["interface_type"].get<std::string>(), "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(body["interfaces"][0]["schema_encoding"].get<std::string>(), "ros2msg");
+  EXPECT_EQ(body["interfaces"][0]["format"].get<std::string>(), "ros2msg");
   EXPECT_EQ(body["interfaces"][0]["definition"].get<std::string>(), "float32 voltage\n");
 
   EXPECT_EQ(body["interfaces"][1]["interface_type"].get<std::string>(), "std_msgs/msg/Header");
-  EXPECT_EQ(body["interfaces"][1]["schema_encoding"].get<std::string>(), "ros2msg");
+  EXPECT_EQ(body["interfaces"][1]["format"].get<std::string>(), "ros2msg");
   EXPECT_EQ(body["interfaces"][1]["definition"].get<std::string>(), "builtin_interfaces/Time stamp\nstring frame_id\n");
 }
 

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "encoding_utils.hpp"
+#include "ros_image_format_mapping.hpp"
 
 #include <sensor_msgs/image_encodings.hpp>
 
-GstVideoFormat rosEncodingToGstFormat(const std::string & encoding)
+GstVideoFormat rosImageEncodingToGstFormat(const std::string & encoding)
 {
   // Keep this intentionally limited to the raw formats exposed in
-  // GST_ROS_VIDEO_FORMAT_LIST instead of guessing caps for other ROS encodings.
+  // GST_ROS_IMAGE_CAPS_FORMAT_LIST instead of guessing caps for other ROS encodings.
   if (encoding == sensor_msgs::image_encodings::MONO8) return GST_VIDEO_FORMAT_GRAY8;
   if (encoding == sensor_msgs::image_encodings::MONO16) return GST_VIDEO_FORMAT_GRAY16_LE;
   if (encoding == sensor_msgs::image_encodings::RGB8) return GST_VIDEO_FORMAT_RGB;

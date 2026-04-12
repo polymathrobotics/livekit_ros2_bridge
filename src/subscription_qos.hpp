@@ -51,7 +51,7 @@ struct SubscriptionQosConfig
   std::vector<TopicSubscriptionQosOverride> topic_overrides;
 };
 
-struct ObservedPublisherQosProfile
+struct PublisherQosProfile
 {
   rclcpp::ReliabilityPolicy reliability = rclcpp::ReliabilityPolicy::Unknown;
   rclcpp::DurabilityPolicy durability = rclcpp::DurabilityPolicy::Unknown;
@@ -60,7 +60,7 @@ struct ObservedPublisherQosProfile
 enum class SubscriptionQosResolutionSource
 {
   kFallback,
-  kInspection,
+  kPublisherQos,
   kOverride
 };
 
@@ -68,7 +68,7 @@ struct ResolvedSubscriptionQos
 {
   rclcpp::QoS qos{rclcpp::KeepLast(2)};
   SubscriptionQosResolutionSource source = SubscriptionQosResolutionSource::kFallback;
-  bool used_publisher_info = false;
+  bool used_publisher_qos = false;
   bool mixed_reliability = false;
   bool mixed_durability = false;
   std::string matched_override_id;
@@ -79,7 +79,7 @@ ResolvedSubscriptionQos resolveTopicSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
-  const std::vector<ObservedPublisherQosProfile> & publisher_profiles);
+  const std::vector<PublisherQosProfile> & publisher_qos_profiles);
 
 ResolvedSubscriptionQos resolveTopicSubscriptionQos(
   const rclcpp::Node & node,

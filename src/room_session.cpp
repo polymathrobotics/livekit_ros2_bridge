@@ -621,7 +621,7 @@ private:
     condition_.wait(lock, [this]() { return reconnect_requested_ || stop_requested_; });
   }
 
-  void clearRoomState(bool notify_session_reset)
+  void clearRoomState(bool notify_connection_reset)
   {
     std::shared_ptr<livekit::Room> room;
     std::function<void()> callback;
@@ -646,7 +646,7 @@ private:
 
     // The runtime only rebuilds per-connection ROS state after an actual disconnect or reconnect
     // cycle, not during final stop().
-    if (notify_session_reset && callback) {
+    if (notify_connection_reset && callback) {
       LogEvent(kRoomSessionLogger, "room_session_reset")
         .field("phase", "reconnect")
         .field("reason", reconnect_reason.empty() ? "session_reset" : reconnect_reason.c_str())

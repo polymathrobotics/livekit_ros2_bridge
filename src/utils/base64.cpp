@@ -61,7 +61,7 @@ bool hasCanonicalPadding(std::string_view value) noexcept
   return padding_count <= 2U && first_padding >= value.size() - 2U;
 }
 
-Base64DecodeResult decodeBase64(std::string_view value, Base64Variant variant)
+Base64DecodeResult decodeBase64Variant(std::string_view value, Base64Variant variant)
 {
   if (value.empty()) {
     return {};
@@ -121,7 +121,7 @@ Base64DecodeResult decodeBase64(std::string_view value, Base64Variant variant)
   return {std::move(decoded), Base64DecodeStatus::kOk};
 }
 
-std::string encodeBase64(const std::uint8_t * data, std::size_t size, Base64Variant variant)
+std::string encodeBase64Variant(const std::uint8_t * data, std::size_t size, Base64Variant variant)
 {
   if (size == 0U) {
     return "";
@@ -152,22 +152,22 @@ std::string encodeBase64(const std::uint8_t * data, std::size_t size, Base64Vari
 
 std::string base64Encode(const std::uint8_t * data, std::size_t size)
 {
-  return encodeBase64(data, size, Base64Variant::kStandard);
+  return encodeBase64Variant(data, size, Base64Variant::kStandard);
 }
 
 Base64DecodeResult base64Decode(std::string_view value)
 {
-  return decodeBase64(value, Base64Variant::kStandard);
+  return decodeBase64Variant(value, Base64Variant::kStandard);
 }
 
 std::string base64UrlEncode(const std::uint8_t * data, std::size_t size)
 {
-  return encodeBase64(data, size, Base64Variant::kUrl);
+  return encodeBase64Variant(data, size, Base64Variant::kUrl);
 }
 
 Base64DecodeResult base64UrlDecode(std::string_view value)
 {
-  return decodeBase64(value, Base64Variant::kUrl);
+  return decodeBase64Variant(value, Base64Variant::kUrl);
 }
 
 }  // namespace livekit_ros2_bridge

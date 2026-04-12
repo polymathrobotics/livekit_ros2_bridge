@@ -28,21 +28,21 @@ TEST(EventThrottleTest, FirstEventFiresImmediately)
 {
   EventThrottle throttle(kThrottleInterval);
 
-  EXPECT_EQ(throttle.recordAndCheck(), 1U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
 }
 
 TEST(EventThrottleTest, AggregatesSuppressedEventsUntilIntervalPasses)
 {
   EventThrottle throttle(kThrottleInterval);
 
-  EXPECT_EQ(throttle.recordAndCheck(), 1U);
-  EXPECT_EQ(throttle.recordAndCheck(), 0U);
-  EXPECT_EQ(throttle.recordAndCheck(), 0U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
 
   std::this_thread::sleep_for(kThrottleWindowResetWait);
 
-  EXPECT_EQ(throttle.recordAndCheck(), 3U);
-  EXPECT_EQ(throttle.recordAndCheck(), 0U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 3U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
 }
 
 }  // namespace livekit_ros2_bridge

@@ -129,7 +129,7 @@ Successful response body:
   "interfaces": [
     {
       "interface_type": "sensor_msgs/msg/Image",
-      "schema_encoding": "ros2msg",
+      "format": "ros2msg",
       "definition": "..."
     }
   ]

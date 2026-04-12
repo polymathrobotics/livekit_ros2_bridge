@@ -110,13 +110,13 @@ VideoConfig makeDefaultVideoConfig()
   return config;
 }
 
-std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type)
+std::optional<RosVideoInterfaceClassification> classifyRosVideoInterfaceType(std::string_view interface_type)
 {
   if (interface_type == kImageInterfaceType) {
-    return RosVideoSourceClassification{kRawImageIngestMode};
+    return RosVideoInterfaceClassification{kRawImageIngestMode};
   }
   if (interface_type == kCompressedImageInterfaceType) {
-    return RosVideoSourceClassification{kCompressedImageIngestMode};
+    return RosVideoInterfaceClassification{kCompressedImageIngestMode};
   }
   return std::nullopt;
 }
@@ -126,9 +126,9 @@ std::string trimConfiguredSourceName(std::string_view configured_source_name)
   return trim(configured_source_name);
 }
 
-std::string videoSourceKindToString(VideoSourceKind kind)
+std::string videoInputKindToString(VideoInputKind kind)
 {
-  if (kind == VideoSourceKind::RosTopic) {
+  if (kind == VideoInputKind::RosTopic) {
     return "ros_topic";
   }
   return "configured_source";
@@ -141,8 +141,8 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   if (normalized.empty()) {
     throw std::invalid_argument("Invalid ROS topic.");
   }
-  const auto source_classification = classifyRosVideoInterfaceType(interface_type);
-  if (!source_classification.has_value()) {
+  const auto interface_classification = classifyRosVideoInterfaceType(interface_type);
+  if (!interface_classification.has_value()) {
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 
@@ -165,10 +165,10 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   spec.track_name = makeVideoTrackName(kTopicTrackNamePrefix, normalized);
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
-  spec.source_kind = VideoSourceKind::RosTopic;
-  spec.ingest_mode = std::string(source_classification->ingest_mode);
-  spec.selected_config_key = matched_rule->id;
-  spec.transform_description = matched_rule->transform;
+  spec.input_kind = VideoInputKind::RosTopic;
+  spec.ingest_mode = std::string(interface_classification->ingest_mode);
+  spec.selected_config_id = matched_rule->id;
+  spec.transform_fragment = matched_rule->transform;
   spec.publish_config = matched_rule->publish;
   return spec;
 }
@@ -186,19 +186,19 @@ VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
     throw std::invalid_argument("Unknown configured video source '" + trimmed_name + "'.");
   }
 
-  const auto & source = source_it->second;
+  const auto & configured_pipeline = source_it->second;
 
   VideoStreamSpec spec;
-  // stream_key, configured_source_name, and selected_config_key all use the same trimmed configured-source name.
+  // stream_key, configured_source_name, and selected_config_id all use the same trimmed configured-source name.
   spec.stream_key = makeVideoStreamKey(kConfiguredSourceStreamKeyPrefix, trimmed_name);
   spec.track_name = makeConfiguredSourceTrackName(kConfiguredSourceTrackNamePrefix, trimmed_name);
   spec.configured_source_name = trimmed_name;
-  spec.source_kind = VideoSourceKind::ConfiguredSource;
-  spec.selected_config_key = trimmed_name;
-  spec.source_description = source.source;
-  spec.transform_description = source.transform;
+  spec.input_kind = VideoInputKind::ConfiguredSource;
+  spec.selected_config_id = trimmed_name;
+  spec.ingress_fragment = configured_pipeline.ingress_fragment;
+  spec.transform_fragment = configured_pipeline.transform_fragment;
   spec.ingest_mode = kConfiguredSourceIngestMode;
-  spec.publish_config = source.publish;
+  spec.publish_config = configured_pipeline.publish;
 
   return spec;
 }

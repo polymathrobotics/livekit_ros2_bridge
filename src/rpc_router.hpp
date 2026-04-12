@@ -48,7 +48,7 @@ public:
   void unregisterRpcMethods(RoomSession & session);
 
 private:
-  std::array<std::pair<const char *, RpcHandler>, 4> rpcMethodCatalog();
+  std::array<std::pair<const char *, RpcHandler>, 4> rpcEntrypoints();
   std::optional<std::string> handleServiceCall(const RpcInvocation & invocation);
   std::optional<std::string> handleInterfacesGet(const RpcInvocation & invocation);
   std::optional<std::string> handleServiceList(const RpcInvocation & invocation);

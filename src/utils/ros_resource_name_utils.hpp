@@ -22,7 +22,7 @@
 namespace livekit_ros2_bridge
 {
 
-constexpr char kRosResourceSubtreeSuffix[] = "/*";
+constexpr char kRosResourceSubtreeWildcard[] = "/*";
 
 /// Canonicalize a ROS topic/service/resource name for policy and protocol comparisons:
 /// trim surrounding whitespace, collapse repeated `/`, prepend a leading `/` when missing,
@@ -65,10 +65,10 @@ inline std::string normalizeRosResourceName(std::string_view name)
 inline bool rosResourceMatchesPattern(std::string_view name, std::string_view pattern)
 {
   const bool is_subtree_pattern =
-    pattern.size() >= sizeof(kRosResourceSubtreeSuffix) - 1U &&
-    pattern.substr(pattern.size() - (sizeof(kRosResourceSubtreeSuffix) - 1U)) == kRosResourceSubtreeSuffix;
+    pattern.size() >= sizeof(kRosResourceSubtreeWildcard) - 1U &&
+    pattern.substr(pattern.size() - (sizeof(kRosResourceSubtreeWildcard) - 1U)) == kRosResourceSubtreeWildcard;
   if (is_subtree_pattern) {
-    const std::string prefix(pattern.substr(0, pattern.size() - (sizeof(kRosResourceSubtreeSuffix) - 1U)));
+    const std::string prefix(pattern.substr(0, pattern.size() - (sizeof(kRosResourceSubtreeWildcard) - 1U)));
     return name.rfind(prefix + "/", 0) == 0;
   }
   return name == pattern;

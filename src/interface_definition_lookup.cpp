@@ -35,7 +35,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kSchemaEncodingRos2Msg[] = "ros2msg";
+constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 constexpr char kServiceDefinitionSeparator[] = "---";
 constexpr std::size_t kInvalidInterfaceTypeCacheCapacity = 256U;
 
@@ -64,18 +64,18 @@ std::string readInterfaceDefinitionFile(const std::string & path)
 {
   std::ifstream file(path);
   if (!file.is_open()) {
-    throw std::runtime_error("Cannot open schema file: " + path);
+    throw std::runtime_error("Cannot open interface definition file: " + path);
   }
   std::ostringstream contents;
   contents << file.rdbuf();
   return contents.str();
 }
 
-using FailureCache = BoundedLruCache<std::string, std::exception_ptr>;
+using InterfaceLookupFailureCache = BoundedLruCache<std::string, std::exception_ptr>;
 
-FailureCache & invalidInterfaceTypeCache()
+InterfaceLookupFailureCache & interfaceLookupFailureCache()
 {
-  static FailureCache cache(kInvalidInterfaceTypeCacheCapacity);
+  static InterfaceLookupFailureCache cache(kInvalidInterfaceTypeCacheCapacity);
   return cache;
 }
 
@@ -112,7 +112,8 @@ std::string getPackageShareDirectoryCompat(const std::string & package)
 {
   // ament_index_cpp 1.11+ adds the filesystem-path overload used by Kilted/Rolling, while
   // Humble and Jazzy still only expose the legacy string-returning API. Keep one compatibility
-  // wrapper here instead of scattering distro/version checks across schema lookup code.
+  // wrapper here instead of scattering distro/version checks across interface definition lookup
+  // code.
 #if AMENT_INDEX_CPP_VERSION_GTE(1, 11, 0)
   std::filesystem::path share_dir;
   ament_index_cpp::get_package_share_directory(package, share_dir);
@@ -147,13 +148,13 @@ std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
   } catch (const std::exception &) {
     throw std::runtime_error("Package '" + package + "' not found in ament index");
   }
-  const std::string relative_schema_path = kind + "/" + name + "." + kind;
-  return share_dir + "/" + relative_schema_path;
+  const std::string relative_definition_path = kind + "/" + name + "." + kind;
+  return share_dir + "/" + relative_definition_path;
 }
 
 std::string loadInterfaceDefinition(const std::string & interface_type)
 {
-  if (const auto failure = invalidInterfaceTypeCache().get(interface_type); failure.has_value()) {
+  if (const auto failure = interfaceLookupFailureCache().get(interface_type); failure.has_value()) {
     std::rethrow_exception(*failure);
   }
   noteInterfaceDefinitionLookupAttempt(interface_type);
@@ -162,10 +163,10 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
     const std::string path = resolveInterfaceDefinitionPath(interface_type);
     return readInterfaceDefinitionFile(path);
   } catch (const std::invalid_argument &) {
-    invalidInterfaceTypeCache().insertOrAssign(interface_type, std::current_exception());
+    interfaceLookupFailureCache().insertOrAssign(interface_type, std::current_exception());
     throw;
   } catch (const std::runtime_error &) {
-    invalidInterfaceTypeCache().insertOrAssign(interface_type, std::current_exception());
+    interfaceLookupFailureCache().insertOrAssign(interface_type, std::current_exception());
     throw;
   }
 }
@@ -203,10 +204,10 @@ std::string qualifyTypeReference(const std::string & type_ref, const std::string
 /// Scan a .msg or .srv file for complex type references and return their fully-qualified names.
 /// Field types are always messages, so short-form references like "std_msgs/Header" are
 /// qualified as "std_msgs/msg/Header" regardless of whether the containing file is msg or srv.
-std::vector<std::string> extractTypeReferences(const std::string & schema_text)
+std::vector<std::string> extractTypeReferences(const std::string & definition)
 {
   std::vector<std::string> refs;
-  std::istringstream stream(schema_text);
+  std::istringstream stream(definition);
   std::string line;
 
   while (std::getline(stream, line)) {
@@ -253,7 +254,9 @@ std::vector<std::string> extractTypeReferences(const std::string & schema_text)
 }
 
 void collectDependencies(
-  const std::string & interface_type, std::set<std::string> & visited, std::vector<InterfaceDefinition> & dependencies)
+  const std::string & interface_type,
+  std::set<std::string> & visited,
+  std::vector<InterfaceDefinition> & definition_entries)
 {
   if (visited.count(interface_type) > 0) {
     return;
@@ -262,12 +265,12 @@ void collectDependencies(
 
   const std::string definition = loadInterfaceDefinition(interface_type);
 
-  // Record each schema before recursing so callers can keep the requested type first and the
+  // Record each definition before recursing so callers can keep the requested type first and the
   // remaining entries in the same first-discovery order used for dependency traversal.
-  dependencies.push_back({interface_type, kSchemaEncodingRos2Msg, definition});
+  definition_entries.push_back({interface_type, kDefinitionFormatRos2Msg, definition});
 
   for (const auto & ref : extractTypeReferences(definition)) {
-    collectDependencies(ref, visited, dependencies);
+    collectDependencies(ref, visited, definition_entries);
   }
 }
 
@@ -289,7 +292,7 @@ void setInterfaceDefinitionLookupAttemptHookForTest(std::function<void(const std
 
 void resetInterfaceDefinitionLookupStateForTest()
 {
-  invalidInterfaceTypeCache().clear();
+  interfaceLookupFailureCache().clear();
 
   std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
   interfaceDefinitionLookupAttemptHook() = nullptr;

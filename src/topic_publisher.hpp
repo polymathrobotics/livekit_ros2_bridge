@@ -48,29 +48,29 @@ public:
   void shutdown();
 
 private:
-  static constexpr auto kPublisherCacheEvictionThrottlePeriod = std::chrono::seconds(5);
+  static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
 
   // Test-only hook that runs after publisher resolution/creation and
   // immediately before the underlying ROS publisher publishes the message.
   void setBeforePublishHookForTest(std::function<void()> hook);
 
-  struct PublisherCacheEntry
+  struct CachedPublisher
   {
     std::string interface_type;
-    std::shared_ptr<rclcpp::GenericPublisher> publisher_handle;
+    std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };
 
   std::string resolveTopicTypeOrThrow(const std::string & topic, const std::string & requested_interface_type) const;
-  void publishWithPublisherCache(
+  void publishWithResolvedPublisher(
     const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized);
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
   std::size_t max_cached_publishers_ = 0U;
   std::atomic<bool> is_shutdown_{false};
-  BoundedLruCache<std::string, PublisherCacheEntry> publishers_;
+  BoundedLruCache<std::string, CachedPublisher> cached_publishers_;
   std::function<void()> before_publish_hook_for_test_;
-  EventThrottle publisher_cache_eviction_throttle_{kPublisherCacheEvictionThrottlePeriod};
+  EventThrottle evicted_publisher_warning_throttle_{kEvictedPublisherWarningThrottlePeriod};
 };
 
 }  // namespace livekit_ros2_bridge

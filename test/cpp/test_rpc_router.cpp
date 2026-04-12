@@ -124,16 +124,16 @@ std::string nextNodeName(const std::string & prefix)
   return prefix + "_" + std::to_string(counter.fetch_add(1));
 }
 
-std::string makeServiceCallRequest(
+std::string makeServiceCallRequestPayload(
   const std::string & service,
   const std::string & interface_type,
-  const std::vector<std::uint8_t> & request,
+  const std::vector<std::uint8_t> & request_payload,
   std::optional<int> timeout_ms = std::nullopt)
 {
   auto body = nlohmann::json{
     {"service", service},
     {"interface_type", interface_type},
-    {"request", serializeCdrPayload(request)},
+    {"request", serializeCdrPayload(request_payload)},
   };
   if (timeout_ms.has_value()) {
     body["timeout_ms"] = *timeout_ms;
@@ -261,7 +261,7 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
         protocol::kRpcServiceCall,
         RpcInvocation{
           "participant-1",
-          makeServiceCallRequest("/denied_service", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+          makeServiceCallRequestPayload("/denied_service", "std_srvs/srv/SetBool", serializeMessage(request_message)),
         });
     },
     protocol::kRpcErrorForbidden,
@@ -284,7 +284,7 @@ TEST_F(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
     protocol::kRpcErrorInternal);
 }
 
-TEST_F(RpcRouterTest, InterfacesGetRpcReturnsSchemaForKnownType)
+TEST_F(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
 {
   RpcRouterHarness harness;
 
@@ -298,10 +298,10 @@ TEST_F(RpcRouterTest, InterfacesGetRpcReturnsSchemaForKnownType)
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["interfaces"].size(), 1U);
-  const auto & definition = body["interfaces"][0];
-  EXPECT_EQ(definition["interface_type"].get<std::string>(), "std_msgs/msg/String");
-  EXPECT_EQ(definition["schema_encoding"].get<std::string>(), "ros2msg");
-  EXPECT_FALSE(definition["definition"].get<std::string>().empty());
+  const auto & interface_definition = body["interfaces"][0];
+  EXPECT_EQ(interface_definition["interface_type"].get<std::string>(), "std_msgs/msg/String");
+  EXPECT_EQ(interface_definition["format"].get<std::string>(), "ros2msg");
+  EXPECT_FALSE(interface_definition["definition"].get<std::string>().empty());
 }
 
 TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
@@ -330,7 +330,8 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
       protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
-        makeServiceCallRequest("/rpc_router/set_bool", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+        makeServiceCallRequestPayload(
+          "/rpc_router/set_bool", "std_srvs/srv/SetBool", serializeMessage(request_message)),
       });
   });
 
@@ -365,7 +366,8 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
       protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
-        makeServiceCallRequest("/no_such_service", "std_srvs/srv/SetBool", serializeMessage(request_message), 200),
+        makeServiceCallRequestPayload(
+          "/no_such_service", "std_srvs/srv/SetBool", serializeMessage(request_message), 200),
       });
   });
 

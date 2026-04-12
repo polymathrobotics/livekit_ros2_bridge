@@ -28,7 +28,7 @@ namespace livekit_ros2_bridge
 std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payload);
 
 /// Serialize interface definitions as
-/// `{ "interfaces": [{ "interface_type", "schema_encoding", "definition" }, ...] }`
+/// `{ "interfaces": [{ "interface_type", "format", "definition" }, ...] }`
 /// while preserving the input order.
 std::string serializeInterfacesResponse(const std::vector<InterfaceDefinition> & interfaces);
 

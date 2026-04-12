@@ -32,7 +32,7 @@ namespace livekit_ros2_bridge
 class RoomSession;
 class SubscriptionRegistry;
 
-// Resolves heartbeat requester identity, including anonymous renewals that present a still-leased
+// Resolves heartbeat lease ownership, including anonymous renewals that present a still-leased
 // session_id, then renews the requested subscriptions and publishes one status envelope back.
 class SubscriptionHeartbeatProcessor final
 {
@@ -47,7 +47,7 @@ public:
   // accepted only when session_id already maps to an active requester lease.
   void process(const std::string & requester_identity, const SubscriptionHeartbeat & update);
   // Expires only the session_id leases used for anonymous-heartbeat fallback.
-  void sweepExpiredSessionLeases();
+  void pruneExpiredSessionLeases();
 
 private:
   struct SessionLease
@@ -61,17 +61,18 @@ private:
   std::optional<std::string> resolveRequesterIdentity(
     const std::string & requester_identity,
     const SubscriptionHeartbeat & update,
-    std::chrono::steady_clock::time_point expiry);
-  // Binds a session_id to exactly one requester identity until expiry. Conflicts are rejected so a
-  // delayed or replayed heartbeat cannot steal another participant's lease.
-  bool bindSessionId(
+    std::chrono::steady_clock::time_point requester_lease_expiry);
+  // Renews a session_id lease for exactly one requester identity until requester_lease_expiry.
+  // Conflicts are rejected so a delayed or replayed heartbeat cannot steal another participant's
+  // lease.
+  bool renewRequesterSessionLease(
     const std::string & session_id,
     const std::string & requester_identity,
-    std::chrono::steady_clock::time_point expiry);
+    std::chrono::steady_clock::time_point requester_lease_expiry);
   void publishSubscriptionStatus(
     const std::string & requester_identity,
     const std::optional<std::string> & session_id,
-    std::chrono::steady_clock::time_point expiry,
+    std::chrono::steady_clock::time_point requester_lease_expiry,
     const nlohmann::json & streams);
 
   SubscriptionRegistry & subscription_registry_;

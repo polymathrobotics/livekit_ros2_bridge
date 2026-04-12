@@ -108,7 +108,7 @@ private:
   bool shutdown_ = false;
   // Used so shutdown() can wait for an in-progress drain without deadlocking
   // when shutdown itself is called from the executor thread running drain().
-  ReentrantQuiesceGuard drain_guard_;
+  ReentrantQuiesceGate drain_gate_;
 };
 
 }  // namespace livekit_ros2_bridge

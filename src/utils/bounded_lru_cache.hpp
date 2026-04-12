@@ -32,7 +32,7 @@ template <typename Key, typename Value, typename Hash = std::hash<Key>, typename
 class BoundedLruCache
 {
 public:
-  struct Entry
+  struct EvictedEntry
   {
     Key key;
     Value value;
@@ -48,20 +48,20 @@ public:
   std::optional<Value> get(const Key & key)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end()) {
+    const auto it = entry_index_.find(key);
+    if (it == entry_index_.end()) {
       return std::nullopt;
     }
 
-    lru_entries_.splice(lru_entries_.end(), lru_entries_, it->second);
+    entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
     return it->second->value;
   }
 
   std::optional<Value> peek(const Key & key) const
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end()) {
+    const auto it = entry_index_.find(key);
+    if (it == entry_index_.end()) {
       return std::nullopt;
     }
 
@@ -71,76 +71,76 @@ public:
   bool touch(const Key & key)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it == entries_.end()) {
+    const auto it = entry_index_.find(key);
+    if (it == entry_index_.end()) {
       return false;
     }
 
-    lru_entries_.splice(lru_entries_.end(), lru_entries_, it->second);
+    entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
     return true;
   }
 
-  std::optional<Entry> insertOrAssign(Key key, Value value)
+  std::optional<EvictedEntry> insertOrAssign(Key key, Value value)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entries_.find(key);
-    if (it != entries_.end()) {
+    const auto it = entry_index_.find(key);
+    if (it != entry_index_.end()) {
       it->second->value = std::move(value);
-      lru_entries_.splice(lru_entries_.end(), lru_entries_, it->second);
+      entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
       return std::nullopt;
     }
 
-    lru_entries_.push_back(CacheEntry{std::move(key), std::move(value)});
-    auto cache_entry_it = std::prev(lru_entries_.end());
-    entries_.emplace(cache_entry_it->key, cache_entry_it);
+    entries_by_recency_.push_back(LruEntry{std::move(key), std::move(value)});
+    auto lru_entry_it = std::prev(entries_by_recency_.end());
+    entry_index_.emplace(lru_entry_it->key, lru_entry_it);
     return evictIfNeeded();
   }
 
   void clear()
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_.clear();
-    lru_entries_.clear();
+    entry_index_.clear();
+    entries_by_recency_.clear();
   }
 
   std::size_t size() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    return entries_.size();
+    return entry_index_.size();
   }
 
   bool empty() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    return entries_.empty();
+    return entry_index_.empty();
   }
 
 private:
-  struct CacheEntry
+  struct LruEntry
   {
     Key key;
     Value value;
   };
 
-  using CacheEntries = std::list<CacheEntry>;
-  using CacheIndex = std::unordered_map<Key, typename CacheEntries::iterator, Hash, KeyEqual>;
+  using LruEntries = std::list<LruEntry>;
+  using EntryIndex = std::unordered_map<Key, typename LruEntries::iterator, Hash, KeyEqual>;
 
-  std::optional<Entry> evictIfNeeded()
+  std::optional<EvictedEntry> evictIfNeeded()
   {
-    if (entries_.size() <= capacity_) {
+    if (entry_index_.size() <= capacity_) {
       return std::nullopt;
     }
 
-    Entry evicted{std::move(lru_entries_.front().key), std::move(lru_entries_.front().value)};
-    entries_.erase(evicted.key);
-    lru_entries_.pop_front();
+    EvictedEntry evicted{std::move(entries_by_recency_.front().key), std::move(entries_by_recency_.front().value)};
+    entry_index_.erase(evicted.key);
+    entries_by_recency_.pop_front();
     return evicted;
   }
 
   std::size_t capacity_ = 0U;
   mutable std::mutex mutex_;
-  CacheEntries lru_entries_;
-  CacheIndex entries_;
+  LruEntries entries_by_recency_;
+  EntryIndex entry_index_;
 };
 
 }  // namespace livekit_ros2_bridge

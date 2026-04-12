@@ -25,66 +25,66 @@ namespace livekit_ros2_bridge
 constexpr auto kQuiesceStillBlockedWindow = std::chrono::milliseconds(50);
 constexpr auto kQuiesceReadyTimeout = std::chrono::seconds(2);
 
-TEST(ReentrantQuiesceGuardTest, TryBeginWorkSucceedsWhileEnabled)
+TEST(ReentrantQuiesceGateTest, TryEnterSucceedsWhileOpen)
 {
-  ReentrantQuiesceGuard guard;
+  ReentrantQuiesceGate gate;
 
-  EXPECT_TRUE(guard.tryBeginWork());
-  guard.endWork();
+  EXPECT_TRUE(gate.tryEnter());
+  gate.leave();
 }
 
-TEST(ReentrantQuiesceGuardTest, DisableBlocksNewTryBeginWorkCalls)
+TEST(ReentrantQuiesceGateTest, CloseBlocksNewEntries)
 {
-  ReentrantQuiesceGuard guard;
+  ReentrantQuiesceGate gate;
 
-  guard.disable();
+  gate.close();
 
-  EXPECT_FALSE(guard.tryBeginWork());
+  EXPECT_FALSE(gate.tryEnter());
 }
 
-TEST(ReentrantQuiesceGuardTest, QuiesceBlocksUntilOtherThreadEndsWork)
+TEST(ReentrantQuiesceGateTest, AwaitIdleBlocksUntilOtherThreadLeaves)
 {
-  ReentrantQuiesceGuard guard;
-  guard.beginWork();
+  ReentrantQuiesceGate gate;
+  gate.enter();
 
-  auto quiesce_future = std::async(std::launch::async, [&guard]() {
-    guard.quiesce();
+  auto idle_future = std::async(std::launch::async, [&gate]() {
+    gate.awaitIdle();
     return true;
   });
 
-  EXPECT_EQ(quiesce_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+  EXPECT_EQ(idle_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
 
-  guard.endWork();
+  gate.leave();
 
-  EXPECT_EQ(quiesce_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
-  EXPECT_TRUE(quiesce_future.get());
+  EXPECT_EQ(idle_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  EXPECT_TRUE(idle_future.get());
 }
 
-TEST(ReentrantQuiesceGuardTest, QuiesceReturnsImmediatelyForOwningThread)
+TEST(ReentrantQuiesceGateTest, AwaitIdleReturnsImmediatelyForOwningThread)
 {
-  ReentrantQuiesceGuard guard;
-  guard.beginWork();
+  ReentrantQuiesceGate gate;
+  gate.enter();
 
   const auto start = std::chrono::steady_clock::now();
-  guard.quiesce();
+  gate.awaitIdle();
   const auto elapsed = std::chrono::steady_clock::now() - start;
 
   EXPECT_LT(elapsed, kQuiesceStillBlockedWindow);
 
-  guard.endWork();
+  gate.leave();
 }
 
-TEST(ReentrantQuiesceGuardTest, BeginWorkThrowsWhenSectionIsNotEnterable)
+TEST(ReentrantQuiesceGateTest, EnterThrowsWhenSectionIsNotEnterable)
 {
-  ReentrantQuiesceGuard guard;
-  guard.beginWork();
+  ReentrantQuiesceGate gate;
+  gate.enter();
 
-  EXPECT_THROW(guard.beginWork(), std::logic_error);
+  EXPECT_THROW(gate.enter(), std::logic_error);
 
-  guard.endWork();
-  guard.disable();
+  gate.leave();
+  gate.close();
 
-  EXPECT_THROW(guard.beginWork(), std::logic_error);
+  EXPECT_THROW(gate.enter(), std::logic_error);
 }
 
 }  // namespace livekit_ros2_bridge

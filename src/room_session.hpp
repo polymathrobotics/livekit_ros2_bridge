@@ -108,8 +108,8 @@ struct RoomSessionCallbacks
   // Called when the current room connection begins a reconnect episode. The reason is a stable
   // internal string such as `room_disconnected` or `connection_state_disconnected`.
   std::function<void(const std::string &)> on_reconnect_requested;
-  // Called after a connected session has been torn down and any per-connection room state should
-  // be rebuilt on the next connect.
+  // Called after a connected room session has been torn down and any per-session room state
+  // should be rebuilt on the next connect.
   std::function<void()> on_session_reset;
   // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
   // session suppresses transient participant disconnects so leases can survive browser refreshes.

@@ -147,7 +147,7 @@ ServiceCallRequest makeSetBoolRequest(const std::string & service, int timeout_m
   request.interface_type = "std_srvs/srv/SetBool";
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = data;
-  request.request = serializeMessage(ros_request);
+  request.request_payload = serializeMessage(ros_request);
   request.timeout_ms = timeout_ms;
   return request;
 }
@@ -335,7 +335,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
   }
 
   ServiceCallRequest malformed_request = request;
-  malformed_request.request.clear();
+  malformed_request.request_payload.clear();
   auto malformed_future = caller.call("requester-1", malformed_request);
   const std::string malformed_error = expectRuntimeErrorMessage(malformed_future);
   EXPECT_NE(malformed_error.find("Failed to build service request:"), std::string::npos);
@@ -553,7 +553,7 @@ TEST_F(RosServiceCallerTest, RejectsUnresolvableServiceType)
   request.service = "/no_such_service";
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = false;
-  request.request = serializeMessage(ros_request);
+  request.request_payload = serializeMessage(ros_request);
   request.timeout_ms = 100;
 
   auto future = caller.call("requester-1", request);
@@ -580,7 +580,7 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
   request.interface_type = "nonexistent_pkg/srv/Foo";
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = false;
-  request.request = serializeMessage(ros_request);
+  request.request_payload = serializeMessage(ros_request);
   request.timeout_ms = 100;
 
   auto first_future = caller.call("requester-1", request);
@@ -763,7 +763,7 @@ TEST_F(RosServiceCallerTest, RejectsCallAfterShutdown)
   request.interface_type = "std_srvs/srv/SetBool";
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = true;
-  request.request = serializeMessage(ros_request);
+  request.request_payload = serializeMessage(ros_request);
   request.timeout_ms = 100;
 
   auto future = caller.call("requester-1", request);

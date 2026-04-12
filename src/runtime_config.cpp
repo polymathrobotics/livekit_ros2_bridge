@@ -47,7 +47,7 @@ void ensureGstreamerInitialized()
   std::call_once(once, []() { gst_init(nullptr, nullptr); });
 }
 
-RoomConnectionConfig loadConnectConfig(const Params & params)
+RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
 {
   if (params.livekit.url.empty()) {
     throw std::runtime_error("livekit.url is required");
@@ -271,12 +271,13 @@ VideoPublishConfig mergeVideoPublishConfig(const VideoPublishConfig & defaults, 
   return merged;
 }
 
-std::string composeVideoPipelineDescription(const std::string & prefix, const std::string & transform)
+std::string composeBridgeOwnedVideoPipelineDescription(
+  const std::string & ingress_fragment, const std::string & transform_fragment)
 {
-  std::string pipeline = prefix;
-  if (!transform.empty()) {
+  std::string pipeline = ingress_fragment;
+  if (!transform_fragment.empty()) {
     pipeline += " ! ";
-    pipeline += transform;
+    pipeline += transform_fragment;
   }
   pipeline += " ! queue max-size-buffers=2 leaky=downstream";
   pipeline += " ! videoconvert";
@@ -289,7 +290,7 @@ std::string composeVideoPipelineDescription(const std::string & prefix, const st
   return pipeline;
 }
 
-void validateBridgeManagedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
+void validateBridgeOwnedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_owned_appsrc)
 {
   guint appsrc_count = 0;
   guint appsink_count = 0;
@@ -341,7 +342,7 @@ void validateBridgeManagedEndpoints(const std::string & context, GstElement * pi
     item.reset();
   }
 
-  if (expect_bridge_appsrc) {
+  if (expect_bridge_owned_appsrc) {
     if (
       appsrc_count != 1U || named_bridge_appsrc_count != 1U || appsink_count != 1U || named_bridge_appsink_count != 1U)
     {
@@ -356,7 +357,7 @@ void validateBridgeManagedEndpoints(const std::string & context, GstElement * pi
 }
 
 void validatePipelineDescription(
-  const std::string & context, const std::string & pipeline_description, bool expect_bridge_appsrc)
+  const std::string & context, const std::string & pipeline_description, bool expect_bridge_owned_appsrc)
 {
   ensureGstreamerInitialized();
 
@@ -372,7 +373,7 @@ void validatePipelineDescription(
     throw std::runtime_error(context + " must parse to a GstBin");
   }
 
-  validateBridgeManagedEndpoints(context, pipeline.get(), expect_bridge_appsrc);
+  validateBridgeOwnedEndpoints(context, pipeline.get(), expect_bridge_owned_appsrc);
 }
 
 std::string makeRosValidationPrefix()
@@ -384,31 +385,33 @@ std::string makeRosValidationPrefix()
   return prefix;
 }
 
-std::string parseVideoTransform(const std::string & raw_transform)
+std::string parseVideoTransformFragment(const std::string & raw_transform)
 {
   return trim(raw_transform);
 }
 
-std::string parseConfiguredSource(const std::string & entry_id, const std::string & raw_source)
+std::string parseConfiguredSourceIngressFragment(const std::string & entry_id, const std::string & raw_source)
 {
-  const std::string source = trim(raw_source);
-  if (source.empty()) {
+  const std::string ingress_fragment = trim(raw_source);
+  if (ingress_fragment.empty()) {
     throw std::runtime_error("video configured source '" + entry_id + "' requires a non-empty source");
   }
-  return source;
+  return ingress_fragment;
 }
 
-void validateVideoTopicRuleTransform(const std::string & entry_id, const std::string & transform)
+void validateVideoTopicRuleTransformFragment(const std::string & entry_id, const std::string & transform_fragment)
 {
   const std::string context = "video topic rule '" + entry_id + "' transform";
-  validatePipelineDescription(context, composeVideoPipelineDescription(makeRosValidationPrefix(), transform), true);
+  validatePipelineDescription(
+    context, composeBridgeOwnedVideoPipelineDescription(makeRosValidationPrefix(), transform_fragment), true);
 }
 
-void validateConfiguredSourceFragments(
-  const std::string & entry_id, const std::string & source, const std::string & transform)
+void validateConfiguredSourcePipelineFragments(
+  const std::string & entry_id, const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   const std::string context = "video configured source '" + entry_id + "'";
-  validatePipelineDescription(context, composeVideoPipelineDescription(source, transform), false);
+  validatePipelineDescription(
+    context, composeBridgeOwnedVideoPipelineDescription(ingress_fragment, transform_fragment), false);
 }
 
 void requireUniqueEntryKey(std::unordered_set<std::string> & seen_keys, const std::string & key, const char * context)
@@ -466,13 +469,13 @@ VideoConfig loadVideoConfig(const Params & params)
       "video topic rule");
 
     const std::string pattern = normalizeVideoRulePattern(entry.pattern);
-    const std::string transform = parseVideoTransform(entry.transform);
-    validateVideoTopicRuleTransform(entry_id, transform);
+    const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
+    validateVideoTopicRuleTransformFragment(entry_id, transform_fragment);
 
     RosTopicRule rule;
     rule.pattern = pattern;
     rule.id = entry_id;
-    rule.transform = transform;
+    rule.transform = transform_fragment;
     rule.publish =
       mergeVideoPublishConfig(config.publish, parseVideoPublishOverride(entry, "video topic rule '" + entry_id + "'"));
     config.ros_topic_rules.push_back(std::move(rule));
@@ -490,9 +493,9 @@ VideoConfig loadVideoConfig(const Params & params)
       "video configured source id",
       "video configured source");
 
-    const std::string source_fragment = parseConfiguredSource(entry_id, entry.source);
-    const std::string transform = parseVideoTransform(entry.transform);
-    validateConfiguredSourceFragments(entry_id, source_fragment, transform);
+    const std::string ingress_fragment = parseConfiguredSourceIngressFragment(entry_id, entry.source);
+    const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
+    validateConfiguredSourcePipelineFragments(entry_id, ingress_fragment, transform_fragment);
 
     // Configured sources are keyed by the trimmed configured-source name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
@@ -503,12 +506,12 @@ VideoConfig loadVideoConfig(const Params & params)
     }
     requireUniqueEntryKey(seen_configured_source_names, trimmed_configured_source_name, "configured video source name");
 
-    ConfiguredSource source;
-    source.source = source_fragment;
-    source.transform = transform;
-    source.publish = mergeVideoPublishConfig(
+    ConfiguredVideoPipeline configured_pipeline;
+    configured_pipeline.ingress_fragment = ingress_fragment;
+    configured_pipeline.transform_fragment = transform_fragment;
+    configured_pipeline.publish = mergeVideoPublishConfig(
       config.publish, parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
-    config.configured_sources.emplace(trimmed_configured_source_name, std::move(source));
+    config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_pipeline));
   }
 
   // Append built-in catch-all after user entries.
@@ -577,7 +580,7 @@ RuntimeConfig loadRuntimeConfig(
     room =
       runtime_config.loaded_params.livekit.room.empty() ? kUnsetLogValue : runtime_config.loaded_params.livekit.room;
 
-    runtime_config.connect_config = loadConnectConfig(runtime_config.loaded_params);
+    runtime_config.room_connection_config = loadRoomConnectionConfig(runtime_config.loaded_params);
     runtime_config.access_token = runtime_config.loaded_params.livekit.token;
     runtime_config.health_config = loadHealthConfig(runtime_config.loaded_params);
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
@@ -586,7 +589,7 @@ RuntimeConfig loadRuntimeConfig(
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .field("phase", "startup")
-      .fieldOr("room", runtime_config.connect_config.room, kUnsetLogValue)
+      .fieldOr("room", runtime_config.room_connection_config.room, kUnsetLogValue)
       .field("auth_mode", "static_token")
       .field("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
       .field(

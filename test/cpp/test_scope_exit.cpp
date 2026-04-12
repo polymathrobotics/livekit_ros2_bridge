@@ -18,7 +18,7 @@
 namespace livekit_ros2_bridge
 {
 
-TEST(ScopeExitTest, CallbackRunsOnDestruction)
+TEST(ScopeExitTest, InvokesCallbackOnDestruction)
 {
   bool called = false;
   {
@@ -28,7 +28,7 @@ TEST(ScopeExitTest, CallbackRunsOnDestruction)
   EXPECT_TRUE(called);
 }
 
-TEST(ScopeExitTest, EmptyCallbackThrows)
+TEST(ScopeExitTest, RejectsEmptyCallback)
 {
   EXPECT_THROW({ ScopeExit guard(std::function<void()>{}); }, std::invalid_argument);
 }

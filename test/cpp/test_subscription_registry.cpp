@@ -141,9 +141,9 @@ bool publishUntil(
 VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
-  ConfiguredSource source;
-  source.source = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(source));
+  ConfiguredVideoPipeline configured_pipeline;
+  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front", std::move(configured_pipeline));
   return config;
 }
 
@@ -438,10 +438,10 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionTrimsRawConfiguredSourceHeartbea
   EXPECT_EQ(raw_response.track_name, canonical_response.track_name);
   EXPECT_TRUE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 
-  registry.removeRequesterLeases("bob");
+  registry.revokeRequesterLeases("bob");
   EXPECT_TRUE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 
-  registry.removeRequesterLeases("alice");
+  registry.revokeRequesterLeases("alice");
   EXPECT_FALSE(registry.hasSubscription(configured_source_name, SubscriptionTargetKind::ConfiguredSource));
 }
 
@@ -491,7 +491,7 @@ TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoStreamManager)
   EXPECT_THROW(registry.renewSubscription("alice", topic, 0, kFarFuture), StreamUnavailableError);
 }
 
-TEST(SubscriptionRegistryTest, RemoveRequesterLeasesPreservesSharedSubscriptionsOwnedByOthers)
+TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptionsOwnedByOthers)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_remove_requester_shared_test");
@@ -530,7 +530,7 @@ TEST(SubscriptionRegistryTest, RemoveRequesterLeasesPreservesSharedSubscriptions
   ASSERT_TRUE(registry.onCdrTrackPublished(alice_only.track_name, 0));
   ASSERT_TRUE(registry.onCdrTrackPublished(shared_data.track_name, 0));
 
-  registry.removeRequesterLeases("alice");
+  registry.revokeRequesterLeases("alice");
 
   EXPECT_FALSE(registry.hasSubscription(alice_only_topic));
   EXPECT_TRUE(registry.hasSubscription(shared_data_topic));
@@ -642,12 +642,12 @@ TEST(SubscriptionRegistryTest, DisconnectAndExpiryPrunePathsRecomputeSurvivingDa
   const auto expiry_initial = registry.renewSubscription("carol", expiry_topic, 50, past);
   registry.renewSubscription("dave", expiry_topic, 250, kFarFuture);
 
-  registry.removeRequesterLeases("alice");
+  registry.revokeRequesterLeases("alice");
   const auto disconnect_after_prune = registry.renewSubscription("bob", disconnect_topic, 250, kFarFuture);
   EXPECT_EQ(disconnect_after_prune.track_name, disconnect_initial.track_name);
   EXPECT_EQ(disconnect_after_prune.applied_interval_ms, 250);
 
-  registry.sweepExpiredLeases();
+  registry.pruneExpiredLeases();
   const auto expiry_after_prune = registry.renewSubscription("dave", expiry_topic, 250, kFarFuture);
   EXPECT_EQ(expiry_after_prune.track_name, expiry_initial.track_name);
   EXPECT_EQ(expiry_after_prune.applied_interval_ms, 250);
@@ -727,14 +727,14 @@ TEST(SubscriptionRegistryTest, UnpublishesDataTrackWhenLastRequesterExpires)
   EXPECT_EQ(response.track_name, published_names[0]);
   registry.onCdrTrackPublished(published_names[0], 0);
 
-  registry.sweepExpiredLeases();
+  registry.pruneExpiredLeases();
 
   EXPECT_FALSE(registry.hasSubscription(topic));
   ASSERT_EQ(unpublished_names.size(), 1U);
   EXPECT_EQ(unpublished_names[0], published_names[0]);
 }
 
-TEST(SubscriptionRegistryTest, SweepExpiredLeasesDoesNotUnpublishPendingCdrTrack)
+TEST(SubscriptionRegistryTest, PruneExpiredLeasesDoesNotUnpublishPendingCdrTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_pending_sweep_test");
@@ -759,7 +759,7 @@ TEST(SubscriptionRegistryTest, SweepExpiredLeasesDoesNotUnpublishPendingCdrTrack
   registry.renewSubscription("alice", topic, 0, past);
   ASSERT_EQ(published_names.size(), 1U);
 
-  registry.sweepExpiredLeases();
+  registry.pruneExpiredLeases();
 
   EXPECT_FALSE(registry.hasSubscription(topic));
   EXPECT_TRUE(unpublished_names.empty());
@@ -840,7 +840,7 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsThrowOnEmptyRequesterIden
     [&registry]() { registry.markRequesterForCdrReplay("", 0); }, "requester_identity is required");
   expectInvalidArgumentMessage(
     [&registry]() { registry.replayCdrTracksForRequester(""); }, "requester_identity is required");
-  expectInvalidArgumentMessage([&registry]() { registry.removeRequesterLeases(""); }, "requester_identity is required");
+  expectInvalidArgumentMessage([&registry]() { registry.revokeRequesterLeases(""); }, "requester_identity is required");
 }
 
 TEST(SubscriptionRegistryTest, RenewSubscriptionThrowsOnInvalidTopic)
@@ -1128,7 +1128,7 @@ TEST(SubscriptionRegistryTest, StalePublishFromDestroyedSubscriptionStealsNewSub
   ASSERT_EQ(published_names.size(), 1U);
   const std::string track_name = first_response.track_name;
 
-  registry.sweepExpiredLeases();
+  registry.pruneExpiredLeases();
   ASSERT_FALSE(registry.hasSubscription(topic));
   EXPECT_TRUE(unpublished_names.empty());
 
@@ -1174,7 +1174,7 @@ TEST(SubscriptionRegistryTest, StaleDisconnectAfterLeaseExpiryDoesNotTriggerRepl
 
   const std::size_t old_generation = registry.registryGeneration();
 
-  registry.sweepExpiredLeases();
+  registry.pruneExpiredLeases();
   ASSERT_FALSE(registry.hasSubscription(topic));
   ASSERT_EQ(unpublished_names.size(), 1U);
 

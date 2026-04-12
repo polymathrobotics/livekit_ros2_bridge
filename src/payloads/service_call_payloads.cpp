@@ -40,8 +40,8 @@ ServiceCallRequest parseServiceCallRequest(const std::string & payload)
     normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(json, "service", "service is required"));
   result.service = normalized_service;
 
-  result.request = parseCdrPayload(json, "request");
-  if (result.request.empty()) {
+  result.request_payload = parseCdrPayload(json, "request");
+  if (result.request_payload.empty()) {
     // Service calls always forward a concrete serialized request message; an empty payload is
     // treated as malformed rather than as a typed default instance.
     throw std::invalid_argument("request.payload_base64 must not be empty");
@@ -67,14 +67,14 @@ ServiceCallRequest parseServiceCallRequest(const std::string & payload)
 std::string serializeServiceCallResponse(
   const std::string & service,
   const std::string & interface_type,
-  const std::vector<std::uint8_t> & response,
+  const std::vector<std::uint8_t> & response_payload,
   int elapsed_ms)
 {
   const Json service_descriptor = {{"name", service}, {"interface_type", interface_type}};
   const Json body = {
     {"ok", true},
     {"service", service_descriptor},
-    {"response", serializeCdrPayload(response)},
+    {"response", serializeCdrPayload(response_payload)},
     {"elapsed_ms", elapsed_ms},
   };
   return body.dump();

@@ -29,14 +29,14 @@ namespace livekit_ros2_bridge
 class ControlPacketRouter final
 {
 public:
-  struct Handlers
+  struct Callbacks
   {
     std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)> on_subscription_heartbeat;
     std::function<void(std::string requester_identity, TopicPublishCommand command)> on_topic_publish_command;
   };
 
-  // Both handlers are required; construction fails if either callback is empty.
-  ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers);
+  // Both callbacks are required; construction fails if either callback is empty.
+  ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Callbacks callbacks);
 
   // Routes only the control topics this bridge understands. Unknown topics, malformed payloads,
   // and anonymous publish commands are dropped before dispatch. Anonymous heartbeats are still
@@ -46,7 +46,7 @@ public:
 private:
   rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr clock_;
-  Handlers handlers_;
+  Callbacks callbacks_;
 };
 
 }  // namespace livekit_ros2_bridge

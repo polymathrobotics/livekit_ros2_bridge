@@ -24,79 +24,79 @@ namespace livekit_ros2_bridge
 
 const auto kNoOwningThread = std::thread::id{};
 
-// Coordinates shutdown of a single active callback/drain section. External callers wait until the
-// section goes inactive, while the owning thread can quiesce itself without self-deadlocking.
-class ReentrantQuiesceGuard
+// Coordinates shutdown of a single callback/drain entry gate. External callers wait until the
+// active entry leaves, while the owning thread can await idle without self-deadlocking.
+class ReentrantQuiesceGate
 {
 public:
-  ReentrantQuiesceGuard() = default;
+  ReentrantQuiesceGate() = default;
 
-  ReentrantQuiesceGuard(const ReentrantQuiesceGuard &) = delete;
-  ReentrantQuiesceGuard & operator=(const ReentrantQuiesceGuard &) = delete;
-  ReentrantQuiesceGuard(ReentrantQuiesceGuard &&) = delete;
-  ReentrantQuiesceGuard & operator=(ReentrantQuiesceGuard &&) = delete;
+  ReentrantQuiesceGate(const ReentrantQuiesceGate &) = delete;
+  ReentrantQuiesceGate & operator=(const ReentrantQuiesceGate &) = delete;
+  ReentrantQuiesceGate(ReentrantQuiesceGate &&) = delete;
+  ReentrantQuiesceGate & operator=(ReentrantQuiesceGate &&) = delete;
 
-  // Starts work only while entry is enabled and no other thread currently owns the guarded
+  // Admits entry only while the gate is open and no other thread currently owns the guarded
   // section.
-  bool tryBeginWork()
+  bool tryEnter()
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!enabled_ || active_) {
+    if (!is_open_ || is_entered_) {
       return false;
     }
 
-    active_ = true;
+    is_entered_ = true;
     owner_thread_id_ = std::this_thread::get_id();
     return true;
   }
 
-  // Starts work when the caller expects the guarded section to be enabled and currently idle.
-  void beginWork()
+  // Enters the guarded section when the caller expects the gate to be open and currently idle.
+  void enter()
   {
-    if (!tryBeginWork()) {
-      throw std::logic_error("ReentrantQuiesceGuard work must begin from an enabled, idle state.");
+    if (!tryEnter()) {
+      throw std::logic_error("ReentrantQuiesceGate entry must begin from an open, idle state.");
     }
   }
 
-  // Finishes the active section and wakes any thread blocked in quiesce().
-  void endWork()
+  // Leaves the active section and wakes any thread blocked in awaitIdle().
+  void leave()
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (!active_) {
+      if (!is_entered_) {
         return;
       }
 
-      active_ = false;
+      is_entered_ = false;
       owner_thread_id_ = kNoOwningThread;
     }
 
-    quiesced_.notify_all();
+    idle_.notify_all();
   }
 
-  // Prevents future tryBeginWork() calls from entering the guarded section.
-  void disable()
+  // Closes the gate so future tryEnter() calls cannot enter the guarded section.
+  void close()
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    enabled_ = false;
+    is_open_ = false;
   }
 
-  // Waits until the section is inactive, or until the caller is itself the current owner.
-  void quiesce()
+  // Waits until the section is idle, or until the caller is itself the current owner.
+  void awaitIdle()
   {
     const auto caller_thread_id = std::this_thread::get_id();
     std::unique_lock<std::mutex> lock(mutex_);
-    quiesced_.wait(lock, [this, &caller_thread_id]() {
+    idle_.wait(lock, [this, &caller_thread_id]() {
       const bool caller_owns_active_section = owner_thread_id_ == caller_thread_id;
-      return !active_ || caller_owns_active_section;
+      return !is_entered_ || caller_owns_active_section;
     });
   }
 
 private:
   std::mutex mutex_;
-  std::condition_variable quiesced_;
-  bool enabled_ = true;
-  bool active_ = false;
+  std::condition_variable idle_;
+  bool is_open_ = true;
+  bool is_entered_ = false;
   std::thread::id owner_thread_id_{kNoOwningThread};
 };
 

@@ -112,10 +112,10 @@ SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & ent
   return SubscriptionRequest{{target.kind, canonical_name}, entry.preferred_interval_ms};
 }
 
-std::string ensureVideoStream(VideoStreamManager & video_stream_manager, const VideoStreamSpec & spec)
+std::string ensureVideoStreamRunning(VideoStreamManager & video_stream_manager, const VideoStreamSpec & spec)
 {
   try {
-    return video_stream_manager.ensureStream(spec);
+    return video_stream_manager.ensureStreamRunning(spec);
   } catch (const std::exception & exc) {
     throw StreamUnavailableError(exc.what());
   }
@@ -158,7 +158,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
   auto it = subscriptions_.find(subscription_key);
   if (it != subscriptions_.end()) {
     try {
-      refreshExistingLease(it->second, requester_identity, requester_lease);
+      renewExistingLease(it->second, requester_identity, requester_lease);
     } catch (const std::exception & exc) {
       const auto & sub = it->second;
       LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
@@ -180,7 +180,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     if (target.kind == SubscriptionTargetKind::ConfiguredSource) {
       sub = createVideoSubscription(normalized, "", requester_identity, requester_lease);
     } else {
-      interface_type = requireUniqueInterfaceType(node_.get_topic_names_and_types(), target.name, "topic");
+      interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), target.name, "topic");
       if (classifyRosVideoInterfaceType(interface_type).has_value()) {
         sub = createVideoSubscription(normalized, interface_type, requester_identity, requester_lease);
       } else {
@@ -287,7 +287,7 @@ void SubscriptionRegistry::replayCdrTracksForRequester(const std::string & reque
   }
 }
 
-void SubscriptionRegistry::refreshExistingLease(
+void SubscriptionRegistry::renewExistingLease(
   SubscriptionState & sub, const std::string & requester_identity, const RequesterLease & requester_lease)
 {
   const bool requester_already_present = sub.requesters.find(requester_identity) != sub.requesters.end();
@@ -308,7 +308,7 @@ void SubscriptionRegistry::refreshExistingLease(
     return;
   }
 
-  const std::string track_name = ensureVideoStream(videoStreamManager(), videoStreamSpec(sub));
+  const std::string track_name = ensureVideoStreamRunning(videoStreamManager(), videoStreamSpec(sub));
   sub.requesters = std::move(updated_requesters);
   std::get<VideoTrackResource>(sub.resource_state).track_name = track_name;
 }
@@ -326,10 +326,10 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
 
-  const VideoStreamSpec video_stream_spec = target.kind == SubscriptionTargetKind::ConfiguredSource
-                                              ? resolveConfiguredSourceVideoStreamSpec(*video_config_, target.name)
-                                              : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
-  assignVideoMetadata(sub, video_stream_spec, ensureVideoStream(videoStreamManager(), video_stream_spec));
+  const VideoStreamSpec stream_spec = target.kind == SubscriptionTargetKind::ConfiguredSource
+                                        ? resolveConfiguredSourceVideoStreamSpec(*video_config_, target.name)
+                                        : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
+  assignVideoMetadata(sub, stream_spec, ensureVideoStreamRunning(videoStreamManager(), stream_spec));
   return sub;
 }
 
@@ -350,9 +350,9 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
 }
 
 void SubscriptionRegistry::assignVideoMetadata(
-  SubscriptionState & sub, VideoStreamSpec video_stream_spec, std::string track_name)
+  SubscriptionState & sub, VideoStreamSpec stream_spec, std::string track_name)
 {
-  sub.resource_state = VideoTrackResource{std::move(track_name), std::move(video_stream_spec)};
+  sub.resource_state = VideoTrackResource{std::move(track_name), std::move(stream_spec)};
 }
 
 SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataTrackResource(
@@ -366,7 +366,7 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
     resolveTopicSubscriptionQos(node_, topic, base_qos, subscription_qos_config_);
 
   DataTrackResource data;
-  const std::size_t callback_generation = message_callback_guard_.currentGeneration();
+  const std::size_t callback_generation = message_callback_gate_.currentGeneration();
   data.track_name = deriveTrackName(topic);
   data.applied_interval_ms = computeAppliedIntervalMs(requesters);
   data.generation = registry_generation_.load();
@@ -380,7 +380,7 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
     .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
     .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
     .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-    .field("used_publisher_info", resolved_qos.used_publisher_info)
+    .field("used_publisher_qos", resolved_qos.used_publisher_qos)
     .field("mixed_reliability", resolved_qos.mixed_reliability)
     .field("mixed_durability", resolved_qos.mixed_durability)
     .field("override_id", resolved_qos.matched_override_id)
@@ -397,10 +397,10 @@ SubscriptionRegistry::DataTrackResource SubscriptionRegistry::createPendingDataT
       if (message == nullptr) {
         return;
       }
-      if (!message_callback_guard_.tryBeginWork(callback_generation)) {
+      if (!message_callback_gate_.tryEnter(callback_generation)) {
         return;
       }
-      ScopeExit finish_delivery([this]() { message_callback_guard_.endWork(); });
+      ScopeExit finish_delivery([this]() { message_callback_gate_.leave(); });
       handleSerializedMessage(normalized_topic, *message);
     });
   return data;
@@ -438,14 +438,14 @@ const VideoStreamSpec & SubscriptionRegistry::videoStreamSpec(const Subscription
   return video->stream_spec;
 }
 
-void SubscriptionRegistry::removeRequesterLeases(const std::string & requester_identity)
+void SubscriptionRegistry::revokeRequesterLeases(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
     return;
   }
   requireRequesterIdentity(requester_identity);
 
-  removeRequesterLeasesIf(
+  revokeRequesterLeasesIf(
     [&requester_identity](const std::string & candidate_requester_identity, const RequesterLease &) {
       return candidate_requester_identity == requester_identity;
     },
@@ -453,13 +453,13 @@ void SubscriptionRegistry::removeRequesterLeases(const std::string & requester_i
     Clock::now());
 }
 
-void SubscriptionRegistry::sweepExpiredLeases()
+void SubscriptionRegistry::pruneExpiredLeases()
 {
   if (is_shutdown_.load()) {
     return;
   }
   const auto now = Clock::now();
-  removeRequesterLeasesIf(
+  revokeRequesterLeasesIf(
     [now](const std::string &, const RequesterLease & requester_lease) { return now >= requester_lease.expiry; },
     RequesterLeaseRemovalReason::kLeaseExpired,
     now);
@@ -485,10 +485,10 @@ void SubscriptionRegistry::resetSessionState()
     .field("subscription_count", subscriptions_.size())
     .field("pending_cdr_replays", requesters_needing_cdr_replay_.size())
     .info();
-  const std::size_t callback_generation = message_callback_guard_.quiesce();
+  const std::size_t callback_generation = message_callback_gate_.close();
   requesters_needing_cdr_replay_.clear();
   clearSubscriptions();
-  message_callback_guard_.resume(callback_generation);
+  message_callback_gate_.open(callback_generation);
 }
 
 void SubscriptionRegistry::shutdown()
@@ -501,7 +501,7 @@ void SubscriptionRegistry::shutdown()
     .field("subscription_count", subscriptions_.size())
     .field("pending_cdr_replays", requesters_needing_cdr_replay_.size())
     .info();
-  (void)message_callback_guard_.quiesce();
+  (void)message_callback_gate_.close();
   clearSubscriptions();
 }
 
@@ -604,7 +604,7 @@ std::string SubscriptionRegistry::makeSubscriptionKey(SubscriptionTargetKind tar
          resource;
 }
 
-void SubscriptionRegistry::removeRequesterLeasesIf(
+void SubscriptionRegistry::revokeRequesterLeasesIf(
   const RequesterIdentityLeasePredicate & should_remove,
   RequesterLeaseRemovalReason reason,
   Clock::time_point reference_time)

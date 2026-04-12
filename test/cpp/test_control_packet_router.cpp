@@ -85,14 +85,15 @@ struct RouterProbe final
   ControlPacketRouter makeRouter()
   {
     auto clock = makeTestClock();
-    ControlPacketRouter::Handlers handlers;
-    handlers.on_subscription_heartbeat = [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
+    ControlPacketRouter::Callbacks callbacks;
+    callbacks.on_subscription_heartbeat = [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
       heartbeat_call = RoutedSubscriptionHeartbeat{std::move(requester_identity), std::move(heartbeat)};
     };
-    handlers.on_topic_publish_command = [this](std::string requester_identity, TopicPublishCommand command) {
+    callbacks.on_topic_publish_command = [this](std::string requester_identity, TopicPublishCommand command) {
       publish_call = RoutedPublishCommand{std::move(requester_identity), std::move(command)};
     };
-    return ControlPacketRouter(rclcpp::get_logger("control_packet_router_test"), std::move(clock), std::move(handlers));
+    return ControlPacketRouter(
+      rclcpp::get_logger("control_packet_router_test"), std::move(clock), std::move(callbacks));
   }
 };
 
@@ -193,26 +194,26 @@ TEST(ControlPacketRouterTest, IgnoresUnknownTopics)
   EXPECT_FALSE(probe.publish_call.has_value());
 }
 
-TEST(ControlPacketRouterTest, RequiresHeartbeatHandler)
+TEST(ControlPacketRouterTest, RequiresHeartbeatCallback)
 {
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),
       makeTestClock(),
-      ControlPacketRouter::Handlers{
+      ControlPacketRouter::Callbacks{
         {},
         [](std::string, TopicPublishCommand) {},
       }),
     std::invalid_argument);
 }
 
-TEST(ControlPacketRouterTest, RequiresPublishHandler)
+TEST(ControlPacketRouterTest, RequiresPublishCallback)
 {
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),
       makeTestClock(),
-      ControlPacketRouter::Handlers{
+      ControlPacketRouter::Callbacks{
         [](std::string, SubscriptionHeartbeat) {},
         {},
       }),

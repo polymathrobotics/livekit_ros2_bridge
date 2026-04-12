@@ -38,10 +38,10 @@ const auto kVideoStreamManagerLogger = rclcpp::get_logger("livekit_ros2_bridge.v
 
 }  // namespace
 
-class VideoStreamManager::StreamRecord final : public IVideoFrameSink
+class VideoStreamManager::VideoStreamRuntime final : public IVideoFrameSink
 {
 public:
-  StreamRecord(
+  VideoStreamRuntime(
     rclcpp::Node & node,
     RoomSession & session,
     VideoStreamSpec spec,
@@ -52,7 +52,7 @@ public:
   , subscription_qos_config_(subscription_qos_config)
   {}
 
-  ~StreamRecord()
+  ~VideoStreamRuntime()
   {
     shutdown();
   }
@@ -124,18 +124,18 @@ public:
 private:
   std::shared_ptr<IVideoIngestor> createIngestorLocked()
   {
-    if (spec_.source_kind == VideoSourceKind::ConfiguredSource) {
+    if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
       return makeConfiguredSourceVideoIngestor(spec_, *this);
     }
-    if (spec_.source_kind == VideoSourceKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
+    if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
       return makeRawRosVideoIngestor(node_, spec_, subscription_qos_config_, *this);
     }
-    if (spec_.source_kind == VideoSourceKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
+    if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
       return makeCompressedRosVideoIngestor(node_, spec_, subscription_qos_config_, *this);
     }
 
     throw std::runtime_error(
-      "Unsupported video source kind/ingest mode combination '" + videoSourceKindToString(spec_.source_kind) + "/" +
+      "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec_.input_kind) + "/" +
       spec_.ingest_mode + "'.");
   }
 
@@ -201,57 +201,57 @@ VideoStreamManager::~VideoStreamManager()
   shutdown();
 }
 
-std::string VideoStreamManager::ensureStream(const VideoStreamSpec & spec)
+std::string VideoStreamManager::ensureStreamRunning(const VideoStreamSpec & spec)
 {
-  std::shared_ptr<StreamRecord> record;
+  std::shared_ptr<VideoStreamRuntime> runtime;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       throw std::runtime_error("Video stream manager is shut down.");
     }
 
-    auto [it, inserted] = streams_.try_emplace(spec.stream_key);
+    auto [it, inserted] = stream_runtimes_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<StreamRecord>(node_, session_, spec, subscription_qos_config_);
+      it->second = std::make_shared<VideoStreamRuntime>(node_, session_, spec, subscription_qos_config_);
     }
-    record = it->second;
+    runtime = it->second;
   }
 
-  return record->ensureRunning();
+  return runtime->ensureRunning();
 }
 
 void VideoStreamManager::stopStream(const std::string & stream_key)
 {
-  std::shared_ptr<StreamRecord> record;
+  std::shared_ptr<VideoStreamRuntime> runtime;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = streams_.find(stream_key);
-    if (it == streams_.end()) {
+    const auto it = stream_runtimes_.find(stream_key);
+    if (it == stream_runtimes_.end()) {
       return;
     }
-    record = std::move(it->second);
-    streams_.erase(it);
+    runtime = std::move(it->second);
+    stream_runtimes_.erase(it);
   }
 
-  if (record) {
-    record->shutdown();
+  if (runtime) {
+    runtime->shutdown();
   }
 }
 
 void VideoStreamManager::shutdown()
 {
-  std::unordered_map<std::string, std::shared_ptr<StreamRecord>> streams;
+  std::unordered_map<std::string, std::shared_ptr<VideoStreamRuntime>> stream_runtimes;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
     is_shutdown_ = true;
-    streams = std::move(streams_);
-    streams_.clear();
+    stream_runtimes = std::move(stream_runtimes_);
+    stream_runtimes_.clear();
   }
 
-  for (auto & entry : streams) {
+  for (auto & entry : stream_runtimes) {
     if (entry.second) {
       entry.second->shutdown();
     }

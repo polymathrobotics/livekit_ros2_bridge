@@ -28,13 +28,13 @@ rclcpp::QoS makeBaseQos(std::size_t depth)
   return qos;
 }
 
-TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherInfo)
+TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 {
   const rclcpp::QoS base_qos = makeBaseQos(10);
   const ResolvedSubscriptionQos resolved = resolveTopicSubscriptionQos("/camera/front", base_qos, nullptr, {});
 
   EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kFallback);
-  EXPECT_FALSE(resolved.used_publisher_info);
+  EXPECT_FALSE(resolved.used_publisher_qos);
   EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
   EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
@@ -42,16 +42,16 @@ TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherInfo)
 TEST(SubscriptionQosTest, MixedPublisherReliabilityChoosesBestEffort)
 {
   const rclcpp::QoS base_qos = makeBaseQos(10);
-  const std::vector<ObservedPublisherQosProfile> publisher_profiles{
+  const std::vector<PublisherQosProfile> publisher_qos_profiles{
     {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::Volatile},
     {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
   };
 
   const ResolvedSubscriptionQos resolved =
-    resolveTopicSubscriptionQos("/camera/front", base_qos, nullptr, publisher_profiles);
+    resolveTopicSubscriptionQos("/camera/front", base_qos, nullptr, publisher_qos_profiles);
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kInspection);
-  EXPECT_TRUE(resolved.used_publisher_info);
+  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_TRUE(resolved.used_publisher_qos);
   EXPECT_TRUE(resolved.mixed_reliability);
   EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
 }
@@ -59,21 +59,21 @@ TEST(SubscriptionQosTest, MixedPublisherReliabilityChoosesBestEffort)
 TEST(SubscriptionQosTest, MixedPublisherDurabilityChoosesVolatile)
 {
   const rclcpp::QoS base_qos = makeBaseQos(10);
-  const std::vector<ObservedPublisherQosProfile> publisher_profiles{
+  const std::vector<PublisherQosProfile> publisher_qos_profiles{
     {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
     {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::Volatile},
   };
 
   const ResolvedSubscriptionQos resolved =
-    resolveTopicSubscriptionQos("/camera/front", base_qos, nullptr, publisher_profiles);
+    resolveTopicSubscriptionQos("/camera/front", base_qos, nullptr, publisher_qos_profiles);
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kInspection);
-  EXPECT_TRUE(resolved.used_publisher_info);
+  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_TRUE(resolved.used_publisher_qos);
   EXPECT_TRUE(resolved.mixed_durability);
   EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
-TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoFieldsStillInspectPublishers)
+TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoFieldsStillUsePublisherQos)
 {
   const rclcpp::QoS base_qos = makeBaseQos(10);
 
@@ -83,17 +83,17 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoFieldsStillInspectPu
     {"camera", "/camera/*", SubscriptionQosReliabilityMode::kAuto, SubscriptionQosDurabilityMode::kTransientLocal},
   };
 
-  const std::vector<ObservedPublisherQosProfile> publisher_profiles{
+  const std::vector<PublisherQosProfile> publisher_qos_profiles{
     {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
   };
 
   const ResolvedSubscriptionQos resolved =
-    resolveTopicSubscriptionQos("/camera/front", base_qos, &config, publisher_profiles);
+    resolveTopicSubscriptionQos("/camera/front", base_qos, &config, publisher_qos_profiles);
 
   EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kOverride);
   EXPECT_EQ(resolved.matched_override_id, "camera");
   EXPECT_EQ(resolved.matched_override_pattern, "/camera/*");
-  EXPECT_TRUE(resolved.used_publisher_info);
+  EXPECT_TRUE(resolved.used_publisher_qos);
   EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
 }

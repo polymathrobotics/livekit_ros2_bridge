@@ -38,12 +38,12 @@ inline constexpr char kDefaultRosTransform[] = "";
 
 }  // namespace video_defaults
 
-struct RosVideoSourceClassification
+struct RosVideoInterfaceClassification
 {
   std::string_view ingest_mode;
 };
 
-enum class VideoSourceKind
+enum class VideoInputKind
 {
   RosTopic,
   ConfiguredSource,
@@ -82,10 +82,10 @@ struct RosTopicRule
   VideoPublishConfig publish;
 };
 
-struct ConfiguredSource
+struct ConfiguredVideoPipeline
 {
-  std::string source;
-  std::string transform;
+  std::string ingress_fragment;
+  std::string transform_fragment;
   VideoPublishConfig publish;
 };
 
@@ -93,7 +93,7 @@ struct VideoConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
   // Keyed by trimConfiguredSourceName(...).
-  std::unordered_map<std::string, ConfiguredSource> configured_sources;
+  std::unordered_map<std::string, ConfiguredVideoPipeline> configured_sources;
   VideoPublishConfig publish;
 };
 
@@ -109,15 +109,15 @@ struct VideoStreamSpec
   std::string interface_type;
   // Set only for configured sources after configured-source-name trimming.
   std::string configured_source_name;
-  VideoSourceKind source_kind = VideoSourceKind::RosTopic;
+  VideoInputKind input_kind = VideoInputKind::RosTopic;
   std::string ingest_mode;
   // ROS sources store the matched rule id; configured sources store the canonical trimmed configured source name.
-  std::string selected_config_key;
+  std::string selected_config_id;
   std::optional<std::string> degraded_reason;
-  // Configured sources set this to the configured source fragment. ROS sources leave it empty.
-  std::string source_description;
-  // Optional GStreamer transform fragment inserted after ingress and before the bridge tail.
-  std::string transform_description;
+  // Configured sources set this to the configured ingress fragment. ROS sources leave it empty.
+  std::string ingress_fragment;
+  // Optional GStreamer transform fragment inserted after ingress and before the bridge-owned tail.
+  std::string transform_fragment;
   // Resolved LiveKit publish config after applying any per-entry overrides to video.publish.*.
   VideoPublishConfig publish_config;
 };
@@ -125,10 +125,10 @@ struct VideoStreamSpec
 VideoConfig makeDefaultVideoConfig();
 
 // Returns the ingest contract for supported ROS video types and std::nullopt for non-video types.
-std::optional<RosVideoSourceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
+std::optional<RosVideoInterfaceClassification> classifyRosVideoInterfaceType(std::string_view interface_type);
 // Trims configured source names. Unlike ROS resources, slashes and colons stay significant.
 std::string trimConfiguredSourceName(std::string_view configured_source_name);
-std::string videoSourceKindToString(VideoSourceKind kind);
+std::string videoInputKindToString(VideoInputKind kind);
 
 // Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
 VideoStreamSpec resolveRosVideoStreamSpec(

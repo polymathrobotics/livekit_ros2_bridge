@@ -128,10 +128,10 @@ VideoStreamSpec makeRosSpec(const std::string & topic, const std::string & track
   spec.track_name = track_name;
   spec.ros_topic = topic;
   spec.interface_type = kImageInterfaceType;
-  spec.source_kind = VideoSourceKind::RosTopic;
+  spec.input_kind = VideoInputKind::RosTopic;
   spec.ingest_mode = kRawImageIngestMode;
-  spec.selected_config_key = "default_ros";
-  spec.transform_description = "queue max-size-buffers=2 leaky=downstream";
+  spec.selected_config_id = "default_ros";
+  spec.transform_fragment = "queue max-size-buffers=2 leaky=downstream";
   return spec;
 }
 
@@ -149,10 +149,10 @@ VideoStreamSpec makeConfiguredSourceSpec(const std::string & configured_source_n
   spec.stream_key = "configured_source:" + configured_source_name;
   spec.track_name = track_name;
   spec.configured_source_name = configured_source_name;
-  spec.source_kind = VideoSourceKind::ConfiguredSource;
+  spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.ingest_mode = kConfiguredSourceIngestMode;
-  spec.selected_config_key = configured_source_name;
-  spec.source_description = "videotestsrc is-live=true pattern=black";
+  spec.selected_config_id = configured_source_name;
+  spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
   return spec;
 }
 
@@ -180,8 +180,8 @@ TEST_F(VideoStreamManagerTest, SharedRosStreamUsesSingleSubscriptionAndSinglePub
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -206,7 +206,7 @@ TEST_F(VideoStreamManagerTest, StopStreamUnpublishesRosTrackAndRemovesSubscripti
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  manager.ensureStream(spec);
+  manager.ensureStreamRunning(spec);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage();
@@ -233,7 +233,7 @@ TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -258,7 +258,7 @@ TEST_F(VideoStreamManagerTest, RawRosPublisherAcceptsOddSizedFrames)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -283,7 +283,7 @@ TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJ
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -307,7 +307,7 @@ TEST_F(VideoStreamManagerTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpu
 
   const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.%2Fsources%2Ffront");
 
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
@@ -325,7 +325,7 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   VideoStreamManager manager(*node, session);
 
   const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.%2Fsources%2Fshutdown");
-  EXPECT_EQ(manager.ensureStream(spec), spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
 
@@ -335,7 +335,7 @@ TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStrea
   EXPECT_EQ(session.state->unpublished_video_track_names[0], spec.track_name);
 
   try {
-    (void)manager.ensureStream(spec);
+    (void)manager.ensureStreamRunning(spec);
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Video stream manager is shut down.");
@@ -366,8 +366,8 @@ TEST_F(VideoStreamManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedTra
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStream(first_spec), first_spec.track_name);
-  EXPECT_EQ(manager.ensureStream(second_spec), second_spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(first_spec), first_spec.track_name);
+  EXPECT_EQ(manager.ensureStreamRunning(second_spec), second_spec.track_name);
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 

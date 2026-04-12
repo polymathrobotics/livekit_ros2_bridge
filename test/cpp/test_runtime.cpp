@@ -49,7 +49,7 @@ using test_support::spinUntil;
 using test_support::waitForTopicType;
 using test_support::waitUntil;
 
-constexpr auto kHealthyPublisherObservationWindow = std::chrono::milliseconds(1200);
+constexpr auto kHealthyConnectionObservationWindow = std::chrono::milliseconds(1200);
 constexpr auto kRuntimeTestPollInterval = std::chrono::milliseconds(20);
 
 std::string nextNodeName(const std::string & prefix)
@@ -141,7 +141,7 @@ struct RuntimeHarness
 
 template <typename ConfigureSessionT>
 RuntimeHarness makeRuntimeHarness(
-  const rclcpp::NodeOptions & options, ConfigureSessionT configure_session, RuntimeHooks hooks = {})
+  const rclcpp::NodeOptions & options, ConfigureSessionT configure_session, FailFastCallbacks fail_fast_callbacks = {})
 {
   RuntimeHarness harness;
   harness.node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), options);
@@ -152,8 +152,8 @@ RuntimeHarness makeRuntimeHarness(
   configure_session(*session);
 
   RuntimeConfig startup_config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
-  harness.runtime =
-    std::make_unique<Runtime>(*harness.node, std::move(session), std::move(startup_config), std::move(hooks));
+  harness.runtime = std::make_unique<Runtime>(
+    *harness.node, std::move(session), std::move(startup_config), std::move(fail_fast_callbacks));
   return harness;
 }
 
@@ -162,9 +162,9 @@ RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options)
   return makeRuntimeHarness(options, [](FakeRoomSession &) {});
 }
 
-RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, RuntimeHooks hooks)
+RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, FailFastCallbacks fail_fast_callbacks)
 {
-  return makeRuntimeHarness(options, [](FakeRoomSession &) {}, std::move(hooks));
+  return makeRuntimeHarness(options, [](FakeRoomSession &) {}, std::move(fail_fast_callbacks));
 }
 
 struct FailFastExitCapture
@@ -173,15 +173,15 @@ struct FailFastExitCapture
   std::atomic<int> exit_code{-1};
 };
 
-RuntimeHooks makeFailFastHooks(FailFastExitCapture & capture)
+FailFastCallbacks makeFailFastCallbacks(FailFastExitCapture & capture)
 {
-  RuntimeHooks hooks;
-  hooks.shutdown_hook = []() {};
-  hooks.exit_hook = [&capture](int exit_code) {
+  FailFastCallbacks callbacks;
+  callbacks.shutdown_callback = []() {};
+  callbacks.exit_callback = [&capture](int exit_code) {
     capture.exit_code.store(exit_code);
     capture.exit_call_count.fetch_add(1);
   };
-  return hooks;
+  return callbacks;
 }
 
 }  // namespace
@@ -218,7 +218,7 @@ TEST_F(RuntimeTest, FailFastExitsWhenInitialConnectNeverSucceeds)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -236,13 +236,13 @@ TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
   harness.fake_session->emitConnected();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
 
   EXPECT_EQ(capture.exit_call_count.load(), 0);
 }
@@ -253,7 +253,7 @@ TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
   harness.fake_session->emitConnected();
   harness.fake_session->emitReconnectRequested("room_disconnected");
@@ -273,7 +273,7 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
   harness.fake_session->emitConnected();
   harness.fake_session->emitReconnectRequested("room_disconnected");
@@ -281,7 +281,7 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
 
   EXPECT_EQ(capture.exit_call_count.load(), 0);
 }
@@ -293,12 +293,12 @@ TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedSession)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
 
   EXPECT_EQ(capture.exit_call_count.load(), 0);
 }
@@ -309,13 +309,13 @@ TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
   options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
 
   FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastHooks(capture));
+  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
   harness.runtime.reset();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyPublisherObservationWindow);
+  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
 
   EXPECT_EQ(capture.exit_call_count.load(), 0);
 }

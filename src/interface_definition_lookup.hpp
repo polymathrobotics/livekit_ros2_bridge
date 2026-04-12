@@ -21,19 +21,22 @@
 namespace livekit_ros2_bridge
 {
 
-/// One ROS interface schema entry returned to a remote caller.
+/// One ROS interface definition entry returned to a remote caller.
+/// Wire-format note: serializeInterfacesResponse() maps these members directly to the
+/// `ros.interfaces.get` JSON response keys. Treat those keys and their meanings as public
+/// client-facing contract; do not rename or repurpose them without an explicit compatibility plan.
 struct InterfaceDefinition
 {
   /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
   std::string interface_type;
-  /// Stable schema encoding label for `definition`.
-  std::string schema_encoding;
+  /// Stable format label for `definition`.
+  std::string format;
   /// Raw `.msg` or `.srv` file contents as read from the ROS package share directory.
   std::string definition;
 };
 
 /// Look up a fully-qualified ROS interface type and read its `.msg` or `.srv` definition plus any
-/// transitive message dependencies. The requested schema is always returned first, followed by
+/// transitive message dependencies. The requested definition is always returned first, followed by
 /// unique dependencies in first-discovery order during recursive traversal.
 std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
 

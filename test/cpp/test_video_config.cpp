@@ -66,10 +66,10 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
   EXPECT_EQ(spec.track_name, "ros.video.camera.front.image");
   EXPECT_EQ(spec.ros_topic, "/camera/front/image");
   EXPECT_EQ(spec.interface_type, kImageInterfaceType);
-  EXPECT_EQ(spec.source_kind, VideoSourceKind::RosTopic);
+  EXPECT_EQ(spec.input_kind, VideoInputKind::RosTopic);
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
-  EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
-  EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
+  EXPECT_EQ(spec.selected_config_id, video_defaults::kDefaultRosProfileId);
+  EXPECT_EQ(spec.transform_fragment, video_defaults::kDefaultRosTransform);
   expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
@@ -83,10 +83,10 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
   EXPECT_EQ(spec.track_name, "ros.video.camera.front.image.compressed");
   EXPECT_EQ(spec.ros_topic, "/camera/front/image/compressed");
   EXPECT_EQ(spec.interface_type, kCompressedImageInterfaceType);
-  EXPECT_EQ(spec.source_kind, VideoSourceKind::RosTopic);
+  EXPECT_EQ(spec.input_kind, VideoInputKind::RosTopic);
   EXPECT_EQ(spec.ingest_mode, kCompressedImageIngestMode);
-  EXPECT_EQ(spec.selected_config_key, video_defaults::kDefaultRosProfileId);
-  EXPECT_EQ(spec.transform_description, video_defaults::kDefaultRosTransform);
+  EXPECT_EQ(spec.selected_config_id, video_defaults::kDefaultRosProfileId);
+  EXPECT_EQ(spec.transform_fragment, video_defaults::kDefaultRosTransform);
   expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
@@ -104,9 +104,9 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
 
   const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.selected_config_key, "specific");
+  EXPECT_EQ(spec.selected_config_id, "specific");
   EXPECT_EQ(spec.ingest_mode, kRawImageIngestMode);
-  EXPECT_EQ(spec.transform_description, "videoconvert ! specific-filter");
+  EXPECT_EQ(spec.transform_fragment, "videoconvert ! specific-filter");
   expectPublishConfigEq(spec.publish_config, specific_rule.publish);
 }
 
@@ -122,8 +122,8 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
 
   const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.selected_config_key, "first");
-  EXPECT_EQ(spec.transform_description, "videoconvert ! first-filter");
+  EXPECT_EQ(spec.selected_config_id, "first");
+  EXPECT_EQ(spec.transform_fragment, "videoconvert ! first-filter");
   expectPublishConfigEq(spec.publish_config, first_rule.publish);
 }
 
@@ -136,8 +136,8 @@ TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
 
   const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.selected_config_key, "user_default");
-  EXPECT_EQ(spec.transform_description, "videoconvert ! user-filter");
+  EXPECT_EQ(spec.selected_config_id, "user_default");
+  EXPECT_EQ(spec.transform_fragment, "videoconvert ! user-filter");
   expectPublishConfigEq(spec.publish_config, user_rule.publish);
 }
 
@@ -148,7 +148,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholde
 
   const auto spec = resolveRosVideoStreamSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.transform_description, "{topic}");
+  EXPECT_EQ(spec.transform_fragment, "{topic}");
   expectPublishConfigEq(spec.publish_config, config.ros_topic_rules.front().publish);
 }
 
@@ -163,22 +163,23 @@ TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredSourc
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredSource source;
-  source.source = "videotestsrc is-live=true pattern=black";
-  source.transform = "videobalance saturation=0.0";
-  source.publish = makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
-  config.configured_sources.emplace("front_camera", std::move(source));
+  ConfiguredVideoPipeline configured_pipeline;
+  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  configured_pipeline.transform_fragment = "videobalance saturation=0.0";
+  configured_pipeline.publish =
+    makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
+  config.configured_sources.emplace("front_camera", std::move(configured_pipeline));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "  front_camera  ");
 
   EXPECT_EQ(spec.stream_key, "configured_source:front_camera");
   EXPECT_EQ(spec.track_name, "ros.video.configured_source.front_camera");
   EXPECT_EQ(spec.configured_source_name, "front_camera");
-  EXPECT_EQ(spec.source_kind, VideoSourceKind::ConfiguredSource);
+  EXPECT_EQ(spec.input_kind, VideoInputKind::ConfiguredSource);
   EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
-  EXPECT_EQ(spec.selected_config_key, "front_camera");
-  EXPECT_EQ(spec.source_description, "videotestsrc is-live=true pattern=black");
-  EXPECT_EQ(spec.transform_description, "videobalance saturation=0.0");
+  EXPECT_EQ(spec.selected_config_id, "front_camera");
+  EXPECT_EQ(spec.ingress_fragment, "videotestsrc is-live=true pattern=black");
+  EXPECT_EQ(spec.transform_fragment, "videobalance saturation=0.0");
   expectPublishConfigEq(
     spec.publish_config, makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled));
 }
@@ -187,9 +188,9 @@ TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecPercentEncodesTrackN
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredSource source;
-  source.source = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front:rgb%", std::move(source));
+  ConfiguredVideoPipeline configured_pipeline;
+  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front:rgb%", std::move(configured_pipeline));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "/sources/front:rgb%");
 

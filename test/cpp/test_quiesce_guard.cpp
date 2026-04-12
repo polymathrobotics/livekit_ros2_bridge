@@ -21,69 +21,69 @@
 namespace livekit_ros2_bridge
 {
 
-TEST(QuiesceGuardTest, InitialGenerationIsZero)
+TEST(QuiesceGateTest, InitialGenerationIsZero)
 {
-  QuiesceGuard guard;
+  QuiesceGate gate;
 
-  EXPECT_EQ(guard.currentGeneration(), 0U);
+  EXPECT_EQ(gate.currentGeneration(), 0U);
 }
 
-TEST(QuiesceGuardTest, TryBeginWorkSucceedsForCurrentGenerationWhileEnabled)
+TEST(QuiesceGateTest, TryEnterSucceedsForCurrentGenerationWhileOpen)
 {
-  QuiesceGuard guard;
-  const std::size_t generation = guard.currentGeneration();
+  QuiesceGate gate;
+  const std::size_t generation = gate.currentGeneration();
 
-  EXPECT_TRUE(guard.tryBeginWork(generation));
+  EXPECT_TRUE(gate.tryEnter(generation));
 
-  guard.endWork();
+  gate.leave();
 }
 
-TEST(QuiesceGuardTest, QuiesceBlocksUntilActiveWorkEnds)
+TEST(QuiesceGateTest, CloseBlocksUntilActiveEntriesLeave)
 {
-  QuiesceGuard guard;
-  const std::size_t initial_generation = guard.currentGeneration();
-  ASSERT_TRUE(guard.tryBeginWork(initial_generation));
+  QuiesceGate gate;
+  const std::size_t initial_generation = gate.currentGeneration();
+  ASSERT_TRUE(gate.tryEnter(initial_generation));
 
-  auto quiesce_future = std::async(std::launch::async, [&guard]() { return guard.quiesce(); });
+  auto close_future = std::async(std::launch::async, [&gate]() { return gate.close(); });
 
-  EXPECT_EQ(quiesce_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
-  EXPECT_FALSE(guard.tryBeginWork(initial_generation));
+  EXPECT_EQ(close_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+  EXPECT_FALSE(gate.tryEnter(initial_generation));
 
-  guard.endWork();
+  gate.leave();
 
-  EXPECT_EQ(quiesce_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_EQ(quiesce_future.get(), initial_generation + 1U);
+  EXPECT_EQ(close_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_EQ(close_future.get(), initial_generation + 1U);
 }
 
-TEST(QuiesceGuardTest, OldGenerationIsRejectedAfterQuiesceAndResume)
+TEST(QuiesceGateTest, OldGenerationIsRejectedAfterCloseAndOpen)
 {
-  QuiesceGuard guard;
-  const std::size_t old_generation = guard.currentGeneration();
+  QuiesceGate gate;
+  const std::size_t old_generation = gate.currentGeneration();
 
-  const std::size_t new_generation = guard.quiesce();
+  const std::size_t new_generation = gate.close();
 
   EXPECT_EQ(new_generation, old_generation + 1U);
-  EXPECT_FALSE(guard.tryBeginWork(old_generation));
-  EXPECT_FALSE(guard.tryBeginWork(new_generation));
+  EXPECT_FALSE(gate.tryEnter(old_generation));
+  EXPECT_FALSE(gate.tryEnter(new_generation));
 
-  guard.resume(new_generation);
+  gate.open(new_generation);
 
-  EXPECT_TRUE(guard.tryBeginWork(new_generation));
-  guard.endWork();
+  EXPECT_TRUE(gate.tryEnter(new_generation));
+  gate.leave();
 }
 
-TEST(QuiesceGuardTest, StaleResumeIsNoOp)
+TEST(QuiesceGateTest, StaleOpenIsNoOp)
 {
-  QuiesceGuard guard;
-  const std::size_t old_generation = guard.currentGeneration();
-  const std::size_t new_generation = guard.quiesce();
+  QuiesceGate gate;
+  const std::size_t old_generation = gate.currentGeneration();
+  const std::size_t new_generation = gate.close();
 
-  guard.resume(old_generation);
-  EXPECT_FALSE(guard.tryBeginWork(new_generation));
+  gate.open(old_generation);
+  EXPECT_FALSE(gate.tryEnter(new_generation));
 
-  guard.resume(new_generation);
-  EXPECT_TRUE(guard.tryBeginWork(new_generation));
-  guard.endWork();
+  gate.open(new_generation);
+  EXPECT_TRUE(gate.tryEnter(new_generation));
+  gate.leave();
 }
 
 }  // namespace livekit_ros2_bridge

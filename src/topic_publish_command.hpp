@@ -33,7 +33,8 @@ struct TopicPublishCommand
 };
 
 /// Parse a JSON command object with required `topic`, `interface_type`, and `message` fields.
-/// `topic` is normalized as a ROS resource name and `message` must use the stable CDR payload schema.
+/// `topic` is normalized as a ROS resource name and `message` must use the stable CDR payload object
+/// format.
 TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload);
 
 }  // namespace livekit_ros2_bridge

@@ -29,7 +29,7 @@
 namespace livekit_ros2_bridge
 {
 
-constexpr char kUnknownTrackName[] = "<unknown>";
+constexpr char kUnknownCdrTrackName[] = "<unknown>";
 
 struct FakeRoomSessionState
 {
@@ -46,8 +46,8 @@ struct FakeRoomSessionState
   std::vector<std::string> published_video_track_names;
   std::vector<VideoPublishConfig> published_video_configs;
   std::vector<std::string> unpublished_video_track_names;
-  std::vector<std::string> attempted_cdr_track_unpublish_names;
-  std::vector<std::string> rejected_cdr_track_unpublish_names;
+  std::vector<std::string> unpublish_attempted_cdr_track_names;
+  std::vector<std::string> unpublish_rejected_cdr_track_names;
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
   std::function<void(const RoomSessionCallbacks & callbacks)> stop_hook;
@@ -113,7 +113,7 @@ public:
   {
     state->event_log.push_back("publish_cdr_track:" + name);
     state->published_cdr_track_names.push_back(name);
-    auto track = state->publish_cdr_track_handler ? state->publish_cdr_track_handler(name) : makeSyntheticTrack();
+    auto track = state->publish_cdr_track_handler ? state->publish_cdr_track_handler(name) : makeSyntheticCdrTrack();
     if (track != nullptr) {
       cdr_track_names_[track.get()] = name;
     }
@@ -122,12 +122,12 @@ public:
 
   void unpublishCdrTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
-    const std::string name = lookupTrackName(track);
-    state->attempted_cdr_track_unpublish_names.push_back(name);
+    const std::string name = lookupCdrTrackName(track);
+    state->unpublish_attempted_cdr_track_names.push_back(name);
     const bool unpublish_rejected =
       std::find(
-        state->rejected_cdr_track_unpublish_names.begin(), state->rejected_cdr_track_unpublish_names.end(), name) !=
-      state->rejected_cdr_track_unpublish_names.end();
+        state->unpublish_rejected_cdr_track_names.begin(), state->unpublish_rejected_cdr_track_names.end(), name) !=
+      state->unpublish_rejected_cdr_track_names.end();
     if (unpublish_rejected) {
       throw std::runtime_error("simulated unpublish failure");
     }
@@ -206,16 +206,16 @@ public:
   std::shared_ptr<FakeRoomSessionState> state;
 
 private:
-  std::shared_ptr<livekit::LocalDataTrack> makeSyntheticTrack()
+  std::shared_ptr<livekit::LocalDataTrack> makeSyntheticCdrTrack()
   {
     auto owner = std::make_shared<int>(next_track_id_++);
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   }
 
-  std::string lookupTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
+  std::string lookupCdrTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
     const auto it = cdr_track_names_.find(track.get());
-    return it == cdr_track_names_.end() ? kUnknownTrackName : it->second;
+    return it == cdr_track_names_.end() ? kUnknownCdrTrackName : it->second;
   }
 
   int next_track_id_ = 1;

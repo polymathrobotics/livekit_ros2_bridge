@@ -51,7 +51,7 @@ Node::Node(const rclcpp::NodeOptions & options)
     }
   }();
 
-  const std::string room = runtime_config.connect_config.room;
+  const std::string room = runtime_config.room_connection_config.room;
   try {
     runtime_ = std::make_unique<Runtime>(*this, makeRoomSession(), std::move(runtime_config));
   } catch (const std::exception & exc) {

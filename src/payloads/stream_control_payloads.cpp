@@ -64,7 +64,7 @@ const char * streamDeliveryKindString(StreamDeliveryKind delivery_kind)
   throw std::invalid_argument("stream status delivery kind is invalid");
 }
 
-int parseIntervalMs(const nlohmann::json & prefs)
+int parsePreferredIntervalMs(const nlohmann::json & prefs)
 {
   const auto interval_it = prefs.find("interval_ms");
   if (interval_it == prefs.end()) {
@@ -143,7 +143,7 @@ SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)
     throw std::invalid_argument("delivery_preferences must be an object");
   }
 
-  const int interval = parseIntervalMs(*prefs_it);
+  const int interval = parsePreferredIntervalMs(*prefs_it);
   if (interval == kNoPreferredIntervalOverrideMs) {
     return result;
   }

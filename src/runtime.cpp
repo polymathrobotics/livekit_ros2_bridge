@@ -46,28 +46,31 @@ constexpr auto kFailFastExitDelay = std::chrono::milliseconds(100);
 }  // namespace
 
 Runtime::Runtime(
-  rclcpp::Node & node, std::unique_ptr<RoomSession> session, RuntimeConfig runtime_config, RuntimeHooks hooks)
+  rclcpp::Node & node,
+  std::unique_ptr<RoomSession> session,
+  RuntimeConfig runtime_config,
+  FailFastCallbacks fail_fast_callbacks)
 : node_(node)
 , room_session_(std::move(session))
 , video_config_(std::move(runtime_config.video_config))
 , subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
-, room_(runtime_config.connect_config.room)
-, hooks_(std::move(hooks))
+, room_(runtime_config.room_connection_config.room)
+, fail_fast_callbacks_(std::move(fail_fast_callbacks))
 , fail_fast_enabled_(runtime_config.health_config.fail_fast_enabled)
 , fail_fast_disconnect_grace_(runtime_config.health_config.fail_fast_disconnect_grace)
 {
   if (room_session_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit session");
   }
-  if (!hooks_.shutdown_hook) {
-    hooks_.shutdown_hook = []() {
+  if (!fail_fast_callbacks_.shutdown_callback) {
+    fail_fast_callbacks_.shutdown_callback = []() {
       if (rclcpp::ok()) {
         rclcpp::shutdown();
       }
     };
   }
-  if (!hooks_.exit_hook) {
-    hooks_.exit_hook = [](int exit_code) { std::_Exit(exit_code); };
+  if (!fail_fast_callbacks_.exit_callback) {
+    fail_fast_callbacks_.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
   }
 
   LogEvent(node_.get_logger(), "runtime_startup_begin")
@@ -103,7 +106,7 @@ Runtime::Runtime(
   control_packet_router_ = std::make_unique<ControlPacketRouter>(
     node_.get_logger(),
     node_.get_clock(),
-    ControlPacketRouter::Handlers{
+    ControlPacketRouter::Callbacks{
       [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
         submitExecutorWork(
           [this, requester_identity = std::move(requester_identity), heartbeat = std::move(heartbeat)]() {
@@ -119,8 +122,8 @@ Runtime::Runtime(
 
   lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitExecutorWork([this]() {
-      subscription_heartbeat_processor_->sweepExpiredSessionLeases();
-      subscription_registry_->sweepExpiredLeases();
+      subscription_heartbeat_processor_->pruneExpiredSessionLeases();
+      subscription_registry_->pruneExpiredLeases();
     });
   });
   if (fail_fast_enabled_) {
@@ -130,7 +133,7 @@ Runtime::Runtime(
   fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
 
   room_session_->start(
-    runtime_config.connect_config,
+    runtime_config.room_connection_config,
     runtime_config.access_token,
     RoomSessionCallbacks{
       [this]() { handleRoomConnected(); },
@@ -301,7 +304,7 @@ void Runtime::evaluateFailFast()
     }
   }
 
-  requestFailFastExit(disconnect_reason, ready_once);
+  terminateForFailFast(disconnect_reason, ready_once);
 }
 
 void Runtime::emitReadyLogs()
@@ -310,7 +313,7 @@ void Runtime::emitReadyLogs()
   LogEvent(node_.get_logger(), "node_ready").field("phase", "startup").fieldOr("room", room_, "<unset>").info();
 }
 
-void Runtime::requestFailFastExit(const std::string & disconnect_reason, bool ready_once)
+void Runtime::terminateForFailFast(const std::string & disconnect_reason, bool ready_once)
 {
   LogEvent(node_.get_logger(), "runtime_fail_fast_triggered")
     .field("phase", ready_once ? "reconnect" : "startup")
@@ -320,15 +323,15 @@ void Runtime::requestFailFastExit(const std::string & disconnect_reason, bool re
     .field("grace_seconds", fail_fast_disconnect_grace_.count() / 1000.0)
     .field("ready_once", ready_once)
     .error();
-  hooks_.shutdown_hook();
+  fail_fast_callbacks_.shutdown_callback();
   std::this_thread::sleep_for(kFailFastExitDelay);
-  hooks_.exit_hook(EXIT_FAILURE);
+  fail_fast_callbacks_.exit_callback(EXIT_FAILURE);
 }
 
 void Runtime::submitExecutorWork(std::function<void()> fn)
 {
   auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
-    if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+    if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
       LogEvent(node_.get_logger(), "executor_work_dropped")
         .field("reason", reason)
         .field("stage", stage)
@@ -347,7 +350,7 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
   }
   (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
     auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
-      if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+      if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
         LogEvent(node_.get_logger(), "executor_work_dropped")
           .field("reason", reason)
           .field("stage", stage)
@@ -368,7 +371,7 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
 void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) const
 {
   auto logControlPacketDrop = [this, &packet](const char * reason, EventThrottle & throttle) {
-    if (const std::size_t count = throttle.recordAndCheck(); count > 0U) {
+    if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
       LogEvent(node_.get_logger(), "control_packet_dropped")
         .field("reason", reason)
         .field("control_topic", packet.control_topic)

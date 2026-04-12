@@ -45,9 +45,9 @@ VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredSource source;
-  source.source = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(source));
+  ConfiguredVideoPipeline configured_pipeline;
+  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front", std::move(configured_pipeline));
   return config;
 }
 

@@ -30,7 +30,7 @@ public:
   : interval_(interval)
   {}
 
-  std::size_t recordAndCheck()
+  std::size_t recordAndTakePendingCount()
   {
     ++count_;
     const auto now = std::chrono::steady_clock::now();

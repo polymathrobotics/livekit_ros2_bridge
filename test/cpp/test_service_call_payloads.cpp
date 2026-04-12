@@ -40,7 +40,7 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
-  EXPECT_EQ(request.request, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
+  EXPECT_EQ(request.request_payload, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
   EXPECT_EQ(request.timeout_ms, 500);
 }
 
@@ -55,7 +55,7 @@ TEST(ServiceCallPayloadsTest, ParsesRequestWithoutOptionalFields)
 
   EXPECT_EQ(request.service, "/trigger");
   EXPECT_TRUE(request.interface_type.empty());
-  EXPECT_EQ(request.request, (std::vector<std::uint8_t>{0x01}));
+  EXPECT_EQ(request.request_payload, (std::vector<std::uint8_t>{0x01}));
   EXPECT_EQ(request.timeout_ms, 0);
 }
 

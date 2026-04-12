@@ -24,7 +24,7 @@ namespace livekit_ros2_bridge
 
 class Runtime;
 
-// ROS component boundary that loads startup config and owns one bridge runtime.
+// ROS component boundary that loads startup config and owns one runtime.
 class Node final : public rclcpp::Node
 {
 public:

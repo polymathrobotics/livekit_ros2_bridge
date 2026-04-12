@@ -34,7 +34,7 @@ constexpr std::size_t kMaxCachedPublishers = 50U;
 constexpr auto kPublishLogThrottleMs = 5000;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
 
-rclcpp::SerializedMessage toSerializedMessage(const std::vector<std::uint8_t> & payload)
+rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
 {
   rclcpp::SerializedMessage serialized(payload.size());
   auto & rcl_msg = serialized.get_rcl_serialized_message();
@@ -55,7 +55,7 @@ RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_po
 : node_(node)
 , access_policy_(std::move(access_policy))
 , max_cached_publishers_(max_cached_publishers)
-, publishers_(max_cached_publishers)
+, cached_publishers_(max_cached_publishers)
 {}
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
@@ -101,10 +101,10 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     return;
   }
 
-  rclcpp::SerializedMessage serialized = toSerializedMessage(command.cdr_payload);
+  rclcpp::SerializedMessage serialized = wrapSerializedPayload(command.cdr_payload);
 
   try {
-    publishWithPublisherCache(topic, interface_type, serialized);
+    publishWithResolvedPublisher(topic, interface_type, serialized);
   } catch (const std::exception & exc) {
     LogEvent(kTopicPublisherLogger, "publish_request_failed")
       .field("reason", "internal")
@@ -124,14 +124,14 @@ void RosTopicPublisher::shutdown()
     return;
   }
 
-  const std::size_t cached_publishers = publishers_.size();
+  const std::size_t cached_publishers = cached_publishers_.size();
   LogEvent(kTopicPublisherLogger, "topic_publisher_state_changed")
     .field("reason", "shutdown")
     .field("action", "clear_cached_publishers")
     .field("cached_publishers", cached_publishers)
     .info();
 
-  publishers_.clear();
+  cached_publishers_.clear();
 }
 
 std::string RosTopicPublisher::resolveTopicTypeOrThrow(
@@ -139,12 +139,12 @@ std::string RosTopicPublisher::resolveTopicTypeOrThrow(
 {
   std::string expected_type;
 
-  if (const auto publisher_entry = publishers_.peek(topic); publisher_entry.has_value()) {
+  if (const auto cached_publisher = cached_publishers_.peek(topic); cached_publisher.has_value()) {
     // Reuse the cache's interface type once a publisher exists so later
     // commands stay consistent even if graph introspection lags that creation.
-    expected_type = publisher_entry->interface_type;
+    expected_type = cached_publisher->interface_type;
   } else {
-    expected_type = requireUniqueInterfaceType(node_.get_topic_names_and_types(), topic, "topic");
+    expected_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), topic, "topic");
   }
 
   if (expected_type != requested_interface_type) {
@@ -153,44 +153,44 @@ std::string RosTopicPublisher::resolveTopicTypeOrThrow(
   return expected_type;
 }
 
-void RosTopicPublisher::publishWithPublisherCache(
+void RosTopicPublisher::publishWithResolvedPublisher(
   const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized)
 {
-  const auto cached_entry = publishers_.peek(topic);
-  const bool was_cached = cached_entry.has_value();
-  std::shared_ptr<rclcpp::GenericPublisher> publisher_handle;
+  const auto cached_publisher = cached_publishers_.peek(topic);
+  const bool was_cached = cached_publisher.has_value();
+  std::shared_ptr<rclcpp::GenericPublisher> resolved_publisher;
   if (!was_cached) {
     const rclcpp::QoS qos(kPublisherDepth);
-    publisher_handle = node_.create_generic_publisher(topic, interface_type, qos);
+    resolved_publisher = node_.create_generic_publisher(topic, interface_type, qos);
   } else {
-    publisher_handle = cached_entry->publisher_handle;
+    resolved_publisher = cached_publisher->publisher;
   }
 
   if (before_publish_hook_for_test_) {
     before_publish_hook_for_test_();
   }
-  publisher_handle->publish(serialized);
+  resolved_publisher->publish(serialized);
 
   // Refresh recency only after a successful publish so failed attempts do not
   // change bounded-cache residency.
   if (was_cached) {
-    (void)publishers_.touch(topic);
+    (void)cached_publishers_.touch(topic);
     return;
   }
 
   // Enforce the cap after serving the current command: the publish succeeds and
   // an older cached publisher is discarded to make room for future use.
-  const auto evicted_entry =
-    publishers_.insertOrAssign(topic, PublisherCacheEntry{interface_type, std::move(publisher_handle)});
-  if (!evicted_entry.has_value()) {
+  const auto evicted_publisher =
+    cached_publishers_.insertOrAssign(topic, CachedPublisher{interface_type, std::move(resolved_publisher)});
+  if (!evicted_publisher.has_value()) {
     return;
   }
 
-  if (const std::size_t count = publisher_cache_eviction_throttle_.recordAndCheck(); count > 0U) {
+  if (const std::size_t count = evicted_publisher_warning_throttle_.recordAndTakePendingCount(); count > 0U) {
     LogEvent(kTopicPublisherLogger, "publisher_cache_evicted")
       .field("reason", "max_topics_exceeded")
       .field("topic", topic)
-      .field("evicted_topic", evicted_entry->key)
+      .field("evicted_topic", evicted_publisher->key)
       .field("count", count)
       .field("policy", "lru")
       .field("max_topics", static_cast<int>(max_cached_publishers_))

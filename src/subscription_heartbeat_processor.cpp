@@ -35,7 +35,7 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-constexpr auto kLeaseExpiry = std::chrono::seconds(45);
+constexpr auto kRequesterLeaseDuration = std::chrono::seconds(45);
 constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
 const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
@@ -82,9 +82,9 @@ SubscriptionHeartbeatProcessor::SubscriptionHeartbeatProcessor(
 void SubscriptionHeartbeatProcessor::process(
   const std::string & requester_identity, const SubscriptionHeartbeat & update)
 {
-  const auto expiry = std::chrono::steady_clock::now() + kLeaseExpiry;
+  const auto requester_lease_expiry = std::chrono::steady_clock::now() + kRequesterLeaseDuration;
   const std::optional<std::string> resolved_requester_identity =
-    resolveRequesterIdentity(requester_identity, update, expiry);
+    resolveRequesterIdentity(requester_identity, update, requester_lease_expiry);
   if (!resolved_requester_identity.has_value()) {
     return;
   }
@@ -101,7 +101,8 @@ void SubscriptionHeartbeatProcessor::process(
     }
 
     try {
-      auto stream_status = subscription_registry_.renewSubscription(*resolved_requester_identity, entry, expiry);
+      auto stream_status =
+        subscription_registry_.renewSubscription(*resolved_requester_identity, entry, requester_lease_expiry);
       streams.push_back(serializeStreamStatus(stream_status));
     } catch (const StreamUnavailableError & exc) {
       appendStreamError(streams, target, "unavailable", exc.what());
@@ -114,10 +115,10 @@ void SubscriptionHeartbeatProcessor::process(
   // that lease alive, but the rejoined participant still needs a fresh data-track publication
   // because the previous publication belonged to the disconnected participant session.
   subscription_registry_.replayCdrTracksForRequester(*resolved_requester_identity);
-  publishSubscriptionStatus(*resolved_requester_identity, update.session_id, expiry, streams);
+  publishSubscriptionStatus(*resolved_requester_identity, update.session_id, requester_lease_expiry, streams);
 }
 
-void SubscriptionHeartbeatProcessor::sweepExpiredSessionLeases()
+void SubscriptionHeartbeatProcessor::pruneExpiredSessionLeases()
 {
   const auto now = std::chrono::steady_clock::now();
   for (auto it = session_leases_.begin(); it != session_leases_.end();) {
@@ -137,11 +138,11 @@ void SubscriptionHeartbeatProcessor::sweepExpiredSessionLeases()
 std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdentity(
   const std::string & requester_identity,
   const SubscriptionHeartbeat & update,
-  std::chrono::steady_clock::time_point expiry)
+  std::chrono::steady_clock::time_point requester_lease_expiry)
 {
   if (!requester_identity.empty()) {
     if (update.session_id.has_value()) {
-      if (!bindSessionId(*update.session_id, requester_identity, expiry)) {
+      if (!renewRequesterSessionLease(*update.session_id, requester_identity, requester_lease_expiry)) {
         return std::nullopt;
       }
     }
@@ -167,7 +168,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   // LiveKit should normally attach the requester identity to user-data packets. When it does not,
   // we treat a known session_id as proof that this heartbeat belongs to the same previously
   // authenticated browser tab and continue renewing that tab's leases instead of dropping them.
-  lease_it->second.expiry = expiry;
+  lease_it->second.expiry = requester_lease_expiry;
   LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_fallback")
     .field("session_id", *update.session_id)
     .field("requester_identity", lease_it->second.requester_identity)
@@ -176,12 +177,14 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   return lease_it->second.requester_identity;
 }
 
-bool SubscriptionHeartbeatProcessor::bindSessionId(
-  const std::string & session_id, const std::string & requester_identity, std::chrono::steady_clock::time_point expiry)
+bool SubscriptionHeartbeatProcessor::renewRequesterSessionLease(
+  const std::string & session_id,
+  const std::string & requester_identity,
+  std::chrono::steady_clock::time_point requester_lease_expiry)
 {
   auto it = session_leases_.find(session_id);
   if (it == session_leases_.end()) {
-    session_leases_.emplace(session_id, SessionLease{requester_identity, expiry});
+    session_leases_.emplace(session_id, SessionLease{requester_identity, requester_lease_expiry});
     LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_bound")
       .field("session_id", session_id)
       .field("requester_identity", requester_identity)
@@ -190,7 +193,7 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
   }
 
   if (it->second.requester_identity != requester_identity) {
-    if (const std::size_t count = session_conflict_throttle_.recordAndCheck(); count > 0U) {
+    if (const std::size_t count = session_conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
       LogEvent(kHeartbeatProcessorLogger, "heartbeat_session_conflict")
         .field("reason", "requester_identity_mismatch")
         .field("session_id", session_id)
@@ -202,14 +205,14 @@ bool SubscriptionHeartbeatProcessor::bindSessionId(
     return false;
   }
 
-  it->second.expiry = expiry;
+  it->second.expiry = requester_lease_expiry;
   return true;
 }
 
 void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   const std::string & requester_identity,
   const std::optional<std::string> & session_id,
-  std::chrono::steady_clock::time_point expiry,
+  std::chrono::steady_clock::time_point requester_lease_expiry,
   const nlohmann::json & streams)
 {
   if (streams.empty()) {
@@ -223,7 +226,8 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   };
   if (session_id.has_value()) {
     const auto lease_expires_in_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(expiry - std::chrono::steady_clock::now()).count();
+      std::chrono::duration_cast<std::chrono::milliseconds>(requester_lease_expiry - std::chrono::steady_clock::now())
+        .count();
     envelope["session_id"] = *session_id;
     envelope["lease_expires_in_ms"] = lease_expires_in_ms;
   }

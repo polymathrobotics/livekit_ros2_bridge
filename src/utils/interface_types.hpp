@@ -22,9 +22,9 @@
 namespace livekit_ros2_bridge
 {
 
-// Returns the only graph-advertised type for a resource or throws when the
+// Returns the single graph-advertised type for a resource or throws when the
 // graph is missing or ambiguous, so callers never guess a ROS interface type.
-inline std::string requireUniqueInterfaceType(
+inline std::string requireSingleInterfaceType(
   const std::map<std::string, std::vector<std::string>> & names_and_types,
   const std::string & name,
   const char * resource_kind)

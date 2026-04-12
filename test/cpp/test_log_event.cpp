@@ -56,7 +56,7 @@ TEST(LogEventTest, BuildsStructuredMessageInFieldOrder)
   EXPECT_EQ(message, "event=sample_event count=3 success=true status=ok");
 }
 
-TEST(LogEventTest, FieldOrUsesFallbackForEmptyValues)
+TEST(LogEventTest, FieldOrUsesFallbackForEmptyStrings)
 {
   const std::string message = LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
                                 .fieldOr("missing", std::string{}, "<unset>")
@@ -66,7 +66,7 @@ TEST(LogEventTest, FieldOrUsesFallbackForEmptyValues)
   EXPECT_EQ(message, "event=sample_event missing=<unset> present=value");
 }
 
-TEST(LogEventTest, WarnThrottleSmokeTest)
+TEST(LogEventTest, WarnThrottleAcceptsZeroInterval)
 {
   ScopedRclcppInit init;
   rclcpp::Clock clock(RCL_SYSTEM_TIME);

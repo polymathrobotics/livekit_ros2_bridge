@@ -58,7 +58,7 @@ std::string serializeInterfacesResponse(const std::vector<InterfaceDefinition> &
   for (const auto & iface : interfaces) {
     entries.push_back({
       {"interface_type", iface.interface_type},
-      {"schema_encoding", iface.schema_encoding},
+      {"format", iface.format},
       {"definition", iface.definition},
     });
   }

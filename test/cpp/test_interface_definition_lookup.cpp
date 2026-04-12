@@ -55,7 +55,7 @@ TEST(LookupInterfaceDefinitionTest, LooksUpSimpleMessageWithoutDependencies)
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result.front().interface_type, "std_msgs/msg/String");
-  EXPECT_EQ(result.front().schema_encoding, "ros2msg");
+  EXPECT_EQ(result.front().format, "ros2msg");
   EXPECT_NE(result.front().definition.find("string data"), std::string::npos);
 }
 
@@ -67,7 +67,7 @@ TEST(LookupInterfaceDefinitionTest, LooksUpMessageWithDirectDependencies)
   EXPECT_EQ(result[0].interface_type, "std_msgs/msg/Header");
   EXPECT_NE(result[0].definition.find("builtin_interfaces/Time stamp"), std::string::npos);
   EXPECT_EQ(result[1].interface_type, "builtin_interfaces/msg/Time");
-  EXPECT_EQ(result[1].schema_encoding, "ros2msg");
+  EXPECT_EQ(result[1].format, "ros2msg");
   EXPECT_NE(result[1].definition.find("int32 sec"), std::string::npos);
 }
 
@@ -91,7 +91,7 @@ TEST(LookupInterfaceDefinitionTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
 
   ASSERT_EQ(result.size(), 1u);
   EXPECT_EQ(result.front().interface_type, "std_srvs/srv/SetBool");
-  EXPECT_EQ(result.front().schema_encoding, "ros2msg");
+  EXPECT_EQ(result.front().format, "ros2msg");
   EXPECT_NE(result.front().definition.find("---"), std::string::npos);
 }
 

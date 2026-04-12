@@ -84,13 +84,13 @@ public:
 
   // Participant disconnect callbacks can lag behind lease expiry or a same-topic resubscribe. The
   // caller supplies the registry generation observed for that session; only a matching generation
-  // marks the requester for CDR replay on the next heartbeat-confirmed reconnect.
+  // marks the requester identity for CDR replay on the next heartbeat-confirmed reconnect.
   void markRequesterForCdrReplay(const std::string & requester_identity, std::size_t generation);
   // Replays currently published CDR tracks for a requester once a fresh heartbeat proves the
   // requester has rejoined and still owns those subscriptions.
   void replayCdrTracksForRequester(const std::string & requester_identity);
-  void removeRequesterLeases(const std::string & requester_identity);
-  void sweepExpiredLeases();
+  void revokeRequesterLeases(const std::string & requester_identity);
+  void pruneExpiredLeases();
   bool hasSubscription(
     const std::string & resource, SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic) const;
   void resetSessionState();
@@ -151,7 +151,7 @@ private:
   static std::string deriveTrackName(const std::string & normalized_topic);
   static std::string makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource);
 
-  void refreshExistingLease(
+  void renewExistingLease(
     SubscriptionState & sub, const std::string & requester_identity, const RequesterLease & requester_lease);
   SubscriptionState createVideoSubscription(
     const SubscriptionRequest & entry,
@@ -163,7 +163,7 @@ private:
     const std::string & interface_type,
     const std::string & requester_identity,
     const RequesterLease & requester_lease);
-  void assignVideoMetadata(SubscriptionState & sub, VideoStreamSpec video_stream_spec, std::string track_name);
+  void assignVideoMetadata(SubscriptionState & sub, VideoStreamSpec stream_spec, std::string track_name);
   DataTrackResource createPendingDataTrackResource(
     const std::string & topic,
     const std::string & interface_type,
@@ -173,7 +173,7 @@ private:
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
   VideoStreamManager & videoStreamManager() const;
   const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
-  void removeRequesterLeasesIf(
+  void revokeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
     RequesterLeaseRemovalReason reason,
     Clock::time_point reference_time);
@@ -193,10 +193,10 @@ private:
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
   const SubscriptionQosConfig * subscription_qos_config_;
-  // Subscriptions capture the guard's current generation in their message callback.
+  // Subscriptions capture the gate's current generation in their message callback.
   // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from
   // the old session self-reject on entry.
-  QuiesceGuard message_callback_guard_;
+  QuiesceGate message_callback_gate_;
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> registry_generation_{0};
   SubscriptionStateMap subscriptions_;

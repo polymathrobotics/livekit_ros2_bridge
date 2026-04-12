@@ -142,7 +142,7 @@ In the default ROS case with no override and no publish overrides:
 Important behavior:
 
 - the map is keyed by normalized `stream_key`, so equivalent requests share one stream
-- calling `ensureStream()` again for an existing key reuses the current runtime
+- calling `ensureStreamRunning()` again for an existing key reuses the current runtime
 - when the last requester lease disappears, the shared runtime is torn down
 
 Failure handling differs slightly by source kind:
@@ -152,7 +152,7 @@ Failure handling differs slightly by source kind:
 
 ## ROS input constraints
 
-For `sensor_msgs/msg/Image`, the bridge accepts only ROS encodings that `rosEncodingToGstFormat()` maps to a known GStreamer raw format:
+For `sensor_msgs/msg/Image`, the bridge accepts only ROS encodings that `rosImageEncodingToGstFormat()` maps to a known GStreamer raw format:
 
 - `mono8`
 - `mono16`
