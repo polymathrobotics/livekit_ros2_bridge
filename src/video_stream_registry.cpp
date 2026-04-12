@@ -27,12 +27,12 @@
 namespace livekit_ros2_bridge
 {
 
-// Each runtime owns the source side and publication side for one resolved
+// Each instance owns the source side and publication side for one resolved
 // stream: one VideoFrameSource feeds one VideoTrackPublisher.
-class VideoStreamRegistry::VideoStreamRuntime final
+class VideoStreamRegistry::VideoStreamInstance final
 {
 public:
-  VideoStreamRuntime(
+  VideoStreamInstance(
     rclcpp::Node & node,
     RoomSession & session,
     VideoStreamSpec spec,
@@ -43,7 +43,7 @@ public:
   , video_track_publisher_(std::make_unique<VideoTrackPublisher>(session, spec_))
   {}
 
-  ~VideoStreamRuntime()
+  ~VideoStreamInstance()
   {
     shutdown();
   }
@@ -131,55 +131,55 @@ VideoStreamRegistry::~VideoStreamRegistry()
 
 std::string VideoStreamRegistry::ensureStreamRunning(const VideoStreamSpec & spec)
 {
-  std::shared_ptr<VideoStreamRuntime> runtime;
+  std::shared_ptr<VideoStreamInstance> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       throw std::runtime_error("Video stream registry is shut down.");
     }
 
-    auto [it, inserted] = stream_runtimes_.try_emplace(spec.stream_key);
+    auto [it, inserted] = stream_instances_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<VideoStreamRuntime>(node_, session_, spec, subscription_qos_config_);
+      it->second = std::make_shared<VideoStreamInstance>(node_, session_, spec, subscription_qos_config_);
     }
-    runtime = it->second;
+    instance = it->second;
   }
 
-  return runtime->ensureRunning();
+  return instance->ensureRunning();
 }
 
 void VideoStreamRegistry::stopStream(const std::string & stream_key)
 {
-  std::shared_ptr<VideoStreamRuntime> runtime;
+  std::shared_ptr<VideoStreamInstance> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = stream_runtimes_.find(stream_key);
-    if (it == stream_runtimes_.end()) {
+    const auto it = stream_instances_.find(stream_key);
+    if (it == stream_instances_.end()) {
       return;
     }
-    runtime = std::move(it->second);
-    stream_runtimes_.erase(it);
+    instance = std::move(it->second);
+    stream_instances_.erase(it);
   }
 
-  if (runtime) {
-    runtime->shutdown();
+  if (instance) {
+    instance->shutdown();
   }
 }
 
 void VideoStreamRegistry::shutdown()
 {
-  std::unordered_map<std::string, std::shared_ptr<VideoStreamRuntime>> stream_runtimes;
+  std::unordered_map<std::string, std::shared_ptr<VideoStreamInstance>> stream_instances;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
     is_shutdown_ = true;
-    stream_runtimes = std::move(stream_runtimes_);
-    stream_runtimes_.clear();
+    stream_instances = std::move(stream_instances_);
+    stream_instances_.clear();
   }
 
-  for (auto & entry : stream_runtimes) {
+  for (auto & entry : stream_instances) {
     if (entry.second) {
       entry.second->shutdown();
     }

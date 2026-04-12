@@ -27,7 +27,7 @@
 namespace livekit_ros2_bridge
 {
 
-// Registry of shared in-process video runtimes keyed by resolved stream key.
+// Registry of shared in-process video instances keyed by resolved stream key.
 class VideoStreamRegistry final
 {
 public:
@@ -40,14 +40,14 @@ public:
   void shutdown();
 
 private:
-  class VideoStreamRuntime;
+  class VideoStreamInstance;
 
   rclcpp::Node & node_;
   RoomSession & session_;
   const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  std::unordered_map<std::string, std::shared_ptr<VideoStreamRuntime>> stream_runtimes_;
+  std::unordered_map<std::string, std::shared_ptr<VideoStreamInstance>> stream_instances_;
 };
 
 }  // namespace livekit_ros2_bridge
