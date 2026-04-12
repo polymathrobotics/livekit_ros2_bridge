@@ -18,29 +18,30 @@
 namespace livekit_ros2_bridge
 {
 
-TEST(NormalizeRosResourceNameTest, EmptyAndWhitespaceInputReturnsEmpty)
+TEST(NormalizeRosResourceNameTest, EmptyAndWhitespaceOnlyInputsReturnEmpty)
 {
   EXPECT_EQ(normalizeRosResourceName(""), "");
-  EXPECT_EQ(normalizeRosResourceName("   "), "");
   EXPECT_EQ(normalizeRosResourceName("\t\n"), "");
 }
 
-TEST(NormalizeRosResourceNameTest, NormalizesCommonTopicInputsToCanonicalForm)
+TEST(NormalizeRosResourceNameTest, NormalizesCommonInputsToCanonicalAbsoluteNames)
 {
   EXPECT_EQ(normalizeRosResourceName("camera"), "/camera");
-  EXPECT_EQ(normalizeRosResourceName(" camera//image/ "), "/camera/image");
-  EXPECT_EQ(normalizeRosResourceName("  /camera///front/image  "), "/camera/front/image");
+  EXPECT_EQ(normalizeRosResourceName("  /camera///front/image/  "), "/camera/front/image");
+  EXPECT_EQ(normalizeRosResourceName(" blocked//tree//* "), "/blocked/tree/*");
 }
 
-TEST(NormalizeRosResourceNameTest, RootSlashAloneIsPreserved)
+TEST(NormalizeRosResourceNameTest, RootInputsNormalizeToRootName)
 {
-  EXPECT_EQ(normalizeRosResourceName("/"), "/");
+  EXPECT_EQ(normalizeRosResourceName("  ////  "), "/");
 }
 
-TEST(RosResourceMatchesPatternTest, ExactPatternMatchesOnlyIdenticalName)
+TEST(RosResourceMatchesPatternTest, ExactPatternsMatchOnlyIdenticalNames)
 {
   EXPECT_TRUE(rosResourceMatchesPattern("/camera", "/camera"));
   EXPECT_FALSE(rosResourceMatchesPattern("/camera/image", "/camera"));
+  EXPECT_TRUE(rosResourceMatchesPattern("/", "/"));
+  EXPECT_FALSE(rosResourceMatchesPattern("/camera", "/"));
 }
 
 TEST(RosResourceMatchesPatternTest, SubtreePatternMatchesDescendantsButNotPrefixNeighbors)
@@ -49,13 +50,14 @@ TEST(RosResourceMatchesPatternTest, SubtreePatternMatchesDescendantsButNotPrefix
   EXPECT_TRUE(rosResourceMatchesPattern("/camera/image", "/camera/*"));
   EXPECT_TRUE(rosResourceMatchesPattern("/camera/front/image", "/camera/*"));
   EXPECT_FALSE(rosResourceMatchesPattern("/camera_front/image", "/camera/*"));
-}
-
-TEST(RosResourceMatchesPatternTest, RootSubtreePatternMatchesAllAbsolutePaths)
-{
   EXPECT_TRUE(rosResourceMatchesPattern("/", "/*"));
   EXPECT_TRUE(rosResourceMatchesPattern("/camera", "/*"));
-  EXPECT_TRUE(rosResourceMatchesPattern("/camera/image", "/*"));
+}
+
+TEST(RosResourceMatchesPatternTest, OnlyTerminalSlashStarActsAsSubtreeWildcard)
+{
+  EXPECT_TRUE(rosResourceMatchesPattern("/camera/*/image", "/camera/*/image"));
+  EXPECT_FALSE(rosResourceMatchesPattern("/camera/front/image", "/camera/*/image"));
 }
 
 }  // namespace livekit_ros2_bridge

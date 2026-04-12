@@ -22,7 +22,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -33,10 +32,10 @@
 #include "payloads/cdr_payload.hpp"
 #include "protocol.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
-#include "rclcpp/rclcpp.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
+#include "ros_test_support.hpp"
 #include "rpc_router.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_srvs/srv/set_bool.hpp"
@@ -47,7 +46,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kSpinPollInterval = std::chrono::milliseconds(5);
 constexpr auto kSpinTimeout = std::chrono::seconds(5);
 
 template <typename MessageT>
@@ -74,29 +72,13 @@ MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
   return message;
 }
 
-bool spinUntil(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  const std::function<bool()> & predicate,
-  std::chrono::milliseconds timeout = kSpinTimeout)
-{
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    executor.spin_some();
-    if (predicate()) {
-      return true;
-    }
-    std::this_thread::sleep_for(kSpinPollInterval);
-  }
-  return predicate();
-}
-
 template <typename FutureT>
 bool waitForFutureReady(
   rclcpp::executors::SingleThreadedExecutor & executor,
   FutureT & future,
   std::chrono::milliseconds timeout = kSpinTimeout)
 {
-  return spinUntil(
+  return test_support::spinUntil(
     executor,
     [&future]() { return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; },
     timeout);
@@ -139,6 +121,14 @@ std::string makeServiceCallRequestPayload(
     body["timeout_ms"] = *timeout_ms;
   }
   return body.dump();
+}
+
+std::string makeSetBoolRequestPayload(
+  const std::string & service, bool data = false, std::optional<int> timeout_ms = std::nullopt)
+{
+  std_srvs::srv::SetBool::Request request_message;
+  request_message.data = data;
+  return makeServiceCallRequestPayload(service, "std_srvs/srv/SetBool", serializeMessage(request_message), timeout_ms);
 }
 
 AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -192,35 +182,12 @@ public:
   RpcRouter rpc_router;
 };
 
-class RpcRouterTest : public ::testing::Test
+TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
 {
-protected:
-  static void SetUpTestSuite()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  static void TearDownTestSuite()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-};
-
-TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
-{
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
-  const std::vector<std::string> methods{
-    protocol::kRpcServiceCall,
-    protocol::kRpcInterfacesGet,
-    protocol::kRpcServicesList,
-    protocol::kRpcTopicsList,
-  };
 
-  for (const auto & method : methods) {
+  const auto expectUnauthorized = [&](const std::string & method) {
     expectRpcHandlerError(
       [&]() {
         harness.invokeRpc(
@@ -231,11 +198,17 @@ TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
           });
       },
       protocol::kRpcErrorUnauthorized);
-  }
+  };
+
+  expectUnauthorized(protocol::kRpcServiceCall);
+  expectUnauthorized(protocol::kRpcInterfacesGet);
+  expectUnauthorized(protocol::kRpcServicesList);
+  expectUnauthorized(protocol::kRpcTopicsList);
 }
 
-TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
+TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   expectRpcHandlerError(
@@ -250,10 +223,10 @@ TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
     protocol::kRpcErrorInvalidRequest);
 }
 
-TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
+TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"/allowed_service"}));
-  std_srvs::srv::SetBool::Request request_message;
 
   expectRpcHandlerError(
     [&]() {
@@ -261,15 +234,16 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
         protocol::kRpcServiceCall,
         RpcInvocation{
           "participant-1",
-          makeServiceCallRequestPayload("/denied_service", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+          makeSetBoolRequestPayload("/denied_service"),
         });
     },
     protocol::kRpcErrorForbidden,
     "ROS service '/denied_service' not permitted.");
 }
 
-TEST_F(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
+TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   expectRpcHandlerError(
@@ -284,8 +258,9 @@ TEST_F(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
     protocol::kRpcErrorInternal);
 }
 
-TEST_F(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
+TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
@@ -304,34 +279,109 @@ TEST_F(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
   EXPECT_FALSE(interface_definition["definition"].get<std::string>().empty());
 }
 
-TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
+TEST(RpcRouterTest, InterfacesGetRpcDeduplicatesRepeatedRequestedTypes)
 {
+  test_support::ScopedRclcppInit init;
+  RpcRouterHarness harness;
+
+  const auto response = harness.invokeRpc(
+    protocol::kRpcInterfacesGet,
+    RpcInvocation{
+      "participant-1",
+      R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})",
+    });
+
+  ASSERT_TRUE(response.has_value());
+  const auto body = nlohmann::json::parse(*response);
+  ASSERT_EQ(body["interfaces"].size(), 1U);
+  EXPECT_EQ(body["interfaces"][0]["interface_type"].get<std::string>(), "std_msgs/msg/String");
+}
+
+TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
+{
+  test_support::ScopedRclcppInit init;
+  RpcRouterHarness harness;
+
+  const auto expectInvalidLimit = [&](const std::string & method) {
+    expectRpcHandlerError(
+      [&]() {
+        harness.invokeRpc(
+          method,
+          RpcInvocation{
+            "participant-1",
+            R"({"limit":0})",
+          });
+      },
+      protocol::kRpcErrorInvalidRequest,
+      "limit must be a positive integer");
+  };
+
+  expectInvalidLimit(protocol::kRpcServicesList);
+  expectInvalidLimit(protocol::kRpcTopicsList);
+}
+
+TEST(RpcRouterTest, RegisterRpcMethodsIsBestEffortAndUnregistersAllEntrypoints)
+{
+  test_support::ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
+  RosExecutorQueue ros_executor_queue(*node);
+  RosServiceCaller ros_service_caller(*node);
+  FakeRoomConnection session;
+  session.state->rejected_rpc_methods = {protocol::kRpcServicesList};
+
+  {
+    RpcRouter rpc_router(*node, AccessPolicy(), ros_executor_queue, ros_service_caller);
+
+    EXPECT_FALSE(rpc_router.registerRpcMethods(session));
+
+    const std::vector<std::string> expected_methods = {
+      protocol::kRpcServiceCall,
+      protocol::kRpcInterfacesGet,
+      protocol::kRpcServicesList,
+      protocol::kRpcTopicsList,
+    };
+    EXPECT_EQ(session.state->registered_rpc_methods, expected_methods);
+    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcServiceCall), 1U);
+    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcInterfacesGet), 1U);
+    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcServicesList), 0U);
+    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcTopicsList), 1U);
+
+    rpc_router.unregisterRpcMethods(session);
+
+    EXPECT_TRUE(session.state->rpc_handlers.empty());
+    EXPECT_EQ(session.state->unregistered_rpc_methods, expected_methods);
+  }
+
+  ros_service_caller.shutdown();
+  ros_executor_queue.shutdown();
+}
+
+TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
+{
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
   auto server_node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_service_server"));
-  auto service = server_node->create_service<std_srvs::srv::SetBool>(
+  [[maybe_unused]] const auto service = server_node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/set_bool",
     [](const std_srvs::srv::SetBool::Request::SharedPtr request, std_srvs::srv::SetBool::Response::SharedPtr response) {
       response->success = request->data;
       response->message = request->data ? "enabled" : "disabled";
     });
-  (void)service;
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
   executor.add_node(server_node);
 
-  ASSERT_TRUE(spinUntil(
-    executor, [&]() { return harness.node->get_service_names_and_types().count("/rpc_router/set_bool") > 0U; }));
+  ASSERT_TRUE(test_support::spinUntil(executor, [&]() {
+    return harness.node->get_service_names_and_types().count("/rpc_router/set_bool") > 0U;
+  }));
 
   auto handler_future = std::async(std::launch::async, [&]() {
-    std_srvs::srv::SetBool::Request request_message;
-    request_message.data = true;
     return harness.invokeRpc(
       protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
-        makeServiceCallRequestPayload(
-          "/rpc_router/set_bool", "std_srvs/srv/SetBool", serializeMessage(request_message)),
+        makeSetBoolRequestPayload("/rpc_router/set_bool", true),
       });
   });
 
@@ -344,7 +394,6 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_TRUE(body["ok"].get<bool>());
   EXPECT_EQ(body["service"]["name"].get<std::string>(), "/rpc_router/set_bool");
   EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
-  EXPECT_TRUE(body.contains("response"));
 
   const auto response_payload = parseCdrPayload(body, "response");
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(response_payload);
@@ -352,22 +401,20 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_EQ(response_message.message, "enabled");
 }
 
-TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
+TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
 
   auto handler_future = std::async(std::launch::async, [&]() {
-    std_srvs::srv::SetBool::Request request_message;
-    request_message.data = true;
     return harness.invokeRpc(
       protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
-        makeServiceCallRequestPayload(
-          "/no_such_service", "std_srvs/srv/SetBool", serializeMessage(request_message), 200),
+        makeSetBoolRequestPayload("/no_such_service", true, 200),
       });
   });
 
@@ -376,26 +423,25 @@ TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
   expectRpcHandlerError([&]() { handler_future.get(); }, protocol::kRpcErrorInternal, "Service call timed out.");
 }
 
-TEST_F(RpcRouterTest, ServiceListRpcFiltersAllowedServicesOnRosExecutorThread)
+TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
 {
+  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"/rpc_router/allowed_service"}));
-  auto allowed_service = harness.node->create_service<std_srvs::srv::SetBool>(
+  [[maybe_unused]] const auto allowed_service = harness.node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/allowed_service",
     [](const std_srvs::srv::SetBool::Request::SharedPtr, std_srvs::srv::SetBool::Response::SharedPtr response) {
       response->success = true;
     });
-  auto blocked_service = harness.node->create_service<std_srvs::srv::SetBool>(
+  [[maybe_unused]] const auto blocked_service = harness.node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/blocked_service",
     [](const std_srvs::srv::SetBool::Request::SharedPtr, std_srvs::srv::SetBool::Response::SharedPtr response) {
       response->success = false;
     });
-  (void)allowed_service;
-  (void)blocked_service;
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
 
-  ASSERT_TRUE(spinUntil(executor, [&]() {
+  ASSERT_TRUE(test_support::spinUntil(executor, [&]() {
     const auto services = harness.node->get_service_names_and_types();
     return services.count("/rpc_router/allowed_service") > 0U && services.count("/rpc_router/blocked_service") > 0U;
   }));
@@ -419,22 +465,21 @@ TEST_F(RpcRouterTest, ServiceListRpcFiltersAllowedServicesOnRosExecutorThread)
   EXPECT_EQ(body["services"][0]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
 }
 
-TEST_F(RpcRouterTest, TopicListRpcFiltersAllowedTopicsOnRosExecutorThread)
+TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPolicyFiltering)
 {
-  RpcRouterHarness harness(makeSubscribePolicy({"/rpc_router/allowed_topic"}));
-  auto allowed_topic =
-    harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/allowed_topic", rclcpp::QoS(10));
-  auto blocked_topic =
-    harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/blocked_topic", rclcpp::QoS(10));
-  (void)allowed_topic;
-  (void)blocked_topic;
+  test_support::ScopedRclcppInit init;
+  RpcRouterHarness harness(makeSubscribePolicy({"/rpc_router/visible_topic"}));
+  [[maybe_unused]] const auto blocked_topic =
+    harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/a_blocked_topic", rclcpp::QoS(10));
+  [[maybe_unused]] const auto visible_topic =
+    harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/visible_topic", rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
 
-  ASSERT_TRUE(spinUntil(executor, [&]() {
+  ASSERT_TRUE(test_support::spinUntil(executor, [&]() {
     const auto topics = harness.node->get_topic_names_and_types();
-    return topics.count("/rpc_router/allowed_topic") > 0U && topics.count("/rpc_router/blocked_topic") > 0U;
+    return topics.count("/rpc_router/a_blocked_topic") > 0U && topics.count("/rpc_router/visible_topic") > 0U;
   }));
 
   auto handler_future = std::async(std::launch::async, [&]() {
@@ -442,7 +487,7 @@ TEST_F(RpcRouterTest, TopicListRpcFiltersAllowedTopicsOnRosExecutorThread)
       protocol::kRpcTopicsList,
       RpcInvocation{
         "participant-1",
-        R"({"query":"rpc_router"})",
+        R"({"query":"BatteryState","limit":1})",
       });
   });
 
@@ -452,7 +497,7 @@ TEST_F(RpcRouterTest, TopicListRpcFiltersAllowedTopicsOnRosExecutorThread)
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["topics"].size(), 1U);
-  EXPECT_EQ(body["topics"][0]["name"].get<std::string>(), "/rpc_router/allowed_topic");
+  EXPECT_EQ(body["topics"][0]["name"].get<std::string>(), "/rpc_router/visible_topic");
   EXPECT_EQ(body["topics"][0]["interface_type"].get<std::string>(), "sensor_msgs/msg/BatteryState");
 }
 

@@ -14,13 +14,21 @@
 
 #include "video_track_publisher.hpp"
 
+#include <exception>
 #include <utility>
 
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
+namespace
+{
+const auto kVideoTrackPublisherLogger = rclcpp::get_logger("video_track_publisher");
+}  // namespace
+
 VideoTrackPublisher::VideoTrackPublisher(
   RoomConnection & room_connection,
   VideoStreamSpec spec,
@@ -80,7 +88,16 @@ void VideoTrackPublisher::shutdown()
 
   if (published_track) {
     lifecycle_observer_.onVideoTrackUnpublishing();
-    room_connection_.unpublishVideoTrack(published_track);
+    try {
+      room_connection_.unpublishVideoTrack(published_track);
+    } catch (const std::exception & exc) {
+      LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
+        .field("track_name", spec_.track_name)
+        .field("error", exc.what())
+        .warn();
+    } catch (...) {
+      LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed").field("track_name", spec_.track_name).warn();
+    }
   }
 }
 

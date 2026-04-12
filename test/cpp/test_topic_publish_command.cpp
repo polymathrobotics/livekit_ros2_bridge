@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -61,96 +60,94 @@ TEST(TopicPublishCommandTest, ParsesValidCommandAndNormalizesFields)
   EXPECT_EQ(command.cdr_payload, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
 }
 
-TEST(TopicPublishCommandTest, RejectsInvalidJson)
+TEST(TopicPublishCommandTest, AcceptsRootTopicAfterNormalization)
 {
-  EXPECT_THROW(parseTopicPublishCommand(toBytes("{")), std::invalid_argument);
+  auto command_payload = makeValidPayload();
+  command_payload["topic"] = "  ////  ";
+
+  const auto command = parseCommand(command_payload);
+
+  EXPECT_EQ(command.topic, "/");
 }
 
-TEST(TopicPublishCommandTest, RejectsNonObject)
+TEST(TopicPublishCommandTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayload)
 {
+  const std::vector<std::uint8_t> payload = {0x00, 0x01, 0x7f, 0x80, 0xff};
+
+  auto command_payload = makeValidPayload();
+  command_payload["topic"] = "  battery/cmd  ";
+  command_payload["message"] = serializeCdrPayload(payload);
+
+  const auto command = parseCommand(command_payload);
+
+  EXPECT_EQ(command.topic, "/battery/cmd");
+  EXPECT_EQ(command.cdr_payload, payload);
+}
+
+TEST(TopicPublishCommandTest, RejectsInvalidJsonAndNonObjectRoot)
+{
+  EXPECT_THROW(parseTopicPublishCommand(toBytes("{")), std::invalid_argument);
   EXPECT_THROW(parseTopicPublishCommand(toBytes("[1,2,3]")), std::invalid_argument);
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingOrInvalidTopic)
+TEST(TopicPublishCommandTest, RejectsMissingBlankOrNonStringTopicField)
 {
-  const std::array<nlohmann::json, 3> payloads{
-    nlohmann::json{
-      {"interface_type", "std_msgs/msg/String"},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
+  auto command_payload = makeValidPayload();
+  command_payload.erase("topic");
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 
-    nlohmann::json{
-      {"topic", ""},
-      {"interface_type", "std_msgs/msg/String"},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
+  command_payload = makeValidPayload();
+  command_payload["topic"] = "   ";
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 
-    nlohmann::json{
-      {"topic", 123},
-      {"interface_type", "std_msgs/msg/String"},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
-  };
-
-  for (const auto & command_payload : payloads) {
-    EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
-  }
+  command_payload = makeValidPayload();
+  command_payload["topic"] = 123;
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingOrInvalidInterfaceType)
+TEST(TopicPublishCommandTest, RejectsMissingBlankOrNonStringInterfaceTypeField)
 {
-  const std::array<nlohmann::json, 3> payloads{
-    nlohmann::json{
-      {"topic", "/chatter"},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
+  auto command_payload = makeValidPayload();
+  command_payload.erase("interface_type");
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 
-    nlohmann::json{
-      {"topic", "/chatter"},
-      {"interface_type", ""},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
+  command_payload = makeValidPayload();
+  command_payload["interface_type"] = "   ";
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 
-    nlohmann::json{
-      {"topic", "/chatter"},
-      {"interface_type", false},
-      {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
-  };
-
-  for (const auto & command_payload : payloads) {
-    EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
-  }
+  command_payload = makeValidPayload();
+  command_payload["interface_type"] = false;
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingOrMalformedMessage)
+TEST(TopicPublishCommandTest, RejectsMissingOrNonObjectMessageField)
 {
-  const std::array<nlohmann::json, 2> payloads{
-    nlohmann::json{
-      {"topic", "/chatter"},
-      {"interface_type", "std_msgs/msg/String"},
-    },
+  auto command_payload = makeValidPayload();
+  command_payload.erase("message");
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 
-    nlohmann::json{
-      {"topic", "/chatter"},
-      {"interface_type", "std_msgs/msg/String"},
-      {"message", nlohmann::json::array({1, 2})},
-    },
+  command_payload = makeValidPayload();
+  command_payload["message"] = "not-an-object";
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
+}
+
+// TODO: Keep exhaustive CDR envelope structure/content-type/base64 cases in
+// test_payload_helpers.cpp; this file only needs a representative delegated
+// failure plus the command-specific non-empty payload rule.
+TEST(TopicPublishCommandTest, RejectsUnsupportedMessageContentType)
+{
+  auto command_payload = makeValidPayload();
+  command_payload["message"] = {
+    {"content_type", "application/json"},
+    {"payload_base64", "AQID"},
   };
-
-  for (const auto & command_payload : payloads) {
-    EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
-  }
+  EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 }
 
 TEST(TopicPublishCommandTest, RejectsEmptyMessagePayload)
 {
   auto command_payload = makeValidPayload();
-  command_payload["message"] = {
-    {"content_type", "application/x-ros-cdr"},
-    {"payload_base64", ""},
-  };
-
+  command_payload["message"] = serializeCdrPayload(std::vector<std::uint8_t>{});
   EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 }
 

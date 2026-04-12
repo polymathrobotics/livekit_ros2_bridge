@@ -74,8 +74,10 @@ public:
   {
     std::unique_lock<std::mutex> lock(mutex_);
     is_open_ = false;
+    is_draining_ = true;
     ++generation_;
     idle_.wait(lock, [this]() { return active_entries_ == 0U; });
+    is_draining_ = false;
     return generation_;
   }
 
@@ -83,7 +85,7 @@ public:
   void open(std::size_t generation)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (generation_ != generation) {
+    if (generation_ != generation || is_draining_) {
       return;
     }
 
@@ -94,6 +96,7 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable idle_;
   bool is_open_ = true;
+  bool is_draining_ = false;
   std::size_t active_entries_ = 0U;
   std::size_t generation_ = 0U;
 };

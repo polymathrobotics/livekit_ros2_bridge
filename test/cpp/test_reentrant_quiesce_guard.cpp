@@ -25,65 +25,89 @@ namespace livekit_ros2_bridge
 constexpr auto kQuiesceStillBlockedWindow = std::chrono::milliseconds(50);
 constexpr auto kQuiesceReadyTimeout = std::chrono::seconds(2);
 
-TEST(ReentrantQuiesceGateTest, TryEnterSucceedsWhileOpen)
+TEST(ReentrantQuiesceGateTest, EnterThrowsWhileGateIsBusy)
 {
   ReentrantQuiesceGate gate;
 
-  EXPECT_TRUE(gate.tryEnter());
-  gate.leave();
-}
-
-TEST(ReentrantQuiesceGateTest, CloseBlocksNewEntries)
-{
-  ReentrantQuiesceGate gate;
-
-  gate.close();
-
-  EXPECT_FALSE(gate.tryEnter());
-}
-
-TEST(ReentrantQuiesceGateTest, AwaitIdleBlocksUntilOtherThreadLeaves)
-{
-  ReentrantQuiesceGate gate;
-  gate.enter();
-
-  auto idle_future = std::async(std::launch::async, [&gate]() {
-    gate.awaitIdle();
-    return true;
-  });
-
-  EXPECT_EQ(idle_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
-
-  gate.leave();
-
-  EXPECT_EQ(idle_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
-  EXPECT_TRUE(idle_future.get());
-}
-
-TEST(ReentrantQuiesceGateTest, AwaitIdleReturnsImmediatelyForOwningThread)
-{
-  ReentrantQuiesceGate gate;
-  gate.enter();
-
-  const auto start = std::chrono::steady_clock::now();
-  gate.awaitIdle();
-  const auto elapsed = std::chrono::steady_clock::now() - start;
-
-  EXPECT_LT(elapsed, kQuiesceStillBlockedWindow);
-
-  gate.leave();
-}
-
-TEST(ReentrantQuiesceGateTest, EnterThrowsWhenSectionIsNotEnterable)
-{
-  ReentrantQuiesceGate gate;
-  gate.enter();
-
+  ASSERT_TRUE(gate.tryEnter());
   EXPECT_THROW(gate.enter(), std::logic_error);
 
   gate.leave();
+}
+
+TEST(ReentrantQuiesceGateTest, AwaitIdleIsReentrantForOwnerButBlocksOtherThreads)
+{
+  ReentrantQuiesceGate gate;
+  std::promise<void> owner_entered_promise;
+  auto owner_entered_future = owner_entered_promise.get_future();
+  std::promise<void> owner_await_idle_returned_promise;
+  auto owner_await_idle_returned_future = owner_await_idle_returned_promise.get_future();
+  std::promise<void> release_owner_promise;
+  auto release_owner_future = release_owner_promise.get_future();
+
+  auto owner_future = std::async(std::launch::async, [&]() {
+    gate.enter();
+    owner_entered_promise.set_value();
+
+    gate.awaitIdle();
+    owner_await_idle_returned_promise.set_value();
+
+    release_owner_future.wait();
+    gate.leave();
+  });
+
+  const auto owner_entered_status = owner_entered_future.wait_for(kQuiesceReadyTimeout);
+  EXPECT_EQ(owner_entered_status, std::future_status::ready);
+  if (owner_entered_status != std::future_status::ready) {
+    gate.leave();
+    release_owner_promise.set_value();
+    ASSERT_EQ(owner_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+    owner_future.get();
+    return;
+  }
+
+  auto other_thread_idle_future = std::async(std::launch::async, [&]() { gate.awaitIdle(); });
+
+  EXPECT_EQ(other_thread_idle_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+
+  const auto owner_await_idle_status = owner_await_idle_returned_future.wait_for(kQuiesceReadyTimeout);
+  if (owner_await_idle_status != std::future_status::ready) {
+    gate.leave();
+  }
+  EXPECT_EQ(owner_await_idle_status, std::future_status::ready);
+
+  release_owner_promise.set_value();
+
+  ASSERT_EQ(other_thread_idle_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  other_thread_idle_future.get();
+
+  ASSERT_EQ(owner_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  owner_future.get();
+}
+
+TEST(ReentrantQuiesceGateTest, CloseDuringActiveEntryWaitsForLeaveAndKeepsGateClosed)
+{
+  ReentrantQuiesceGate gate;
+  std::promise<void> other_thread_started_promise;
+  auto other_thread_started_future = other_thread_started_promise.get_future();
+
+  gate.enter();
   gate.close();
 
+  auto other_thread_idle_future = std::async(std::launch::async, [&]() {
+    other_thread_started_promise.set_value();
+    gate.awaitIdle();
+  });
+
+  ASSERT_EQ(other_thread_started_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  EXPECT_EQ(other_thread_idle_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+
+  gate.leave();
+
+  ASSERT_EQ(other_thread_idle_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  other_thread_idle_future.get();
+
+  EXPECT_FALSE(gate.tryEnter());
   EXPECT_THROW(gate.enter(), std::logic_error);
 }
 

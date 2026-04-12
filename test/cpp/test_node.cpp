@@ -12,42 +12,72 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdexcept>
+#include <string>
+
 #include "gtest/gtest.h"
 #include "livekit_ros2_bridge/node.hpp"
-#include "rclcpp/rclcpp.hpp"
+#include "ros_test_support.hpp"
 
 namespace livekit_ros2_bridge
 {
+namespace
+{
+
+rclcpp::NodeOptions makeConnectionOptions(
+  const char * url = "not-a-url", const char * room = "robot-room", const char * token = nullptr)
+{
+  rclcpp::NodeOptions options;
+  if (url != nullptr) {
+    options.append_parameter_override("livekit.url", url);
+  }
+  if (room != nullptr) {
+    options.append_parameter_override("livekit.room", room);
+  }
+  if (token != nullptr) {
+    options.append_parameter_override("livekit.token", token);
+  }
+  return options;
+}
+
+std::string captureNodeConstructionError(const rclcpp::NodeOptions & options)
+{
+  try {
+    (void)std::make_shared<Node>(options);
+    ADD_FAILURE() << "Expected Node construction to fail";
+  } catch (const std::exception & error) {
+    return error.what();
+  }
+
+  return {};
+}
+
+}  // namespace
 
 class NodeTest : public ::testing::Test
 {
 protected:
   static void SetUpTestSuite()
   {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  static void TearDownTestSuite()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
+    static test_support::ScopedRclcppInit init;
   }
 };
 
-TEST_F(NodeTest, ConstructsWithDefaultRoomConnection)
+TEST_F(NodeTest, ConstructsAndDestroysWithRequiredConnectionParameters)
 {
-  rclcpp::NodeOptions options;
-  options.append_parameter_override("livekit.url", "not-a-url");
-  options.append_parameter_override("livekit.room", "robot-room");
-  options.append_parameter_override("livekit.token", "test-token");
+  EXPECT_NO_THROW((void)std::make_shared<Node>(makeConnectionOptions("not-a-url", "robot-room", "test-token")));
+}
 
-  const auto node = std::make_shared<Node>(options);
-
-  ASSERT_NE(node, nullptr);
-  EXPECT_STREQ(node->get_name(), "livekit_ros2_bridge");
+// TODO(jon): Keep detailed per-parameter startup validation in test_runtime_config.cpp. Add a
+// RoomConnection injection seam here if Node needs direct coverage for runtime-initialization failures.
+TEST_F(NodeTest, InvalidStartupConfigurationFailsConstruction)
+{
+  const std::string missing_url_error =
+    captureNodeConstructionError(makeConnectionOptions(nullptr, "robot-room", "test-token"));
+  EXPECT_NE(missing_url_error.find("livekit.url"), std::string::npos) << missing_url_error;
+  EXPECT_TRUE(
+    missing_url_error.find("empty") != std::string::npos || missing_url_error.find("required") != std::string::npos)
+    << missing_url_error;
 }
 
 }  // namespace livekit_ros2_bridge

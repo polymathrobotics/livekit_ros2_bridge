@@ -97,37 +97,49 @@ struct RouterProbe final
   }
 };
 
-}  // namespace
-
-TEST(ControlPacketRouterTest, RoutesHeartbeatPayloads)
+RouterProbe routePacket(const IncomingControlPacket & packet)
 {
   RouterProbe probe;
   auto router = probe.makeRouter();
+  router.route(packet);
+  return probe;
+}
 
-  const auto heartbeat_packet = makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat);
-  router.route(heartbeat_packet);
-
-  ASSERT_TRUE(probe.heartbeat_call.has_value());
+void expectNoDispatch(const IncomingControlPacket & packet)
+{
+  const auto probe = routePacket(packet);
+  EXPECT_FALSE(probe.heartbeat_call.has_value());
   EXPECT_FALSE(probe.publish_call.has_value());
-  EXPECT_EQ(probe.heartbeat_call->requester_identity, "participant-1");
-  ASSERT_EQ(probe.heartbeat_call->heartbeat.subscriptions.size(), 1U);
+}
 
-  const auto & demand = probe.heartbeat_call->heartbeat.subscriptions[0];
-  EXPECT_EQ(demand.target.kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(demand.target.name, "/battery");
-  ASSERT_TRUE(demand.preferred_interval_ms.has_value());
-  EXPECT_EQ(*demand.preferred_interval_ms, 125);
+}  // namespace
 
-  ASSERT_TRUE(probe.heartbeat_call->heartbeat.session_id.has_value());
-  EXPECT_EQ(*probe.heartbeat_call->heartbeat.session_id, "session-1");
+TEST(ControlPacketRouterTest, RoutesHeartbeatPayloadsToTheHeartbeatCallback)
+{
+  const auto expect_heartbeat_route = [](std::string requester_identity) {
+    const auto probe =
+      routePacket(makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat, requester_identity));
+
+    ASSERT_TRUE(probe.heartbeat_call.has_value());
+    EXPECT_FALSE(probe.publish_call.has_value());
+    EXPECT_EQ(probe.heartbeat_call->requester_identity, requester_identity);
+    ASSERT_TRUE(probe.heartbeat_call->heartbeat.session_id.has_value());
+    EXPECT_EQ(*probe.heartbeat_call->heartbeat.session_id, "session-1");
+    ASSERT_EQ(probe.heartbeat_call->heartbeat.subscriptions.size(), 1U);
+    const auto & subscription = probe.heartbeat_call->heartbeat.subscriptions.front();
+    EXPECT_EQ(subscription.target.kind, SubscriptionTargetKind::Topic);
+    EXPECT_EQ(subscription.target.name, "/battery");
+    ASSERT_TRUE(subscription.preferred_interval_ms.has_value());
+    EXPECT_EQ(*subscription.preferred_interval_ms, 125);
+  };
+
+  expect_heartbeat_route("participant-1");
+  expect_heartbeat_route("");
 }
 
 TEST(ControlPacketRouterTest, RoutesPublishPayloads)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
-
-  router.route(makePacket(makePublishPayload(), protocol::kControlTopicPublish));
+  const auto probe = routePacket(makePacket(makePublishPayload(), protocol::kControlTopicPublish));
 
   EXPECT_FALSE(probe.heartbeat_call.has_value());
   ASSERT_TRUE(probe.publish_call.has_value());
@@ -137,68 +149,104 @@ TEST(ControlPacketRouterTest, RoutesPublishPayloads)
   EXPECT_EQ(probe.publish_call->command.cdr_payload, (std::vector<std::uint8_t>{0x01U, 0x02U}));
 }
 
-TEST(ControlPacketRouterTest, RoutesHeartbeatWithoutRequesterIdentity)
+TEST(ControlPacketRouterTest, ContainsHeartbeatCallbackExceptionsAndContinuesRouting)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
+  auto clock = makeTestClock();
+  int heartbeat_call_count = 0;
+  bool publish_called = false;
+  std::optional<SubscriptionHeartbeat> subsequent_heartbeat;
 
-  const auto anonymous_heartbeat_packet =
-    makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat, "");
-  router.route(anonymous_heartbeat_packet);
+  ControlPacketRouter router(
+    rclcpp::get_logger("control_packet_router_test"),
+    std::move(clock),
+    ControlPacketRouter::Callbacks{
+      [&](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
+        ++heartbeat_call_count;
+        if (heartbeat_call_count == 1) {
+          throw std::runtime_error("heartbeat callback failed");
+        }
+        EXPECT_EQ(requester_identity, "participant-1");
+        subsequent_heartbeat = std::move(heartbeat);
+      },
+      [&](std::string, TopicPublishCommand) { publish_called = true; },
+    });
 
-  ASSERT_TRUE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
-  EXPECT_EQ(probe.heartbeat_call->requester_identity, "");
-  ASSERT_TRUE(probe.heartbeat_call->heartbeat.session_id.has_value());
-  EXPECT_EQ(*probe.heartbeat_call->heartbeat.session_id, "session-1");
+  const auto packet = makePacket(makeHeartbeatPayload(), protocol::kControlSubscriptionsHeartbeat);
+  EXPECT_NO_THROW(router.route(packet));
+  EXPECT_NO_THROW(router.route(packet));
+
+  EXPECT_EQ(heartbeat_call_count, 2);
+  EXPECT_FALSE(publish_called);
+  ASSERT_TRUE(subsequent_heartbeat.has_value());
 }
 
-TEST(ControlPacketRouterTest, DoesNotRouteHeartbeatParseFailures)
+TEST(ControlPacketRouterTest, ContainsPublishCallbackExceptionsAndContinuesRouting)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
+  auto clock = makeTestClock();
+  int publish_call_count = 0;
+  bool heartbeat_called = false;
+  std::optional<TopicPublishCommand> subsequent_command;
 
-  router.route(makePacket("{", protocol::kControlSubscriptionsHeartbeat));
+  ControlPacketRouter router(
+    rclcpp::get_logger("control_packet_router_test"),
+    std::move(clock),
+    ControlPacketRouter::Callbacks{
+      [&](std::string, SubscriptionHeartbeat) { heartbeat_called = true; },
+      [&](std::string requester_identity, TopicPublishCommand command) {
+        ++publish_call_count;
+        if (publish_call_count == 1) {
+          throw std::runtime_error("publish callback failed");
+        }
+        EXPECT_EQ(requester_identity, "participant-1");
+        subsequent_command = std::move(command);
+      },
+    });
 
-  EXPECT_FALSE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
+  const auto packet = makePacket(makePublishPayload(), protocol::kControlTopicPublish);
+  EXPECT_NO_THROW(router.route(packet));
+  EXPECT_NO_THROW(router.route(packet));
+
+  EXPECT_EQ(publish_call_count, 2);
+  EXPECT_FALSE(heartbeat_called);
+  ASSERT_TRUE(subsequent_command.has_value());
 }
 
-TEST(ControlPacketRouterTest, DropsPublishWithoutRequesterIdentity)
+TEST(ControlPacketRouterTest, RejectsMalformedHeartbeatPayloadsWithoutDispatch)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
-
-  router.route(makePacket(makePublishPayload(), protocol::kControlTopicPublish, ""));
-
-  EXPECT_FALSE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
+  expectNoDispatch(makePacket("{", protocol::kControlSubscriptionsHeartbeat));
 }
 
-TEST(ControlPacketRouterTest, DoesNotRoutePublishParseFailures)
+TEST(ControlPacketRouterTest, RejectsStructurallyInvalidHeartbeatPayloadsWithoutDispatch)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
-
-  router.route(makePacket("{", protocol::kControlTopicPublish));
-
-  EXPECT_FALSE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
+  expectNoDispatch(makePacket(R"({})", protocol::kControlSubscriptionsHeartbeat));
 }
 
-TEST(ControlPacketRouterTest, IgnoresUnknownTopics)
+TEST(ControlPacketRouterTest, RejectsAnonymousPublishPacketsWithoutDispatch)
 {
-  RouterProbe probe;
-  auto router = probe.makeRouter();
-
-  router.route(IncomingControlPacket{{'x'}, "custom.topic", "participant-1"});
-
-  EXPECT_FALSE(probe.heartbeat_call.has_value());
-  EXPECT_FALSE(probe.publish_call.has_value());
+  expectNoDispatch(makePacket(makePublishPayload(), protocol::kControlTopicPublish, ""));
 }
 
-TEST(ControlPacketRouterTest, RequiresHeartbeatCallback)
+TEST(ControlPacketRouterTest, RejectsInvalidPublishPayloadsWithoutDispatch)
 {
+  expectNoDispatch(makePacket("{", protocol::kControlTopicPublish));
+}
+
+TEST(ControlPacketRouterTest, DropsUnsupportedControlTopicsWithoutDispatch)
+{
+  expectNoDispatch(IncomingControlPacket{{'x'}, "custom.topic", "participant-1"});
+}
+
+TEST(ControlPacketRouterTest, ValidatesConstructorDependencies)
+{
+  EXPECT_THROW(
+    ControlPacketRouter(
+      rclcpp::get_logger("control_packet_router_test"),
+      {},
+      ControlPacketRouter::Callbacks{
+        [](std::string, SubscriptionHeartbeat) {},
+        [](std::string, TopicPublishCommand) {},
+      }),
+    std::invalid_argument);
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),
@@ -208,10 +256,7 @@ TEST(ControlPacketRouterTest, RequiresHeartbeatCallback)
         [](std::string, TopicPublishCommand) {},
       }),
     std::invalid_argument);
-}
 
-TEST(ControlPacketRouterTest, RequiresPublishCallback)
-{
   EXPECT_THROW(
     ControlPacketRouter(
       rclcpp::get_logger("control_packet_router_test"),

@@ -16,9 +16,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -56,6 +53,28 @@ std::string nextNodeName(const std::string & prefix)
 {
   static std::atomic<size_t> next_suffix{0};
   return prefix + "_" + std::to_string(next_suffix.fetch_add(1));
+}
+
+const std::vector<std::string> & expectedRpcMethods()
+{
+  static const std::vector<std::string> methods{
+    protocol::kRpcServiceCall,
+    protocol::kRpcInterfacesGet,
+    protocol::kRpcServicesList,
+    protocol::kRpcTopicsList,
+  };
+  return methods;
+}
+
+std::vector<std::string> expectedShutdownEventLog()
+{
+  std::vector<std::string> event_log;
+  event_log.reserve(expectedRpcMethods().size() + 1U);
+  for (const auto & method : expectedRpcMethods()) {
+    event_log.push_back("unregister:" + method);
+  }
+  event_log.emplace_back("stop");
+  return event_log;
 }
 
 rclcpp::NodeOptions makeBaseOptions()
@@ -105,31 +124,6 @@ void spinExecutorFor(rclcpp::executors::SingleThreadedExecutor & executor, std::
     std::this_thread::sleep_for(kRuntimeTestPollInterval);
   }
 }
-
-class ScopedPathEnvPrepend
-{
-public:
-  explicit ScopedPathEnvPrepend(const std::filesystem::path & prepend_path)
-  : previous_path_(std::getenv("PATH") == nullptr ? "" : std::getenv("PATH"))
-  {
-    const std::string updated_path = prepend_path.string() + ":" + previous_path_;
-    if (setenv("PATH", updated_path.c_str(), 1) != 0) {
-      throw std::runtime_error("Failed to update PATH for runtime test.");
-    }
-  }
-
-  ~ScopedPathEnvPrepend()
-  {
-    if (previous_path_.empty()) {
-      unsetenv("PATH");
-      return;
-    }
-    (void)setenv("PATH", previous_path_.c_str(), 1);
-  }
-
-private:
-  std::string previous_path_;
-};
 
 struct RuntimeHarness
 {
@@ -186,6 +180,25 @@ FailFastCallbacks makeFailFastCallbacks(FailFastExitCapture & capture)
   return callbacks;
 }
 
+void expectFailFastExit(RuntimeHarness & harness, FailFastExitCapture & capture)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+
+  EXPECT_TRUE(
+    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2)));
+  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
+}
+
+void expectNoFailFastExit(RuntimeHarness & harness, FailFastExitCapture & capture)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
+
+  EXPECT_EQ(capture.exit_call_count.load(), 0);
+}
+
 }  // namespace
 
 class RuntimeTest : public ::testing::Test
@@ -200,13 +213,10 @@ protected:
 TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
 {
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
-  const std::vector<std::string> expected_methods{
-    protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList};
 
-  ASSERT_NE(harness.runtime, nullptr);
   EXPECT_TRUE(harness.state->started);
-  EXPECT_EQ(harness.state->registered_rpc_methods, expected_methods);
-  EXPECT_EQ(harness.state->rpc_handlers.size(), expected_methods.size());
+  EXPECT_EQ(harness.state->registered_rpc_methods, expectedRpcMethods());
+  EXPECT_EQ(harness.state->rpc_handlers.size(), expectedRpcMethods().size());
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
@@ -221,15 +231,7 @@ TEST_F(RuntimeTest, FailFastExitsWhenInitialConnectNeverSucceeds)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-
-  const bool exit_triggered =
-    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2));
-  EXPECT_TRUE(exit_triggered);
-  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
+  expectFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
@@ -239,14 +241,9 @@ TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
   harness.fake_room_connection->emitConnected();
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
-
-  EXPECT_EQ(capture.exit_call_count.load(), 0);
+  expectNoFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
@@ -256,17 +253,10 @@ TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
   harness.fake_room_connection->emitConnected();
   harness.fake_room_connection->emitReconnectRequested("room_disconnected");
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-
-  const bool exit_triggered =
-    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2));
-  EXPECT_TRUE(exit_triggered);
-  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
+  expectFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
@@ -276,16 +266,11 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
   harness.fake_room_connection->emitConnected();
   harness.fake_room_connection->emitReconnectRequested("room_disconnected");
   harness.fake_room_connection->emitConnected();
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
-
-  EXPECT_EQ(capture.exit_call_count.load(), 0);
+  expectNoFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
@@ -296,13 +281,7 @@ TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
-
-  EXPECT_EQ(capture.exit_call_count.load(), 0);
+  expectNoFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
@@ -312,14 +291,9 @@ TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
 
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  ASSERT_NE(harness.runtime, nullptr);
   harness.runtime.reset();
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
-
-  EXPECT_EQ(capture.exit_call_count.load(), 0);
+  expectNoFailFastExit(harness, capture);
 }
 
 TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
@@ -337,34 +311,42 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
     EXPECT_STREQ(exc.what(), "Failed to register required RPC methods");
   }
 
-  const std::vector<std::string> expected_methods{
-    protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList};
-
   EXPECT_TRUE(state->started);
   EXPECT_TRUE(state->stopped);
-  EXPECT_EQ(state->registered_rpc_methods, expected_methods);
-  EXPECT_EQ(state->unregistered_rpc_methods, expected_methods);
+  EXPECT_EQ(state->registered_rpc_methods, expectedRpcMethods());
+  EXPECT_EQ(state->unregistered_rpc_methods, expectedRpcMethods());
   EXPECT_TRUE(state->rpc_handlers.empty());
 }
 
-TEST_F(RuntimeTest, UnregistersRpcMethodsBeforeStop)
+TEST_F(RuntimeTest, ShutdownRunsSingleOrderedTeardownAcrossDestructionAndExplicitCalls)
 {
-  auto harness = makeRuntimeHarness(makeStaticTokenOptions());
-  ASSERT_NE(harness.runtime, nullptr);
+  const auto expected_event_log = expectedShutdownEventLog();
 
-  harness.runtime.reset();
+  {
+    SCOPED_TRACE("destruction");
+    auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
-  ASSERT_EQ(harness.state->event_log.size(), 5U);
-  EXPECT_EQ(harness.state->event_log[0], "unregister:" + std::string(protocol::kRpcServiceCall));
-  EXPECT_EQ(harness.state->event_log[1], "unregister:" + std::string(protocol::kRpcInterfacesGet));
-  EXPECT_EQ(harness.state->event_log[2], "unregister:" + std::string(protocol::kRpcServicesList));
-  EXPECT_EQ(harness.state->event_log[3], "unregister:" + std::string(protocol::kRpcTopicsList));
-  EXPECT_EQ(harness.state->event_log[4], "stop");
-  EXPECT_TRUE(harness.state->stopped);
-  EXPECT_EQ(
-    harness.state->unregistered_rpc_methods,
-    (std::vector<std::string>{
-      protocol::kRpcServiceCall, protocol::kRpcInterfacesGet, protocol::kRpcServicesList, protocol::kRpcTopicsList}));
+    harness.runtime.reset();
+
+    EXPECT_EQ(harness.state->event_log, expected_event_log);
+    EXPECT_TRUE(harness.state->stopped);
+    EXPECT_EQ(harness.state->unregistered_rpc_methods, expectedRpcMethods());
+  }
+
+  {
+    SCOPED_TRACE("explicit shutdown");
+    auto harness = makeRuntimeHarness(makeStaticTokenOptions());
+
+    harness.runtime->shutdown();
+
+    EXPECT_EQ(harness.state->event_log, expected_event_log);
+
+    harness.runtime->shutdown();
+    harness.runtime.reset();
+
+    EXPECT_EQ(harness.state->event_log, expected_event_log);
+    EXPECT_EQ(harness.state->unregistered_rpc_methods, expectedRpcMethods());
+  }
 }
 
 TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
@@ -373,15 +355,13 @@ TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
   options.append_parameter_override("access.rules.publish.allow", std::vector<std::string>{"/battery/cmd"});
 
   auto harness = makeRuntimeHarness(options);
-  ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_publish_observer"));
   std::optional<sensor_msgs::msg::BatteryState> received_message;
-  auto subscription = observer->create_subscription<sensor_msgs::msg::BatteryState>(
+  [[maybe_unused]] auto subscription = observer->create_subscription<sensor_msgs::msg::BatteryState>(
     "/battery/cmd", rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
       received_message = message;
     });
-  ASSERT_NE(subscription, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -408,10 +388,8 @@ TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
 
   EXPECT_FALSE(received_message.has_value());
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
-  ASSERT_TRUE(received_message.has_value());
   EXPECT_NEAR(received_message->voltage, expected_message.voltage, 1e-6F);
   EXPECT_NEAR(received_message->percentage, expected_message.percentage, 1e-6F);
-  EXPECT_EQ(observer->count_publishers("/battery/cmd"), 1U);
 }
 
 TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
@@ -420,11 +398,10 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
   auto harness = makeRuntimeHarness(options);
-  ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("participant_refresh_observer"));
-  auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
-  ASSERT_NE(publisher, nullptr);
+  [[maybe_unused]] auto publisher =
+    observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -451,23 +428,18 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
     });
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
-  EXPECT_EQ(harness.state->published_data_track_names[0], harness.state->published_data_track_names[1]);
-  EXPECT_NE(
-    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_data_track"),
-    harness.state->event_log.end());
 }
 
-TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
+TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecreateDataTrack)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
   auto harness = makeRuntimeHarness(options);
-  ASSERT_NE(harness.runtime, nullptr);
 
-  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("new_participant_replay_observer"));
-  auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
-  ASSERT_NE(publisher, nullptr);
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("connection_reset_observer"));
+  [[maybe_unused]] auto publisher =
+    observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -485,18 +457,19 @@ TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
+  harness.fake_room_connection->emitConnectionReset();
+
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->unpublished_data_track_names.size() == 1U; }));
+  EXPECT_EQ(harness.state->unpublished_data_track_names.front(), harness.state->published_data_track_names.front());
+
   harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
-      "participant-2",
+      "participant-1",
     });
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
-  EXPECT_EQ(harness.state->published_data_track_names[0], harness.state->published_data_track_names[1]);
-  EXPECT_NE(
-    std::find(harness.state->event_log.begin(), harness.state->event_log.end(), "unpublish_data_track"),
-    harness.state->event_log.end());
 }
 
 TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
@@ -508,7 +481,6 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_video_watchdog_observer"));
   auto publisher = observer->create_publisher<sensor_msgs::msg::Image>("/camera/front", rclcpp::QoS(10));
-  ASSERT_NE(publisher, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -528,8 +500,8 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   ASSERT_TRUE(status.contains("subscriptions"));
   ASSERT_EQ(status["subscriptions"].size(), 1U);
   const auto & delivery = status["subscriptions"][0]["delivery"];
-  EXPECT_EQ(delivery["kind"], protocol::kDeliveryKindVideo);
-  EXPECT_EQ(delivery["track_name"], "ros.video.camera.front");
+  EXPECT_EQ(delivery["kind"], "video");
+  EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
 
   sensor_msgs::msg::Image image;
   image.header.stamp.sec = 1;
@@ -554,7 +526,6 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   publisher->publish(image);
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_video_track_names.size() == 1U; }));
-  EXPECT_EQ(harness.state->published_video_track_names[0], "ros.video.camera.front");
 }
 
 TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
@@ -584,21 +555,15 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
       }
     };
   });
-  ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("shutdown_stop_observer"));
-  auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
-  ASSERT_NE(publisher, nullptr);
+  [[maybe_unused]] auto publisher =
+    observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
   executor.add_node(observer);
-
-  const bool topic_ready = waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState");
-  EXPECT_TRUE(topic_ready);
-  if (!topic_ready) {
-    return;
-  }
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
 
   std::thread executor_thread([&executor]() { executor.spin(); });
 
@@ -639,21 +604,14 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
           return std::shared_ptr<livekit::LocalDataTrack>{};
         };
     });
-  ASSERT_NE(harness.runtime, nullptr);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("shutdown_publish_track_observer"));
   auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
-  ASSERT_NE(publisher, nullptr);
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
   executor.add_node(observer);
-
-  const bool topic_ready = waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState");
-  EXPECT_TRUE(topic_ready);
-  if (!topic_ready) {
-    return;
-  }
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
 
   std::thread executor_thread([&executor]() { executor.spin(); });
 

@@ -19,7 +19,6 @@
 
 #include "gtest/gtest.h"
 #include "utils/interface_type_utils.hpp"
-#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -27,7 +26,21 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyType)
+std::string requireSingleInterfaceTypeError(
+  const std::map<std::string, std::vector<std::string>> & names, const std::string & name, const char * resource_kind)
+{
+  try {
+    static_cast<void>(requireSingleInterfaceType(names, name, resource_kind));
+    ADD_FAILURE() << "Expected std::invalid_argument";
+  } catch (const std::invalid_argument & error) {
+    return error.what();
+  } catch (const std::exception & error) {
+    ADD_FAILURE() << "Expected std::invalid_argument, got: " << error.what();
+  }
+  return {};
+}
+
+TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
 {
   std::map<std::string, std::vector<std::string>> names{
     {"/foo", {"bar/msg/Baz"}},
@@ -35,66 +48,28 @@ TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyType)
   EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
 }
 
-TEST(RequireSingleInterfaceTypeTest, ThrowsWhenNameNotFound)
+TEST(RequireSingleInterfaceTypeTest, RejectsMissingOrUnusableTypeSetsAsNoTypesFound)
 {
-  std::map<std::string, std::vector<std::string>> names;
-  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "topic"), std::invalid_argument);
+  const std::string expected_error = "No ROS types found for topic '/foo'.";
+
+  EXPECT_EQ(
+    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{}, "/foo", "topic"),
+    expected_error);
+  EXPECT_EQ(
+    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{{"/foo", {}}}, "/foo", "topic"),
+    expected_error);
+  // A graph entry with only empty strings is not a usable ROS interface type.
+  EXPECT_EQ(
+    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{{"/foo", {""}}}, "/foo", "topic"),
+    expected_error);
 }
 
-TEST(RequireSingleInterfaceTypeTest, ThrowsWhenMultipleTypes)
+TEST(RequireSingleInterfaceTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)
 {
-  std::map<std::string, std::vector<std::string>> names{
-    {"/foo", {"a/msg/A", "b/msg/B"}},
-  };
-  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "topic"), std::invalid_argument);
-}
-
-TEST(RequireSingleInterfaceTypeTest, ThrowsWhenTypesVectorEmpty)
-{
-  std::map<std::string, std::vector<std::string>> names{
-    {"/foo", {}},
-  };
-  EXPECT_THROW(requireSingleInterfaceType(names, "/foo", "service"), std::invalid_argument);
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, RawImageTypeIsVideo)
-{
-  const auto interface_classification = classifyRosVideoInterfaceType(kImageInterfaceType);
-  ASSERT_TRUE(interface_classification.has_value());
-  EXPECT_EQ(interface_classification->ingest_mode, kRawImageIngestMode);
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, CompressedImageTypeIsVideo)
-{
-  const auto interface_classification = classifyRosVideoInterfaceType(kCompressedImageInterfaceType);
-  ASSERT_TRUE(interface_classification.has_value());
-  EXPECT_EQ(interface_classification->ingest_mode, kCompressedImageIngestMode);
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, StringTypeIsNotVideo)
-{
-  EXPECT_FALSE(classifyRosVideoInterfaceType("std_msgs/msg/String").has_value());
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, EmptyStringIsNotVideo)
-{
-  EXPECT_FALSE(classifyRosVideoInterfaceType("").has_value());
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, PartialImageTypeIsNotVideo)
-{
-  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/Imag").has_value());
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, CaseVariantIsNotVideo)
-{
-  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/image").has_value());
-}
-
-TEST(ClassifyRosVideoInterfaceTypeTest, ExtraWhitespaceIsNotVideo)
-{
-  EXPECT_FALSE(classifyRosVideoInterfaceType(" sensor_msgs/msg/Image").has_value());
-  EXPECT_FALSE(classifyRosVideoInterfaceType("sensor_msgs/msg/Image ").has_value());
+  EXPECT_EQ(
+    requireSingleInterfaceTypeError(
+      std::map<std::string, std::vector<std::string>>{{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
+    "Multiple ROS types found for topic '/foo'.");
 }
 
 }  // namespace

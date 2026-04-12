@@ -13,7 +13,6 @@
 // limitations under the License.
 
 #include <chrono>
-#include <thread>
 
 #include "gtest/gtest.h"
 #include "utils/event_throttle.hpp"
@@ -22,27 +21,70 @@ namespace livekit_ros2_bridge
 {
 
 constexpr auto kThrottleInterval = std::chrono::milliseconds(20);
-constexpr auto kThrottleWindowResetWait = std::chrono::milliseconds(25);
 
-TEST(EventThrottleTest, FirstEventFiresImmediately)
+namespace
 {
-  EventThrottle throttle(kThrottleInterval);
 
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
+class ManualSteadyClock
+{
+public:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
+  TimePoint now() const
+  {
+    return now_;
+  }
+
+  void advance(std::chrono::steady_clock::duration delta)
+  {
+    now_ += delta;
+  }
+
+private:
+  TimePoint now_{};
+};
+
+}  // namespace
+
+TEST(EventThrottleTest, FlushesSuppressedEventsOnlyAfterIntervalBoundary)
+{
+  ManualSteadyClock clock;
+  EventThrottle throttle(kThrottleInterval, [&clock]() { return clock.now(); });
+
+  ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+  clock.advance(kThrottleInterval - std::chrono::milliseconds(1));
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+
+  clock.advance(std::chrono::milliseconds(1));
+  ASSERT_EQ(throttle.recordAndTakePendingCount(), 3U);
 }
 
-TEST(EventThrottleTest, AggregatesSuppressedEventsUntilIntervalPasses)
+TEST(EventThrottleTest, LateFlushRebasesThrottleWindowFromActualFireTime)
 {
-  EventThrottle throttle(kThrottleInterval);
+  ManualSteadyClock clock;
+  EventThrottle throttle(kThrottleInterval, [&clock]() { return clock.now(); });
 
+  ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
+
+  clock.advance(kThrottleInterval * 5);
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+
+  clock.advance(kThrottleInterval - std::chrono::milliseconds(1));
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
 
-  std::this_thread::sleep_for(kThrottleWindowResetWait);
-
+  clock.advance(std::chrono::milliseconds(1));
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 3U);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+}
+
+TEST(EventThrottleTest, ZeroIntervalFiresOnEveryCall)
+{
+  ManualSteadyClock clock;
+  EventThrottle throttle(std::chrono::milliseconds(0), [&clock]() { return clock.now(); });
+
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
 }
 
 }  // namespace livekit_ros2_bridge

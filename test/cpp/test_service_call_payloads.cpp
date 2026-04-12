@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <array>
 #include <stdexcept>
 #include <vector>
 
@@ -27,16 +26,39 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+template <typename Fn>
+void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
+{
+  try {
+    fn();
+    ADD_FAILURE() << "Expected std::invalid_argument";
+    return;
+  } catch (const std::invalid_argument & error) {
+    EXPECT_EQ(error.what(), std::string(expected_message));
+  }
+}
+
+void expectRequestError(const nlohmann::json & body, const char * expected_message)
+{
+  expectInvalidArgumentMessage([&body]() { (void)parseServiceCallRequest(body.dump()); }, expected_message);
+}
+
+nlohmann::json makeValidRequestBody()
+{
+  return nlohmann::json{
+    {"service", "/set_bool"},
+    {"interface_type", "std_srvs/srv/SetBool"},
+    {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
+    {"timeout_ms", 500},
+  };
+}
+
 TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 {
-  const auto request = parseServiceCallRequest(
-    nlohmann::json{
-      {"service", "  set_bool  "},
-      {"interface_type", "  std_srvs/srv/SetBool  "},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
-      {"timeout_ms", 500},
-    }
-      .dump());
+  auto body = makeValidRequestBody();
+  body["service"] = "  set_bool  ";
+  body["interface_type"] = "  std_srvs/srv/SetBool  ";
+  const auto request = parseServiceCallRequest(body.dump());
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
@@ -44,108 +66,70 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
   EXPECT_EQ(request.timeout_ms, 500);
 }
 
-TEST(ServiceCallPayloadsTest, ParsesRequestWithoutOptionalFields)
+TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndTimeoutVariants)
 {
-  const auto request = parseServiceCallRequest(
-    nlohmann::json{
-      {"service", "/trigger"},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }
-      .dump());
+  auto body = makeValidRequestBody();
+  body.erase("interface_type");
+  body.erase("timeout_ms");
+  const auto defaulted_request = parseServiceCallRequest(body.dump());
 
-  EXPECT_EQ(request.service, "/trigger");
-  EXPECT_TRUE(request.interface_type.empty());
-  EXPECT_EQ(request.request_payload, (std::vector<std::uint8_t>{0x01}));
-  EXPECT_EQ(request.timeout_ms, 0);
-}
+  EXPECT_TRUE(defaulted_request.interface_type.empty());
+  EXPECT_EQ(defaulted_request.timeout_ms, 0);
 
-TEST(ServiceCallPayloadsTest, RejectsEmptyRequestPayload)
-{
-  EXPECT_THROW(
-    parseServiceCallRequest(
-      nlohmann::json{
-        {"service", "/foo"},
-        {"request", {{"content_type", "application/x-ros-cdr"}, {"payload_base64", ""}}},
-      }
-        .dump()),
-    std::invalid_argument);
+  body = makeValidRequestBody();
+  body["interface_type"] = "   ";
+  body["timeout_ms"] = -1;
+  const auto explicit_request = parseServiceCallRequest(body.dump());
+
+  EXPECT_TRUE(explicit_request.interface_type.empty());
+  EXPECT_EQ(explicit_request.timeout_ms, -1);
 }
 
 TEST(ServiceCallPayloadsTest, RejectsInvalidJson)
 {
-  EXPECT_THROW(parseServiceCallRequest("{"), std::invalid_argument);
+  expectInvalidArgumentMessage([]() { (void)parseServiceCallRequest("{"); }, "Invalid JSON in service call request");
 }
 
-TEST(ServiceCallPayloadsTest, RejectsMissingOrBlankService)
+TEST(ServiceCallPayloadsTest, RejectsNonObjectRoot)
 {
-  const std::array<nlohmann::json, 3> payloads{
-    nlohmann::json{{"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})}},
-    nlohmann::json{
-      {"service", ""},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    },
-    nlohmann::json{
-      {"service", "   "},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }};
-
-  for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
-  }
+  expectInvalidArgumentMessage(
+    []() { (void)parseServiceCallRequest(R"([1,2,3])"); }, "Service call request must be a JSON object");
 }
 
-TEST(ServiceCallPayloadsTest, RejectsMissingOrMalformedRequest)
+TEST(ServiceCallPayloadsTest, RejectsMissingServiceAndEmptyRequestPayload)
 {
-  const std::array<nlohmann::json, 2> payloads{
-    nlohmann::json{{"service", "/foo"}},
-    nlohmann::json{{"service", "/foo"}, {"request", nlohmann::json::array({1, 2})}}};
+  auto body = makeValidRequestBody();
+  body.erase("service");
+  expectRequestError(body, "service is required");
 
-  for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
-  }
+  body = makeValidRequestBody();
+  body["service"] = "   ";
+  expectRequestError(body, "service is required");
+
+  // TODO: Keep request-envelope structure/content-type/base64 cases in test_payload_helpers.cpp;
+  // this file should only cover the service-call-specific non-empty request rule.
+  body = makeValidRequestBody();
+  body["request"] = serializeCdrPayload(std::vector<std::uint8_t>{});
+  expectRequestError(body, "request.payload_base64 must not be empty");
 }
 
 TEST(ServiceCallPayloadsTest, RejectsMistypedOptionalFields)
 {
-  const auto valid_request = serializeCdrPayload(std::vector<std::uint8_t>{0x01});
-  const std::array<nlohmann::json, 4> payloads{
-    nlohmann::json{
-      {"service", "/foo"},
-      {"interface_type", 123},
-      {"request", valid_request},
-    },
-    nlohmann::json{
-      {"service", "/foo"},
-      {"interface_type", nullptr},
-      {"request", valid_request},
-    },
+  expectRequestError(
     nlohmann::json{
       {"service", "/foo"},
       {"timeout_ms", "500"},
-      {"request", valid_request},
-    },
-    nlohmann::json{
-      {"service", "/foo"},
-      {"timeout_ms", 5.5},
-      {"request", valid_request},
-    }};
-
-  for (const auto & payload : payloads) {
-    EXPECT_THROW(parseServiceCallRequest(payload.dump()), std::invalid_argument);
-  }
-}
-
-TEST(ServiceCallPayloadsTest, IgnoresEmptyTypeString)
-{
-  const auto request = parseServiceCallRequest(
-    nlohmann::json{
-      {"service", "/foo"},
-      {"interface_type", ""},
       {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }
-      .dump());
+    },
+    "timeout_ms must be an integer");
 
-  EXPECT_TRUE(request.interface_type.empty());
+  expectRequestError(
+    nlohmann::json{
+      {"service", "/foo"},
+      {"interface_type", 123},
+      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
+    },
+    "interface_type must be a string");
 }
 
 TEST(ServiceCallPayloadsTest, SerializesResponse)

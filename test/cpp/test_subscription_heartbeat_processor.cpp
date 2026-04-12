@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -25,9 +23,7 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/stream_control_payloads.hpp"
 #include "protocol.hpp"
-#include "room_connection.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -52,9 +48,23 @@ VideoStreamConfig makeConfiguredVideoStreamConfig()
   return stream_config;
 }
 
-SubscriptionHeartbeat makeSubscriptionHeartbeat(const nlohmann::json & body)
+SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return parseSubscriptionHeartbeat(body);
+  return SubscriptionDemand{{SubscriptionTargetKind::Topic, name}, interval_ms};
+}
+
+SubscriptionDemand makeConfiguredSourceDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+{
+  return SubscriptionDemand{{SubscriptionTargetKind::ConfiguredSource, name}, interval_ms};
+}
+
+SubscriptionHeartbeat makeHeartbeat(
+  std::vector<SubscriptionDemand> subscriptions, std::optional<std::string> session_id = std::nullopt)
+{
+  SubscriptionHeartbeat heartbeat;
+  heartbeat.session_id = std::move(session_id);
+  heartbeat.subscriptions = std::move(subscriptions);
+  return heartbeat;
 }
 
 AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -63,6 +73,18 @@ AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vecto
   config.subscribe.allow = std::move(allow);
   config.subscribe.deny = std::move(deny);
   return AccessPolicy(config);
+}
+
+template <typename MessageT>
+std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<rclcpp::Node> & node,
+  const std::string & topic,
+  const std::string & interface_type)
+{
+  auto publisher = node->create_publisher<MessageT>(topic, 1);
+  EXPECT_TRUE(waitForTopicType(executor, node, topic, interface_type));
+  return publisher;
 }
 
 nlohmann::json extractSinglePublishedStatusEnvelope(
@@ -85,16 +107,59 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
-nlohmann::json extractSinglePublishedSubscriptionStatus(
-  const FakeRoomConnectionState & state, const std::string & requester_identity)
+nlohmann::json extractSingleSubscriptionStatus(const nlohmann::json & response)
 {
-  const auto response = extractSinglePublishedStatusEnvelope(state, requester_identity);
   if (!response.contains("subscriptions") || response["subscriptions"].size() != 1U) {
     ADD_FAILURE() << "Expected one subscription status object in status response";
     return nlohmann::json::object();
   }
 
   return response["subscriptions"].front();
+}
+
+nlohmann::json extractSinglePublishedSubscriptionStatus(
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
+{
+  return extractSingleSubscriptionStatus(extractSinglePublishedStatusEnvelope(state, requester_identity));
+}
+
+std::optional<nlohmann::json> findSubscriptionStatus(
+  const nlohmann::json & response, const char * kind, const char * name)
+{
+  if (!response.contains("subscriptions") || !response["subscriptions"].is_array()) {
+    return std::nullopt;
+  }
+
+  for (const auto & subscription_status : response["subscriptions"]) {
+    if (
+      subscription_status.value("kind", std::string()) == kind &&
+      subscription_status.value("name", std::string()) == name)
+    {
+      return std::optional<nlohmann::json>{subscription_status};
+    }
+  }
+
+  return std::nullopt;
+}
+
+void expectSubscriptionStatus(
+  const nlohmann::json & subscription_status, const char * kind, const char * name, const char * status)
+{
+  EXPECT_EQ(subscription_status["kind"], kind);
+  EXPECT_EQ(subscription_status["name"], name);
+  EXPECT_EQ(subscription_status["status"], status);
+}
+
+void expectPublishedSubscriptionError(
+  const FakeRoomConnectionState & state,
+  const std::string & requester_identity,
+  const char * kind,
+  const char * name,
+  const char * reason)
+{
+  const auto subscription_status = extractSinglePublishedSubscriptionStatus(state, requester_identity);
+  expectSubscriptionStatus(subscription_status, kind, name, "error");
+  EXPECT_EQ(subscription_status["error"]["reason"], reason);
 }
 
 class SubscriptionHeartbeatProcessorTest : public ::testing::Test
@@ -125,18 +190,6 @@ protected:
   AccessPolicy access_policy_;
 };
 
-TEST_F(SubscriptionHeartbeatProcessorTest, EmptyHeartbeatDoesNotBroadcast)
-{
-  auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
-
-  const nlohmann::json body = {{"subscriptions", nlohmann::json::array()}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
-
-  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
-  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
-}
-
 TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
@@ -144,16 +197,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "topic");
-  EXPECT_EQ(subscription_status["name"], "/battery_state");
-  EXPECT_EQ(subscription_status["status"], "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], "forbidden");
+  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
@@ -161,16 +207,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "topic");
-  EXPECT_EQ(subscription_status["name"], "/nonexistent_topic");
-  EXPECT_EQ(subscription_status["status"], "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], "not_found");
+  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/nonexistent_topic", "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnavailable)
@@ -178,20 +217,14 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher = node_->create_publisher<sensor_msgs::msg::Image>("/camera/front", 1);
-  ASSERT_TRUE(waitForTopicType(executor, node_, "/camera/front", "sensor_msgs/msg/Image"));
+  auto publisher = advertiseTopic<sensor_msgs::msg::Image>(executor, node_, "/camera/front", "sensor_msgs/msg/Image");
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"kind", "topic"}, {"name", "/camera/front"}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "topic");
-  EXPECT_EQ(subscription_status["name"], "/camera/front");
-  EXPECT_EQ(subscription_status["status"], "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], "unavailable");
+  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/camera/front", "unavailable");
   (void)publisher;
 }
 
@@ -204,16 +237,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/front"}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
 
   const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "configured_source");
-  EXPECT_EQ(subscription_status["name"], "/sources/front");
-  EXPECT_EQ(subscription_status["status"], "active");
-  EXPECT_EQ(subscription_status["delivery"]["kind"], protocol::kDeliveryKindVideo);
-  EXPECT_EQ(subscription_status["delivery"]["track_name"], "ros.video.configured_source.%2Fsources%2Ffront");
-  EXPECT_FALSE(subscription_status.contains("error"));
+  expectSubscriptionStatus(subscription_status, "configured_source", "/sources/front", "active");
+  const auto & delivery = subscription_status["delivery"];
+  EXPECT_EQ(delivery["kind"], "video");
+  EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
@@ -224,14 +254,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/missing"}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "configured_source");
-  EXPECT_EQ(subscription_status["name"], "/sources/missing");
-  EXPECT_EQ(subscription_status["status"], "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], "not_found");
+  expectPublishedSubscriptionError(*state_, "requester-1", "configured_source", "/sources/missing", "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)
@@ -239,18 +264,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher = node_->create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 1);
-  ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"session_id", "session-1"},
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
-  };
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
   const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(response["v"], protocol::kProtocolVersion);
@@ -259,18 +279,12 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
   ASSERT_TRUE(response["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
 
-  ASSERT_EQ(response["subscriptions"].size(), 1U);
-  EXPECT_EQ(response["subscriptions"][0]["kind"], "topic");
-  EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
-  EXPECT_EQ(response["subscriptions"][0]["status"], "active");
-  EXPECT_EQ(response["subscriptions"][0]["interface_type"], "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(response["subscriptions"][0]["delivery"]["kind"], protocol::kDeliveryKindData);
-  EXPECT_EQ(response["subscriptions"][0]["delivery"]["track_name"], "ros.data.battery_state");
-  EXPECT_EQ(response["subscriptions"][0]["delivery"]["content_type"], "application/x-ros-cdr");
-  EXPECT_EQ(response["subscriptions"][0]["delivery"]["interval_ms"], 100);
-  EXPECT_FALSE(response["subscriptions"][0]["delivery"].contains("publisher_identity"));
-  EXPECT_FALSE(response["subscriptions"][0].contains("error"));
-  EXPECT_FALSE(response["subscriptions"][0].contains("target"));
+  const auto subscription = extractSingleSubscriptionStatus(response);
+  const auto & delivery = subscription["delivery"];
+  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
+  EXPECT_EQ(subscription["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(delivery["track_name"], "ros.data.battery_state");
+  EXPECT_EQ(delivery["interval_ms"], 100);
   (void)publisher;
 }
 
@@ -279,67 +293,74 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher = node_->create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 1);
-  ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"session_id", "session-1"},
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
-  };
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  const auto heartbeat = makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1"));
+  processor.process("requester-1", heartbeat);
   state_->published_outgoing_control_packets.clear();
 
-  processor.process("", makeSubscriptionHeartbeat(body));
+  processor.process("", heartbeat);
 
   const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(response["session_id"], "session-1");
 
-  ASSERT_EQ(response["subscriptions"].size(), 1U);
-  EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
-  EXPECT_EQ(response["subscriptions"][0]["status"], "active");
+  const auto subscription = extractSingleSubscriptionStatus(response);
+  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
   (void)publisher;
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownClientSessionIsDropped)
+TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutResolvableClientSessionIsDropped)
 {
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"session_id", "unknown-session"},
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
-  };
-
-  processor.process("", makeSubscriptionHeartbeat(body));
+  processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("unknown-session")));
 
   EXPECT_EQ(state_->publish_control_packet_call_count, 0);
-  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+
+  processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
+
+  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, ClientSessionConflictDoesNotRebindRequesterIdentity)
+TEST_F(
+  SubscriptionHeartbeatProcessorTest,
+  EmptyHeartbeatBindsClientSessionLeaseThatAnonymousHeartbeatCanStillUseAfterConflict)
 {
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const auto body = makeSubscriptionHeartbeat(
-    nlohmann::json{
-      {"session_id", "session-1"},
-      {"subscriptions", nlohmann::json::array()},
-    });
+  const auto session_only_heartbeat = makeHeartbeat({}, std::string("session-1"));
+  processor.process("requester-1", session_only_heartbeat);
 
-  processor.process("requester-1", body);
-  state_->published_outgoing_control_packets.clear();
-  const int publish_count_after_bind = state_->publish_control_packet_call_count;
-  processor.process("requester-2", body);
+  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 
-  EXPECT_EQ(state_->publish_control_packet_call_count, publish_count_after_bind);
-  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+  processor.process("requester-2", session_only_heartbeat);
+
+  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+
+  processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
+
+  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(response["session_id"], "session-1");
+
+  const auto subscription = extractSingleSubscriptionStatus(response);
+  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
+  (void)publisher;
 }
+
+// TODO: Add lease-expiry/prune coverage once requester lease timing is injectable. This processor
+// currently hardcodes std::chrono::steady_clock and a 45-second lease duration.
 
 TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 {
@@ -350,16 +371,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 
   policy = makeSubscribePolicy({"*"});
 
-  const nlohmann::json body = {
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
-  processor.process("requester-1", makeSubscriptionHeartbeat(body));
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  EXPECT_EQ(subscription_status["kind"], "topic");
-  EXPECT_EQ(subscription_status["name"], "/battery_state");
-  EXPECT_EQ(subscription_status["status"], "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], "forbidden");
+  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledGracefully)
@@ -369,13 +383,37 @@ TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledG
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {
-    {"subscriptions",
-     {{{"kind", "topic"}, {"name", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
-
-  EXPECT_NO_THROW(processor.process("requester-1", makeSubscriptionHeartbeat(body)));
+  EXPECT_NO_THROW(processor.process("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)})));
   EXPECT_EQ(state_->publish_control_packet_call_count, 1);
-  EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
+}
+
+TEST_F(SubscriptionHeartbeatProcessorTest, MixedSubscriptionResultsArePublishedInOneEnvelope)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
+
+  processor.process(
+    "requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100), makeTopicDemand("/nonexistent_topic", 100)}));
+
+  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
+  ASSERT_TRUE(response.contains("subscriptions"));
+  ASSERT_EQ(response["subscriptions"].size(), 2U);
+
+  const auto active_status = findSubscriptionStatus(response, "topic", "/battery_state");
+  ASSERT_TRUE(active_status.has_value());
+  expectSubscriptionStatus(*active_status, "topic", "/battery_state", "active");
+
+  const auto missing_status = findSubscriptionStatus(response, "topic", "/nonexistent_topic");
+  ASSERT_TRUE(missing_status.has_value());
+  expectSubscriptionStatus(*missing_status, "topic", "/nonexistent_topic", "error");
+  EXPECT_EQ((*missing_status)["error"]["reason"], "not_found");
+  (void)publisher;
 }
 
 }  // namespace

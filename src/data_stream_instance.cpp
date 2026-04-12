@@ -206,11 +206,11 @@ void DataStreamInstance::initializeSubscription()
 
 void DataStreamInstance::handleSerializedMessage(const rclcpp::SerializedMessage & message)
 {
-  if (shouldSkipDueToInterval()) {
+  if (state_ != State::kPublished) {
     return;
   }
 
-  if (state_ != State::kPending && state_ != State::kPublished) {
+  if (shouldSkipDueToInterval()) {
     return;
   }
 

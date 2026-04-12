@@ -23,8 +23,8 @@
 
 #include "gtest/gtest.h"
 #include "rclcpp/executors/single_threaded_executor.hpp"
-#include "rclcpp/rclcpp.hpp"
 #include "ros_executor_queue.hpp"
+#include "ros_test_support.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -49,31 +49,16 @@ void expectFutureRuntimeError(FutureT & future, const char * expected_message)
   }
 }
 
-class RosExecutorQueueTest : public ::testing::Test
+std::shared_ptr<rclcpp::Node> makeNode(const std::string & prefix)
 {
-protected:
-  static void SetUpTestSuite()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
+  return std::make_shared<rclcpp::Node>(nextNodeName(prefix));
+}
 
-  static void TearDownTestSuite()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
+}  // namespace
 
-  static std::shared_ptr<rclcpp::Node> makeNode(const std::string & prefix)
-  {
-    return std::make_shared<rclcpp::Node>(nextNodeName(prefix));
-  }
-};
-
-TEST_F(RosExecutorQueueTest, ReturnsResultFromSubmittedWork)
+TEST(RosExecutorQueueTest, ReturnsResultFromSubmittedWork)
 {
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_test_node");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -85,11 +70,11 @@ TEST_F(RosExecutorQueueTest, ReturnsResultFromSubmittedWork)
 
   ASSERT_EQ(result, rclcpp::FutureReturnCode::SUCCESS);
   EXPECT_EQ(future.get(), 42);
-  ros_executor_queue.shutdown();
 }
 
-TEST_F(RosExecutorQueueTest, RejectsNewWorkAfterShutdown)
+TEST(RosExecutorQueueTest, RejectsNewWorkAfterShutdown)
 {
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_shutdown_test");
 
   RosExecutorQueue ros_executor_queue(*node);
@@ -100,35 +85,28 @@ TEST_F(RosExecutorQueueTest, RejectsNewWorkAfterShutdown)
   expectFutureRuntimeError(future, "ROS executor queue is shut down.");
 }
 
-TEST_F(RosExecutorQueueTest, PropagatesExceptionFromSubmittedWork)
+TEST(RosExecutorQueueTest, ContinuesDrainingQueuedWorkAfterTaskThrows)
 {
-  auto node = makeNode("ros_executor_queue_exception_test");
+  test_support::ScopedRclcppInit init;
+  auto node = makeNode("ros_executor_queue_failure_isolation_test");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
   RosExecutorQueue ros_executor_queue(*node);
-  auto future = ros_executor_queue.submit([]() -> int { throw std::runtime_error("task failed"); });
 
-  const auto result = executor.spin_until_future_complete(future, std::chrono::seconds(1));
+  auto failed_task = ros_executor_queue.submit([]() -> int { throw std::runtime_error("task failed"); });
+  auto trailing_task = ros_executor_queue.submit([]() { return 7; });
+
+  const auto result = executor.spin_until_future_complete(trailing_task, std::chrono::seconds(1));
 
   ASSERT_EQ(result, rclcpp::FutureReturnCode::SUCCESS);
-  expectFutureRuntimeError(future, "task failed");
-  ros_executor_queue.shutdown();
+  expectFutureRuntimeError(failed_task, "task failed");
+  EXPECT_EQ(trailing_task.get(), 7);
 }
 
-TEST_F(RosExecutorQueueTest, CancelsPendingWorkOnShutdown)
+TEST(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWorkAndRejectsQueuedOrLateWork)
 {
-  auto node = makeNode("ros_executor_queue_cancel_test");
-
-  RosExecutorQueue ros_executor_queue(*node);
-  auto future = ros_executor_queue.submit([]() { return 99; });
-  ros_executor_queue.shutdown();
-
-  expectFutureRuntimeError(future, "ROS executor queue is shut down.");
-}
-
-TEST_F(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWork)
-{
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_active_shutdown_test");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -139,6 +117,7 @@ TEST_F(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWork)
   std::promise<void> release_active_task_promise;
   auto release_active_task = release_active_task_promise.get_future().share();
   std::atomic<bool> queued_task_ran{false};
+  std::atomic<bool> late_task_ran{false};
 
   std::thread executor_thread([&executor]() { executor.spin(); });
 
@@ -158,22 +137,29 @@ TEST_F(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWork)
   });
 
   EXPECT_EQ(shutdown_finished.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+  ASSERT_EQ(queued_task.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  expectFutureRuntimeError(queued_task, "ROS executor queue is shut down.");
+  EXPECT_FALSE(queued_task_ran.load());
+
+  auto late_task = ros_executor_queue.submit([&late_task_ran]() { late_task_ran.store(true); });
+
+  expectFutureRuntimeError(late_task, "ROS executor queue is shut down.");
+  EXPECT_FALSE(late_task_ran.load());
 
   release_active_task_promise.set_value();
 
   ASSERT_EQ(active_task.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   EXPECT_NO_THROW(active_task.get());
-  expectFutureRuntimeError(queued_task, "ROS executor queue is shut down.");
-  EXPECT_FALSE(queued_task_ran.load());
-  EXPECT_EQ(shutdown_finished.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  ASSERT_EQ(shutdown_finished.wait_for(std::chrono::seconds(1)), std::future_status::ready);
 
   shutdown_thread.join();
   executor.cancel();
   executor_thread.join();
 }
 
-TEST_F(RosExecutorQueueTest, ShutdownFromActiveDrainWorkDoesNotDeadlock)
+TEST(RosExecutorQueueTest, ShutdownFromActiveDrainWorkDoesNotDeadlock)
 {
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_reentrant_shutdown_test");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -186,10 +172,9 @@ TEST_F(RosExecutorQueueTest, ShutdownFromActiveDrainWorkDoesNotDeadlock)
   auto active_task = ros_executor_queue.submit([&ros_executor_queue]() { ros_executor_queue.shutdown(); });
   auto queued_task = ros_executor_queue.submit([&queued_task_ran]() { queued_task_ran.store(true); });
 
-  EXPECT_EQ(active_task.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  ASSERT_EQ(active_task.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   EXPECT_NO_THROW(active_task.get());
 
-  EXPECT_EQ(queued_task.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   expectFutureRuntimeError(queued_task, "ROS executor queue is shut down.");
   EXPECT_FALSE(queued_task_ran.load());
 
@@ -197,8 +182,9 @@ TEST_F(RosExecutorQueueTest, ShutdownFromActiveDrainWorkDoesNotDeadlock)
   executor_thread.join();
 }
 
-TEST_F(RosExecutorQueueTest, ExecutesTasksInSubmissionOrder)
+TEST(RosExecutorQueueTest, ExecutesTasksInSubmissionOrder)
 {
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_fifo_test");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -215,12 +201,38 @@ TEST_F(RosExecutorQueueTest, ExecutesTasksInSubmissionOrder)
   ASSERT_EQ(result, rclcpp::FutureReturnCode::SUCCESS);
   EXPECT_NO_THROW(future.get());
   EXPECT_EQ(execution_order, (std::vector<int>{1, 2, 3}));
-
-  ros_executor_queue.shutdown();
 }
 
-TEST_F(RosExecutorQueueTest, WakesExecutorForWorkSubmittedWhileSpinning)
+TEST(RosExecutorQueueTest, ExecutesWorkSubmittedFromActiveDrainWork)
 {
+  test_support::ScopedRclcppInit init;
+  auto node = makeNode("ros_executor_queue_reentrant_submit_test");
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  std::vector<int> execution_order;
+  RosExecutorQueue ros_executor_queue(*node);
+  std::promise<void> nested_task_ran_promise;
+  auto nested_task_ran = nested_task_ran_promise.get_future();
+
+  auto outer_task = ros_executor_queue.submit([&]() {
+    execution_order.push_back(1);
+    ros_executor_queue.submit([&]() {
+      execution_order.push_back(2);
+      nested_task_ran_promise.set_value();
+    });
+  });
+
+  const auto result = executor.spin_until_future_complete(nested_task_ran, std::chrono::seconds(1));
+
+  ASSERT_EQ(result, rclcpp::FutureReturnCode::SUCCESS);
+  EXPECT_NO_THROW(outer_task.get());
+  EXPECT_EQ(execution_order, (std::vector<int>{1, 2}));
+}
+
+TEST(RosExecutorQueueTest, WakesExecutorForWorkSubmittedWhileSpinning)
+{
+  test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_async_submit_test");
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
@@ -246,7 +258,6 @@ TEST_F(RosExecutorQueueTest, WakesExecutorForWorkSubmittedWhileSpinning)
   auto task_future = ros_executor_queue.submit(
     [&executed_thread_promise]() { executed_thread_promise.set_value(std::this_thread::get_id()); });
 
-  const auto task_status = task_future.wait_for(std::chrono::seconds(1));
   const auto spin_status = spin_result_future.wait_for(std::chrono::seconds(2));
 
   if (spin_status != std::future_status::ready) {
@@ -254,14 +265,12 @@ TEST_F(RosExecutorQueueTest, WakesExecutorForWorkSubmittedWhileSpinning)
   }
   executor_thread.join();
 
-  ASSERT_EQ(task_status, std::future_status::ready);
-  EXPECT_NO_THROW(task_future.get());
   ASSERT_EQ(spin_status, std::future_status::ready);
   EXPECT_EQ(spin_result_future.get(), rclcpp::FutureReturnCode::SUCCESS);
+  EXPECT_NO_THROW(task_future.get());
   EXPECT_EQ(executed_thread_future.get(), executor_thread_id);
 
   ros_executor_queue.shutdown();
 }
 
-}  // namespace
 }  // namespace livekit_ros2_bridge

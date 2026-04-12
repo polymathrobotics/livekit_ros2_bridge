@@ -14,68 +14,76 @@
 
 #include <chrono>
 #include <string>
+#include <string_view>
 
 #include "gtest/gtest.h"
-#include "rclcpp/rclcpp.hpp"
+#include "ros_test_support.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-namespace
+TEST(LogEventTest, BuildsStructuredMessageWithFallbacksInFieldOrder)
 {
-
-class ScopedRclcppInit
-{
-public:
-  ScopedRclcppInit()
-  {
-    if (!rclcpp::ok()) {
-      rclcpp::init(0, nullptr);
-    }
-  }
-
-  ~ScopedRclcppInit()
-  {
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-  }
-};
-
-}  // namespace
-
-TEST(LogEventTest, BuildsStructuredMessageInFieldOrder)
-{
-  const std::string message = LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-                                .field("count", 3U)
-                                .field("success", true)
-                                .field("status", "ok")
-                                .str();
-
-  EXPECT_EQ(message, "event=sample_event count=3 success=true status=ok");
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .field("count", 3U)
+      .field("success", true)
+      .field("status", "ok")
+      .fieldOr("missing", std::string{}, "<unset>")
+      .fieldOr("present", std::string{"value"})
+      .str(),
+    "event=sample_event count=3 success=true status=ok missing=<unset> present=value");
 }
 
-TEST(LogEventTest, FieldOrUsesFallbackForEmptyStrings)
+TEST(LogEventTest, UsesDefaultFallbacksForNullAndEmptyFieldInputs)
 {
-  const std::string message = LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-                                .fieldOr("missing", std::string{}, "<unset>")
-                                .fieldOr("present", std::string("value"))
-                                .str();
+  const char * const null_value = nullptr;
+  const char * const empty_cstr = "";
 
-  EXPECT_EQ(message, "event=sample_event missing=<unset> present=value");
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .field("nullable", null_value)
+      .fieldOr("empty_string", std::string{})
+      .fieldOr("empty_view", std::string_view{})
+      .fieldOr("empty_cstr", empty_cstr)
+      .fieldOr("null_cstr", null_value)
+      .str(),
+    "event=sample_event nullable=<null> empty_string=<unknown> empty_view=<unknown> "
+    "empty_cstr=<unknown> null_cstr=<unknown>");
 }
 
-TEST(LogEventTest, WarnThrottleAcceptsZeroInterval)
+TEST(LogEventTest, UsesCustomFallbacksForStringViewAndCStringInputs)
 {
-  ScopedRclcppInit init;
+  const char * const null_value = nullptr;
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .fieldOr("empty_view", std::string_view{}, "<missing>")
+      .fieldOr("null_cstr", null_value, "<missing>")
+      .fieldOr("present_view", std::string_view{"ready"}, "<missing>")
+      .fieldOr("present_cstr", "ok", "<missing>")
+      .str(),
+    "event=sample_event empty_view=<missing> null_cstr=<missing> present_view=ready "
+    "present_cstr=ok");
+}
+
+TEST(LogEventTest, ClampWarnThrottleIntervalKeepsMillisecondsNonNegative)
+{
+  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(-5)), 0);
+  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(0)), 0);
+  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(999)), 0);
+  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(1000)), 1);
+  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(2500)), 2);
+}
+
+TEST(LogEventTest, WarnThrottleAcceptsAnIntervalThatClampsToZeroMilliseconds)
+{
+  test_support::ScopedRclcppInit init;
   rclcpp::Clock clock(RCL_SYSTEM_TIME);
 
-  LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-    .field("detail", "value")
-    .warnThrottle(clock, std::chrono::milliseconds(0));
-
-  SUCCEED();
+  EXPECT_NO_THROW(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").warnThrottle(clock, std::chrono::microseconds(999)));
 }
 
 }  // namespace livekit_ros2_bridge

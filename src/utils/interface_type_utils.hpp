@@ -33,10 +33,24 @@ inline std::string requireSingleInterfaceType(
   if (it == names_and_types.end() || it->second.empty()) {
     throw std::invalid_argument(std::string("No ROS types found for ") + resource_kind + " '" + name + "'.");
   }
-  if (it->second.size() > 1U) {
-    throw std::invalid_argument(std::string("Multiple ROS types found for ") + resource_kind + " '" + name + "'.");
+
+  std::string resolved_type;
+  for (const auto & type : it->second) {
+    if (type.empty()) {
+      continue;
+    }
+    if (resolved_type.empty()) {
+      resolved_type = type;
+      continue;
+    }
+    if (resolved_type != type) {
+      throw std::invalid_argument(std::string("Multiple ROS types found for ") + resource_kind + " '" + name + "'.");
+    }
   }
-  return it->second.front();
+  if (resolved_type.empty()) {
+    throw std::invalid_argument(std::string("No ROS types found for ") + resource_kind + " '" + name + "'.");
+  }
+  return resolved_type;
 }
 
 }  // namespace livekit_ros2_bridge

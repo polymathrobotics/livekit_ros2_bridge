@@ -29,6 +29,18 @@
 namespace livekit_ros2_bridge
 {
 
+namespace detail
+{
+
+template <typename Rep, typename Period>
+std::int64_t clampWarnThrottleIntervalMs(const std::chrono::duration<Rep, Period> & interval)
+{
+  const auto requested_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
+  return std::max<std::int64_t>(0, requested_interval_ms);
+}
+
+}  // namespace detail
+
 constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
 
 class LogEvent
@@ -105,8 +117,7 @@ public:
   void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
   {
     const std::string message = str();
-    const auto requested_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
-    const auto throttle_interval_ms = std::max<std::int64_t>(0, requested_interval_ms);
+    const auto throttle_interval_ms = detail::clampWarnThrottleIntervalMs(interval);
     RCLCPP_WARN_THROTTLE(logger_, clock, throttle_interval_ms, "%s", message.c_str());
   }
 

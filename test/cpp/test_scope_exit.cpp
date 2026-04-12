@@ -12,27 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdexcept>
+#include <vector>
+
 #include "gtest/gtest.h"
 #include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-TEST(ScopeExitTest, InvokesCallbackOnDestruction)
-{
-  bool called = false;
-
-  {
-    ScopeExit guard([&called]() { called = true; });
-    EXPECT_FALSE(called);
-  }
-
-  EXPECT_TRUE(called);
-}
-
-TEST(ScopeExitTest, RejectsEmptyCallback)
+TEST(ScopeExitTest, RejectsEmptyCallbackAtConstruction)
 {
   EXPECT_THROW({ ScopeExit guard(std::function<void()>{}); }, std::invalid_argument);
+}
+
+TEST(ScopeExitTest, InvokesCallbackDuringExceptionUnwinding)
+{
+  int call_count = 0;
+
+  try {
+    ScopeExit guard([&call_count]() { ++call_count; });
+    throw std::runtime_error("boom");
+  } catch (const std::runtime_error &) {}
+
+  EXPECT_EQ(call_count, 1);
+}
+
+TEST(ScopeExitTest, InvokesCallbacksOnNormalScopeExitInReverseConstructionOrder)
+{
+  std::vector<int> callback_order;
+
+  {
+    ScopeExit first_guard([&callback_order]() { callback_order.push_back(1); });
+    ScopeExit second_guard([&callback_order]() { callback_order.push_back(2); });
+  }
+
+  EXPECT_EQ((std::vector<int>{2, 1}), callback_order);
+}
+
+TEST(ScopeExitTest, TerminatesWhenCallbackThrowsDuringDestruction)
+{
+  EXPECT_DEATH({ ScopeExit guard([]() { throw std::runtime_error("callback boom"); }); }, "callback boom");
 }
 
 }  // namespace livekit_ros2_bridge

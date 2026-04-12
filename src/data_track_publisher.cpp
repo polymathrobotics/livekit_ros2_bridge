@@ -89,8 +89,9 @@ void DataTrackPublisher::tryPush(const std::uint8_t * data, std::size_t size)
 void DataTrackPublisher::publish(
   std::size_t generation, const PublishAcceptedFn & publish_accepted_fn, const PublishFailedFn & publish_failed_fn)
 {
+  std::shared_ptr<livekit::LocalDataTrack> track;
   try {
-    auto track = room_connection_.publishDataTrack(track_name_);
+    track = room_connection_.publishDataTrack(track_name_);
     // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
@@ -112,6 +113,7 @@ void DataTrackPublisher::publish(
       .info();
   } catch (const std::exception & exc) {
     publish_failed_fn();
+    unpublishTrackNoThrow(room_connection_, track_name_, track);
     LogEvent(kDataTrackPublisherLogger, "data_track_publish_error")
       .field("track_name", track_name_)
       .field("generation", generation)
@@ -119,6 +121,7 @@ void DataTrackPublisher::publish(
       .warn();
   } catch (...) {
     publish_failed_fn();
+    unpublishTrackNoThrow(room_connection_, track_name_, track);
     LogEvent(kDataTrackPublisherLogger, "data_track_publish_error")
       .field("track_name", track_name_)
       .field("generation", generation)

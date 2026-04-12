@@ -12,19 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
-#include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_registry.hpp"
@@ -56,21 +54,6 @@ sensor_msgs::msg::BatteryState makeBatteryState()
   return message;
 }
 
-template <typename MessageT>
-MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
-{
-  rclcpp::SerializedMessage serialized(payload.size());
-  serialized.reserve(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  std::copy(payload.begin(), payload.end(), rcl_msg.buffer);
-  rcl_msg.buffer_length = payload.size();
-
-  rclcpp::Serialization<MessageT> serialization;
-  MessageT message;
-  serialization.deserialize_message(&serialized, &message);
-  return message;
-}
-
 template <typename PublisherT, typename MessageT>
 bool publishUntil(
   rclcpp::executors::SingleThreadedExecutor & executor,
@@ -91,33 +74,34 @@ bool publishUntil(
   return predicate();
 }
 
-TEST(DataStreamInstanceTest, PublishesTrackAndPushesSerializedMessagesThroughOwnedPublisher)
+template <typename PublisherT, typename MessageT>
+bool publishUntilFrameCount(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<PublisherT> & publisher,
+  const MessageT & message,
+  const FakeRoomConnection & session,
+  std::size_t expected_count,
+  std::chrono::milliseconds timeout = std::chrono::seconds(2))
 {
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("data_stream_instance_delivery_test");
-  FakeRoomConnection session;
-  const std::string topic = "/battery/per_instance_delivery";
-  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10).best_effort());
+  return publishUntil(
+    executor,
+    publisher,
+    message,
+    [&]() { return session.state->pushed_data_track_frames.size() == expected_count; },
+    timeout);
+}
 
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
-
-  SubscriptionRegistry registry(*node, session, nullptr);
-
-  const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
-  EXPECT_EQ(response.track_name, "ros.data.battery.per_instance_delivery");
-  EXPECT_EQ(session.state->published_data_track_names[0], response.track_name);
-
-  const auto message = makeBatteryState();
-  ASSERT_TRUE(
-    publishUntil(executor, publisher, message, [&]() { return session.state->pushed_data_track_frames.size() == 1U; }));
-
-  ASSERT_EQ(session.state->pushed_data_track_frames.size(), 1U);
-  EXPECT_EQ(session.state->pushed_data_track_frames[0].track_name, response.track_name);
-  EXPECT_EQ(
-    deserializeMessage<sensor_msgs::msg::BatteryState>(session.state->pushed_data_track_frames[0].payload), message);
+template <typename PublisherT, typename MessageT>
+void publishAndDrain(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<PublisherT> & publisher,
+  const MessageT & message,
+  std::chrono::milliseconds settle_time)
+{
+  publisher->publish(message);
+  executor.spin_some();
+  std::this_thread::sleep_for(settle_time);
+  executor.spin_some();
 }
 
 TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
@@ -134,22 +118,18 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
 
   SubscriptionRegistry registry(*node, session, nullptr);
   registry.renewSubscription("alice", topic, 150, kFarFuture);
+  const auto message = makeBatteryState();
 
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeBatteryState(), [&]() { return session.state->pushed_data_track_frames.size() == 1U; }));
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 1U));
 
-  publisher->publish(makeBatteryState());
-  executor.spin_some();
-  std::this_thread::sleep_for(std::chrono::milliseconds(60));
-  executor.spin_some();
+  publishAndDrain(executor, publisher, message, std::chrono::milliseconds(60));
   EXPECT_EQ(session.state->pushed_data_track_frames.size(), 1U);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(160));
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeBatteryState(), [&]() { return session.state->pushed_data_track_frames.size() == 2U; }));
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 2U));
 }
 
-TEST(DataStreamInstanceTest, RepublishResetsSuppressionAndRequestsNewPublish)
+TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_stream_instance_republish_test");
@@ -162,22 +142,89 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionAndRequestsNewPublish)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   SubscriptionRegistry registry(*node, session, nullptr);
-  const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
-  ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
+  registry.renewSubscription("alice", topic, 1000, kFarFuture);
+  const auto message = makeBatteryState();
 
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeBatteryState(), [&]() { return session.state->pushed_data_track_frames.size() == 1U; }));
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 1U));
 
   registry.markRequesterForDataTrackRepublish("alice", registry.registryGeneration());
   registry.republishDataTracksForRequester("alice");
+  // TODO: Keep detailed republish bookkeeping coverage in test_subscription_registry.cpp;
+  // this test should stay focused on suppression timing.
 
-  ASSERT_EQ(session.state->unpublished_data_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublished_data_track_names[0], response.track_name);
-  ASSERT_EQ(session.state->published_data_track_names.size(), 2U);
-  EXPECT_EQ(session.state->published_data_track_names[0], session.state->published_data_track_names[1]);
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 2U, std::chrono::milliseconds(300)));
+}
 
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeBatteryState(), [&]() { return session.state->pushed_data_track_frames.size() == 2U; }));
+TEST(DataStreamInstanceTest, RecoversFromPublishFailureWithoutStartingSuppressionWindow)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("data_stream_instance_publish_failure_test");
+  FakeRoomConnection session;
+  const std::string topic = "/battery/per_instance_publish_failure";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  int publish_attempt_count = 0;
+  session.state->publish_data_track_handler =
+    [&publish_attempt_count](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    publish_attempt_count++;
+    if (publish_attempt_count == 1) {
+      throw std::runtime_error("simulated publish failure");
+    }
+
+    auto owner = std::make_shared<int>(publish_attempt_count);
+    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+  };
+
+  SubscriptionRegistry registry(*node, session, nullptr);
+  const auto failed_response = registry.renewSubscription("alice", topic, 500, kFarFuture);
+  const auto message = makeBatteryState();
+
+  EXPECT_TRUE(failed_response.track_name.empty());
+
+  publishAndDrain(executor, publisher, message, std::chrono::milliseconds(40));
+  EXPECT_TRUE(session.state->pushed_data_track_frames.empty());
+
+  const auto recovered_response = registry.renewSubscription("alice", topic, 500, kFarFuture);
+  EXPECT_FALSE(recovered_response.track_name.empty());
+
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 1U, std::chrono::milliseconds(120)));
+}
+
+TEST(DataStreamInstanceTest, PendingPublishDoesNotStartSuppressionWindow)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("data_stream_instance_pending_publish_interval_test");
+  FakeRoomConnection session;
+  const std::string topic = "/battery/per_instance_pending_publish";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  const auto message = makeBatteryState();
+  session.state->publish_data_track_handler =
+    [&executor, &publisher, &message](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    // Deliver one ROS message while the track is still pending so the next post-publish
+    // message proves whether the suppression window started too early.
+    publisher->publish(message);
+    executor.spin_some();
+
+    auto owner = std::make_shared<int>(1);
+    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+  };
+
+  SubscriptionRegistry registry(*node, session, nullptr);
+  const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
+
+  EXPECT_TRUE(session.state->pushed_data_track_frames.empty());
+
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 1U, std::chrono::milliseconds(300)));
+  EXPECT_EQ(session.state->pushed_data_track_frames[0].track_name, response.track_name);
 }
 
 TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscription)
@@ -194,22 +241,16 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
 
   SubscriptionRegistry registry(*node, session, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  ASSERT_EQ(session.state->published_data_track_names.size(), 1U);
-  EXPECT_EQ(session.state->published_data_track_names[0], response.track_name);
+  const auto message = makeBatteryState();
 
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeBatteryState(), [&]() { return session.state->pushed_data_track_frames.size() == 1U; }));
+  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, session, 1U));
 
   registry.shutdown();
 
   EXPECT_FALSE(registry.hasSubscription(topic));
-  ASSERT_EQ(session.state->unpublished_data_track_names.size(), 1U);
-  EXPECT_EQ(session.state->unpublished_data_track_names[0], response.track_name);
+  EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
 
-  publisher->publish(makeBatteryState());
-  executor.spin_some();
-  std::this_thread::sleep_for(std::chrono::milliseconds(60));
-  executor.spin_some();
+  publishAndDrain(executor, publisher, message, std::chrono::milliseconds(60));
   EXPECT_EQ(session.state->pushed_data_track_frames.size(), 1U);
 }
 

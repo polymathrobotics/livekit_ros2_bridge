@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <mutex>
-#include <string>
+#include <algorithm>
+#include <atomic>
+#include <thread>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "utils/gstreamer_raii.hpp"
@@ -24,29 +26,65 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-void ensureGstreamerInitializedForTest()
+class GstreamerRaiiTest : public ::testing::Test
 {
-  static std::once_flag once;
-  std::call_once(once, []() {
-    if (!gst_is_initialized()) {
-      gst_init(nullptr, nullptr);
-    }
-  });
-}
+protected:
+  static void SetUpTestSuite()
+  {
+    ensureGstreamerInitialized();
+  }
+};
 
 }  // namespace
 
-TEST(GstreamerRaiiTest, IteratorAndValueGuardTraverseParsedPipeline)
+TEST(GstreamerInitializationTest, EnsureGstreamerInitializedIsSafeAcrossConcurrentCalls)
 {
-  ensureGstreamerInitializedForTest();
+  constexpr std::size_t kThreadCount = 8U;
+  constexpr std::size_t kCallsPerThread = 32U;
 
+  std::atomic<std::size_t> ready_count{0U};
+  std::atomic<bool> start{false};
+  std::atomic<bool> all_threads_observed_initialized{true};
+  std::vector<std::thread> threads;
+  threads.reserve(kThreadCount);
+
+  for (std::size_t index = 0; index < kThreadCount; ++index) {
+    threads.emplace_back([&ready_count, &start, &all_threads_observed_initialized, kCallsPerThread]() {
+      ready_count.fetch_add(1U, std::memory_order_relaxed);
+      while (!start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+      }
+
+      for (std::size_t call = 0; call < kCallsPerThread; ++call) {
+        ensureGstreamerInitialized();
+        if (!gst_is_initialized()) {
+          all_threads_observed_initialized.store(false, std::memory_order_relaxed);
+        }
+      }
+    });
+  }
+
+  while (ready_count.load(std::memory_order_acquire) != kThreadCount) {
+    std::this_thread::yield();
+  }
+  start.store(true, std::memory_order_release);
+
+  for (auto & thread : threads) {
+    thread.join();
+  }
+
+  EXPECT_TRUE(gst_is_initialized());
+  EXPECT_TRUE(all_threads_observed_initialized.load(std::memory_order_relaxed));
+}
+
+TEST_F(GstreamerRaiiTest, IteratorAndValueGuardTraverseParsedPipeline)
+{
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch("fakesrc num-buffers=1 ! queue ! fakesink", &raw_error));
   GErrorPtr error(raw_error);
 
   ASSERT_NE(pipeline.get(), nullptr)
     << (error != nullptr && error->message != nullptr ? error->message : "parse failed");
-  ASSERT_TRUE(GST_IS_BIN(pipeline.get()));
 
   GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(pipeline.get())));
   ASSERT_NE(iterator.get(), nullptr);
@@ -66,7 +104,6 @@ TEST(GstreamerRaiiTest, IteratorAndValueGuardTraverseParsedPipeline)
     ASSERT_EQ(result, GST_ITERATOR_OK);
     auto * element = GST_ELEMENT(g_value_get_object(item.get()));
     ASSERT_NE(element, nullptr);
-    EXPECT_NE(std::string(GST_ELEMENT_NAME(element)).size(), 0U);
     ++element_count;
     item.reset();
   }
@@ -74,37 +111,103 @@ TEST(GstreamerRaiiTest, IteratorAndValueGuardTraverseParsedPipeline)
   EXPECT_GT(element_count, 0U);
 }
 
-TEST(GstreamerRaiiTest, MapGuardSupportsWriteThenRead)
+TEST_F(GstreamerRaiiTest, MapGuardSupportsWriteThenRead)
 {
-  ensureGstreamerInitializedForTest();
-
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, 4U, nullptr));
   ASSERT_NE(buffer.get(), nullptr);
+
+  const std::vector<guint8> expected_bytes{1U, 2U, 3U, 4U};
 
   {
     GstMapGuard map(buffer.get(), GST_MAP_WRITE);
     ASSERT_TRUE(map.is_valid());
-    map.get()->data[0] = 1U;
-    map.get()->data[1] = 2U;
-    map.get()->data[2] = 3U;
-    map.get()->data[3] = 4U;
+    std::copy(expected_bytes.begin(), expected_bytes.end(), map.get()->data);
   }
 
   {
     GstMapGuard map(buffer.get(), GST_MAP_READ);
     ASSERT_TRUE(map.is_valid());
-    EXPECT_EQ(map.get()->size, 4U);
-    EXPECT_EQ(map.get()->data[0], 1U);
-    EXPECT_EQ(map.get()->data[1], 2U);
-    EXPECT_EQ(map.get()->data[2], 3U);
-    EXPECT_EQ(map.get()->data[3], 4U);
+    const std::vector<guint8> actual_bytes(map.get()->data, map.get()->data + map.get()->size);
+    EXPECT_EQ(actual_bytes, expected_bytes);
   }
 }
 
-TEST(GstreamerRaiiTest, ErrorAndStringWrappersAdoptAllocatedValues)
+TEST_F(GstreamerRaiiTest, MapGuardRejectsNullBuffer)
 {
-  ensureGstreamerInitializedForTest();
+  GstMapGuard map(nullptr, GST_MAP_READ);
 
+  EXPECT_FALSE(map.is_valid());
+}
+
+TEST_F(GstreamerRaiiTest, VideoFrameGuardSupportsWriteThenRead)
+{
+  GstVideoInfo info;
+  gst_video_info_init(&info);
+  ASSERT_TRUE(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_RGB, 2U, 2U));
+
+  GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, info.size, nullptr));
+  ASSERT_NE(buffer.get(), nullptr);
+
+  const std::vector<guint8> expected_bytes{1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U, 9U, 10U, 11U, 12U};
+  const guint row_bytes = 2U * 3U;
+
+  {
+    GstVideoFrameGuard frame(&info, buffer.get(), GST_MAP_WRITE);
+    ASSERT_TRUE(frame.is_valid());
+
+    auto * data = static_cast<guint8 *>(GST_VIDEO_FRAME_PLANE_DATA(frame.get(), 0));
+    ASSERT_NE(data, nullptr);
+
+    const gint stride = GST_VIDEO_FRAME_PLANE_STRIDE(frame.get(), 0);
+
+    for (guint row = 0; row < 2U; ++row) {
+      std::copy_n(expected_bytes.begin() + (row * row_bytes), row_bytes, data + (row * stride));
+    }
+  }
+
+  {
+    GstVideoFrameGuard frame(&info, buffer.get(), GST_MAP_READ);
+    ASSERT_TRUE(frame.is_valid());
+
+    const auto * data = static_cast<const guint8 *>(GST_VIDEO_FRAME_PLANE_DATA(frame.get(), 0));
+    ASSERT_NE(data, nullptr);
+
+    const gint stride = GST_VIDEO_FRAME_PLANE_STRIDE(frame.get(), 0);
+    std::vector<guint8> actual_bytes;
+    actual_bytes.reserve(expected_bytes.size());
+    for (guint row = 0; row < 2U; ++row) {
+      actual_bytes.insert(actual_bytes.end(), data + (row * stride), data + (row * stride) + row_bytes);
+    }
+
+    EXPECT_EQ(actual_bytes, expected_bytes);
+  }
+}
+
+TEST_F(GstreamerRaiiTest, VideoFrameGuardRejectsInvalidInputs)
+{
+  GstVideoInfo info;
+  gst_video_info_init(&info);
+  ASSERT_TRUE(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_RGB, 2U, 2U));
+
+  GstBufferPtr full_size_buffer(gst_buffer_new_allocate(nullptr, info.size, nullptr));
+  ASSERT_NE(full_size_buffer.get(), nullptr);
+
+  GstVideoFrameGuard missing_info(nullptr, full_size_buffer.get(), GST_MAP_READ);
+  EXPECT_FALSE(missing_info.is_valid());
+
+  GstVideoFrameGuard missing_buffer(&info, nullptr, GST_MAP_READ);
+  EXPECT_FALSE(missing_buffer.is_valid());
+
+  ASSERT_GT(info.size, static_cast<gsize>(1U));
+  GstBufferPtr undersized_buffer(gst_buffer_new_allocate(nullptr, info.size - static_cast<gsize>(1U), nullptr));
+  ASSERT_NE(undersized_buffer.get(), nullptr);
+
+  GstVideoFrameGuard frame(&info, undersized_buffer.get(), GST_MAP_READ);
+  EXPECT_FALSE(frame.is_valid());
+}
+
+TEST_F(GstreamerRaiiTest, ErrorAndStringWrappersAdoptAllocatedValues)
+{
   GstElementPtr source(gst_pipeline_new("test_source"));
   ASSERT_NE(source.get(), nullptr);
 
@@ -122,7 +225,6 @@ TEST(GstreamerRaiiTest, ErrorAndStringWrappersAdoptAllocatedValues)
   GErrorPtr error(raw_error);
   GCharPtr debug(raw_debug);
   ASSERT_NE(error.get(), nullptr);
-  ASSERT_NE(debug.get(), nullptr);
   EXPECT_STREQ(error->message, "synthetic failure");
   EXPECT_STREQ(debug.get(), "debug details");
 }

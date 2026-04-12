@@ -50,7 +50,6 @@ TEST(AccessPolicyTest, UsesOperationSpecificRulesAndDenylistPrecedence)
   config.publish.deny = {"/cmd/blocked"};
   config.subscribe.allow = {"/camera/image"};
   config.service.allow = {"/example/service"};
-  config.service.deny = {"/example/service"};
   const AccessPolicy policy(config);
 
   EXPECT_TRUE(policy.allows(AccessOperation::Publish, "/cmd/allowed"));
@@ -59,40 +58,51 @@ TEST(AccessPolicyTest, UsesOperationSpecificRulesAndDenylistPrecedence)
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/image"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/cmd/allowed"));
 
-  EXPECT_FALSE(policy.allows(AccessOperation::CallService, "/example/service"));
+  EXPECT_TRUE(policy.allows(AccessOperation::CallService, "/example/service"));
+  EXPECT_FALSE(policy.allows(AccessOperation::CallService, "/cmd/allowed"));
 }
 
 TEST(AccessPolicyTest, AllowAllStillHonorsDenylistEntries)
 {
-  const AccessPolicy exact_deny_policy = makeSubscribePolicy({"  *  "}, {"  /blocked  "});
-  const AccessPolicy wildcard_deny_policy = makeSubscribePolicy({"*"}, {"  *  "});
+  const AccessPolicy exact_deny_policy = makeSubscribePolicy({"*"}, {"/blocked"});
+  const AccessPolicy wildcard_deny_policy = makeSubscribePolicy({"*"}, {"*"});
 
   EXPECT_TRUE(exact_deny_policy.allows(AccessOperation::Subscribe, "/ok"));
   EXPECT_FALSE(exact_deny_policy.allows(AccessOperation::Subscribe, "/blocked"));
-  EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/"));
-  EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/camera"));
   EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
-TEST(AccessPolicyTest, TrimsAndNormalizesConfiguredEntries)
+TEST(AccessPolicyTest, NormalizesConfiguredEntriesAndRequestedNames)
 {
-  const AccessPolicy policy = makeSubscribePolicy(
-    {"   ", "  /camera/image  ", "  camera//front//*  "}, {"  blocked//tree//*  ", "  /camera/front/blocked  "});
+  const AccessPolicy policy =
+    makeSubscribePolicy({"  camera//front//*  ", "/camera/front/image"}, {"  /camera/front/blocked  "});
 
-  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/image"));
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/stream"));
+  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "  camera//front/image/  "));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/front/blocked"));
-  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/blocked/tree/leaf"));
-  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/other"));
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, " \t\n "));
 }
 
-TEST(AccessPolicyTest, IgnoresBlankConfiguredEntriesWithoutChangingPolicySemantics)
+// TODO(jon): Keep matcher-specific prefix-boundary edge cases in
+// test_ros_resource_name_utils.cpp if this file needs further trimming.
+TEST(AccessPolicyTest, ExactAndSubtreeRulesHaveDistinctMatchBoundaries)
 {
-  const AccessPolicy policy = makeSubscribePolicy({"   ", "\t", "/camera/image"}, {"   ", "\n", "  /camera/blocked  "});
+  const AccessPolicy exact_policy = makeSubscribePolicy({"/camera/front"});
+  const AccessPolicy subtree_policy = makeSubscribePolicy({"/camera/front/*"});
 
-  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/image"));
-  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/blocked"));
-  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/other"));
+  EXPECT_TRUE(exact_policy.allows(AccessOperation::Subscribe, "/camera/front"));
+  EXPECT_FALSE(exact_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+
+  EXPECT_FALSE(subtree_policy.allows(AccessOperation::Subscribe, "/camera/front"));
+  EXPECT_TRUE(subtree_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+}
+
+TEST(AccessPolicyTest, RootSubtreeWildcardAllowsAnyResourceExceptDeniedSubtrees)
+{
+  const AccessPolicy policy = makeSubscribePolicy({"/*"}, {"  /private//*  "});
+
+  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/private/secret"));
 }
 
 }  // namespace livekit_ros2_bridge

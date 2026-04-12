@@ -18,8 +18,10 @@
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "access_policy.hpp"
 #include "rclcpp/generic_publisher.hpp"
@@ -55,6 +57,7 @@ private:
   // Test-only hook that runs after publisher resolution/creation and
   // immediately before the underlying ROS publisher publishes the message.
   void setBeforePublishHookForTest(std::function<void()> hook);
+  void setTopicNamesAndTypesProviderForTest(std::function<std::map<std::string, std::vector<std::string>>()> provider);
 
   struct CachedPublisher
   {
@@ -72,6 +75,7 @@ private:
   std::atomic<bool> is_shutdown_{false};
   LruCache<std::string, CachedPublisher> cached_publishers_;
   std::function<void()> before_publish_hook_for_test_;
+  std::function<std::map<std::string, std::vector<std::string>>()> topic_names_and_types_provider_for_test_;
   EventThrottle evicted_publisher_warning_throttle_{kEvictedPublisherWarningThrottlePeriod};
 };
 

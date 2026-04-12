@@ -123,6 +123,11 @@ std::string getPackageShareDirectoryCompat(const std::string & package)
 #endif
 }
 
+bool isSupportedInterfaceKind(const std::string & kind) noexcept
+{
+  return kind == "msg" || kind == "srv" || kind == "action";
+}
+
 std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
 {
   // Expected: "package/kind/Name" where kind is msg, srv, or action
@@ -140,6 +145,12 @@ std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
   const std::string name = interface_type.substr(second_slash + 1);
   if (package.empty() || kind.empty() || name.empty()) {
     throwInvalidInterfaceType(interface_type, "empty component");
+  }
+  if (name.find('/') != std::string::npos) {
+    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+  }
+  if (!isSupportedInterfaceKind(kind)) {
+    throwInvalidInterfaceType(interface_type, "kind must be msg, srv, or action");
   }
 
   std::string share_dir;
@@ -201,10 +212,20 @@ std::string qualifyTypeReference(const std::string & type_ref, const std::string
   return package + "/" + context_subfolder + "/" + name;
 }
 
+std::string qualifyTypeReference(
+  const std::string & type_ref, const std::string & context_package, const std::string & context_subfolder)
+{
+  const auto first_slash = type_ref.find('/');
+  if (first_slash == std::string::npos) {
+    return context_package + "/" + context_subfolder + "/" + type_ref;
+  }
+  return qualifyTypeReference(type_ref, context_subfolder);
+}
+
 /// Scan a .msg or .srv file for complex type references and return their fully-qualified names.
 /// Field types are always messages, so short-form references like "std_msgs/Header" are
 /// qualified as "std_msgs/msg/Header" regardless of whether the containing file is msg or srv.
-std::vector<std::string> extractTypeReferences(const std::string & definition)
+std::vector<std::string> extractTypeReferences(const std::string & definition, const std::string & context_package)
 {
   std::vector<std::string> refs;
   std::istringstream stream(definition);
@@ -242,12 +263,7 @@ std::vector<std::string> extractTypeReferences(const std::string & definition)
       continue;
     }
 
-    // Must contain a '/' to be a package-qualified type reference
-    if (base_type.find('/') == std::string::npos) {
-      continue;
-    }
-
-    refs.push_back(qualifyTypeReference(base_type, "msg"));
+    refs.push_back(qualifyTypeReference(base_type, context_package, "msg"));
   }
 
   return refs;
@@ -264,12 +280,13 @@ void collectDependencies(
   visited.insert(interface_type);
 
   const std::string definition = loadInterfaceDefinition(interface_type);
+  const std::string context_package = interface_type.substr(0, interface_type.find('/'));
 
   // Record each definition before recursing so callers can keep the requested type first and the
   // remaining entries in the same first-discovery order used for dependency traversal.
   definition_entries.push_back({interface_type, kDefinitionFormatRos2Msg, definition});
 
-  for (const auto & ref : extractTypeReferences(definition)) {
+  for (const auto & ref : extractTypeReferences(definition, context_package)) {
     collectDependencies(ref, visited, definition_entries);
   }
 }

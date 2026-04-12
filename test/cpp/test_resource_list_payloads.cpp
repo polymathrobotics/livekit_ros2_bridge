@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <optional>
 #include <stdexcept>
 
 #include "gtest/gtest.h"
@@ -23,75 +24,67 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-
-using SerializeListResponseFn = std::string (*)(const std::vector<ResourceListEntry> & entries);
-
-void expectSerializedListResponse(
-  SerializeListResponseFn serialize, const char * key, const std::vector<ResourceListEntry> & entries)
+TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
-  nlohmann::json expected_entries = nlohmann::json::array();
-  for (const auto & entry : entries) {
-    expected_entries.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
-  }
+  const auto request = parseResourceListRequest(R"({
+    "extra":"ignored",
+    "query":"   ",
+    "limit":null
+  })");
 
-  const nlohmann::json expected_body = {{key, expected_entries}};
-  EXPECT_EQ(nlohmann::json::parse(serialize(entries)), expected_body);
+  EXPECT_EQ(request.query, std::nullopt);
+  EXPECT_EQ(request.limit, std::nullopt);
+
+  const auto null_query_request = parseResourceListRequest(R"({"query":null})");
+
+  EXPECT_EQ(null_query_request.query, std::nullopt);
+  EXPECT_EQ(null_query_request.limit, std::nullopt);
 }
 
-TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndNullOptionals)
-{
-  const auto request = parseResourceListRequest(R"({"query":null,"limit":null,"extra":"ignored"})");
-
-  EXPECT_FALSE(request.query.has_value());
-  EXPECT_FALSE(request.limit.has_value());
-}
-
-TEST(ResourceListPayloadsTest, ParsesQueryAndLimit)
+TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
 {
   const auto request = parseResourceListRequest(R"({"query":" /cortex/modify ","limit":25})");
 
-  ASSERT_TRUE(request.query.has_value());
-  EXPECT_EQ(*request.query, "/cortex/modify");
-  ASSERT_TRUE(request.limit.has_value());
-  EXPECT_EQ(*request.limit, 25u);
+  EXPECT_EQ(request.query, std::optional<std::string>("/cortex/modify"));
+  EXPECT_EQ(request.limit, std::optional<std::size_t>(25u));
 }
 
-TEST(ResourceListPayloadsTest, RejectsInvalidJson)
-{
-  EXPECT_THROW(parseResourceListRequest("{"), std::invalid_argument);
-}
-
-TEST(ResourceListPayloadsTest, RejectsNonObject)
-{
-  EXPECT_THROW(parseResourceListRequest("[1,2]"), std::invalid_argument);
-}
-
-TEST(ResourceListPayloadsTest, RejectsInvalidQueryType)
+TEST(ResourceListPayloadsTest, RejectsInvalidQueryAndLimitFields)
 {
   EXPECT_THROW(parseResourceListRequest(R"({"query":123})"), std::invalid_argument);
+  EXPECT_THROW(parseResourceListRequest(R"({"limit":-1})"), std::invalid_argument);
+  EXPECT_THROW(parseResourceListRequest(R"({"limit":0})"), std::invalid_argument);
+  EXPECT_THROW(parseResourceListRequest(R"({"limit":1.5})"), std::invalid_argument);
 }
 
-TEST(ResourceListPayloadsTest, RejectsNonPositiveOrNonIntegralLimit)
+TEST(ResourceListPayloadsTest, RejectsMalformedJsonAndNonObjectPayloads)
 {
-  EXPECT_THROW(parseResourceListRequest(R"({"limit":0})"), std::invalid_argument);
-  EXPECT_THROW(parseResourceListRequest(R"({"limit":-1})"), std::invalid_argument);
-  EXPECT_THROW(parseResourceListRequest(R"({"limit":1.5})"), std::invalid_argument);
+  EXPECT_THROW(parseResourceListRequest("{"), std::invalid_argument);
+  EXPECT_THROW(parseResourceListRequest(R"([])"), std::invalid_argument);
 }
 
 TEST(ResourceListPayloadsTest, SerializesServiceList)
 {
-  expectSerializedListResponse(
-    serializeServiceListResponse,
-    "services",
-    {
-      {"/set_bool", "std_srvs/srv/SetBool"},
-      {"/trigger", "std_srvs/srv/Trigger"},
-    });
+  const auto body = nlohmann::json::parse(serializeServiceListResponse({
+    {"/set_bool", "std_srvs/srv/SetBool"},
+    {"/trigger", "std_srvs/srv/Trigger"},
+  }));
+
+  EXPECT_EQ(
+    body,
+    nlohmann::json({
+      {"services",
+       nlohmann::json::array({
+         {{"name", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}},
+         {{"name", "/trigger"}, {"interface_type", "std_srvs/srv/Trigger"}},
+       })},
+    }));
 }
 
 TEST(ResourceListPayloadsTest, SerializesEmptyTopicList)
 {
-  expectSerializedListResponse(serializeTopicListResponse, "topics", {});
+  EXPECT_EQ(
+    nlohmann::json::parse(serializeTopicListResponse({})), nlohmann::json({{"topics", nlohmann::json::array()}}));
 }
 
 }  // namespace

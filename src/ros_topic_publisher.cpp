@@ -134,7 +134,9 @@ std::string RosTopicPublisher::resolveTopicTypeOrThrow(
     // commands stay consistent even if graph introspection lags that creation.
     expected_type = cached_publisher->interface_type;
   } else {
-    expected_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), topic, "topic");
+    const auto names_and_types = topic_names_and_types_provider_for_test_ ? topic_names_and_types_provider_for_test_()
+                                                                          : node_.get_topic_names_and_types();
+    expected_type = requireSingleInterfaceType(names_and_types, topic, "topic");
   }
 
   if (expected_type != requested_interface_type) {
@@ -160,7 +162,13 @@ void RosTopicPublisher::publishWithResolvedPublisher(
   if (before_publish_hook_for_test_) {
     before_publish_hook_for_test_();
   }
+  if (is_shutdown_.load()) {
+    return;
+  }
   resolved_publisher->publish(serialized);
+  if (is_shutdown_.load()) {
+    return;
+  }
 
   // Refresh recency only after a successful publish so failed attempts do not
   // change bounded-cache residency.
@@ -192,6 +200,12 @@ void RosTopicPublisher::publishWithResolvedPublisher(
 void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
 {
   before_publish_hook_for_test_ = std::move(hook);
+}
+
+void RosTopicPublisher::setTopicNamesAndTypesProviderForTest(
+  std::function<std::map<std::string, std::vector<std::string>>()> provider)
+{
+  topic_names_and_types_provider_for_test_ = std::move(provider);
 }
 
 }  // namespace livekit_ros2_bridge

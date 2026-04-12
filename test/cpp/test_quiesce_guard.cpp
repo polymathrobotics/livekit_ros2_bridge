@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <future>
+#include <thread>
 
 #include "gtest/gtest.h"
 #include "utils/quiesce_gate.hpp"
@@ -21,24 +22,76 @@
 namespace livekit_ros2_bridge
 {
 
-TEST(QuiesceGateTest, InitialGenerationIsZero)
-{
-  QuiesceGate gate;
+constexpr auto kQuiesceStillBlockedWindow = std::chrono::milliseconds(50);
+constexpr auto kQuiesceReadyTimeout = std::chrono::seconds(2);
 
-  EXPECT_EQ(gate.currentGeneration(), 0U);
+namespace
+{
+
+bool waitForGeneration(QuiesceGate & gate, std::size_t expected_generation)
+{
+  const auto deadline = std::chrono::steady_clock::now() + kQuiesceReadyTimeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (gate.currentGeneration() == expected_generation) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  return gate.currentGeneration() == expected_generation;
 }
 
-TEST(QuiesceGateTest, TryEnterSucceedsForCurrentGenerationWhileOpen)
+}  // namespace
+
+TEST(QuiesceGateTest, CloseBlocksNewEntriesAndWaitsForAllActiveEntriesToLeave)
 {
   QuiesceGate gate;
-  const std::size_t generation = gate.currentGeneration();
+  const std::size_t initial_generation = gate.currentGeneration();
+  ASSERT_TRUE(gate.tryEnter(initial_generation));
+  ASSERT_TRUE(gate.tryEnter(initial_generation));
 
-  EXPECT_TRUE(gate.tryEnter(generation));
+  auto close_future = std::async(std::launch::async, [&gate]() { return gate.close(); });
 
+  EXPECT_EQ(close_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+  EXPECT_FALSE(gate.tryEnter(initial_generation));
+
+  gate.leave();
+
+  EXPECT_EQ(close_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+
+  gate.leave();
+
+  ASSERT_EQ(close_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  EXPECT_EQ(close_future.get(), initial_generation + 1U);
+}
+
+TEST(QuiesceGateTest, OpenRequiresCurrentGenerationAcrossRepeatedClose)
+{
+  QuiesceGate gate;
+  const std::size_t initial_generation = gate.currentGeneration();
+  const std::size_t next_generation = gate.close();
+
+  EXPECT_FALSE(gate.tryEnter(next_generation));
+
+  gate.open(next_generation);
+
+  EXPECT_FALSE(gate.tryEnter(initial_generation));
+  ASSERT_TRUE(gate.tryEnter(next_generation));
+  gate.leave();
+
+  const std::size_t latest_generation = gate.close();
+
+  EXPECT_EQ(latest_generation, next_generation + 1U);
+
+  gate.open(next_generation);
+  EXPECT_FALSE(gate.tryEnter(latest_generation));
+
+  gate.open(latest_generation);
+  EXPECT_TRUE(gate.tryEnter(latest_generation));
   gate.leave();
 }
 
-TEST(QuiesceGateTest, CloseBlocksUntilActiveEntriesLeave)
+TEST(QuiesceGateTest, OpenDoesNotReAdmitWorkBeforeCloseFinishesDraining)
 {
   QuiesceGate gate;
   const std::size_t initial_generation = gate.currentGeneration();
@@ -46,43 +99,25 @@ TEST(QuiesceGateTest, CloseBlocksUntilActiveEntriesLeave)
 
   auto close_future = std::async(std::launch::async, [&gate]() { return gate.close(); });
 
-  EXPECT_EQ(close_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
-  EXPECT_FALSE(gate.tryEnter(initial_generation));
+  const std::size_t draining_generation = initial_generation + 1U;
+  ASSERT_TRUE(waitForGeneration(gate, draining_generation));
+  EXPECT_EQ(close_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
+
+  gate.open(draining_generation);
+
+  const bool entered_during_drain = gate.tryEnter(draining_generation);
+  EXPECT_FALSE(entered_during_drain);
+  if (entered_during_drain) {
+    gate.leave();
+  }
 
   gate.leave();
 
-  EXPECT_EQ(close_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_EQ(close_future.get(), initial_generation + 1U);
-}
+  ASSERT_EQ(close_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+  EXPECT_EQ(close_future.get(), draining_generation);
 
-TEST(QuiesceGateTest, OldGenerationIsRejectedAfterCloseAndOpen)
-{
-  QuiesceGate gate;
-  const std::size_t old_generation = gate.currentGeneration();
-
-  const std::size_t new_generation = gate.close();
-
-  EXPECT_EQ(new_generation, old_generation + 1U);
-  EXPECT_FALSE(gate.tryEnter(old_generation));
-  EXPECT_FALSE(gate.tryEnter(new_generation));
-
-  gate.open(new_generation);
-
-  EXPECT_TRUE(gate.tryEnter(new_generation));
-  gate.leave();
-}
-
-TEST(QuiesceGateTest, StaleOpenIsNoOp)
-{
-  QuiesceGate gate;
-  const std::size_t old_generation = gate.currentGeneration();
-  const std::size_t new_generation = gate.close();
-
-  gate.open(old_generation);
-  EXPECT_FALSE(gate.tryEnter(new_generation));
-
-  gate.open(new_generation);
-  EXPECT_TRUE(gate.tryEnter(new_generation));
+  gate.open(draining_generation);
+  ASSERT_TRUE(gate.tryEnter(draining_generation));
   gate.leave();
 }
 

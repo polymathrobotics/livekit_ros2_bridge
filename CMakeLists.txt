@@ -136,12 +136,15 @@ if(BUILD_TESTING)
   ament_add_gtest(test_interface_definition_lookup test/cpp/test_interface_definition_lookup.cpp)
   target_link_libraries(test_interface_definition_lookup ${PROJECT_NAME})
 
+  ament_add_gtest(test_payload_helpers test/cpp/test_payload_helpers.cpp)
+  target_link_libraries(test_payload_helpers ${PROJECT_NAME} nlohmann_json::nlohmann_json)
+
   ament_add_gtest(test_event_throttle test/cpp/test_event_throttle.cpp)
   target_include_directories(test_event_throttle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(test_event_throttle ${PROJECT_NAME})
 
   ament_add_gtest(test_gstreamer_raii test/cpp/test_gstreamer_raii.cpp)
-  target_link_libraries(test_gstreamer_raii ${PROJECT_NAME} PkgConfig::gstreamer)
+  target_link_libraries(test_gstreamer_raii ${PROJECT_NAME} PkgConfig::gstreamer PkgConfig::gstreamer-video)
 
   ament_add_gtest(test_interface_payloads test/cpp/test_interface_payloads.cpp)
   target_link_libraries(test_interface_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
@@ -230,6 +233,7 @@ if(BUILD_TESTING)
     test_log_event
     test_lru_cache
     test_node
+    test_payload_helpers
     test_quiesce_guard
     test_reentrant_quiesce_guard
     test_resource_list_payloads

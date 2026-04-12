@@ -296,12 +296,17 @@ std::string composeVideoPipelineDescription(
   return pipeline;
 }
 
-void validateReservedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
+struct ParsedEndpointCounts
 {
   guint appsrc_count = 0;
   guint appsink_count = 0;
   guint named_bridge_appsrc_count = 0;
   guint named_bridge_appsink_count = 0;
+};
+
+ParsedEndpointCounts inspectReservedEndpoints(const std::string & context, GstElement * pipeline)
+{
+  ParsedEndpointCounts counts;
 
   GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(pipeline)));
   GValueGuard item;
@@ -326,38 +331,59 @@ void validateReservedEndpoints(const std::string & context, GstElement * pipelin
     const bool is_appsrc = factory_name == "appsrc";
     const bool is_appsink = factory_name == "appsink";
     if (is_appsrc) {
-      ++appsrc_count;
+      ++counts.appsrc_count;
     }
     if (is_appsink) {
-      ++appsink_count;
+      ++counts.appsink_count;
     }
 
     if (element_name == kBridgeVideoAppSrcName) {
       if (!is_appsrc) {
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSrcName + "'");
       }
-      ++named_bridge_appsrc_count;
+      ++counts.named_bridge_appsrc_count;
     }
     if (element_name == kBridgeVideoAppSinkName) {
       if (!is_appsink) {
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSinkName + "'");
       }
-      ++named_bridge_appsink_count;
+      ++counts.named_bridge_appsink_count;
     }
 
     item.reset();
   }
 
+  return counts;
+}
+
+bool hasUserDefinedReservedEndpoints(const ParsedEndpointCounts & counts, bool expect_bridge_appsrc)
+{
+  if (expect_bridge_appsrc) {
+    return counts.appsrc_count > 1U || counts.appsink_count > 1U || counts.named_bridge_appsrc_count > 1U ||
+           counts.named_bridge_appsink_count > 1U ||
+           (counts.appsrc_count == 1U && counts.named_bridge_appsrc_count == 0U) ||
+           (counts.appsink_count == 1U && counts.named_bridge_appsink_count == 0U);
+  }
+
+  return counts.appsrc_count != 0U || counts.appsink_count > 1U || counts.named_bridge_appsink_count > 1U ||
+         (counts.appsink_count == 1U && counts.named_bridge_appsink_count == 0U);
+}
+
+void validateReservedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
+{
+  const ParsedEndpointCounts counts = inspectReservedEndpoints(context, pipeline);
+
   if (expect_bridge_appsrc) {
     if (
-      appsrc_count != 1U || named_bridge_appsrc_count != 1U || appsink_count != 1U || named_bridge_appsink_count != 1U)
+      counts.appsrc_count != 1U || counts.named_bridge_appsrc_count != 1U || counts.appsink_count != 1U ||
+      counts.named_bridge_appsink_count != 1U)
     {
       throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
     }
     return;
   }
 
-  if (appsrc_count != 0U || appsink_count != 1U || named_bridge_appsink_count != 1U) {
+  if (counts.appsrc_count != 0U || counts.appsink_count != 1U || counts.named_bridge_appsink_count != 1U) {
     throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
   }
 }
@@ -370,7 +396,13 @@ void validatePipelineDescription(
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
   GErrorPtr error(raw_error);
-  if (pipeline == nullptr) {
+  if (error != nullptr && pipeline != nullptr) {
+    const ParsedEndpointCounts counts = inspectReservedEndpoints(context, pipeline.get());
+    if (hasUserDefinedReservedEndpoints(counts, expect_bridge_appsrc)) {
+      throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
+    }
+  }
+  if (error != nullptr || pipeline == nullptr) {
     const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
     throw std::runtime_error(context + " has invalid GStreamer syntax: " + message);
   }

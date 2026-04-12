@@ -33,6 +33,26 @@ bool isBase64Char(char ch) noexcept
   return ch == '+' || ch == '/';
 }
 
+int base64CharValue(char ch) noexcept
+{
+  if (ch >= 'A' && ch <= 'Z') {
+    return ch - 'A';
+  }
+  if (ch >= 'a' && ch <= 'z') {
+    return 26 + (ch - 'a');
+  }
+  if (ch >= '0' && ch <= '9') {
+    return 52 + (ch - '0');
+  }
+  if (ch == '+') {
+    return 62;
+  }
+  if (ch == '/') {
+    return 63;
+  }
+  return -1;
+}
+
 bool hasCanonicalPadding(std::string_view value) noexcept
 {
   const auto first_padding = value.find('=');
@@ -48,6 +68,25 @@ bool hasCanonicalPadding(std::string_view value) noexcept
 
   const std::size_t padding_count = value.size() - first_padding;
   return padding_count <= 2U && first_padding >= value.size() - 2U;
+}
+
+bool hasZeroTrailingPadBits(std::string_view value) noexcept
+{
+  if (value.size() < 4U) {
+    return true;
+  }
+
+  if (value[value.size() - 1U] == '=' && value[value.size() - 2U] == '=') {
+    const int second_value = base64CharValue(value[value.size() - 3U]);
+    return second_value >= 0 && (second_value & 0x0F) == 0;
+  }
+
+  if (value[value.size() - 1U] == '=') {
+    const int third_value = base64CharValue(value[value.size() - 2U]);
+    return third_value >= 0 && (third_value & 0x03) == 0;
+  }
+
+  return true;
 }
 
 Base64DecodeResult decodeBase64(std::string_view value)
@@ -68,6 +107,10 @@ Base64DecodeResult decodeBase64(std::string_view value)
 
   if ((value.size() % 4U) != 0U) {
     return {{}, Base64DecodeStatus::kMissingPadding};
+  }
+
+  if (!hasZeroTrailingPadBits(value)) {
+    return {{}, Base64DecodeStatus::kInvalidEncoding};
   }
 
   std::vector<std::uint8_t> decoded((value.size() / 4U) * 3U, 0U);
