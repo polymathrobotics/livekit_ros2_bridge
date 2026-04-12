@@ -47,7 +47,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsNormalizedTopicAndInterval
 {
   expectSingleSubscription(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"topic":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
+      R"({"subscriptions":[{"kind":"topic","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
     "/battery",
     125);
@@ -57,7 +57,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterva
 {
   expectSingleSubscription(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"configured_source":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
+      R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
     125);
@@ -66,7 +66,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatExtractsConfiguredSourceAndInterva
 TEST(StreamControlPayloadsTest, ParseHeartbeatDefaultsIntervalToNullopt)
 {
   expectSingleSubscription(
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/camera"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/camera"}]})"),
     SubscriptionTargetKind::Topic,
     "/camera",
     std::nullopt);
@@ -87,11 +87,25 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsMissingOrMalformedSubscript
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidTargets)
 {
-  const std::array<nlohmann::json, 4> payloads{
+  const std::array<nlohmann::json, 5> payloads{
     nlohmann::json::parse(R"({"subscriptions":[{"delivery_preferences":{"interval_ms":100}}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"configured_source":""}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":123}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/battery","configured_source":"/sources/x"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"name":"/battery"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"configured_source","name":""}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":123}]})"),
+  };
+
+  for (const auto & body : payloads) {
+    EXPECT_THROW((void)parseSubscriptionHeartbeat(body), std::invalid_argument);
+  }
+}
+
+TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsUnknownKindsAndLegacyTargetFields)
+{
+  const std::array<nlohmann::json, 3> payloads{
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/battery"}]})"),
+    nlohmann::json::parse(R"({"subscriptions":[{"configured_source":"/sources/x"}]})"),
   };
 
   for (const auto & body : payloads) {
@@ -102,9 +116,12 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidTargets)
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidIntervalTypes)
 {
   const std::array<nlohmann::json, 3> payloads{
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/lidar","delivery_preferences":{"interval_ms":"125"}}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/lidar","delivery_preferences":{"interval_ms":125.5}}]})"),
-    nlohmann::json::parse(R"({"subscriptions":[{"topic":"/lidar","delivery_preferences":{"interval_ms":null}}]})"),
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":"125"}}]})"),
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":125.5}}]})"),
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":null}}]})"),
   };
 
   for (const auto & body : payloads) {
@@ -117,7 +134,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOversizedIntervals)
   const auto oversized_interval_ms = std::numeric_limits<std::int64_t>::max();
   const auto expected_clamped_interval_ms = std::numeric_limits<int>::max();
   const nlohmann::json body = {
-    {"subscriptions", {{{"topic", "/lidar"}, {"delivery_preferences", {{"interval_ms", oversized_interval_ms}}}}}}};
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", oversized_interval_ms}}}}}}};
   expectSingleSubscription(body, SubscriptionTargetKind::Topic, "/lidar", expected_clamped_interval_ms);
 }
 
@@ -125,8 +143,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
 {
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
-      {"topic":"/battery","delivery_preferences":{"interval_ms":25}},
-      {"topic":" /battery ","delivery_preferences":{"interval_ms":125}}
+      {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":25}},
+      {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto update = parseSubscriptionHeartbeat(body);
 
@@ -140,8 +158,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndConfiguredSourceDisti
 {
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
-      {"topic":"/camera/front","delivery_preferences":{"interval_ms":25}},
-      {"configured_source":"/camera/front","delivery_preferences":{"interval_ms":125}}
+      {"kind":"topic","name":"/camera/front","delivery_preferences":{"interval_ms":25}},
+      {"kind":"configured_source","name":"/camera/front","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto update = parseSubscriptionHeartbeat(body);
 
@@ -158,8 +176,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsConfiguredSourceSlashVariants
 {
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
-      {"configured_source":"front_camera","delivery_preferences":{"interval_ms":25}},
-      {"configured_source":"front_camera/","delivery_preferences":{"interval_ms":125}}
+      {"kind":"configured_source","name":"front_camera","delivery_preferences":{"interval_ms":25}},
+      {"kind":"configured_source","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto update = parseSubscriptionHeartbeat(body);
 

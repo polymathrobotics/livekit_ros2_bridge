@@ -23,7 +23,7 @@
 namespace livekit_ros2_bridge
 {
 
-/// Stable subscription target discriminators used in heartbeat and stream-status payloads.
+/// Stable subscription target discriminators used in heartbeat and subscription-status payloads.
 enum class SubscriptionTargetKind
 {
   Topic,
@@ -75,9 +75,10 @@ struct StreamStatus
 };
 
 /// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
-/// Each subscription entry must contain exactly one of `topic` or `configured_source`, plus an optional
-/// `delivery_preferences.interval_ms` integer. Topics are normalized as ROS names, configured-source ids are
-/// trimmed only, duplicate canonical targets are coalesced, and duplicate intervals keep the smallest non-zero value.
+/// Each subscription entry must contain required `kind` and `name` strings, plus an optional
+/// `delivery_preferences.interval_ms` integer. `topic` names are normalized as ROS names,
+/// `configured_source` names are trimmed only, duplicate canonical targets are coalesced, and
+/// duplicate intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
 /// Serialize one active stream-status entry. Data deliveries include

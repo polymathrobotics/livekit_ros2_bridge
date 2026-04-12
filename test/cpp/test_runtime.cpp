@@ -432,7 +432,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
 
   const std::string heartbeat =
-    R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
+    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
   harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
@@ -475,7 +475,7 @@ TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
 
   const std::string heartbeat =
-    R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
+    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
   harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
@@ -514,7 +514,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
 
-  const std::string heartbeat = R"({"subscriptions":[{"topic":"/camera/front"}]})";
+  const std::string heartbeat = R"({"subscriptions":[{"kind":"topic","name":"/camera/front"}]})";
   harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
@@ -524,9 +524,9 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_outgoing_control_packets.size() == 1U; }));
   const auto status = extractSinglePublishedStatusEnvelope(*harness.state, "participant-1");
-  ASSERT_TRUE(status.contains("streams"));
-  ASSERT_EQ(status["streams"].size(), 1U);
-  const auto & delivery = status["streams"][0]["delivery"];
+  ASSERT_TRUE(status.contains("subscriptions"));
+  ASSERT_EQ(status["subscriptions"].size(), 1U);
+  const auto & delivery = status["subscriptions"][0]["delivery"];
   EXPECT_EQ(delivery["kind"], protocol::kDeliveryKindVideo);
   EXPECT_EQ(delivery["track_name"], "ros.video.camera.front");
 
@@ -562,7 +562,7 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
 
   const std::string heartbeat =
-    R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":125}}]})";
+    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
     room_connection.state->stop_hook = [heartbeat](const RoomConnectionCallbacks & callbacks) {
       if (callbacks.on_connection_reset) {
@@ -655,7 +655,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   std::thread executor_thread([&executor]() { executor.spin(); });
 
   const std::string heartbeat =
-    R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":125}}]})";
+    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   harness.state->callbacks.on_incoming_control_packet_received(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),

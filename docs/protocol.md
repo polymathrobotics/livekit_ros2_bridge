@@ -8,7 +8,7 @@ This page covers the stable LiveKit-facing contract for RPC methods and the non-
 | --- | --- | --- | --- |
 | Control topic | `ros.topics.publish` | caller -> bridge | Best-effort ROS topic publication |
 | Control topic | `ros.subscriptions.heartbeat` | caller -> bridge | Request and renew subscriptions |
-| Control topic | `ros.subscriptions.status` | bridge -> caller | Per-stream subscription status |
+| Control topic | `ros.subscriptions.status` | bridge -> caller | Per-subscription status |
 | RPC | `ros.services.call` | caller <-> bridge | Call an authorized ROS service |
 | RPC | `ros.interfaces.get` | caller <-> bridge | Fetch interface definitions |
 | RPC | `ros.services.list` | caller <-> bridge | List authorized ROS services |
@@ -195,7 +195,7 @@ Behavior:
 - request and response payloads
 - `session_id` fallback behavior
 - lease timing
-- per-stream error reasons
+- per-subscription error reasons
 - data-track republish after reconnect
 
 ## Error handling

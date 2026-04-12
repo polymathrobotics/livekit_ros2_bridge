@@ -153,7 +153,7 @@ Examples:
 
 - `video.topic_rules.front_camera.pattern: "/camera/front/*"` matches ROS topics according to that pattern
 - `video.topic_rules.front_camera.publish.max_framerate: 15.0` overrides only framerate for that rule
-- `video.configured_sources.front_rtsp.source: "uridecodebin uri=rtsp://..."` creates a configured source requested as `configured_source: "front_rtsp"`
+- `video.configured_sources.front_rtsp.source: "uridecodebin uri=rtsp://..."` creates a configured source requested as `{"kind":"configured_source","name":"front_rtsp"}`
 - `video.configured_sources.front_rtsp.publish.codec: "h264"` overrides only codec for that source
 
 `video_topic_rule_ids` and `video_configured_source_ids` stay at the root for now because the generate_parameter_library 0.6 baseline in the current distro matrix cannot move them cleanly under `video.topic_rules.ids` and `video.configured_sources.ids` yet.

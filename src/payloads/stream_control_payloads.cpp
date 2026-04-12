@@ -25,6 +25,7 @@
 #include "protocol.hpp"
 #include "utils/json_object_parser.hpp"
 #include "utils/ros_resource_name_utils.hpp"
+#include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -45,6 +46,19 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
   }
 
   throw std::invalid_argument("stream status target kind is invalid");
+}
+
+SubscriptionTargetKind parseSubscriptionTargetKind(std::string_view raw_kind)
+{
+  const std::string kind = trim(raw_kind);
+  if (kind == "topic") {
+    return SubscriptionTargetKind::Topic;
+  }
+  if (kind == "configured_source") {
+    return SubscriptionTargetKind::ConfiguredSource;
+  }
+
+  throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
 }
 
 std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
@@ -95,38 +109,29 @@ int parsePreferredIntervalMs(const nlohmann::json & prefs)
 
 SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
 {
-  const auto topic_it = entry.find("topic");
-  const auto configured_source_it = entry.find("configured_source");
-  const bool has_topic = topic_it != entry.end();
-  const bool has_configured_source = configured_source_it != entry.end();
-
-  if (has_topic && has_configured_source) {
-    throw std::invalid_argument("heartbeat subscription entry must not contain both 'topic' and 'configured_source'");
+  const auto kind_it = entry.find("kind");
+  if (kind_it == entry.end() || !kind_it->is_string()) {
+    throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
-  if (!has_topic && !has_configured_source) {
-    throw std::invalid_argument("heartbeat subscription entry must contain 'topic' or 'configured_source'");
+  const SubscriptionTargetKind kind = parseSubscriptionTargetKind(kind_it->get_ref<const std::string &>());
+
+  const auto name_it = entry.find("name");
+  if (name_it == entry.end() || !name_it->is_string()) {
+    throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
-  if (has_topic) {
-    if (!topic_it->is_string()) {
-      throw std::invalid_argument("heartbeat subscription 'topic' must be a string");
-    }
-    std::string name = normalizeRosResourceName(topic_it->get_ref<const std::string &>());
-    if (name.empty()) {
-      throw std::invalid_argument("heartbeat subscription topic must normalize to a non-empty name");
-    }
-    return {SubscriptionTargetKind::Topic, std::move(name)};
-  }
-
-  if (!configured_source_it->is_string()) {
-    throw std::invalid_argument("heartbeat subscription 'configured_source' must be a string");
-  }
-  std::string name = trimConfiguredSourceName(configured_source_it->get_ref<const std::string &>());
+  std::string name = kind == SubscriptionTargetKind::Topic
+                       ? normalizeRosResourceName(name_it->get_ref<const std::string &>())
+                       : trimConfiguredSourceName(name_it->get_ref<const std::string &>());
   if (name.empty()) {
-    throw std::invalid_argument("heartbeat subscription configured_source must trim to a non-empty name");
+    throw std::invalid_argument(
+      kind == SubscriptionTargetKind::Topic
+        ? "heartbeat subscription topic name must normalize to a non-empty name"
+        : "heartbeat subscription configured_source name must trim to a non-empty name");
   }
-  return {SubscriptionTargetKind::ConfiguredSource, std::move(name)};
+
+  return {kind, std::move(name)};
 }
 
 SubscriptionRequest parseSubscriptionRequest(const nlohmann::json & entry)

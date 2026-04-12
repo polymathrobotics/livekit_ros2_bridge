@@ -74,7 +74,7 @@ Topic subscriptions from `ros.subscriptions.heartbeat` are checked against `acce
 
 Important details:
 
-- a forbidden topic becomes a per-stream `forbidden` error in `ros.subscriptions.status`
+- a forbidden topic becomes a per-subscription `forbidden` error in `ros.subscriptions.status`
 - `ros.topics.list` uses the same subscribe policy, so callers only see topics they could subscribe to
 - `configured_source` targets are trimmed and resolved through `video.configured_sources.*`, but they do not use subscribe rules
 

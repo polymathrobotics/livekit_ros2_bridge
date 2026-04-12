@@ -56,13 +56,16 @@ nlohmann::json makeFlatTargetEntry(const SubscriptionTarget & target)
   return {{"kind", kind_str}, {"name", target.name}};
 }
 
-void appendStreamError(
-  nlohmann::json & streams, const SubscriptionTarget & target, const char * reason, const std::string & message)
+void appendSubscriptionError(
+  nlohmann::json & subscription_entries,
+  const SubscriptionTarget & target,
+  const char * reason,
+  const std::string & message)
 {
   auto error_entry = makeFlatTargetEntry(target);
   error_entry["status"] = "error";
   error_entry["error"] = {{"reason", reason}, {"message", message}};
-  streams.push_back(std::move(error_entry));
+  subscription_entries.push_back(std::move(error_entry));
 }
 
 const auto kHeartbeatProcessorLogger = rclcpp::get_logger("heartbeat_processor");
@@ -89,25 +92,26 @@ void SubscriptionHeartbeatProcessor::process(
     return;
   }
 
-  nlohmann::json streams = nlohmann::json::array();
+  nlohmann::json subscription_entries = nlohmann::json::array();
 
   for (const auto & entry : update.subscriptions) {
     const auto & target = entry.target;
 
     if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
     {
-      appendStreamError(streams, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
+      appendSubscriptionError(
+        subscription_entries, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
       continue;
     }
 
     try {
       auto stream_status =
         subscription_registry_.renewSubscription(*resolved_requester_identity, entry, requester_lease_expiry);
-      streams.push_back(serializeStreamStatus(stream_status));
+      subscription_entries.push_back(serializeStreamStatus(stream_status));
     } catch (const StreamUnavailableError & exc) {
-      appendStreamError(streams, target, "unavailable", exc.what());
+      appendSubscriptionError(subscription_entries, target, "unavailable", exc.what());
     } catch (const std::exception & exc) {
-      appendStreamError(streams, target, "not_found", exc.what());
+      appendSubscriptionError(subscription_entries, target, "not_found", exc.what());
     }
   }
 
@@ -115,7 +119,8 @@ void SubscriptionHeartbeatProcessor::process(
   // that lease alive, but the rejoined participant still needs a fresh data-track publication
   // because the previous publication belonged to the disconnected participant_session.
   subscription_registry_.republishDataTracksForRequester(*resolved_requester_identity);
-  publishSubscriptionStatus(*resolved_requester_identity, update.session_id, requester_lease_expiry, streams);
+  publishSubscriptionStatus(
+    *resolved_requester_identity, update.session_id, requester_lease_expiry, subscription_entries);
 }
 
 void SubscriptionHeartbeatProcessor::pruneExpiredClientSessionLeases()
@@ -214,16 +219,16 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   const std::string & requester_identity,
   const std::optional<std::string> & client_session_id,
   std::chrono::steady_clock::time_point requester_lease_expiry,
-  const nlohmann::json & streams)
+  const nlohmann::json & subscription_entries)
 {
-  if (streams.empty()) {
+  if (subscription_entries.empty()) {
     return;
   }
 
   nlohmann::json envelope = {
     {"v", protocol::kProtocolVersion},
     {"type", protocol::kControlSubscriptionsStatus},
-    {"streams", streams},
+    {"subscriptions", subscription_entries},
   };
   if (client_session_id.has_value()) {
     const auto lease_expires_in_ms =

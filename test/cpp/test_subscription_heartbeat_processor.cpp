@@ -84,16 +84,16 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
-nlohmann::json extractSinglePublishedStream(
+nlohmann::json extractSinglePublishedSubscription(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
   const auto response = extractSinglePublishedStatusEnvelope(state, requester_identity);
-  if (!response.contains("streams") || response["streams"].size() != 1U) {
-    ADD_FAILURE() << "Expected one stream entry in status response";
+  if (!response.contains("subscriptions") || response["subscriptions"].size() != 1U) {
+    ADD_FAILURE() << "Expected one subscription entry in status response";
     return nlohmann::json::object();
   }
 
-  return response["streams"].front();
+  return response["subscriptions"].front();
 }
 
 class SubscriptionHeartbeatProcessorTest : public ::testing::Test
@@ -144,10 +144,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {
-    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
   EXPECT_EQ(stream["name"], "/battery_state");
   EXPECT_EQ(stream["status"], "error");
@@ -160,10 +161,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
-    {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
   EXPECT_EQ(stream["name"], "/nonexistent_topic");
   EXPECT_EQ(stream["status"], "error");
@@ -181,10 +183,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"topic", "/camera/front"}}}}};
+  const nlohmann::json body = {{"subscriptions", {{{"kind", "topic"}, {"name", "/camera/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
   EXPECT_EQ(stream["name"], "/camera/front");
   EXPECT_EQ(stream["status"], "error");
@@ -201,10 +203,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/front"}}}}};
+  const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "configured_source");
   EXPECT_EQ(stream["name"], "/sources/front");
   EXPECT_EQ(stream["status"], "active");
@@ -221,17 +223,17 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/missing"}}}}};
+  const nlohmann::json body = {{"subscriptions", {{{"kind", "configured_source"}, {"name", "/sources/missing"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "configured_source");
   EXPECT_EQ(stream["name"], "/sources/missing");
   EXPECT_EQ(stream["status"], "error");
   EXPECT_EQ(stream["error"]["reason"], "not_found");
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStatusEnvelope)
+TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
@@ -244,7 +246,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStat
 
   const nlohmann::json body = {
     {"session_id", "session-1"},
-    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
   };
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
@@ -254,18 +257,18 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStat
   EXPECT_EQ(response["session_id"], "session-1");
   ASSERT_TRUE(response["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
-  ASSERT_EQ(response["streams"].size(), 1U);
-  EXPECT_EQ(response["streams"][0]["kind"], "topic");
-  EXPECT_EQ(response["streams"][0]["name"], "/battery_state");
-  EXPECT_EQ(response["streams"][0]["status"], "active");
-  EXPECT_EQ(response["streams"][0]["interface_type"], "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(response["streams"][0]["delivery"]["kind"], protocol::kDeliveryKindData);
-  EXPECT_EQ(response["streams"][0]["delivery"]["track_name"], "ros.data.battery_state");
-  EXPECT_EQ(response["streams"][0]["delivery"]["content_type"], "application/x-ros-cdr");
-  EXPECT_EQ(response["streams"][0]["delivery"]["interval_ms"], 100);
-  EXPECT_FALSE(response["streams"][0]["delivery"].contains("publisher_identity"));
-  EXPECT_FALSE(response["streams"][0].contains("error"));
-  EXPECT_FALSE(response["streams"][0].contains("target"));
+  ASSERT_EQ(response["subscriptions"].size(), 1U);
+  EXPECT_EQ(response["subscriptions"][0]["kind"], "topic");
+  EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
+  EXPECT_EQ(response["subscriptions"][0]["status"], "active");
+  EXPECT_EQ(response["subscriptions"][0]["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(response["subscriptions"][0]["delivery"]["kind"], protocol::kDeliveryKindData);
+  EXPECT_EQ(response["subscriptions"][0]["delivery"]["track_name"], "ros.data.battery_state");
+  EXPECT_EQ(response["subscriptions"][0]["delivery"]["content_type"], "application/x-ros-cdr");
+  EXPECT_EQ(response["subscriptions"][0]["delivery"]["interval_ms"], 100);
+  EXPECT_FALSE(response["subscriptions"][0]["delivery"].contains("publisher_identity"));
+  EXPECT_FALSE(response["subscriptions"][0].contains("error"));
+  EXPECT_FALSE(response["subscriptions"][0].contains("target"));
   (void)publisher;
 }
 
@@ -282,7 +285,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
 
   const nlohmann::json body = {
     {"session_id", "session-1"},
-    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
   };
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
   state_->published_outgoing_control_packets.clear();
@@ -291,9 +295,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
 
   const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(response["session_id"], "session-1");
-  ASSERT_EQ(response["streams"].size(), 1U);
-  EXPECT_EQ(response["streams"][0]["name"], "/battery_state");
-  EXPECT_EQ(response["streams"][0]["status"], "active");
+  ASSERT_EQ(response["subscriptions"].size(), 1U);
+  EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
+  EXPECT_EQ(response["subscriptions"][0]["status"], "active");
   (void)publisher;
 }
 
@@ -304,7 +308,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownClientS
 
   const nlohmann::json body = {
     {"session_id", "unknown-session"},
-    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}},
   };
 
   processor.process("", makeSubscriptionHeartbeat(body));
@@ -343,10 +348,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
   policy = makeSubscribePolicy({"*"});
 
   const nlohmann::json body = {
-    {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
 
-  const auto stream = extractSinglePublishedStream(*state_, "requester-1");
+  const auto stream = extractSinglePublishedSubscription(*state_, "requester-1");
   EXPECT_EQ(stream["kind"], "topic");
   EXPECT_EQ(stream["name"], "/battery_state");
   EXPECT_EQ(stream["status"], "error");
@@ -361,7 +367,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledG
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
-    {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
+    {"subscriptions",
+     {{{"kind", "topic"}, {"name", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
 
   EXPECT_NO_THROW(processor.process("requester-1", makeSubscriptionHeartbeat(body)));
   EXPECT_EQ(state_->publish_control_packet_call_count, 1);

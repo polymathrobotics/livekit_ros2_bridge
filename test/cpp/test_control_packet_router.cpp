@@ -44,7 +44,7 @@ std::vector<std::uint8_t> toBytes(const std::string & command_payload)
 
 std::string makeHeartbeatPayload()
 {
-  return R"({"session_id":"session-1","subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":125}}]})";
+  return R"({"session_id":"session-1","subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
 }
 
 std::string makePublishPayload()

@@ -142,7 +142,7 @@ Common QoS example:
 
 Example:
 
-- `video.configured_sources.front_rtsp.source: ...` is requested as `configured_source: "front_rtsp"`
+- `video.configured_sources.front_rtsp.source: ...` is requested as `{"kind":"configured_source","name":"front_rtsp"}`
 
 Useful log events:
 

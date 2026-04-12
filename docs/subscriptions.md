@@ -1,6 +1,6 @@
 # Subscriptions
 
-`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat says "this is the full set of streams I still want right now" for one requester. The bridge renews 45-second leases, updates shared stream state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one entry.
+`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat says "this is the full set of subscriptions I still want right now" for one requester. The bridge renews 45-second leases, updates shared runtime state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one entry.
 
 ## Heartbeat request
 
@@ -11,13 +11,15 @@ Control topic: `ros.subscriptions.heartbeat`
   "session_id": "tab-123",
   "subscriptions": [
     {
-      "topic": "/battery_state",
+      "kind": "topic",
+      "name": "/battery_state",
       "delivery_preferences": {
         "interval_ms": 100
       }
     },
     {
-      "configured_source": "front_camera"
+      "kind": "configured_source",
+      "name": "front_camera"
     }
   ]
 }
@@ -27,19 +29,20 @@ Rules:
 
 - `subscriptions` is required and must be an array
 - each entry must be an object
-- each entry must contain exactly one of `topic` or `configured_source`
-- `topic` values are normalized as ROS resource names
-- `configured_source` values are trimmed only, so surrounding whitespace is ignored but `/`, repeated `/`, trailing `/`, and `:` stay significant
-- if topic normalization or configured-source trimming produces an empty name, that entry is invalid
+- each entry must contain string `kind` and `name` fields
+- `kind` must be `topic` or `configured_source`
+- `topic` names are normalized as ROS resource names
+- `configured_source` names are trimmed only, so surrounding whitespace is ignored but `/`, repeated `/`, trailing `/`, and `:` stay significant
+- if topic normalization or configured-source trimming produces an empty canonical name, that entry is invalid
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
 - `session_id` is optional; missing, `null`, and blank values are treated as absent
 
 ## Duplicate targets and interval handling
 
-The heartbeat parser treats `subscriptions` as a set keyed by canonical target:
+The heartbeat parser treats `subscriptions` as a set keyed by canonical `kind` + `name`:
 
-- repeating the same normalized `topic` or trimmed `configured_source` name yields one effective request
+- repeating the same canonical target yields one effective request
 - when duplicates provide multiple non-zero `interval_ms` values, the smallest value wins
 - `interval_ms: 0` means no preference
 - negative `interval_ms` values are accepted by the parser but clamped to `0` when the lease is applied
@@ -70,7 +73,7 @@ Control topic: `ros.subscriptions.status`
   "type": "ros.subscriptions.status",
   "session_id": "tab-123",
   "lease_expires_in_ms": 44980,
-  "streams": [
+  "subscriptions": [
     {
       "kind": "topic",
       "name": "/battery_state",
@@ -93,9 +96,9 @@ Envelope rules:
 - `type` is always `ros.subscriptions.status`
 - `session_id` and `lease_expires_in_ms` are included only when the heartbeat carried a non-blank `session_id`
 - `lease_expires_in_ms` is computed at serialization time, so it is approximate
-- the bridge publishes no status packet when the heartbeat produces an empty `streams` array
+- the bridge publishes no status packet when the heartbeat produces an empty `subscriptions` array
 
-## Stream entries
+## Subscription entries
 
 Active entries always include:
 
@@ -117,7 +120,7 @@ Current `error.reason` values are:
 - `unavailable`: the bridge could not start or keep running a required runtime dependency, usually a video stream pipeline
 - `not_found`: lookup or subscription creation failed for another reason
 
-## Active topic entries on a data track
+## Active topic subscription entries on a data track
 
 Non-video ROS topics are delivered on a LiveKit data track:
 
@@ -142,7 +145,7 @@ Notes:
 - `delivery.interval_ms` is always present for data deliveries, including `0`
 - the bytes sent on the data track are raw serialized CDR bytes, not nested JSON
 
-## Active video entries
+## Active video subscription entries
 
 Video deliveries use the same deterministic track-name surface the bridge publishes:
 
@@ -182,7 +185,7 @@ Important behavior:
 
 ## Lease timing and cleanup
 
-- each successful heartbeat renews each requested stream for 45 seconds from processing time
+- each successful heartbeat renews each requested subscription for 45 seconds from processing time
 - the runtime sweeps expired session leases and stream leases once per second
 - `lease_expires_in_ms` reflects the remaining time at the moment the status packet is serialized
 - data-track delivery uses one applied interval per shared topic, based on the smallest current requester interval

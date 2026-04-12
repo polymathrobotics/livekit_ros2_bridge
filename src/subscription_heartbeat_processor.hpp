@@ -33,8 +33,8 @@ class RoomConnection;
 class SubscriptionRegistry;
 
 // Resolves heartbeat lease ownership, including anonymous renewals that present a still-leased
-// wire `session_id`, then renews the requested subscriptions and publishes one status envelope
-// back.
+// wire `session_id`, then renews the requested subscriptions and publishes one subscription-status
+// envelope back.
 class SubscriptionHeartbeatProcessor final
 {
 public:
@@ -76,7 +76,7 @@ private:
     const std::string & requester_identity,
     const std::optional<std::string> & client_session_id,
     std::chrono::steady_clock::time_point requester_lease_expiry,
-    const nlohmann::json & streams);
+    const nlohmann::json & subscription_entries);
 
   SubscriptionRegistry & subscription_registry_;
   RoomConnection & room_connection_;

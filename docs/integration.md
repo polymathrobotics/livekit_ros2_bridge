@@ -16,7 +16,7 @@ That separation matters when you design a client:
 
 - use RPCs when you need a direct success or failure result
 - use `ros.topics.publish` for small best-effort topic ingress
-- use `ros.subscriptions.heartbeat` to declare the full set of streams you still want
+- use `ros.subscriptions.heartbeat` to declare the full set of subscriptions you still want
 - consume `ros.subscriptions.status` and the named LiveKit tracks to understand what the bridge actually made available
 
 ## Typical client flow
@@ -28,8 +28,8 @@ Most integrations follow this order:
 3. Call `ros.interfaces.get` for the message and service types your client needs to encode or decode.
 4. Use `ros.services.call` for request-response operations.
 5. Send `ros.topics.publish` packets for small allowed topic writes.
-6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video streams.
-7. Read `ros.subscriptions.status` to learn whether each requested stream is active, forbidden, unavailable, or not found.
+6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video subscriptions.
+7. Read `ros.subscriptions.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
 8. Subscribe to the announced LiveKit data track or video publication.
 
 For a first integration, start with one service call or one topic subscription path. Once that works, add more interface types, video, and broader policy rules.
@@ -61,8 +61,8 @@ The bridge treats LiveKit identity as part of the contract:
 
 Subscriptions are requester-scoped leases:
 
-- each heartbeat says "this is the full set of streams I still want"
-- the bridge renews requested streams for 45 seconds
+- each heartbeat says "this is the full set of subscriptions I still want"
+- the bridge renews requested subscriptions for 45 seconds
 - if a requester stops sending heartbeats, that requester's leases eventually expire
 - if multiple requesters share a stream, the bridge keeps one shared runtime resource alive until the last lease disappears
 
