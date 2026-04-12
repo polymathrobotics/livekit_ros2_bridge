@@ -107,17 +107,17 @@ int parsePreferredIntervalMs(const nlohmann::json & prefs)
   return static_cast<int>(raw_interval);
 }
 
-SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
+SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & subscription_json)
 {
-  const auto kind_it = entry.find("kind");
-  if (kind_it == entry.end() || !kind_it->is_string()) {
+  const auto kind_it = subscription_json.find("kind");
+  if (kind_it == subscription_json.end() || !kind_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
   const SubscriptionTargetKind kind = parseSubscriptionTargetKind(kind_it->get_ref<const std::string &>());
 
-  const auto name_it = entry.find("name");
-  if (name_it == entry.end() || !name_it->is_string()) {
+  const auto name_it = subscription_json.find("name");
+  if (name_it == subscription_json.end() || !name_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
@@ -134,13 +134,13 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
   return {kind, std::move(name)};
 }
 
-SubscriptionDemand parseSubscriptionDemand(const nlohmann::json & entry)
+SubscriptionDemand parseSubscriptionDemand(const nlohmann::json & subscription_json)
 {
   SubscriptionDemand demand;
-  demand.target = parseSubscriptionTarget(entry);
+  demand.target = parseSubscriptionTarget(subscription_json);
 
-  const auto prefs_it = entry.find("delivery_preferences");
-  if (prefs_it == entry.end()) {
+  const auto prefs_it = subscription_json.find("delivery_preferences");
+  if (prefs_it == subscription_json.end()) {
     return demand;
   }
 
@@ -174,12 +174,12 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
     throw std::invalid_argument("heartbeat subscriptions must be an array");
   }
 
-  for (const auto & entry_json : *subs_it) {
-    if (!entry_json.is_object()) {
-      throw std::invalid_argument("heartbeat subscription entries must be objects");
+  for (const auto & subscription_json : *subs_it) {
+    if (!subscription_json.is_object()) {
+      throw std::invalid_argument("heartbeat subscriptions must be objects");
     }
 
-    SubscriptionDemand demand = parseSubscriptionDemand(entry_json);
+    SubscriptionDemand demand = parseSubscriptionDemand(subscription_json);
     const std::string index_key = makeSubscriptionTargetKey(demand.target);
     const auto [it, inserted] = index_by_key.emplace(index_key, heartbeat.subscriptions.size());
     if (inserted) {
@@ -204,32 +204,32 @@ nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscripti
 {
   const char * kind_str = subscriptionTargetKindString(subscription_status.target.kind);
 
-  nlohmann::json entry = {
+  nlohmann::json status_json = {
     {"kind", kind_str},
     {"name", subscription_status.target.name},
     {"status", "active"},
   };
 
   if (!subscription_status.degraded_reason.empty()) {
-    entry["degraded_reason"] = subscription_status.degraded_reason;
+    status_json["degraded_reason"] = subscription_status.degraded_reason;
   }
   if (!subscription_status.interface_type.empty()) {
-    entry["interface_type"] = subscription_status.interface_type;
+    status_json["interface_type"] = subscription_status.interface_type;
   }
 
   switch (subscription_status.delivery_kind) {
     case SubscriptionDeliveryKind::kVideo:
-      entry["delivery"] = {
+      status_json["delivery"] = {
         {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
         {"track_name", subscription_status.track_name}};
-      return entry;
+      return status_json;
     case SubscriptionDeliveryKind::kData:
-      entry["delivery"] = {
+      status_json["delivery"] = {
         {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
         {"track_name", subscription_status.track_name},
         {"content_type", protocol::kDataContentTypeCdr},
         {"interval_ms", subscription_status.applied_interval_ms}};
-      return entry;
+      return status_json;
   }
 
   throw std::invalid_argument("subscription status delivery kind is invalid");

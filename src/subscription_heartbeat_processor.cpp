@@ -50,22 +50,22 @@ const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
   throw std::invalid_argument("heartbeat target kind is invalid");
 }
 
-nlohmann::json makeFlatTargetEntry(const SubscriptionTarget & target)
+nlohmann::json makeFlatTargetStatusJson(const SubscriptionTarget & target)
 {
   const char * kind_str = subscriptionTargetKindString(target.kind);
   return {{"kind", kind_str}, {"name", target.name}};
 }
 
 void appendSubscriptionError(
-  nlohmann::json & subscription_entries,
+  nlohmann::json & subscription_statuses,
   const SubscriptionTarget & target,
   const char * reason,
   const std::string & message)
 {
-  auto error_entry = makeFlatTargetEntry(target);
-  error_entry["status"] = "error";
-  error_entry["error"] = {{"reason", reason}, {"message", message}};
-  subscription_entries.push_back(std::move(error_entry));
+  auto status_json = makeFlatTargetStatusJson(target);
+  status_json["status"] = "error";
+  status_json["error"] = {{"reason", reason}, {"message", message}};
+  subscription_statuses.push_back(std::move(status_json));
 }
 
 const auto kHeartbeatProcessorLogger = rclcpp::get_logger("heartbeat_processor");
@@ -92,7 +92,7 @@ void SubscriptionHeartbeatProcessor::process(
     return;
   }
 
-  nlohmann::json subscription_entries = nlohmann::json::array();
+  nlohmann::json subscription_statuses = nlohmann::json::array();
 
   for (const auto & demand : heartbeat.subscriptions) {
     const auto & target = demand.target;
@@ -100,18 +100,18 @@ void SubscriptionHeartbeatProcessor::process(
     if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
     {
       appendSubscriptionError(
-        subscription_entries, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
+        subscription_statuses, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
       continue;
     }
 
     try {
       auto subscription_status =
         subscription_registry_.renewSubscription(*resolved_requester_identity, demand, requester_lease_expiry);
-      subscription_entries.push_back(serializeSubscriptionStatus(subscription_status));
+      subscription_statuses.push_back(serializeSubscriptionStatus(subscription_status));
     } catch (const StreamUnavailableError & exc) {
-      appendSubscriptionError(subscription_entries, target, "unavailable", exc.what());
+      appendSubscriptionError(subscription_statuses, target, "unavailable", exc.what());
     } catch (const std::exception & exc) {
-      appendSubscriptionError(subscription_entries, target, "not_found", exc.what());
+      appendSubscriptionError(subscription_statuses, target, "not_found", exc.what());
     }
   }
 
@@ -120,7 +120,7 @@ void SubscriptionHeartbeatProcessor::process(
   // because the previous publication belonged to the disconnected participant_session.
   subscription_registry_.republishDataTracksForRequester(*resolved_requester_identity);
   publishSubscriptionStatus(
-    *resolved_requester_identity, heartbeat.session_id, requester_lease_expiry, subscription_entries);
+    *resolved_requester_identity, heartbeat.session_id, requester_lease_expiry, subscription_statuses);
 }
 
 void SubscriptionHeartbeatProcessor::pruneExpiredClientSessionLeases()
@@ -219,16 +219,18 @@ void SubscriptionHeartbeatProcessor::publishSubscriptionStatus(
   const std::string & requester_identity,
   const std::optional<std::string> & client_session_id,
   std::chrono::steady_clock::time_point requester_lease_expiry,
-  const nlohmann::json & subscription_entries)
+  const nlohmann::json & subscription_statuses)
 {
-  if (subscription_entries.empty()) {
+  if (subscription_statuses.empty()) {
     return;
   }
 
   nlohmann::json envelope = {
     {"v", protocol::kProtocolVersion},
     {"type", protocol::kControlSubscriptionsStatus},
-    {"subscriptions", subscription_entries},
+    // The wire contract keeps the broad `subscriptions` array name even though each object is a
+    // reported `SubscriptionStatus`.
+    {"subscriptions", subscription_statuses},
   };
   if (client_session_id.has_value()) {
     const auto lease_expires_in_ms =

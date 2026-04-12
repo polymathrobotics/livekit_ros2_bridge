@@ -76,7 +76,7 @@ private:
     const std::string & requester_identity,
     const std::optional<std::string> & client_session_id,
     std::chrono::steady_clock::time_point requester_lease_expiry,
-    const nlohmann::json & subscription_entries);
+    const nlohmann::json & subscription_statuses);
 
   SubscriptionRegistry & subscription_registry_;
   RoomConnection & room_connection_;

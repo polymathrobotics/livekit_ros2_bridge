@@ -145,15 +145,22 @@ contract and this guide for internal implementation vocabulary.
   - `heartbeat`
     - Lease-renewal envelope.
     - Example: `SubscriptionHeartbeat`
+    - Wire-aligned container names such as `SubscriptionHeartbeat.subscriptions` are acceptable
+      when they mirror the JSON field and still carry `SubscriptionDemand` objects.
   - `demand`
     - One lease-backed subscription declaration carried by a heartbeat.
     - A demand names one requested subscription target plus any delivery preferences for that target.
     - Multiple demands for the same canonical target aggregate into one shared runtime and one
       applied delivery state.
     - Example: `SubscriptionDemand`
+    - Use `demand` for the object itself even when the containing wire-aligned array or member is
+      named `subscriptions`.
   - `status`
     - The bridge's reported control-path outcome.
     - Example: `SubscriptionStatus`
+    - Status objects may be serialized inside a wire `subscriptions` array; prefer
+      `SubscriptionStatus`, `subscription_status`, or `subscription_statuses` over generic names
+      like `Entry`, `Item`, or `Info`.
   - `update`
     - Fire-and-forget control payload that mutates or refreshes state without RPC semantics.
 
@@ -243,6 +250,10 @@ contract and this guide for internal implementation vocabulary.
 - Prefer `publisher` for output publication ownership and use `topic` vs `track` to distinguish ROS from LiveKit.
 - Reserve `request` and `response` for RPCs.
 - Prefer `command`, `heartbeat`, `demand`, `status`, or `update` for control paths.
+- Keep wire-aligned names like `subscriptions` when they directly mirror the external JSON field,
+  but name the contained control-path objects by role such as `SubscriptionDemand` and
+  `SubscriptionStatus`.
+- Avoid weak control-path nouns like `Entry`, `Item`, or `Info` when a role-specific name exists.
 - Use `resource` only for actual ROS graph entities.
 - Use `target` for caller-selected identifiers that may include non-ROS configured sources.
 - Use `connection` for bridge transport state, `session` only for qualified actor lifetimes, and

@@ -1,6 +1,6 @@
 # Subscriptions
 
-`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat says "this is the full set of subscriptions I still want right now" for one requester. The bridge renews 45-second leases, updates shared runtime state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one entry.
+`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat says "this is the full set of subscriptions I still want right now" for one requester. The bridge renews 45-second leases, updates shared runtime state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one requested subscription.
 
 ## Heartbeat request
 
@@ -28,12 +28,12 @@ Control topic: `ros.subscriptions.heartbeat`
 Rules:
 
 - `subscriptions` is required and must be an array
-- each entry must be an object
-- each entry must contain string `kind` and `name` fields
+- each subscription object must be an object
+- each subscription object must contain string `kind` and `name` fields
 - `kind` must be `topic` or `configured_source`
 - `topic` names are normalized as ROS resource names
 - `configured_source` names are trimmed only, so surrounding whitespace is ignored but `/`, repeated `/`, trailing `/`, and `:` stay significant
-- if topic normalization or configured-source trimming produces an empty canonical name, that entry is invalid
+- if topic normalization or configured-source trimming produces an empty canonical name, that subscription is invalid
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
 - `session_id` is optional; missing, `null`, and blank values are treated as absent
@@ -98,19 +98,19 @@ Envelope rules:
 - `lease_expires_in_ms` is computed at serialization time, so it is approximate
 - the bridge publishes no status packet when the heartbeat produces an empty `subscriptions` array
 
-## Subscription entries
+## Reported Subscription Statuses
 
-Each entry in `ros.subscriptions.status` is a subscription status object. It reports the
-bridge's control-path outcome for one requested target and is distinct from the bridge's internal
-runtime stream objects.
+Each object in the `ros.subscriptions.status` array is a subscription status object. It reports
+the bridge's control-path outcome for one requested target and is distinct from the bridge's
+internal runtime stream objects.
 
-Active entries always include:
+Active statuses always include:
 
 - `kind`: `topic` or `configured_source`
 - `name`
 - `status`: `active`
 
-Error entries always include:
+Error statuses always include:
 
 - `kind`
 - `name`

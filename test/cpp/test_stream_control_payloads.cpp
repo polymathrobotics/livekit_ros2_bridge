@@ -194,10 +194,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForVideoDelivery)
   subscription_status.delivery_kind = SubscriptionDeliveryKind::kVideo;
   subscription_status.track_name = "ros.video.camera.image";
 
-  const auto entry = serializeSubscriptionStatus(subscription_status);
+  const auto status_json = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
-    entry,
+    status_json,
     (nlohmann::json{
       {"kind", "topic"},
       {"name", "/camera/image"},
@@ -218,10 +218,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForConfiguredSourceDe
   subscription_status.delivery_kind = SubscriptionDeliveryKind::kVideo;
   subscription_status.track_name = "ros.video.configured_source.%2Fsources%2Ffront";
 
-  const auto entry = serializeSubscriptionStatus(subscription_status);
+  const auto status_json = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
-    entry,
+    status_json,
     (nlohmann::json{
       {"kind", "configured_source"},
       {"name", "/sources/front"},
@@ -243,10 +243,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusForDataTrackDelivery)
   subscription_status.delivery_kind = SubscriptionDeliveryKind::kData;
   subscription_status.track_name = "ros.data.lidar.points";
 
-  const auto entry = serializeSubscriptionStatus(subscription_status);
+  const auto status_json = serializeSubscriptionStatus(subscription_status);
 
   EXPECT_EQ(
-    entry,
+    status_json,
     (nlohmann::json{
       {"kind", "topic"},
       {"name", "/lidar/points"},

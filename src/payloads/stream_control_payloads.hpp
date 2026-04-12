@@ -52,7 +52,8 @@ struct SubscriptionHeartbeat
 {
   /// Optional trimmed session identifier. Missing, null, or blank values are treated as absent.
   std::optional<std::string> session_id;
-  /// Subscription demands in first-seen order after coalescing duplicate canonical targets.
+  /// Wire `subscriptions` array parsed into lease-backed `SubscriptionDemand` objects in
+  /// first-seen order after coalescing duplicate canonical targets.
   std::vector<SubscriptionDemand> subscriptions;
 };
 
@@ -64,7 +65,7 @@ enum class SubscriptionDeliveryKind
   kVideo,
 };
 
-/// Control-path subscription status entry serialized onto `ros.subscriptions.status`.
+/// Control-path subscription status object serialized onto `ros.subscriptions.status`.
 struct SubscriptionStatus
 {
   SubscriptionTarget target;
@@ -86,7 +87,7 @@ struct SubscriptionStatus
 /// duplicate demand intervals keep the smallest non-zero value.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
-/// Serialize one active subscription status entry. Data deliveries include
+/// Serialize one active subscription status object. Data deliveries include
 /// `content_type="application/x-ros-cdr"` and `delivery.interval_ms`.
 nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscription_status);
 
