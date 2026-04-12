@@ -32,19 +32,20 @@
 namespace livekit_ros2_bridge
 {
 
-// Best-effort LiveKit -> ROS ingress writer that caches concrete ROS
+// Best-effort LiveKit -> ROS topic publisher that caches concrete ROS
 // publishers per topic. Unlike DataTrackPublisher and VideoTrackPublisher, it
-// does not own a LiveKit publication. Failures are logged and dropped rather
-// than surfaced back through a retry or delivery guarantee.
-class RosTopicWriter final
+// publishes onto ROS topics rather than owning a LiveKit publication. Failures
+// are logged and dropped rather than surfaced back through a retry or delivery
+// guarantee.
+class RosTopicPublisher final
 {
 public:
-  RosTopicWriter(rclcpp::Node & node, AccessPolicy access_policy);
-  RosTopicWriter(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers);
+  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy);
+  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers);
 
-  // Writes best-effort: denied topics, type mismatches, shutdown, and ROS
+  // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.
-  void write(const std::string & requester_identity, const TopicPublishCommand & command);
+  void publish(const std::string & requester_identity, const TopicPublishCommand & command);
 
   void shutdown();
 
@@ -53,7 +54,7 @@ private:
 
   // Test-only hook that runs after publisher resolution/creation and
   // immediately before the underlying ROS publisher publishes the message.
-  void setBeforeWriteHookForTest(std::function<void()> hook);
+  void setBeforePublishHookForTest(std::function<void()> hook);
 
   struct CachedPublisher
   {
@@ -62,7 +63,7 @@ private:
   };
 
   std::string resolveTopicTypeOrThrow(const std::string & topic, const std::string & requested_interface_type) const;
-  void writeWithResolvedPublisher(
+  void publishWithResolvedPublisher(
     const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized);
 
   rclcpp::Node & node_;
@@ -70,7 +71,7 @@ private:
   std::size_t max_cached_publishers_ = 0U;
   std::atomic<bool> is_shutdown_{false};
   BoundedLruCache<std::string, CachedPublisher> cached_publishers_;
-  std::function<void()> before_write_hook_for_test_;
+  std::function<void()> before_publish_hook_for_test_;
   EventThrottle evicted_publisher_warning_throttle_{kEvictedPublisherWarningThrottlePeriod};
 };
 

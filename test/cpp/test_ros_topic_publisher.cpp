@@ -32,7 +32,7 @@
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_msgs/msg/string.hpp"
 #define private public
-#include "ros_topic_writer.hpp"
+#include "ros_topic_publisher.hpp"
 #undef private
 
 namespace livekit_ros2_bridge
@@ -68,67 +68,67 @@ AccessPolicy makePublishPolicy(std::vector<std::string> allow = {}, std::vector<
   return AccessPolicy(config);
 }
 
-class TopicWriterHarness final
+class TopicPublisherHarness final
 {
 public:
-  TopicWriterHarness()
+  TopicPublisherHarness()
   {
     observer_context_ = std::make_shared<rclcpp::Context>();
     observer_context_->init(0, nullptr);
 
     rclcpp::NodeOptions observer_options;
     observer_options.context(observer_context_);
-    observer_node_ = std::make_shared<rclcpp::Node>(nextNodeName("topic_writer_observer"), observer_options);
+    observer_node_ = std::make_shared<rclcpp::Node>(nextNodeName("topic_publisher_observer"), observer_options);
 
     rclcpp::ExecutorOptions observer_executor_options;
     observer_executor_options.context = observer_context_;
     observer_executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(observer_executor_options);
     observer_executor_->add_node(observer_node_);
 
-    recreateWriterSide("topic_writer_node");
+    recreatePublisherSide("topic_publisher_node");
   }
 
-  ~TopicWriterHarness()
+  ~TopicPublisherHarness()
   {
-    writer_executor_.reset();
-    writer_node_.reset();
-    if (writer_context_ && writer_context_->is_valid()) {
-      writer_context_->shutdown("topic writer test teardown");
+    publisher_executor_.reset();
+    publisher_node_.reset();
+    if (publisher_context_ && publisher_context_->is_valid()) {
+      publisher_context_->shutdown("topic publisher test teardown");
     }
-    writer_context_.reset();
+    publisher_context_.reset();
 
     observer_executor_.reset();
     observer_node_.reset();
     if (observer_context_ && observer_context_->is_valid()) {
-      observer_context_->shutdown("topic writer test teardown");
+      observer_context_->shutdown("topic publisher test teardown");
     }
     observer_context_.reset();
   }
 
-  void recreateWriterSide(const std::string & node_prefix)
+  void recreatePublisherSide(const std::string & node_prefix)
   {
-    writer_executor_.reset();
-    writer_node_.reset();
-    if (writer_context_ && writer_context_->is_valid()) {
-      writer_context_->shutdown("topic writer test reset");
+    publisher_executor_.reset();
+    publisher_node_.reset();
+    if (publisher_context_ && publisher_context_->is_valid()) {
+      publisher_context_->shutdown("topic publisher test reset");
     }
 
-    writer_context_ = std::make_shared<rclcpp::Context>();
-    writer_context_->init(0, nullptr);
+    publisher_context_ = std::make_shared<rclcpp::Context>();
+    publisher_context_->init(0, nullptr);
 
-    rclcpp::NodeOptions writer_options;
-    writer_options.context(writer_context_);
-    writer_node_ = std::make_shared<rclcpp::Node>(nextNodeName(node_prefix), writer_options);
+    rclcpp::NodeOptions publisher_options;
+    publisher_options.context(publisher_context_);
+    publisher_node_ = std::make_shared<rclcpp::Node>(nextNodeName(node_prefix), publisher_options);
 
-    rclcpp::ExecutorOptions writer_executor_options;
-    writer_executor_options.context = writer_context_;
-    writer_executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(writer_executor_options);
-    writer_executor_->add_node(writer_node_);
+    rclcpp::ExecutorOptions publisher_executor_options;
+    publisher_executor_options.context = publisher_context_;
+    publisher_executor_ = std::make_unique<rclcpp::executors::SingleThreadedExecutor>(publisher_executor_options);
+    publisher_executor_->add_node(publisher_node_);
   }
 
-  rclcpp::Node & writerNode() const
+  rclcpp::Node & publisherNode() const
   {
-    return *writer_node_;
+    return *publisher_node_;
   }
 
   rclcpp::Node & observerNode() const
@@ -136,10 +136,10 @@ public:
     return *observer_node_;
   }
 
-  void shutdownWriterContext()
+  void shutdownPublisherContext()
   {
-    if (writer_context_ && writer_context_->is_valid()) {
-      writer_context_->shutdown("topic writer test induced shutdown");
+    if (publisher_context_ && publisher_context_->is_valid()) {
+      publisher_context_->shutdown("topic publisher test induced shutdown");
     }
   }
 
@@ -164,7 +164,7 @@ public:
   {
     return spinUntil(
       [&]() {
-        const auto topics = writer_node_->get_topic_names_and_types();
+        const auto topics = publisher_node_->get_topic_names_and_types();
         const auto topic_it = topics.find(topic);
         return topic_it != topics.end() && topic_it->second.size() == 1U && topic_it->second.front() == expected_type;
       },
@@ -186,25 +186,25 @@ private:
 
   void spinSome()
   {
-    if (writer_executor_ && writer_context_ && writer_context_->is_valid()) {
-      writer_executor_->spin_some();
+    if (publisher_executor_ && publisher_context_ && publisher_context_->is_valid()) {
+      publisher_executor_->spin_some();
     }
     if (observer_executor_ && observer_context_ && observer_context_->is_valid()) {
       observer_executor_->spin_some();
     }
   }
 
-  std::shared_ptr<rclcpp::Context> writer_context_;
+  std::shared_ptr<rclcpp::Context> publisher_context_;
   std::shared_ptr<rclcpp::Context> observer_context_;
-  std::shared_ptr<rclcpp::Node> writer_node_;
+  std::shared_ptr<rclcpp::Node> publisher_node_;
   std::shared_ptr<rclcpp::Node> observer_node_;
-  std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> writer_executor_;
+  std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> publisher_executor_;
   std::unique_ptr<rclcpp::executors::SingleThreadedExecutor> observer_executor_;
 };
 
-TEST(TopicWriterTest, WritesMessagesToCommandTopic)
+TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string topic = "/battery/cmd";
 
   std::optional<sensor_msgs::msg::BatteryState> received_message;
@@ -216,12 +216,12 @@ TEST(TopicWriterTest, WritesMessagesToCommandTopic)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({topic}));
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
-  writer.write("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -229,9 +229,9 @@ TEST(TopicWriterTest, WritesMessagesToCommandTopic)
   EXPECT_EQ(harness.publisherCount(topic), 1U);
 }
 
-TEST(TopicWriterTest, RejectsDeniedPublishCommands)
+TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string topic = "/battery/blocked";
 
   std::optional<sensor_msgs::msg::BatteryState> received_message;
@@ -243,20 +243,20 @@ TEST(TopicWriterTest, RejectsDeniedPublishCommands)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({"/battery/allowed"}));
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/allowed"}));
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
 
-  writer.write("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   EXPECT_FALSE(harness.spinUntil([&]() { return received_message.has_value(); }, std::chrono::milliseconds(200)));
   EXPECT_EQ(harness.publisherCount(topic), 0U);
 }
 
-TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
+TEST(TopicPublisherTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string first_topic = "/battery/first";
   const std::string second_topic = "/battery/second";
 
@@ -276,11 +276,12 @@ TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   ASSERT_TRUE(harness.waitForTopicType(first_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(harness.waitForTopicType(second_topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({"/battery/*"}), 1U);
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({"/battery/*"}), 1U);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
-  writer.write("alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish(
+    "alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 1U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 48.5F, 1e-6F);
@@ -288,7 +289,8 @@ TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   EXPECT_EQ(harness.publisherCount(second_topic), 0U);
 
   message.voltage = 49.0F;
-  writer.write("alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish(
+    "alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 2U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 49.0F, 1e-6F);
@@ -297,7 +299,8 @@ TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
   EXPECT_EQ(harness.publisherCount(second_topic), 0U);
 
   message.voltage = 47.0F;
-  writer.write("alice", makePublishCommand(second_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish(
+    "alice", makePublishCommand(second_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return second_topic_voltages.size() == 1U; }));
   EXPECT_NEAR(second_topic_voltages.back(), 47.0F, 1e-6F);
@@ -305,7 +308,8 @@ TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
     [&]() { return harness.publisherCount(first_topic) == 0U && harness.publisherCount(second_topic) == 1U; }));
 
   message.voltage = 50.0F;
-  writer.write("alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
+  publisher.publish(
+    "alice", makePublishCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessage(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 3U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 50.0F, 1e-6F);
@@ -313,9 +317,9 @@ TEST(TopicWriterTest, ReusesPublishersAndEvictsLeastRecentlyUsedTopic)
     [&]() { return harness.publisherCount(first_topic) == 1U && harness.publisherCount(second_topic) == 0U; }));
 }
 
-TEST(TopicWriterTest, FailedFirstWriteDoesNotLeavePublisherRegisteredAndLaterWriteStillSucceeds)
+TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLaterPublishStillSucceeds)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string topic = "/battery/failure_cleanup";
   std::optional<sensor_msgs::msg::BatteryState> received_message;
   auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
@@ -331,38 +335,38 @@ TEST(TopicWriterTest, FailedFirstWriteDoesNotLeavePublisherRegisteredAndLaterWri
   const TopicPublishCommand command =
     makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(message));
 
-  bool force_first_write_failure = true;
-  bool subscriber_ready_before_write = false;
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({topic}));
-  writer.setBeforeWriteHookForTest([&]() {
-    subscriber_ready_before_write =
-      harness.spinUntil([&]() { return harness.writerNode().count_subscribers(topic) == 1U; });
-    if (force_first_write_failure) {
-      force_first_write_failure = false;
+  bool force_first_publish_failure = true;
+  bool subscriber_ready_before_publish = false;
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
+  publisher.setBeforePublishHookForTest([&]() {
+    subscriber_ready_before_publish =
+      harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; });
+    if (force_first_publish_failure) {
+      force_first_publish_failure = false;
       throw std::runtime_error("forced publish failure");
     }
   });
 
-  writer.write("alice", command);
+  publisher.publish("alice", command);
 
-  EXPECT_TRUE(subscriber_ready_before_write);
+  EXPECT_TRUE(subscriber_ready_before_publish);
   EXPECT_FALSE(received_message.has_value());
-  EXPECT_TRUE(writer.cached_publishers_.empty());
+  EXPECT_TRUE(publisher.cached_publishers_.empty());
 
-  subscriber_ready_before_write = false;
-  writer.write("alice", command);
+  subscriber_ready_before_publish = false;
+  publisher.publish("alice", command);
 
-  EXPECT_TRUE(subscriber_ready_before_write);
+  EXPECT_TRUE(subscriber_ready_before_publish);
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
-  ASSERT_EQ(writer.cached_publishers_.size(), 1U);
-  ASSERT_TRUE(writer.cached_publishers_.peek(topic).has_value());
-  EXPECT_EQ(writer.cached_publishers_.peek(topic)->interface_type, "sensor_msgs/msg/BatteryState");
+  ASSERT_EQ(publisher.cached_publishers_.size(), 1U);
+  ASSERT_TRUE(publisher.cached_publishers_.peek(topic).has_value());
+  EXPECT_EQ(publisher.cached_publishers_.peek(topic)->interface_type, "sensor_msgs/msg/BatteryState");
 }
 
-TEST(TopicWriterTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
+TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string topic = "/battery/invalid";
 
   std::optional<sensor_msgs::msg::BatteryState> received_message;
@@ -374,20 +378,20 @@ TEST(TopicWriterTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({topic}));
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
 
   std_msgs::msg::String wrong_message;
   wrong_message.data = "not a BatteryState";
 
-  writer.write("alice", makePublishCommand(topic, "std_msgs/msg/String", serializeMessage(wrong_message)));
+  publisher.publish("alice", makePublishCommand(topic, "std_msgs/msg/String", serializeMessage(wrong_message)));
 
   EXPECT_FALSE(harness.spinUntil([&]() { return received_message.has_value(); }, std::chrono::milliseconds(200)));
   EXPECT_EQ(harness.publisherCount(topic), 0U);
 }
 
-TEST(TopicWriterTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdownIsHarmless)
+TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdownIsHarmless)
 {
-  TopicWriterHarness harness;
+  TopicPublisherHarness harness;
   const std::string topic = "/battery/shutdown_terminal";
 
   std::optional<sensor_msgs::msg::BatteryState> received_message;
@@ -399,18 +403,19 @@ TEST(TopicWriterTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdownI
 
   ASSERT_TRUE(harness.waitForTopicType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicWriter writer(harness.writerNode(), makePublishPolicy({topic}));
+  RosTopicPublisher publisher(harness.publisherNode(), makePublishPolicy({topic}));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
-  writer.write("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(first_message)));
+  publisher.publish(
+    "alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(first_message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   EXPECT_EQ(harness.publisherCount(topic), 1U);
 
-  writer.shutdown();
-  writer.shutdown();
+  publisher.shutdown();
+  publisher.shutdown();
 
   ASSERT_TRUE(harness.spinUntil([&]() { return harness.publisherCount(topic) == 0U; }));
 
@@ -418,7 +423,7 @@ TEST(TopicWriterTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdownI
   sensor_msgs::msg::BatteryState late_message;
   late_message.voltage = 49.0F;
 
-  writer.write("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(late_message)));
+  publisher.publish("alice", makePublishCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessage(late_message)));
 
   EXPECT_FALSE(harness.spinUntil([&]() { return received_message.has_value(); }, std::chrono::milliseconds(200)));
   EXPECT_EQ(harness.publisherCount(topic), 0U);

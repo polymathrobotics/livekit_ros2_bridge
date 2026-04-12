@@ -16,7 +16,7 @@ The important boundary is simple:
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
 - `SubscriptionRegistry`: shared lease state, data-track republish bookkeeping, and video stream bindings
 - `VideoStreamRegistry`: one shared in-process video runtime per resolved stream key
-- `RosTopicWriter`: best-effort LiveKit -> ROS topic ingress with a bounded ROS publisher cache
+- `RosTopicPublisher`: best-effort LiveKit -> ROS topic ingress with a bounded ROS publisher cache
 - `RpcRouter` and `ControlPacketRouter`: the LiveKit-facing entry points
 
 ## Event flow
@@ -36,7 +36,7 @@ The flow looks like this:
 
 Construction is eager rather than lazy:
 
-1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicWriter`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
+1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
 3. It starts `RoomConnection` with callbacks for connection reset, participant disconnect, and incoming control packets.
 4. After the connection thread is running, it registers the LiveKit RPC methods.

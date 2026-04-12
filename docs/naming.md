@@ -53,16 +53,10 @@ contract and this guide for internal implementation vocabulary.
 ### Directionality and transport
 
 - **`publisher`**
-  - Reserved for ROS -> LiveKit publication ownership.
-  - A publisher owns or maintains a LiveKit publication.
-  - Does not mean LiveKit -> ROS ingress.
-  - Examples: `DataTrackPublisher`, `VideoTrackPublisher`
-
-- **`writer`**
-  - Preferred for LiveKit -> ROS best-effort writes.
-  - A writer executes ingress commands into ROS.
-  - Distinct from a LiveKit publication owner.
-  - Example: `RosTopicWriter`
+  - Reserved for output-side publication ownership.
+  - A publisher owns or maintains the concrete publishing surface for one transport.
+  - Use `topic publisher` for LiveKit -> ROS ingress and `track publisher` for ROS -> LiveKit egress.
+  - Examples: `RosTopicPublisher`, `DataTrackPublisher`, `VideoTrackPublisher`
 
 - **`track`**
   - LiveKit transport object or deterministic LiveKit transport surface only.
@@ -246,8 +240,7 @@ contract and this guide for internal implementation vocabulary.
 - Use `track` for LiveKit transport and `stream` for the bridge's end-to-end runtime.
 - Use `cdr` only for serialized ROS payload bytes.
 - Use `source` only when there is a real input-side runtime abstraction.
-- Reserve `publisher` for ROS -> LiveKit publication ownership.
-- Prefer `writer` for LiveKit -> ROS ingress execution.
+- Prefer `publisher` for output publication ownership and use `topic` vs `track` to distinguish ROS from LiveKit.
 - Reserve `request` and `response` for RPCs.
 - Prefer `command`, `heartbeat`, `demand`, `status`, or `update` for control paths.
 - Use `resource` only for actual ROS graph entities.

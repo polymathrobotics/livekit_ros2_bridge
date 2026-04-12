@@ -23,7 +23,7 @@
 #include "control_packet_router.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
-#include "ros_topic_writer.hpp"
+#include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "subscription_registry.hpp"
@@ -78,7 +78,7 @@ Runtime::Runtime(
     .info();
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
-  ros_topic_writer_ = std::make_unique<RosTopicWriter>(node_, runtime_config.access_policy);
+  ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_connection_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
@@ -101,7 +101,7 @@ Runtime::Runtime(
       },
       [this](std::string requester_identity, TopicPublishCommand command) {
         submitExecutorWork([this, requester_identity = std::move(requester_identity), command = std::move(command)]() {
-          ros_topic_writer_->write(requester_identity, command);
+          ros_topic_publisher_->publish(requester_identity, command);
         });
       },
     });
@@ -206,8 +206,8 @@ void Runtime::shutdown()
   if (ros_service_caller_ != nullptr) {
     ros_service_caller_->shutdown();
   }
-  if (ros_topic_writer_ != nullptr) {
-    ros_topic_writer_->shutdown();
+  if (ros_topic_publisher_ != nullptr) {
+    ros_topic_publisher_->shutdown();
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_complete")
