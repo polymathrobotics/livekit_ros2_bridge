@@ -149,6 +149,7 @@ void RosTopicPublisher::publishWithResolvedPublisher(
   const auto cached_publisher = cached_publishers_.peek(topic);
   const bool was_cached = cached_publisher.has_value();
   std::shared_ptr<rclcpp::GenericPublisher> resolved_publisher;
+
   if (!was_cached) {
     const rclcpp::QoS qos(kPublisherDepth);
     resolved_publisher = node_.create_generic_publisher(topic, interface_type, qos);

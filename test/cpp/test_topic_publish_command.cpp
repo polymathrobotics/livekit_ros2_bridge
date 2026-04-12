@@ -78,16 +78,19 @@ TEST(TopicPublishCommandTest, RejectsMissingOrInvalidTopic)
       {"interface_type", "std_msgs/msg/String"},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
     },
+
     nlohmann::json{
       {"topic", ""},
       {"interface_type", "std_msgs/msg/String"},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
     },
+
     nlohmann::json{
       {"topic", 123},
       {"interface_type", "std_msgs/msg/String"},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }};
+    },
+  };
 
   for (const auto & command_payload : payloads) {
     EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
@@ -101,16 +104,19 @@ TEST(TopicPublishCommandTest, RejectsMissingOrInvalidInterfaceType)
       {"topic", "/chatter"},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
     },
+
     nlohmann::json{
       {"topic", "/chatter"},
       {"interface_type", ""},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
     },
+
     nlohmann::json{
       {"topic", "/chatter"},
       {"interface_type", false},
       {"message", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
-    }};
+    },
+  };
 
   for (const auto & command_payload : payloads) {
     EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
@@ -124,11 +130,13 @@ TEST(TopicPublishCommandTest, RejectsMissingOrMalformedMessage)
       {"topic", "/chatter"},
       {"interface_type", "std_msgs/msg/String"},
     },
+
     nlohmann::json{
       {"topic", "/chatter"},
       {"interface_type", "std_msgs/msg/String"},
       {"message", nlohmann::json::array({1, 2})},
-    }};
+    },
+  };
 
   for (const auto & command_payload : payloads) {
     EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
@@ -138,7 +146,10 @@ TEST(TopicPublishCommandTest, RejectsMissingOrMalformedMessage)
 TEST(TopicPublishCommandTest, RejectsEmptyMessagePayload)
 {
   auto command_payload = makeValidPayload();
-  command_payload["message"] = {{"content_type", "application/x-ros-cdr"}, {"payload_base64", ""}};
+  command_payload["message"] = {
+    {"content_type", "application/x-ros-cdr"},
+    {"payload_base64", ""},
+  };
 
   EXPECT_THROW(parseCommand(command_payload), std::invalid_argument);
 }

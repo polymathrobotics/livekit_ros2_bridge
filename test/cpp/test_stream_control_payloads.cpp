@@ -136,6 +136,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOversizedIntervals)
   const nlohmann::json body = {
     {"subscriptions",
      {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", oversized_interval_ms}}}}}}};
+
   expectSingleDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_clamped_interval_ms);
 }
 
@@ -167,6 +168,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsTopicAndConfiguredSourceDisti
   EXPECT_EQ(update.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
   EXPECT_EQ(update.subscriptions[0].target.name, "/camera/front");
   EXPECT_EQ(update.subscriptions[0].preferred_interval_ms, 25);
+
   EXPECT_EQ(update.subscriptions[1].target.kind, SubscriptionTargetKind::ConfiguredSource);
   EXPECT_EQ(update.subscriptions[1].target.name, "/camera/front");
   EXPECT_EQ(update.subscriptions[1].preferred_interval_ms, 125);

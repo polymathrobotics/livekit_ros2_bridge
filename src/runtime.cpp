@@ -86,6 +86,7 @@ Runtime::Runtime(
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_connection_, runtime_config.access_policy, node_.get_clock());
+
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
   rpc_router_ =
     std::make_unique<RpcRouter>(node_, runtime_config.access_policy, *ros_executor_queue_, *ros_service_caller_);
@@ -144,6 +145,7 @@ Runtime::Runtime(
     },
     kReconnectInitialBackoff,
     kReconnectMaxBackoff);
+
   if (!rpc_router_->registerRpcMethods(*room_connection_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .field("phase", "startup")

@@ -503,6 +503,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/camera/front"});
+
   auto harness = makeRuntimeHarness(options);
 
   auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_video_watchdog_observer"));
@@ -568,9 +569,11 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
       if (callbacks.on_connection_reset) {
         callbacks.on_connection_reset();
       }
+
       if (callbacks.on_participant_disconnected) {
         callbacks.on_participant_disconnected("participant-1");
       }
+
       if (callbacks.on_incoming_control_packet_received) {
         callbacks.on_incoming_control_packet_received(
           IncomingControlPacket{

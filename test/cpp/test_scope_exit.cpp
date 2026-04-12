@@ -21,10 +21,12 @@ namespace livekit_ros2_bridge
 TEST(ScopeExitTest, InvokesCallbackOnDestruction)
 {
   bool called = false;
+
   {
     ScopeExit guard([&called]() { called = true; });
     EXPECT_FALSE(called);
   }
+
   EXPECT_TRUE(called);
 }
 

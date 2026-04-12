@@ -148,6 +148,7 @@ TEST(VideoStreamSpecTest, UserCatchAllOverridesBuiltInDefault)
 TEST(VideoStreamSpecTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholders)
 {
   VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
+
   stream_config.ros_topic_rules.insert(
     stream_config.ros_topic_rules.begin(), makeRosVideoTopicRule("front", "/camera/front/*", "{topic}"));
 
@@ -173,6 +174,7 @@ TEST(VideoStreamSpecTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredS
   configured_source.transform_fragment = "videobalance saturation=0.0";
   configured_source.publish_config =
     makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
+
   stream_config.configured_sources.emplace("front_camera", std::move(configured_source));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(stream_config, "  front_camera  ");
@@ -195,6 +197,7 @@ TEST(VideoStreamSpecTest, ResolveConfiguredSourceVideoStreamSpecPercentEncodesTr
 
   ConfiguredVideoStreamSource configured_source;
   configured_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+
   stream_config.configured_sources.emplace("/sources/front:rgb%", std::move(configured_source));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(stream_config, "/sources/front:rgb%");

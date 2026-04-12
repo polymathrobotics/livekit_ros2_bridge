@@ -27,9 +27,11 @@
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/serialization.hpp"
+
 #define private public
 #include "ros_service_caller.hpp"
 #undef private
+
 #include "std_srvs/srv/set_bool.hpp"
 
 namespace livekit_ros2_bridge

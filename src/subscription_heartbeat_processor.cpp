@@ -163,6 +163,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveRequesterIdent
   // authenticated browser tab and continue renewing that client session lease instead of dropping
   // it.
   lease_it->second.expiry = requester_lease_expiry;
+
   LogEvent(kHeartbeatProcessorLogger, "heartbeat_client_session_fallback")
     .field("session_id", *heartbeat.session_id)
     .field("requester_identity", lease_it->second.requester_identity)

@@ -321,6 +321,7 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
 {
   TopicPublisherHarness harness;
   const std::string topic = "/battery/failure_cleanup";
+
   std::optional<sensor_msgs::msg::BatteryState> received_message;
   auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
     topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {

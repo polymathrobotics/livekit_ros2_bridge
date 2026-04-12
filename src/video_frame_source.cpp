@@ -657,6 +657,7 @@ private:
           self->handleRawImageMessage(message);
         }
       });
+
     LogEvent(kVideoStreamRegistryLogger, "video_stream_subscription_started")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
@@ -842,6 +843,7 @@ private:
           self->handleCompressedImageMessage(message);
         }
       });
+
     LogEvent(kVideoStreamRegistryLogger, "video_stream_subscription_started")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)

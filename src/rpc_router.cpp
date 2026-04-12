@@ -364,8 +364,10 @@ std::optional<std::string> RpcRouter::handleInterfacesGet(const RpcInvocation & 
   return handleRpcWithCallerIdentity(invocation, protocol::kRpcInterfacesGet, [this, &invocation]() {
     try {
       auto types = parseRequestedInterfaceTypes(invocation.payload);
+
       std::set<std::string> seen;
       std::vector<InterfaceDefinition> all_interfaces;
+
       for (const auto & type : types) {
         for (auto & definition : lookupInterfaceDefinitions(type)) {
           if (seen.insert(definition.interface_type).second) {

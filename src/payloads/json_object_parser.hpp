@@ -84,6 +84,7 @@ inline std::string parseRequiredNonEmptyTrimmedStringField(
   if (field_it == json.end()) {
     throw std::invalid_argument(required_message);
   }
+
   return parseRequiredNonEmptyTrimmedString(*field_it, required_message);
 }
 
@@ -97,6 +98,7 @@ inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringField(
   if (field_it == json.end()) {
     return std::nullopt;
   }
+
   return parseOptionalNonEmptyTrimmedString(*field_it, invalid_message, null_is_absent);
 }
 

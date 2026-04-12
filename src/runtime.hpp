@@ -90,6 +90,7 @@ private:
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<ControlPacketRouter> control_packet_router_;
+
   VideoStreamConfig video_stream_config_;
   SubscriptionQosConfig subscription_qos_config_;
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
@@ -98,6 +99,7 @@ private:
   FailFastCallbacks fail_fast_callbacks_;
   const bool fail_fast_enabled_;
   const std::chrono::milliseconds fail_fast_disconnect_grace_;
+
   std::atomic<bool> shutting_down_{false};
   mutable std::mutex connection_state_mutex_;
   bool connected_ = false;
@@ -106,6 +108,7 @@ private:
   bool fail_fast_triggered_ = false;
   std::optional<SteadyClock::time_point> disconnect_deadline_;
   std::string last_reconnect_reason_;
+
   EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};
   EventThrottle executor_shutdown_execute_drop_throttle_{std::chrono::seconds(5)};

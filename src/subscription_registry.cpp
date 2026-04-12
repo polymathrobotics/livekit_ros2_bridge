@@ -431,6 +431,7 @@ void SubscriptionRegistry::resetSessionState()
     .field("subscription_count", subscriptions_.size())
     .field("pending_data_track_republishes", requesters_needing_data_track_republish_.size())
     .info();
+
   const std::size_t callback_generation = message_callback_gate_.close();
   requesters_needing_data_track_republish_.clear();
   clearSubscriptions();
@@ -447,6 +448,7 @@ void SubscriptionRegistry::shutdown()
     .field("subscription_count", subscriptions_.size())
     .field("pending_data_track_republishes", requesters_needing_data_track_republish_.size())
     .info();
+
   (void)message_callback_gate_.close();
   clearSubscriptions();
 }

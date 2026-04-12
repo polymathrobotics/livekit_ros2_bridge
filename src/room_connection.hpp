@@ -137,15 +137,19 @@ struct RoomConnectionCallbacks
 {
   // Called when a room connection becomes active.
   std::function<void()> on_connected;
+
   // Called when the current room connection begins a reconnect episode. The reason is a stable
   // internal string such as `room_disconnected` or `connection_state_disconnected`.
   std::function<void(const std::string &)> on_reconnect_requested;
+
   // Called after a connected room connection has been torn down and any per-connection state
   // should be rebuilt on the next connect.
   std::function<void()> on_connection_reset;
+
   // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.
   std::function<void(const std::string &)> on_participant_disconnected;
+
   // Delivers one incoming control packet. Callbacks may run on connection-managed background
   // threads
   // and must hand off ROS work instead of assuming executor-thread affinity.
@@ -166,17 +170,21 @@ public:
     RoomConnectionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
     std::chrono::milliseconds max_backoff) = 0;
+
   // Stops the reconnect loop and waits for any connection-owned background thread to exit.
   virtual void stop() = 0;
+
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
   // participant is available.
   virtual bool registerRpcMethod(const std::string & method_name, RpcHandler handler) = 0;
   virtual bool unregisterRpcMethod(const std::string & method_name) = 0;
+
   virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
   virtual DataTrackPushResult tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
+
   virtual std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & track_name,
     const std::shared_ptr<livekit::VideoSource> & source,

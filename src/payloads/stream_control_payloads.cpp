@@ -138,6 +138,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
   std::unordered_map<std::string, std::size_t> index_by_key;
   heartbeat.session_id =
     parseOptionalNonEmptyTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
+
   const auto subs_it = body.find("subscriptions");
   if (subs_it == body.end()) {
     throw std::invalid_argument("heartbeat subscriptions are required");

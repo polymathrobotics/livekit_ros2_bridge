@@ -85,6 +85,7 @@ TEST(VideoTrackPublisherTest, DimensionChangeRepublishesTrack)
   EXPECT_EQ(session.state->published_video_track_names[1], "ros.video.camera.resize");
   ASSERT_EQ(session.state->unpublished_video_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_video_track_names[0], "ros.video.camera.resize");
+
   ASSERT_EQ(session.state->event_log.size(), 3U);
   EXPECT_EQ(session.state->event_log[0], "publish_video_track:ros.video.camera.resize");
   EXPECT_EQ(session.state->event_log[1], "unpublish_video_track:ros.video.camera.resize");

@@ -104,10 +104,12 @@ inline const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind deli
 struct SubscriptionStatus
 {
   SubscriptionTarget target;
+
   // Omitted from the payload when empty.
   std::string degraded_reason;
   // Omitted from the payload when empty.
   std::string interface_type;
+
   // Serialized only for `data` delivery as `delivery.interval_ms`.
   int applied_interval_ms = 0;
   SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;

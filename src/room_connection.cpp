@@ -850,14 +850,18 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable condition_;
   std::thread worker_thread_;
+
   std::shared_ptr<livekit::Room> room_;
   RoomConnectionConfig config_;
   std::string access_token_;
   RoomConnectionCallbacks callbacks_;
+
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
   std::unordered_map<const PublishedVideoTrack *, std::shared_ptr<livekit::LocalVideoTrack>> published_video_tracks_;
+
   std::chrono::milliseconds initial_backoff_{500};
   std::chrono::milliseconds max_backoff_{10000};
+
   bool stop_requested_ = false;
   bool reconnect_requested_ = false;
   bool livekit_initialized_ = false;
@@ -865,6 +869,7 @@ private:
   // requester disappearing permanently.
   bool participant_disconnects_enabled_ = false;
   bool thread_started_ = false;
+
   std::string last_reconnect_reason_;
 };
 

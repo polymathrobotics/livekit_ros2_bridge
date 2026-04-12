@@ -355,11 +355,13 @@ TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTr
   first_spec.publish_config.max_bitrate_bps = 900000;
   first_spec.publish_config.max_framerate = 24.0;
   first_spec.publish_config.simulcast = VideoPublishSimulcast::Enabled;
+
   auto second_spec = makeRosSpec(second_topic, "ros.video.camera.publish_config.two");
   second_spec.publish_config.codec = VideoPublishCodec::Vp9;
   second_spec.publish_config.max_bitrate_bps = 250000;
   second_spec.publish_config.max_framerate = 12.0;
   second_spec.publish_config.simulcast = VideoPublishSimulcast::Disabled;
+
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
 
@@ -381,6 +383,7 @@ TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTr
   ASSERT_EQ(session.state->published_video_track_names.size(), 2U);
   EXPECT_EQ(session.state->published_video_track_names[0], first_spec.track_name);
   EXPECT_EQ(session.state->published_video_track_names[1], second_spec.track_name);
+
   ASSERT_EQ(session.state->published_video_configs.size(), 2U);
   EXPECT_EQ(session.state->published_video_configs[0].codec, first_spec.publish_config.codec);
   EXPECT_EQ(session.state->published_video_configs[0].max_bitrate_bps, first_spec.publish_config.max_bitrate_bps);

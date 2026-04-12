@@ -46,10 +46,12 @@ public:
   // tracks and backpressure are dropped so ROS message delivery never blocks waiting on LiveKit's
   // data-track queue.
   void tryPush(const std::uint8_t * data, std::size_t size);
+
   // Publishes the LiveKit data track for a registry-reserved track name. Completion is reported
   // back with the caller's generation so the registry can reject stale publishes after teardown.
   void publish(
     std::size_t generation, const PublishAcceptedFn & publish_accepted_fn, const PublishFailedFn & publish_failed_fn);
+
   void unpublish();
   void shutdown();
 

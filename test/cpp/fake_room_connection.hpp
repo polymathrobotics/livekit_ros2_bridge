@@ -43,10 +43,12 @@ struct FakeRoomConnectionState
   bool started = false;
   bool stopped = false;
   std::string access_token;
+
   std::vector<std::string> registered_rpc_methods;
   std::vector<std::string> unregistered_rpc_methods;
   std::vector<std::string> event_log;
   std::vector<OutgoingControlPacket> published_outgoing_control_packets;
+
   std::vector<std::string> published_data_track_names;
   std::vector<PushedDataTrackFrame> pushed_data_track_frames;
   std::vector<std::string> unpublished_data_track_names;
@@ -55,12 +57,15 @@ struct FakeRoomConnectionState
   std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> unpublish_attempted_data_track_names;
   std::vector<std::string> unpublish_rejected_data_track_names;
+
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
+
   std::function<void(const RoomConnectionCallbacks & callbacks)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
+
   bool throw_on_publish_control_packet = false;
   int publish_control_packet_call_count = 0;
 };

@@ -88,6 +88,7 @@ std::shared_ptr<VideoFrameSource> VideoStreamInstance::createFrameSourceLocked()
   if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
     return makeConfiguredSourceVideoFrameSource(spec_, *video_track_publisher_);
   }
+
   if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
     return makeRawRosVideoFrameSource(node_, spec_, subscription_qos_config_, *video_track_publisher_);
   }

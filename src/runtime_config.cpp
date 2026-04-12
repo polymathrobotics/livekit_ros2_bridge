@@ -231,12 +231,14 @@ VideoPublishOverride parseVideoPublishOverride(const EntryT & entry, const std::
   {
     config.codec = *codec;
   }
+
   if (entry.publish.max_bitrate_bps >= 0) {
     config.max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
   }
   if (entry.publish.max_framerate >= 0.0) {
     config.max_framerate = entry.publish.max_framerate;
   }
+
   if (
     const auto simulcast = parseOptionalVideoPublishSimulcast(entry.publish.simulcast, context + " publish.simulcast");
     simulcast.has_value())

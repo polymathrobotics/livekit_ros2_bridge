@@ -66,6 +66,7 @@ void DataTrackPublisher::tryPush(const std::uint8_t * data, std::size_t size)
   if (published_track_ == nullptr) {
     return;
   }
+
   auto result = room_connection_.tryPushDataTrack(published_track_, std::vector<std::uint8_t>(data, data + size));
   if (!result) {
     if (result.error().code == DataTrackPushErrorCode::kQueueFull) {
@@ -103,6 +104,7 @@ void DataTrackPublisher::publish(
       unpublishTrackNoThrow(room_connection_, track_name_, track);
       return;
     }
+
     published_track_ = std::move(track);
     LogEvent(kDataTrackPublisherLogger, "data_track_publish_completed")
       .field("track_name", track_name_)

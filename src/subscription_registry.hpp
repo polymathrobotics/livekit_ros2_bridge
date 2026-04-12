@@ -163,6 +163,7 @@ private:
   VideoStreamConfig default_video_stream_config_;
   const VideoStreamConfig * video_stream_config_;
   const SubscriptionQosConfig * subscription_qos_config_;
+
   // Subscriptions capture the gate's current generation in their message callback.
   // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from
   // the old session self-reject on entry.
@@ -170,6 +171,7 @@ private:
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> registry_generation_{0};
   SubscriptionStateMap subscriptions_;
+
   // Requesters whose next confirmed heartbeat should force currently published data tracks
   // through an unpublish/publish cycle so the rejoined participant session sees them again.
   std::unordered_set<std::string> requesters_needing_data_track_republish_;

@@ -95,6 +95,7 @@ public:
 private:
   std::mutex mutex_;
   std::condition_variable idle_;
+
   bool is_open_ = true;
   bool is_entered_ = false;
   std::thread::id owner_thread_id_{kNoOwningThread};

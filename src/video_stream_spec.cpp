@@ -149,10 +149,12 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   VideoStreamSpec spec;
   spec.stream_key = makeVideoStreamKey(kTopicStreamKeyPrefix, normalized);
   spec.track_name = makeVideoTrackName(kTopicTrackNamePrefix, normalized);
+
   spec.ros_topic = normalized;
   spec.interface_type = interface_type;
   spec.input_kind = VideoInputKind::RosTopic;
   spec.ingest_mode = std::string(interface_classification->ingest_mode);
+
   spec.selected_config_id = matched_rule->rule_id;
   spec.transform_fragment = matched_rule->transform_fragment;
   spec.publish_config = matched_rule->publish_config;
@@ -181,6 +183,7 @@ VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
   spec.configured_source_name = trimmed_name;
   spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.selected_config_id = trimmed_name;
+
   spec.ingress_fragment = configured_source.ingress_fragment;
   spec.transform_fragment = configured_source.transform_fragment;
   spec.ingest_mode = kConfiguredSourceIngestMode;

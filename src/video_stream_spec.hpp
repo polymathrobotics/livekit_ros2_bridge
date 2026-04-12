@@ -47,17 +47,21 @@ struct VideoStreamSpec
   std::string stream_key;
   // Stable LiveKit track name exposed to subscribers.
   std::string track_name;
+
   // Set only for ROS-topic sources after ROS resource normalization.
   std::string ros_topic;
   // Set only for ROS-topic sources and must resolve via classifyRosVideoInterfaceType(...).
   std::string interface_type;
+
   // Set only for configured sources after configured-source-name trimming.
   std::string configured_source_name;
+
   VideoInputKind input_kind = VideoInputKind::RosTopic;
   std::string ingest_mode;
   // ROS sources store the matched rule_id; configured sources store the canonical trimmed configured source name.
   std::string selected_config_id;
   std::optional<std::string> degraded_reason;
+
   // Configured sources set this to the configured ingress fragment. ROS sources leave it empty.
   std::string ingress_fragment;
   // Optional GStreamer transform fragment inserted after ingress and before the bridge-owned tail.

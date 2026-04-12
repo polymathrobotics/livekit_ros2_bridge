@@ -258,6 +258,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
   EXPECT_EQ(response["session_id"], "session-1");
   ASSERT_TRUE(response["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
+
   ASSERT_EQ(response["subscriptions"].size(), 1U);
   EXPECT_EQ(response["subscriptions"][0]["kind"], "topic");
   EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
@@ -296,6 +297,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
 
   const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(response["session_id"], "session-1");
+
   ASSERT_EQ(response["subscriptions"].size(), 1U);
   EXPECT_EQ(response["subscriptions"][0]["name"], "/battery_state");
   EXPECT_EQ(response["subscriptions"][0]["status"], "active");

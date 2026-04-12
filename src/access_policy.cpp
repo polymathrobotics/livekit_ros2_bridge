@@ -115,9 +115,11 @@ bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & rulese
   if (deny_rule_matched) {
     return false;
   }
+
   if (ruleset.allow.matches_all) {
     return true;
   }
+
   if (ruleset.allow.patterns.empty()) {
     return false;
   }

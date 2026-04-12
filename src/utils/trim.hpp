@@ -28,9 +28,11 @@ inline std::string trim(std::string_view value)
   const auto is_not_whitespace = [](unsigned char ch) { return std::isspace(ch) == 0; };
   const auto begin = std::find_if(value.begin(), value.end(), is_not_whitespace);
   const auto end = std::find_if(value.rbegin(), value.rend(), is_not_whitespace).base();
+
   if (begin >= end) {
     return "";
   }
+
   return std::string(begin, end);
 }
 
