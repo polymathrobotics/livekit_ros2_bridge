@@ -24,6 +24,7 @@
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_config.hpp"
 
 namespace livekit_ros2_bridge
@@ -46,6 +47,7 @@ struct RuntimeConfig
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos_config;
   VideoStreamConfig video_stream_config;
+  VideoProfilingConfig video_profiling_config;
 };
 
 // Loads and validates the bridge's startup-only configuration from parameters, deriving the

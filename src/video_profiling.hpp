@@ -28,27 +28,17 @@
 namespace livekit_ros2_bridge
 {
 
-#if defined(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING)
-inline constexpr bool kVideoProfilingBuildEnabled = true;
-#else
-inline constexpr bool kVideoProfilingBuildEnabled = false;
-#endif
-
 inline constexpr char kVideoProfilingDefaultTraceFile[] = "/workspace/log/video-profile.trace.json";
 inline constexpr std::size_t kVideoProfilingDefaultTraceMaxEvents = 250000U;
 inline constexpr auto kVideoProfilingDefaultSummaryInterval = std::chrono::milliseconds(5000);
 
 struct VideoProfilingConfig
 {
-  bool build_enabled = kVideoProfilingBuildEnabled;
-  bool requested = false;
   bool enabled = false;
   std::chrono::milliseconds summary_interval = kVideoProfilingDefaultSummaryInterval;
   std::string trace_file = kVideoProfilingDefaultTraceFile;
   std::size_t trace_max_events = kVideoProfilingDefaultTraceMaxEvents;
 };
-
-VideoProfilingConfig loadVideoProfilingConfigFromEnv();
 
 enum class VideoProfileStage
 {

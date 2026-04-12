@@ -65,6 +65,16 @@ RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
   return config;
 }
 
+VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
+{
+  VideoProfilingConfig config;
+  config.enabled = params.debug.video_profiling.enabled;
+  config.summary_interval = std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
+  config.trace_file = params.debug.video_profiling.trace_file;
+  config.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
+  return config;
+}
+
 std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
@@ -582,12 +592,14 @@ RuntimeConfig loadRuntimeConfig(
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
     runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
     runtime_config.video_stream_config = loadVideoStreamConfig(runtime_config.loaded_params);
+    runtime_config.video_profiling_config = loadVideoProfilingConfig(runtime_config.loaded_params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .field("phase", "startup")
       .fieldOr("room", runtime_config.room_connection_config.room, kUnsetLogValue)
       .field("auth_mode", "static_token")
       .field("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
+      .field("video_profiling_enabled", runtime_config.video_profiling_config.enabled)
       .field(
         "fail_fast_disconnect_grace_seconds", runtime_config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
       .info();

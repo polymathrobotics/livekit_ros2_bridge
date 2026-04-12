@@ -60,8 +60,7 @@ public:
     rclcpp::Node & node,
     std::unique_ptr<RoomConnection> room_connection,
     RuntimeConfig runtime_config,
-    FailFastCallbacks fail_fast_callbacks = {},
-    VideoProfilingConfig video_profiling_config = {});
+    FailFastCallbacks fail_fast_callbacks = {});
   ~Runtime();
 
   // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room

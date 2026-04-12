@@ -48,8 +48,7 @@ Runtime::Runtime(
   rclcpp::Node & node,
   std::unique_ptr<RoomConnection> room_connection,
   RuntimeConfig runtime_config,
-  FailFastCallbacks fail_fast_callbacks,
-  VideoProfilingConfig video_profiling_config)
+  FailFastCallbacks fail_fast_callbacks)
 : node_(node)
 , config_{
     std::move(runtime_config.video_stream_config),
@@ -80,13 +79,9 @@ Runtime::Runtime(
     .fieldOr("room", config_.room, "<unset>")
     .info();
 
-  if (video_profiling_config.requested && !video_profiling_config.build_enabled) {
-    LogEvent(node_.get_logger(), "video_profiling_requested_but_unavailable")
-      .field("reason", "profiling_build_flag_disabled")
-      .warn();
-  } else if (video_profiling_config.enabled) {
+  if (runtime_config.video_profiling_config.enabled) {
     components_.video_profiling_registry =
-      std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(video_profiling_config));
+      std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(runtime_config.video_profiling_config));
     components_.video_profiling_registry->emitEnabledLog();
   }
 

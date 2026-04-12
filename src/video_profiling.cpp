@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <filesystem>
@@ -29,7 +28,6 @@
 #include <numeric>
 #include <optional>
 #include <sstream>
-#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -48,11 +46,6 @@ namespace
 
 using SteadyClock = VideoStreamProfiler::SteadyClock;
 using TraceArgValue = std::variant<std::int64_t, double, bool, std::string>;
-
-constexpr char kVideoProfilingEnvEnabled[] = "LIVEKIT_BRIDGE_VIDEO_PROFILING";
-constexpr char kVideoProfilingEnvSummaryIntervalMs[] = "LIVEKIT_BRIDGE_VIDEO_PROFILE_SUMMARY_INTERVAL_MS";
-constexpr char kVideoProfilingEnvTraceFile[] = "LIVEKIT_BRIDGE_VIDEO_TRACE_FILE";
-constexpr char kVideoProfilingEnvTraceMaxEvents[] = "LIVEKIT_BRIDGE_VIDEO_TRACE_MAX_EVENTS";
 
 enum class TraceEventKind
 {
@@ -106,49 +99,6 @@ struct MetricSamples
     return summary;
   }
 };
-
-std::optional<std::string> readEnv(std::string_view name)
-{
-  const char * raw = std::getenv(std::string(name).c_str());
-  if (raw == nullptr) {
-    return std::nullopt;
-  }
-  return std::string(raw);
-}
-
-bool hasAnyVideoProfilingEnv()
-{
-  return readEnv(kVideoProfilingEnvEnabled).has_value() || readEnv(kVideoProfilingEnvSummaryIntervalMs).has_value() ||
-         readEnv(kVideoProfilingEnvTraceFile).has_value() || readEnv(kVideoProfilingEnvTraceMaxEvents).has_value();
-}
-
-bool parseBool(std::string_view name, std::string_view value)
-{
-  if (value == "1" || value == "true" || value == "TRUE" || value == "on" || value == "ON") {
-    return true;
-  }
-  if (value == "0" || value == "false" || value == "FALSE" || value == "off" || value == "OFF") {
-    return false;
-  }
-
-  throw std::runtime_error("invalid boolean value for " + std::string(name) + ": '" + std::string(value) + "'");
-}
-
-std::int64_t parsePositiveInt(std::string_view name, std::string_view value)
-{
-  std::size_t parsed_chars = 0;
-  const std::string owned_value(value);
-  std::int64_t parsed_value = 0;
-  try {
-    parsed_value = std::stoll(owned_value, &parsed_chars, 10);
-  } catch (const std::exception &) {
-    throw std::runtime_error("invalid integer value for " + std::string(name) + ": '" + std::string(value) + "'");
-  }
-  if (parsed_chars != owned_value.size() || parsed_value <= 0) {
-    throw std::runtime_error("invalid integer value for " + std::string(name) + ": '" + std::string(value) + "'");
-  }
-  return parsed_value;
-}
 
 std::uint64_t currentThreadId()
 {
@@ -688,38 +638,6 @@ struct VideoProfilingRegistry::Impl
   std::size_t last_reported_trace_drop_count = 0;
 };
 
-VideoProfilingConfig loadVideoProfilingConfigFromEnv()
-{
-  VideoProfilingConfig config;
-  config.requested = hasAnyVideoProfilingEnv();
-  if (!config.requested) {
-    return config;
-  }
-
-  if (const auto enabled = readEnv(kVideoProfilingEnvEnabled); enabled.has_value()) {
-    config.enabled = parseBool(kVideoProfilingEnvEnabled, *enabled);
-  }
-
-  if (const auto interval_ms = readEnv(kVideoProfilingEnvSummaryIntervalMs); interval_ms.has_value()) {
-    config.summary_interval =
-      std::chrono::milliseconds(parsePositiveInt(kVideoProfilingEnvSummaryIntervalMs, *interval_ms));
-  }
-
-  if (const auto trace_file = readEnv(kVideoProfilingEnvTraceFile); trace_file.has_value()) {
-    if (trace_file->empty()) {
-      throw std::runtime_error("invalid empty value for LIVEKIT_BRIDGE_VIDEO_TRACE_FILE");
-    }
-    config.trace_file = *trace_file;
-  }
-
-  if (const auto max_events = readEnv(kVideoProfilingEnvTraceMaxEvents); max_events.has_value()) {
-    config.trace_max_events = static_cast<std::size_t>(parsePositiveInt(kVideoProfilingEnvTraceMaxEvents, *max_events));
-  }
-
-  config.enabled = config.build_enabled && config.enabled;
-  return config;
-}
-
 const char * videoProfileStageToString(VideoProfileStage stage)
 {
   switch (stage) {
@@ -1190,7 +1108,6 @@ void VideoProfilingRegistry::emitEnabledLog() const
     .field("summary_interval_ms", impl_->config.summary_interval.count())
     .field("trace_file", impl_->config.trace_file)
     .field("trace_max_events", impl_->config.trace_max_events)
-    .field("build_enabled", impl_->config.build_enabled)
     .info();
 }
 

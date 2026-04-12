@@ -160,8 +160,7 @@ VideoStreamSpec makeConfiguredSourceSpec(const std::string & configured_source_n
 VideoProfilingConfig makeProfilingConfig()
 {
   VideoProfilingConfig config;
-  config.requested = true;
-  config.enabled = kVideoProfilingBuildEnabled;
+  config.enabled = true;
   config.trace_max_events = 1024;
   return config;
 }
@@ -311,10 +310,6 @@ TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyle
 
 TEST_F(VideoStreamRegistryTest, ProfilingCapturesRawRosStreamActivity)
 {
-  if (!kVideoProfilingBuildEnabled) {
-    GTEST_SKIP() << "Video profiling build is disabled.";
-  }
-
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_raw_ros"));
   FakeRoomConnection session;
   VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
@@ -349,10 +344,6 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesRawRosStreamActivity)
 
 TEST_F(VideoStreamRegistryTest, ProfilingCapturesCompressedRosStreamActivity)
 {
-  if (!kVideoProfilingBuildEnabled) {
-    GTEST_SKIP() << "Video profiling build is disabled.";
-  }
-
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_compressed_ros"));
   FakeRoomConnection session;
   VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
@@ -405,10 +396,6 @@ TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnp
 
 TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
 {
-  if (!kVideoProfilingBuildEnabled) {
-    GTEST_SKIP() << "Video profiling build is disabled.";
-  }
-
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_configured_source"));
   FakeRoomConnection session;
   VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());

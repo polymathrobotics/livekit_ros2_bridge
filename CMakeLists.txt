@@ -20,11 +20,6 @@ if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
-option(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING "Enable experimental video profiling and trace capture" OFF)
-if(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING)
-  add_compile_definitions(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING=1)
-endif()
-
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -Werror=switch)
   add_link_options("-Wl,--no-undefined")

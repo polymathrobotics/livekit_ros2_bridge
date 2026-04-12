@@ -147,6 +147,33 @@ TEST_F(RuntimeConfigTest, FailFastOverridesLoadFromParameters)
   EXPECT_EQ(startup_config.health_config.fail_fast_disconnect_grace, std::chrono::milliseconds(12500));
 }
 
+TEST_F(RuntimeConfigTest, VideoProfilingDefaultsStayDisabled)
+{
+  const RuntimeConfig startup_config =
+    loadRuntimeConfigForNode("startup_config_video_profiling_defaults", makeStaticTokenOptions());
+
+  EXPECT_FALSE(startup_config.video_profiling_config.enabled);
+  EXPECT_EQ(startup_config.video_profiling_config.summary_interval, kVideoProfilingDefaultSummaryInterval);
+  EXPECT_EQ(startup_config.video_profiling_config.trace_file, kVideoProfilingDefaultTraceFile);
+  EXPECT_EQ(startup_config.video_profiling_config.trace_max_events, kVideoProfilingDefaultTraceMaxEvents);
+}
+
+TEST_F(RuntimeConfigTest, VideoProfilingOverridesLoadFromParameters)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("debug.video_profiling.enabled", true);
+  options.append_parameter_override("debug.video_profiling.summary_interval_ms", 1200);
+  options.append_parameter_override("debug.video_profiling.trace_file", "/tmp/bridge.trace.json");
+  options.append_parameter_override("debug.video_profiling.trace_max_events", 4096);
+
+  const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_profiling_overrides", options);
+
+  EXPECT_TRUE(startup_config.video_profiling_config.enabled);
+  EXPECT_EQ(startup_config.video_profiling_config.summary_interval, std::chrono::milliseconds(1200));
+  EXPECT_EQ(startup_config.video_profiling_config.trace_file, "/tmp/bridge.trace.json");
+  EXPECT_EQ(startup_config.video_profiling_config.trace_max_events, 4096U);
+}
+
 TEST_F(RuntimeConfigTest, MissingTokenConfigurationThrows)
 {
   expectRuntimeConfigErrorContains("startup_config_missing_token", makeBaseOptions(), "livekit.token");

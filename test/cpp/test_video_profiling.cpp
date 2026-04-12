@@ -12,13 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <optional>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 
 #include "gtest/gtest.h"
@@ -30,11 +27,6 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-
-constexpr char kEnvEnabled[] = "LIVEKIT_BRIDGE_VIDEO_PROFILING";
-constexpr char kEnvSummaryIntervalMs[] = "LIVEKIT_BRIDGE_VIDEO_PROFILE_SUMMARY_INTERVAL_MS";
-constexpr char kEnvTraceFile[] = "LIVEKIT_BRIDGE_VIDEO_TRACE_FILE";
-constexpr char kEnvTraceMaxEvents[] = "LIVEKIT_BRIDGE_VIDEO_TRACE_MAX_EVENTS";
 
 class ScopedRclcppInit
 {
@@ -52,38 +44,6 @@ public:
       rclcpp::shutdown();
     }
   }
-};
-
-class ScopedEnvVar
-{
-public:
-  ScopedEnvVar(const char * name, std::optional<std::string> value)
-  : name_(name)
-  , previous_value_(std::getenv(name) == nullptr ? std::nullopt : std::optional<std::string>(std::getenv(name)))
-  {
-    if (value.has_value()) {
-      if (setenv(name, value->c_str(), 1) != 0) {
-        throw std::runtime_error("failed to set test environment variable");
-      }
-    } else {
-      if (unsetenv(name) != 0) {
-        throw std::runtime_error("failed to unset test environment variable");
-      }
-    }
-  }
-
-  ~ScopedEnvVar()
-  {
-    if (previous_value_.has_value()) {
-      (void)setenv(name_.c_str(), previous_value_->c_str(), 1);
-    } else {
-      (void)unsetenv(name_.c_str());
-    }
-  }
-
-private:
-  std::string name_;
-  std::optional<std::string> previous_value_;
 };
 
 VideoStreamSpec makeSpec()
@@ -116,51 +76,23 @@ protected:
   }
 };
 
-TEST_F(VideoProfilingTest, LoadConfigDefaultsToDisabledWhenEnvUnset)
+TEST_F(VideoProfilingTest, DefaultConfigStartsDisabled)
 {
-  const ScopedEnvVar enabled(kEnvEnabled, std::nullopt);
-  const ScopedEnvVar interval(kEnvSummaryIntervalMs, std::nullopt);
-  const ScopedEnvVar trace_file(kEnvTraceFile, std::nullopt);
-  const ScopedEnvVar max_events(kEnvTraceMaxEvents, std::nullopt);
+  const VideoProfilingConfig config;
 
-  const VideoProfilingConfig config = loadVideoProfilingConfigFromEnv();
-
-  EXPECT_FALSE(config.requested);
   EXPECT_FALSE(config.enabled);
   EXPECT_EQ(config.summary_interval, kVideoProfilingDefaultSummaryInterval);
   EXPECT_EQ(config.trace_file, kVideoProfilingDefaultTraceFile);
   EXPECT_EQ(config.trace_max_events, kVideoProfilingDefaultTraceMaxEvents);
 }
 
-TEST_F(VideoProfilingTest, LoadConfigRejectsInvalidEnabledFlag)
-{
-  const ScopedEnvVar enabled(kEnvEnabled, std::string("maybe"));
-
-  EXPECT_THROW((void)loadVideoProfilingConfigFromEnv(), std::runtime_error);
-}
-
-TEST_F(VideoProfilingTest, LoadConfigReflectsBuildAvailability)
-{
-  const ScopedEnvVar enabled(kEnvEnabled, std::string("1"));
-  const VideoProfilingConfig config = loadVideoProfilingConfigFromEnv();
-
-  EXPECT_TRUE(config.requested);
-  EXPECT_EQ(config.build_enabled, kVideoProfilingBuildEnabled);
-  EXPECT_EQ(config.enabled, kVideoProfilingBuildEnabled);
-}
-
 TEST_F(VideoProfilingTest, RegistryCollectsSummaryAndWritesTrace)
 {
-  if (!kVideoProfilingBuildEnabled) {
-    GTEST_SKIP() << "Video profiling build is disabled.";
-  }
-
   const std::filesystem::path temp_dir =
     std::filesystem::temp_directory_path() / "livekit_ros2_bridge_video_profiling_test";
   const std::filesystem::path trace_path = temp_dir / "trace.json";
 
   VideoProfilingConfig config;
-  config.requested = true;
   config.enabled = true;
   config.trace_file = trace_path.string();
   config.trace_max_events = 32;
@@ -214,12 +146,7 @@ TEST_F(VideoProfilingTest, RegistryCollectsSummaryAndWritesTrace)
 
 TEST_F(VideoProfilingTest, RegistryTracksDroppedTraceEvents)
 {
-  if (!kVideoProfilingBuildEnabled) {
-    GTEST_SKIP() << "Video profiling build is disabled.";
-  }
-
   VideoProfilingConfig config;
-  config.requested = true;
   config.enabled = true;
   config.trace_max_events = 2;
 
