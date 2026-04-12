@@ -38,11 +38,13 @@ VideoStreamInstance::VideoStreamInstance(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
-  const SubscriptionQosConfig * subscription_qos_config)
+  const SubscriptionQosConfig * subscription_qos_config,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 : node_(node)
 , spec_(std::move(spec))
 , subscription_qos_config_(subscription_qos_config)
-, video_track_publisher_(std::make_unique<VideoTrackPublisher>(room_connection, spec_, *this))
+, profiler_(std::move(profiler))
+, video_track_publisher_(std::make_unique<VideoTrackPublisher>(room_connection, spec_, *this, profiler_))
 {}
 
 VideoStreamInstance::~VideoStreamInstance()
@@ -61,6 +63,9 @@ void VideoStreamInstance::onVideoTrackPublished(int width, int height, bool repu
   published_width_ = width;
   published_height_ = height;
   last_runtime_error_.clear();
+  if (profiler_ != nullptr) {
+    profiler_->noteTrackPublished(width, height, republished);
+  }
   LogEvent(kVideoStreamInstanceLogger, republished ? "video_stream_track_republished" : "video_stream_track_published")
     .field("stream_key", spec_.stream_key)
     .field("track_name", spec_.track_name)
@@ -82,6 +87,9 @@ void VideoStreamInstance::onVideoTrackUnpublishing()
     .field("width", published_width_)
     .field("height", published_height_)
     .info();
+  if (profiler_ != nullptr) {
+    profiler_->noteTrackUnpublishing();
+  }
   has_published_track_ = false;
   published_width_ = 0;
   published_height_ = 0;
@@ -89,26 +97,41 @@ void VideoStreamInstance::onVideoTrackUnpublishing()
 
 void VideoStreamInstance::onVideoStreamSampleUnpackFailed(const std::string & error)
 {
+  if (profiler_ != nullptr) {
+    profiler_->noteSampleUnpackFailed(error);
+  }
   logRuntimeError("video_stream_sample_unpack_failed", error);
 }
 
 void VideoStreamInstance::onVideoStreamCaptureFailed(const std::string & error)
 {
+  if (profiler_ != nullptr) {
+    profiler_->noteCaptureFailed(error);
+  }
   logRuntimeError("video_stream_capture_failed", error);
 }
 
 void VideoStreamInstance::onVideoStreamPipelineFailed(const std::string & reason)
 {
+  if (profiler_ != nullptr) {
+    profiler_->notePipelineFailure(reason);
+  }
   logRuntimeError("video_stream_pipeline_failed", reason);
 }
 
 void VideoStreamInstance::onVideoStreamRestartFailed(const std::string & error)
 {
+  if (profiler_ != nullptr) {
+    profiler_->noteRestartFailed(error);
+  }
   logRuntimeError("video_stream_restart_failed", error);
 }
 
 void VideoStreamInstance::onVideoStreamPushFailed(const std::string & error)
 {
+  if (profiler_ != nullptr) {
+    profiler_->notePushFailed(error);
+  }
   logRuntimeError("video_stream_push_failed", error);
 }
 
@@ -157,14 +180,16 @@ void VideoStreamInstance::shutdown()
 std::shared_ptr<VideoFrameSource> VideoStreamInstance::createFrameSourceLocked()
 {
   if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
-    return makeConfiguredSourceVideoFrameSource(spec_, *video_track_publisher_, *this);
+    return makeConfiguredSourceVideoFrameSource(spec_, *video_track_publisher_, *this, profiler_);
   }
 
   if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
-    return makeRawRosVideoFrameSource(node_, spec_, subscription_qos_config_, *video_track_publisher_, *this);
+    return makeRawRosVideoFrameSource(
+      node_, spec_, subscription_qos_config_, *video_track_publisher_, *this, profiler_);
   }
   if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
-    return makeCompressedRosVideoFrameSource(node_, spec_, subscription_qos_config_, *video_track_publisher_, *this);
+    return makeCompressedRosVideoFrameSource(
+      node_, spec_, subscription_qos_config_, *video_track_publisher_, *this, profiler_);
   }
 
   throw std::runtime_error(

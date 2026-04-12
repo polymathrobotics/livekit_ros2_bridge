@@ -23,7 +23,10 @@ class ConfiguredSourceVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   ConfiguredSourceVideoFrameSource(
-    VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer);
+    VideoStreamSpec spec,
+    VideoFrameSink & frame_sink,
+    VideoStreamLifecycleObserver & lifecycle_observer,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void ensureRunning() override;
   void shutdown() override;

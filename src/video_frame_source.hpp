@@ -24,21 +24,28 @@
 namespace livekit_ros2_bridge
 {
 
+class VideoStreamProfiler;
+
 std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer);
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
 std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer);
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
 std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer);
+  VideoStreamSpec spec,
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
 }  // namespace livekit_ros2_bridge

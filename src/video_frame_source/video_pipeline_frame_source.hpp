@@ -25,6 +25,7 @@
 
 #include "utils/gstreamer_raii.hpp"
 #include "video_frame_source.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -41,7 +42,10 @@ class VideoPipelineFrameSource : public VideoFrameSource, public std::enable_sha
 {
 public:
   VideoPipelineFrameSource(
-    VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer);
+    VideoStreamSpec spec,
+    VideoFrameSink & frame_sink,
+    VideoStreamLifecycleObserver & lifecycle_observer,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
   ~VideoPipelineFrameSource() override;
 
 protected:
@@ -71,6 +75,7 @@ protected:
   VideoStreamSpec spec_;
   VideoFrameSink & frame_sink_;
   VideoStreamLifecycleObserver & lifecycle_observer_;
+  std::shared_ptr<VideoStreamProfiler> profiler_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_recovery_pending_ = false;

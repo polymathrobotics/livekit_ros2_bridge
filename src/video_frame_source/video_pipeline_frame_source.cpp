@@ -25,6 +25,7 @@
 
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
+#include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -125,6 +126,14 @@ PackedI420Frame copySampleToPackedI420(GstSample * sample)
   return frame;
 }
 
+std::optional<std::int64_t> gstBufferPtsToTimestampUs(GstBuffer * buffer)
+{
+  if (buffer == nullptr || !GST_BUFFER_PTS_IS_VALID(buffer)) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
+}
+
 }  // namespace
 
 std::string composeVideoPipeline(const std::string & ingress_fragment, const std::string & transform_fragment)
@@ -146,10 +155,14 @@ std::string composeVideoPipeline(const std::string & ingress_fragment, const std
 }
 
 VideoPipelineFrameSource::VideoPipelineFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
+  VideoStreamSpec spec,
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 : spec_(std::move(spec))
 , frame_sink_(frame_sink)
 , lifecycle_observer_(lifecycle_observer)
+, profiler_(std::move(profiler))
 {}
 
 VideoPipelineFrameSource::~VideoPipelineFrameSource() = default;
@@ -197,6 +210,9 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
 {
   ensureGstreamerInitialized();
   first_sample_logged_ = false;
+  if (profiler_ != nullptr) {
+    profiler_->notePipelineStart();
+  }
 
   LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_starting")
     .field("stream_key", spec_.stream_key)
@@ -306,25 +322,48 @@ void VideoPipelineFrameSource::restartAfterFailureLocked()
 
 GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
 {
+  const auto callback_start_time = VideoStreamProfiler::SteadyClock::now();
+  std::optional<std::int64_t> frame_timestamp_us;
+  ScopeExit callback_timer([this, callback_start_time, &frame_timestamp_us]() {
+    if (profiler_ == nullptr) {
+      return;
+    }
+    profiler_->recordStageDuration(
+      VideoProfileStage::kSampleCallback,
+      std::chrono::duration_cast<std::chrono::microseconds>(
+        VideoStreamProfiler::SteadyClock::now() - callback_start_time),
+      frame_timestamp_us,
+      callback_start_time);
+  });
+
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
   if (sample == nullptr) {
     return GST_FLOW_EOS;
   }
 
+  GstBuffer * buffer = gst_sample_get_buffer(sample.get());
+  frame_timestamp_us = gstBufferPtsToTimestampUs(buffer);
+  if (profiler_ != nullptr) {
+    if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
+      profiler_->noteIngressFrame(VideoStreamProfiler::SteadyClock::now(), frame_timestamp_us);
+    }
+    profiler_->noteSampledFrame(frame_timestamp_us);
+  }
+
   PackedI420Frame frame;
   try {
+    VideoStreamProfiler::ScopedStageTimer unpack_timer(
+      profiler_.get(), VideoProfileStage::kSampleUnpack, frame_timestamp_us);
     frame = copySampleToPackedI420(sample.get());
   } catch (const std::exception & exc) {
     lifecycle_observer_.onVideoStreamSampleUnpackFailed(exc.what());
     return GST_FLOW_ERROR;
   }
 
-  GstBuffer * buffer = gst_sample_get_buffer(sample.get());
   if (buffer == nullptr) {
     return GST_FLOW_ERROR;
   }
-  const std::int64_t timestamp_us =
-    GST_BUFFER_PTS_IS_VALID(buffer) ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U) : 0;
+  const std::int64_t timestamp_us = frame_timestamp_us.value_or(0);
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -346,6 +385,8 @@ GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
   }
 
   try {
+    VideoStreamProfiler::ScopedStageTimer frame_sink_timer(
+      profiler_.get(), VideoProfileStage::kFrameSink, frame_timestamp_us);
     frame_sink_.handleFrame(frame.width, frame.height, std::move(frame.data), timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {

@@ -20,6 +20,11 @@ if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
 endif()
 
+option(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING "Enable experimental video profiling and trace capture" OFF)
+if(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING)
+  add_compile_definitions(LIVEKIT_BRIDGE_ENABLE_VIDEO_PROFILING=1)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -Werror=switch)
   add_link_options("-Wl,--no-undefined")
@@ -69,6 +74,7 @@ add_library(${PROJECT_NAME} SHARED
   src/subscription_qos.cpp
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
+  src/video_profiling.cpp
   src/video_frame_source/configured_source_video_frame_source.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
@@ -209,6 +215,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_video_stream_registry test/cpp/test_video_stream_registry.cpp)
   target_link_libraries(test_video_stream_registry ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
+  ament_add_gtest(test_video_profiling test/cpp/test_video_profiling.cpp)
+  target_link_libraries(test_video_profiling ${PROJECT_NAME})
+
   ament_add_gtest(test_video_track_publisher test/cpp/test_video_track_publisher.cpp)
   target_link_libraries(test_video_track_publisher ${PROJECT_NAME})
 
@@ -244,6 +253,7 @@ if(BUILD_TESTING)
     test_subscription_registry
     test_topic_publish_command
     test_video_stream_registry
+    test_video_profiling
     test_video_stream_spec
     test_video_track_publisher
   )

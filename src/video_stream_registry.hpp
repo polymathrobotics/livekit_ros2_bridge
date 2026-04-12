@@ -22,6 +22,7 @@
 #include "rclcpp/node.hpp"
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -36,7 +37,8 @@ public:
   VideoStreamRegistry(
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    const SubscriptionQosConfig * subscription_qos_config = nullptr);
+    const SubscriptionQosConfig * subscription_qos_config = nullptr,
+    VideoProfilingRegistry * profiling_registry = nullptr);
   ~VideoStreamRegistry();
 
   std::string ensureStreamRunning(const VideoStreamSpec & spec);
@@ -47,6 +49,7 @@ private:
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
   const SubscriptionQosConfig * subscription_qos_config_;
+  VideoProfilingRegistry * profiling_registry_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   std::unordered_map<std::string, std::shared_ptr<VideoStreamInstance>> stream_instances_;

@@ -26,6 +26,7 @@
 #include "rclcpp/timer.hpp"
 #include "runtime_config.hpp"
 #include "utils/event_throttle.hpp"
+#include "video_profiling.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -38,6 +39,7 @@ class RosServiceCaller;
 class SubscriptionRegistry;
 class RosTopicPublisher;
 class VideoStreamRegistry;
+class VideoProfilingRegistry;
 
 struct FailFastCallbacks
 {
@@ -58,7 +60,8 @@ public:
     rclcpp::Node & node,
     std::unique_ptr<RoomConnection> room_connection,
     RuntimeConfig runtime_config,
-    FailFastCallbacks fail_fast_callbacks = {});
+    FailFastCallbacks fail_fast_callbacks = {},
+    VideoProfilingConfig video_profiling_config = {});
   ~Runtime();
 
   // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
@@ -76,6 +79,7 @@ private:
     std::unique_ptr<RpcRouter> rpc_router;
     std::unique_ptr<RosTopicPublisher> ros_topic_publisher;
     std::unique_ptr<VideoStreamRegistry> video_stream_registry;
+    std::unique_ptr<VideoProfilingRegistry> video_profiling_registry;
     std::unique_ptr<SubscriptionRegistry> subscription_registry;
     std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor;
     std::unique_ptr<RosServiceCaller> ros_service_caller;
@@ -96,6 +100,7 @@ private:
   {
     rclcpp::TimerBase::SharedPtr lease_gc;
     rclcpp::TimerBase::SharedPtr fail_fast;
+    rclcpp::TimerBase::SharedPtr video_profile_summary;
   };
 
   struct ConnectionState

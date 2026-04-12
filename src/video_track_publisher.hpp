@@ -17,9 +17,11 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "room_connection.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
@@ -37,7 +39,10 @@ class VideoTrackPublisher final : public VideoFrameSink
 {
 public:
   VideoTrackPublisher(
-    RoomConnection & room_connection, VideoStreamSpec spec, VideoStreamLifecycleObserver & lifecycle_observer);
+    RoomConnection & room_connection,
+    VideoStreamSpec spec,
+    VideoStreamLifecycleObserver & lifecycle_observer,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override;
   void shutdown();
@@ -48,6 +53,7 @@ private:
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
   VideoStreamLifecycleObserver & lifecycle_observer_;
+  std::shared_ptr<VideoStreamProfiler> profiler_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   std::shared_ptr<livekit::VideoSource> video_source_;

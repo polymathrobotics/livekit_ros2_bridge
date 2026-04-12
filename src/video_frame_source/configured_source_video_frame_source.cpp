@@ -32,8 +32,11 @@ constexpr auto kConfiguredSourceRestartDelay = std::chrono::milliseconds(250);
 }  // namespace
 
 ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
-: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
+  VideoStreamSpec spec,
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
+: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer, std::move(profiler))
 {}
 
 void ConfiguredSourceVideoFrameSource::ensureRunning()
@@ -89,9 +92,13 @@ void ConfiguredSourceVideoFrameSource::restartAfterFailureLocked()
 }
 
 std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec, VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
+  VideoStreamSpec spec,
+  VideoFrameSink & frame_sink,
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 {
-  return std::make_shared<ConfiguredSourceVideoFrameSource>(std::move(spec), frame_sink, lifecycle_observer);
+  return std::make_shared<ConfiguredSourceVideoFrameSource>(
+    std::move(spec), frame_sink, lifecycle_observer, std::move(profiler));
 }
 
 }  // namespace livekit_ros2_bridge

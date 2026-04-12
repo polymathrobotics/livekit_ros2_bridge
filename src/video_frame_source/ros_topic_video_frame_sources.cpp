@@ -90,6 +90,17 @@ GstClockTime rosStampToClockTime(const builtin_interfaces::msg::Time & stamp)
   return sec * GST_SECOND + stamp.nanosec;
 }
 
+std::optional<std::int64_t> rosStampToTimestampUs(const builtin_interfaces::msg::Time & stamp)
+{
+  if (stamp.sec < 0) {
+    return std::nullopt;
+  }
+  if (stamp.sec == 0 && stamp.nanosec == 0U) {
+    return std::nullopt;
+  }
+  return static_cast<std::int64_t>(stamp.sec) * 1000000LL + static_cast<std::int64_t>(stamp.nanosec / 1000U);
+}
+
 RawSourceConfig makeRawSourceConfig(const sensor_msgs::msg::Image & message)
 {
   const GstVideoFormat format = rosImageEncodingToGstFormat(message.encoding);
@@ -133,8 +144,9 @@ RawRosVideoFrameSource::RawRosVideoFrameSource(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer)
-: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
+: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer, std::move(profiler))
 , node_(node)
 , subscription_qos_config_(subscription_qos_config)
 {}
@@ -210,12 +222,17 @@ void RawRosVideoFrameSource::createRosSubscriptionLocked()
 
 void RawRosVideoFrameSource::handleRawImageMessage(const sensor_msgs::msg::Image::ConstSharedPtr & message)
 {
+  const auto ingress_time = VideoStreamProfiler::SteadyClock::now();
+  const auto source_timestamp_us = rosStampToTimestampUs(message->header.stamp);
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
   try {
+    if (profiler_ != nullptr) {
+      profiler_->noteIngressFrame(ingress_time, source_timestamp_us);
+    }
     if (!first_input_logged_) {
       LogEvent(kVideoStreamRegistryLogger, "video_stream_input_received")
         .field("stream_key", spec_.stream_key)
@@ -259,6 +276,8 @@ void RawRosVideoFrameSource::pushRawImageLocked(const sensor_msgs::msg::Image & 
     throw std::runtime_error("Raw video appsrc is unavailable.");
   }
 
+  VideoStreamProfiler::ScopedStageTimer push_timer(
+    profiler_.get(), VideoProfileStage::kPushToAppSrc, rosStampToTimestampUs(message.header.stamp));
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, message.data.size(), nullptr));
   if (buffer == nullptr) {
     throw std::runtime_error("Failed to allocate GStreamer buffer.");
@@ -305,8 +324,9 @@ CompressedRosVideoFrameSource::CompressedRosVideoFrameSource(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer)
-: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer)
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
+: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer, std::move(profiler))
 , node_(node)
 , subscription_qos_config_(subscription_qos_config)
 {}
@@ -383,12 +403,17 @@ void CompressedRosVideoFrameSource::createRosSubscriptionLocked()
 void CompressedRosVideoFrameSource::handleCompressedImageMessage(
   const sensor_msgs::msg::CompressedImage::ConstSharedPtr & message)
 {
+  const auto ingress_time = VideoStreamProfiler::SteadyClock::now();
+  const auto source_timestamp_us = rosStampToTimestampUs(message->header.stamp);
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
   try {
+    if (profiler_ != nullptr) {
+      profiler_->noteIngressFrame(ingress_time, source_timestamp_us);
+    }
     if (!first_input_logged_) {
       LogEvent(kVideoStreamRegistryLogger, "video_stream_input_received")
         .field("stream_key", spec_.stream_key)
@@ -433,6 +458,8 @@ void CompressedRosVideoFrameSource::pushCompressedImageLocked(const sensor_msgs:
     throw std::runtime_error("Compressed video appsrc is unavailable.");
   }
 
+  VideoStreamProfiler::ScopedStageTimer push_timer(
+    profiler_.get(), VideoProfileStage::kPushToAppSrc, rosStampToTimestampUs(message.header.stamp));
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, message.data.size(), nullptr));
   if (buffer == nullptr) {
     throw std::runtime_error("Failed to allocate GStreamer buffer.");
@@ -467,10 +494,11 @@ std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer)
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 {
   return std::make_shared<RawRosVideoFrameSource>(
-    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer);
+    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer, std::move(profiler));
 }
 
 std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
@@ -478,10 +506,11 @@ std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
   VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer)
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 {
   return std::make_shared<CompressedRosVideoFrameSource>(
-    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer);
+    node, std::move(spec), subscription_qos_config, frame_sink, lifecycle_observer, std::move(profiler));
 }
 
 }  // namespace livekit_ros2_bridge

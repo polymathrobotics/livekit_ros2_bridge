@@ -22,10 +22,14 @@
 namespace livekit_ros2_bridge
 {
 VideoTrackPublisher::VideoTrackPublisher(
-  RoomConnection & room_connection, VideoStreamSpec spec, VideoStreamLifecycleObserver & lifecycle_observer)
+  RoomConnection & room_connection,
+  VideoStreamSpec spec,
+  VideoStreamLifecycleObserver & lifecycle_observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
 : room_connection_(room_connection)
 , spec_(std::move(spec))
 , lifecycle_observer_(lifecycle_observer)
+, profiler_(std::move(profiler))
 {}
 
 void VideoTrackPublisher::handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
@@ -35,12 +39,27 @@ void VideoTrackPublisher::handleFrame(int width, int height, std::vector<std::ui
     return;
   }
 
-  ensurePublishedTrackLocked(width, height);
+  const std::optional<std::int64_t> frame_timestamp_us =
+    timestamp_us > 0 ? std::optional<std::int64_t>(timestamp_us) : std::nullopt;
+  VideoStreamProfiler::ScopedStageTimer publisher_handle_timer(
+    profiler_.get(), VideoProfileStage::kPublisherHandleFrame, frame_timestamp_us);
+  {
+    VideoStreamProfiler::ScopedStageTimer ensure_track_timer(
+      profiler_.get(), VideoProfileStage::kEnsureTrack, frame_timestamp_us);
+    ensurePublishedTrackLocked(width, height);
+  }
   // The public LiveKit C++ SDK takes an owned VideoFrame buffer here, so this
   // remains a low-copy path rather than true zero-copy. Keeping the data in
   // I420 still avoids the more expensive per-frame color conversion.
   livekit::VideoFrame frame(width, height, livekit::VideoBufferType::I420, std::move(i420));
-  video_source_->captureFrame(frame, timestamp_us);
+  {
+    VideoStreamProfiler::ScopedStageTimer capture_frame_timer(
+      profiler_.get(), VideoProfileStage::kCaptureFrame, frame_timestamp_us);
+    video_source_->captureFrame(frame, timestamp_us);
+  }
+  if (profiler_ != nullptr) {
+    profiler_->noteFrameCaptured(frame_timestamp_us);
+  }
 }
 
 void VideoTrackPublisher::shutdown()

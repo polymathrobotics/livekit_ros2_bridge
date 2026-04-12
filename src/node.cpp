@@ -23,6 +23,7 @@
 #include "runtime.hpp"
 #include "runtime_config.hpp"
 #include "utils/log_event.hpp"
+#include "video_profiling.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -50,10 +51,30 @@ Node::Node(const rclcpp::NodeOptions & options)
       throw;
     }
   }();
+  VideoProfilingConfig video_profiling_config = [this]() {
+    try {
+      return loadVideoProfilingConfigFromEnv();
+    } catch (const std::exception & exc) {
+      LogEvent(get_logger(), "node_startup_failed")
+        .field("phase", "startup")
+        .field("reason", "video_profiling_config_load_failed")
+        .field("error", exc.what())
+        .error();
+      throw;
+    } catch (...) {
+      LogEvent(get_logger(), "node_startup_failed")
+        .field("phase", "startup")
+        .field("reason", "video_profiling_config_load_failed")
+        .field("error", "unknown_exception")
+        .error();
+      throw;
+    }
+  }();
 
   const std::string room = runtime_config.room_connection_config.room;
   try {
-    runtime_ = std::make_unique<Runtime>(*this, makeRoomConnection(), std::move(runtime_config));
+    runtime_ = std::make_unique<Runtime>(
+      *this, makeRoomConnection(), std::move(runtime_config), FailFastCallbacks{}, std::move(video_profiling_config));
   } catch (const std::exception & exc) {
     LogEvent(get_logger(), "node_startup_failed")
       .field("phase", "startup")

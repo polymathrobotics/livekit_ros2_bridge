@@ -18,6 +18,7 @@
 #include <mutex>
 #include <string>
 
+#include "video_profiling.hpp"
 #include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
@@ -43,7 +44,8 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config);
+    const SubscriptionQosConfig * subscription_qos_config,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
   ~VideoStreamInstance();
 
   VideoStreamInstance(const VideoStreamInstance &) = delete;
@@ -70,6 +72,7 @@ private:
   rclcpp::Node & node_;
   VideoStreamSpec spec_;
   const SubscriptionQosConfig * subscription_qos_config_;
+  std::shared_ptr<VideoStreamProfiler> profiler_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   bool has_published_track_ = false;

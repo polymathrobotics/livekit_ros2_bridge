@@ -16,6 +16,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -154,6 +155,15 @@ VideoStreamSpec makeConfiguredSourceSpec(const std::string & configured_source_n
   spec.selected_config_id = configured_source_name;
   spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
   return spec;
+}
+
+VideoProfilingConfig makeProfilingConfig()
+{
+  VideoProfilingConfig config;
+  config.requested = true;
+  config.enabled = kVideoProfilingBuildEnabled;
+  config.trace_max_events = 1024;
+  return config;
 }
 
 }  // namespace
@@ -299,6 +309,81 @@ TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyle
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
+TEST_F(VideoStreamRegistryTest, ProfilingCapturesRawRosStreamActivity)
+{
+  if (!kVideoProfilingBuildEnabled) {
+    GTEST_SKIP() << "Video profiling build is disabled.";
+  }
+
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_raw_ros"));
+  FakeRoomConnection session;
+  VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
+  VideoStreamRegistry registry(*node, session, nullptr, &profiling_registry);
+
+  const std::string topic = "/camera/profiled_raw";
+  const auto spec = makeRosSpec(topic, "ros.video.camera.profiled_raw");
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(1).reliable());
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
+  ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
+
+  const auto image = makeRgbImage();
+  ASSERT_TRUE(publishUntil(
+    executor, publisher, image, [&session]() { return session.state->published_video_track_names.size() == 1U; }));
+
+  const auto summaries = profiling_registry.collectAndResetSummaries();
+  ASSERT_EQ(summaries.size(), 1U);
+  EXPECT_GE(summaries.front().frames_in, 1U);
+  EXPECT_GE(summaries.front().frames_sampled, 1U);
+  EXPECT_GE(summaries.front().frames_captured, 1U);
+  EXPECT_EQ(summaries.front().track_publish_count, 1U);
+  EXPECT_TRUE(summaries.front().push_to_appsrc_ms.hasSamples());
+  EXPECT_TRUE(summaries.front().sample_callback_ms.hasSamples());
+  EXPECT_TRUE(summaries.front().sample_unpack_ms.hasSamples());
+  EXPECT_TRUE(summaries.front().frame_sink_ms.hasSamples());
+  EXPECT_TRUE(summaries.front().publisher_handle_frame_ms.hasSamples());
+}
+
+TEST_F(VideoStreamRegistryTest, ProfilingCapturesCompressedRosStreamActivity)
+{
+  if (!kVideoProfilingBuildEnabled) {
+    GTEST_SKIP() << "Video profiling build is disabled.";
+  }
+
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_compressed_ros"));
+  FakeRoomConnection session;
+  VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
+  VideoStreamRegistry registry(*node, session, nullptr, &profiling_registry);
+
+  const std::string topic = "/camera/profiled_compressed";
+  const auto spec = makeCompressedRosSpec(topic, "ros.video.camera.profiled_compressed");
+  auto publisher = node->create_publisher<sensor_msgs::msg::CompressedImage>(topic, rclcpp::QoS(1).reliable());
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
+  ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
+
+  const auto image = makeTransportStyleJpegImage();
+  ASSERT_TRUE(publishUntil(
+    executor,
+    publisher,
+    image,
+    [&session]() { return session.state->published_video_track_names.size() == 1U; },
+    std::chrono::seconds(5)));
+
+  const auto summaries = profiling_registry.collectAndResetSummaries();
+  ASSERT_EQ(summaries.size(), 1U);
+  EXPECT_GE(summaries.front().frames_in, 1U);
+  EXPECT_GE(summaries.front().frames_sampled, 1U);
+  EXPECT_GE(summaries.front().frames_captured, 1U);
+  EXPECT_TRUE(summaries.front().push_to_appsrc_ms.hasSamples());
+}
+
 TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source"));
@@ -316,6 +401,44 @@ TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnp
 
   ASSERT_EQ(session.state->unpublished_video_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_video_track_names[0], spec.track_name);
+}
+
+TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
+{
+  if (!kVideoProfilingBuildEnabled) {
+    GTEST_SKIP() << "Video profiling build is disabled.";
+  }
+
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_configured_source"));
+  FakeRoomConnection session;
+  VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
+  VideoStreamRegistry registry(*node, session, nullptr, &profiling_registry);
+
+  const auto spec =
+    makeConfiguredSourceSpec("/sources/profiled_front", "ros.video.configured_source.%2Fsources%2Fprofiled_front");
+
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
+  ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
+
+  std::optional<std::vector<VideoStreamProfileSummary>> captured_summaries;
+  const bool summary_ready = waitUntil([&profiling_registry, &captured_summaries]() {
+    if (captured_summaries.has_value()) {
+      return true;
+    }
+    const auto summaries = profiling_registry.collectAndResetSummaries();
+    if (!summaries.empty()) {
+      captured_summaries = summaries;
+      return true;
+    }
+    return false;
+  });
+  ASSERT_TRUE(summary_ready);
+  ASSERT_TRUE(captured_summaries.has_value());
+  EXPECT_EQ(captured_summaries->size(), 1U);
+  EXPECT_GT(captured_summaries->front().frames_in, 0U);
+  EXPECT_GT(captured_summaries->front().frames_sampled, 0U);
+  EXPECT_GT(captured_summaries->front().frames_captured, 0U);
+  EXPECT_TRUE(captured_summaries->front().sample_callback_ms.hasSamples());
 }
 
 TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndRejectsNewStreams)

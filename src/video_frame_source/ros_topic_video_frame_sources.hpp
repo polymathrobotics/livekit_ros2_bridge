@@ -48,7 +48,8 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
     VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer);
+    VideoStreamLifecycleObserver & lifecycle_observer,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void ensureRunning() override;
   void shutdown() override;
@@ -75,7 +76,8 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
     VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer);
+    VideoStreamLifecycleObserver & lifecycle_observer,
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void ensureRunning() override;
   void shutdown() override;

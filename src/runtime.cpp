@@ -48,7 +48,8 @@ Runtime::Runtime(
   rclcpp::Node & node,
   std::unique_ptr<RoomConnection> room_connection,
   RuntimeConfig runtime_config,
-  FailFastCallbacks fail_fast_callbacks)
+  FailFastCallbacks fail_fast_callbacks,
+  VideoProfilingConfig video_profiling_config)
 : node_(node)
 , config_{
     std::move(runtime_config.video_stream_config),
@@ -79,10 +80,20 @@ Runtime::Runtime(
     .fieldOr("room", config_.room, "<unset>")
     .info();
 
+  if (video_profiling_config.requested && !video_profiling_config.build_enabled) {
+    LogEvent(node_.get_logger(), "video_profiling_requested_but_unavailable")
+      .field("reason", "profiling_build_flag_disabled")
+      .warn();
+  } else if (video_profiling_config.enabled) {
+    components_.video_profiling_registry =
+      std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(video_profiling_config));
+    components_.video_profiling_registry->emitEnabledLog();
+  }
+
   components_.ros_executor_queue = std::make_unique<RosExecutorQueue>(node_);
   components_.ros_topic_publisher = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
-  components_.video_stream_registry =
-    std::make_unique<VideoStreamRegistry>(node_, *components_.room_connection, &config_.subscription_qos);
+  components_.video_stream_registry = std::make_unique<VideoStreamRegistry>(
+    node_, *components_.room_connection, &config_.subscription_qos, components_.video_profiling_registry.get());
 
   components_.subscription_registry = std::make_unique<SubscriptionRegistry>(
     node_,
@@ -125,6 +136,11 @@ Runtime::Runtime(
     state_.disconnect_deadline = SteadyClock::now() + config_.fail_fast_disconnect_grace;
   }
   timers_.fail_fast = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
+  if (components_.video_profiling_registry != nullptr && components_.video_profiling_registry->enabled()) {
+    timers_.video_profile_summary = node_.create_wall_timer(
+      components_.video_profiling_registry->config().summary_interval,
+      [this]() { components_.video_profiling_registry->emitSummaryLogs(); });
+  }
 
   components_.room_connection->start(
     runtime_config.room_connection_config,
@@ -194,6 +210,7 @@ void Runtime::shutdown()
 
   timers_.lease_gc.reset();
   timers_.fail_fast.reset();
+  timers_.video_profile_summary.reset();
 
   if (components_.rpc_router != nullptr && components_.room_connection != nullptr) {
     components_.rpc_router->unregisterRpcMethods(*components_.room_connection);
@@ -217,6 +234,10 @@ void Runtime::shutdown()
   }
   if (components_.ros_topic_publisher != nullptr) {
     components_.ros_topic_publisher->shutdown();
+  }
+  if (components_.video_profiling_registry != nullptr) {
+    components_.video_profiling_registry->emitSummaryLogs();
+    components_.video_profiling_registry->flushTrace();
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_complete")
