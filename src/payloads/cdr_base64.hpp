@@ -14,14 +14,34 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
-#include <gst/video/video-format.h>
+namespace livekit_ros2_bridge
+{
 
-// Raw ROS images negotiate through this fixed caps subset. Keep it aligned with
-// the encodings accepted by rosImageEncodingToGstFormat().
-#define GST_ROS_IMAGE_CAPS_FORMAT_LIST "{ GRAY8, GRAY16_LE, RGB, BGR, RGBA, BGRA, UYVY, YUY2 }"
+enum class Base64DecodeStatus
+{
+  kOk,
+  kInvalidEncoding,
+  kMissingPadding,
+};
 
-// Maps supported raw ROS image encodings to the caps formats above. Unsupported
-// encodings return GST_VIDEO_FORMAT_UNKNOWN so callers can reject or fall back.
-GstVideoFormat rosImageEncodingToGstFormat(const std::string & encoding);
+struct Base64DecodeResult
+{
+  std::vector<std::uint8_t> bytes;
+  Base64DecodeStatus status = Base64DecodeStatus::kOk;
+
+  explicit operator bool() const noexcept
+  {
+    return status == Base64DecodeStatus::kOk;
+  }
+};
+
+std::string base64Encode(const std::uint8_t * data, std::size_t size);
+Base64DecodeResult base64Decode(std::string_view value);
+
+}  // namespace livekit_ros2_bridge

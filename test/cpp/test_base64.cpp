@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "utils/base64.hpp"
+#include "payloads/cdr_base64.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -64,56 +64,6 @@ TEST(Base64Test, StandardDecodeRejectsTrailingNewline)
 TEST(Base64Test, StandardDecodeRejectsTrailingCarriageReturnNewline)
 {
   const Base64DecodeResult decoded = base64Decode("AAECAw==\r\n");
-  EXPECT_EQ(decoded.status, Base64DecodeStatus::kInvalidEncoding);
-}
-
-TEST(Base64Test, UrlEncodeDecodeRoundTripsAcrossPaddingBoundaries)
-{
-  const std::vector<std::vector<std::uint8_t>> payloads{
-    {},
-    {0xfbU},
-    {0xfbU, 0xefU},
-    {0xfbU, 0xefU, 0xffU},
-    {0xfbU, 0xefU, 0xffU, 0x01U},
-  };
-
-  for (const auto & payload : payloads) {
-    const std::string encoded = base64UrlEncode(payload.data(), payload.size());
-    const Base64DecodeResult decoded = base64UrlDecode(encoded);
-    ASSERT_EQ(decoded.status, Base64DecodeStatus::kOk);
-    EXPECT_EQ(decoded.bytes, payload);
-  }
-}
-
-TEST(Base64Test, UrlDecodeAcceptsUnpaddedInput)
-{
-  const Base64DecodeResult decoded = base64UrlDecode("AAECAw");
-  ASSERT_EQ(decoded.status, Base64DecodeStatus::kOk);
-  EXPECT_EQ(decoded.bytes, (std::vector<std::uint8_t>{0x00U, 0x01U, 0x02U, 0x03U}));
-}
-
-TEST(Base64Test, UrlDecodeAcceptsPaddedInput)
-{
-  const Base64DecodeResult decoded = base64UrlDecode("AAECAw==");
-  ASSERT_EQ(decoded.status, Base64DecodeStatus::kOk);
-  EXPECT_EQ(decoded.bytes, (std::vector<std::uint8_t>{0x00U, 0x01U, 0x02U, 0x03U}));
-}
-
-TEST(Base64Test, UrlDecodeRejectsInvalidCharacters)
-{
-  const Base64DecodeResult decoded = base64UrlDecode("AAECAw?=");
-  EXPECT_EQ(decoded.status, Base64DecodeStatus::kInvalidEncoding);
-}
-
-TEST(Base64Test, UrlDecodeRejectsTrailingNewline)
-{
-  const Base64DecodeResult decoded = base64UrlDecode("AAECAw==\n");
-  EXPECT_EQ(decoded.status, Base64DecodeStatus::kInvalidEncoding);
-}
-
-TEST(Base64Test, UrlDecodeRejectsTrailingCarriageReturnNewline)
-{
-  const Base64DecodeResult decoded = base64UrlDecode("AAECAw==\r\n");
   EXPECT_EQ(decoded.status, Base64DecodeStatus::kInvalidEncoding);
 }
 

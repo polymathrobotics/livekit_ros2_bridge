@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "utils/base64.hpp"
+#include "payloads/cdr_base64.hpp"
 
 #include <openssl/evp.h>
 
-#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -26,22 +25,12 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-enum class Base64Variant
-{
-  kStandard,
-  kUrl,
-};
-
-bool isBase64Char(char ch, Base64Variant variant) noexcept
+bool isBase64Char(char ch) noexcept
 {
   if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
     return true;
   }
-
-  if (variant == Base64Variant::kStandard) {
-    return ch == '+' || ch == '/';
-  }
-  return ch == '-' || ch == '_';
+  return ch == '+' || ch == '/';
 }
 
 bool hasCanonicalPadding(std::string_view value) noexcept
@@ -61,67 +50,47 @@ bool hasCanonicalPadding(std::string_view value) noexcept
   return padding_count <= 2U && first_padding >= value.size() - 2U;
 }
 
-Base64DecodeResult decodeBase64Variant(std::string_view value, Base64Variant variant)
+Base64DecodeResult decodeBase64(std::string_view value)
 {
   if (value.empty()) {
     return {};
   }
 
-  const bool has_padding = value.find('=') != std::string_view::npos;
   if (!hasCanonicalPadding(value)) {
     return {{}, Base64DecodeStatus::kInvalidEncoding};
   }
 
   for (char ch : value) {
-    if (ch != '=' && !isBase64Char(ch, variant)) {
+    if (ch != '=' && !isBase64Char(ch)) {
       return {{}, Base64DecodeStatus::kInvalidEncoding};
     }
   }
 
-  if (variant == Base64Variant::kStandard) {
-    if ((value.size() % 4U) != 0U) {
-      return {{}, Base64DecodeStatus::kMissingPadding};
-    }
-  } else {
-    if (has_padding) {
-      if ((value.size() % 4U) != 0U) {
-        return {{}, Base64DecodeStatus::kInvalidEncoding};
-      }
-    } else if ((value.size() % 4U) == 1U) {
-      return {{}, Base64DecodeStatus::kInvalidEncoding};
-    }
+  if ((value.size() % 4U) != 0U) {
+    return {{}, Base64DecodeStatus::kMissingPadding};
   }
 
-  std::string padded(value);
-  if (variant == Base64Variant::kUrl) {
-    std::replace(padded.begin(), padded.end(), '-', '+');
-    std::replace(padded.begin(), padded.end(), '_', '/');
-    while ((padded.size() % 4U) != 0U) {
-      padded.push_back('=');
-    }
-  }
-
-  std::vector<std::uint8_t> decoded((padded.size() / 4U) * 3U, 0U);
+  std::vector<std::uint8_t> decoded((value.size() / 4U) * 3U, 0U);
   const int written = EVP_DecodeBlock(
     reinterpret_cast<unsigned char *>(decoded.data()),
-    reinterpret_cast<const unsigned char *>(padded.data()),
-    static_cast<int>(padded.size()));
+    reinterpret_cast<const unsigned char *>(value.data()),
+    static_cast<int>(value.size()));
   if (written < 0) {
     return {{}, Base64DecodeStatus::kInvalidEncoding};
   }
 
   std::size_t actual_size = static_cast<std::size_t>(written);
-  if (!padded.empty() && padded.back() == '=') {
+  if (!value.empty() && value.back() == '=') {
     --actual_size;
   }
-  if (padded.size() > 1U && padded[padded.size() - 2U] == '=') {
+  if (value.size() > 1U && value[value.size() - 2U] == '=') {
     --actual_size;
   }
   decoded.resize(actual_size);
   return {std::move(decoded), Base64DecodeStatus::kOk};
 }
 
-std::string encodeBase64Variant(const std::uint8_t * data, std::size_t size, Base64Variant variant)
+std::string encodeBase64(const std::uint8_t * data, std::size_t size)
 {
   if (size == 0U) {
     return "";
@@ -133,18 +102,10 @@ std::string encodeBase64Variant(const std::uint8_t * data, std::size_t size, Bas
     reinterpret_cast<const unsigned char *>(data),
     static_cast<int>(size));
   if (written < 0) {
-    throw std::runtime_error(
-      variant == Base64Variant::kStandard ? "Failed base64 encoding." : "Failed base64url encoding.");
+    throw std::runtime_error("Failed base64 encoding.");
   }
 
   encoded.resize(static_cast<std::size_t>(written));
-  if (variant == Base64Variant::kUrl) {
-    std::replace(encoded.begin(), encoded.end(), '+', '-');
-    std::replace(encoded.begin(), encoded.end(), '/', '_');
-    while (!encoded.empty() && encoded.back() == '=') {
-      encoded.pop_back();
-    }
-  }
   return encoded;
 }
 
@@ -152,22 +113,12 @@ std::string encodeBase64Variant(const std::uint8_t * data, std::size_t size, Bas
 
 std::string base64Encode(const std::uint8_t * data, std::size_t size)
 {
-  return encodeBase64Variant(data, size, Base64Variant::kStandard);
+  return encodeBase64(data, size);
 }
 
 Base64DecodeResult base64Decode(std::string_view value)
 {
-  return decodeBase64Variant(value, Base64Variant::kStandard);
-}
-
-std::string base64UrlEncode(const std::uint8_t * data, std::size_t size)
-{
-  return encodeBase64Variant(data, size, Base64Variant::kUrl);
-}
-
-Base64DecodeResult base64UrlDecode(std::string_view value)
-{
-  return decodeBase64Variant(value, Base64Variant::kUrl);
+  return decodeBase64(value);
 }
 
 }  // namespace livekit_ros2_bridge

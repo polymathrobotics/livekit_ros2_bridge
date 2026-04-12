@@ -15,13 +15,13 @@
 #include "ros_topic_publisher.hpp"
 
 #include <chrono>
-#include <cstring>
 #include <utility>
 
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
-#include "utils/interface_types.hpp"
+#include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
+#include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -33,17 +33,6 @@ constexpr std::size_t kPublisherDepth = 10U;
 constexpr std::size_t kMaxCachedPublishers = 50U;
 constexpr auto kPublishLogThrottleMs = 5000;
 const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
-
-rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
-{
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  if (!payload.empty()) {
-    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
-  }
-  rcl_msg.buffer_length = payload.size();
-  return serialized;
-}
 
 }  // namespace
 

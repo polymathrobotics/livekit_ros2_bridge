@@ -25,6 +25,7 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
+#include "payloads/stream_control_payloads.hpp"
 #include "protocol.hpp"
 #include "room_connection.hpp"
 #include "ros_test_support.hpp"

@@ -27,10 +27,10 @@
 #include <vector>
 
 #include "data_stream_instance.hpp"
-#include "payloads/stream_control_payloads.hpp"
 #include "rclcpp/node.hpp"
 #include "subscription_qos.hpp"
-#include "utils/quiesce_guard.hpp"
+#include "subscription_types.hpp"
+#include "utils/quiesce_gate.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge

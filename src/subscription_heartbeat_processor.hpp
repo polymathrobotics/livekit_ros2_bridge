@@ -22,8 +22,8 @@
 
 #include "access_policy.hpp"
 #include "nlohmann/json_fwd.hpp"
-#include "payloads/stream_control_payloads.hpp"
 #include "rclcpp/clock.hpp"
+#include "subscription_types.hpp"
 #include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge

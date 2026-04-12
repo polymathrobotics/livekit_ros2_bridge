@@ -35,12 +35,13 @@
 #include "builtin_interfaces/msg/time.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
-#include "ros_image_format_mapping.hpp"
+#include "sensor_msgs/image_encodings.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
 #include "utils/gstreamer_raii.hpp"
 #include "utils/log_event.hpp"
+#include "utils/trim.hpp"
 
 #include <gst/video/video-format.h>
 
@@ -65,12 +66,6 @@ struct PackedI420Frame
   std::vector<std::uint8_t> data;
 };
 
-void ensureGstreamerInitialized()
-{
-  static std::once_flag once;
-  std::call_once(once, []() { gst_init(nullptr, nullptr); });
-}
-
 struct RawSourceConfig
 {
   int width = 0;
@@ -89,18 +84,24 @@ bool operator!=(const RawSourceConfig & lhs, const RawSourceConfig & rhs)
   return !(lhs == rhs);
 }
 
-std::string trimWhitespace(std::string value)
+GstVideoFormat rosImageEncodingToGstFormat(const std::string & encoding)
 {
-  value.erase(
-    value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) { return !std::isspace(ch); }));
-  value.erase(
-    std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), value.end());
-  return value;
+  // Keep this intentionally limited to known raw formats instead of
+  // guessing caps for other ROS encodings.
+  if (encoding == sensor_msgs::image_encodings::MONO8) return GST_VIDEO_FORMAT_GRAY8;
+  if (encoding == sensor_msgs::image_encodings::MONO16) return GST_VIDEO_FORMAT_GRAY16_LE;
+  if (encoding == sensor_msgs::image_encodings::RGB8) return GST_VIDEO_FORMAT_RGB;
+  if (encoding == sensor_msgs::image_encodings::BGR8) return GST_VIDEO_FORMAT_BGR;
+  if (encoding == sensor_msgs::image_encodings::RGBA8) return GST_VIDEO_FORMAT_RGBA;
+  if (encoding == sensor_msgs::image_encodings::BGRA8) return GST_VIDEO_FORMAT_BGRA;
+  if (encoding == sensor_msgs::image_encodings::YUV422) return GST_VIDEO_FORMAT_UYVY;
+  if (encoding == sensor_msgs::image_encodings::YUV422_YUY2) return GST_VIDEO_FORMAT_YUY2;
+  return GST_VIDEO_FORMAT_UNKNOWN;
 }
 
 std::optional<std::string> normalizeCompressedCodecToken(std::string token)
 {
-  token = trimWhitespace(std::move(token));
+  token = trim(token);
   const auto token_end = token.find_first_of(" \t\r\n");
   if (token_end != std::string::npos) {
     token.resize(token_end);

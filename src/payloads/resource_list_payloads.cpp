@@ -17,7 +17,7 @@
 #include <cstdint>
 
 #include "nlohmann/json.hpp"
-#include "utils/json_object_parser.hpp"
+#include "payloads/json_object_parser.hpp"
 
 namespace livekit_ros2_bridge
 {

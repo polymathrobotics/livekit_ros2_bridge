@@ -17,7 +17,7 @@
 #include <stdexcept>
 
 #include "gtest/gtest.h"
-#include "utils/reentrant_quiesce_guard.hpp"
+#include "utils/reentrant_quiesce_gate.hpp"
 
 namespace livekit_ros2_bridge
 {

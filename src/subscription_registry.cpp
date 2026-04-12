@@ -19,9 +19,8 @@
 #include <optional>
 #include <utility>
 
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
-#include "utils/interface_types.hpp"
+#include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "video_stream_registry.hpp"
@@ -32,21 +31,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kTopicSubscriptionKeyPrefix[] = "topic:";
-constexpr char kConfiguredSourceSubscriptionKeyPrefix[] = "configured_source:";
 const auto kSubscriptionRegistryLogger = rclcpp::get_logger("subscription_registry");
-
-const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind delivery_kind)
-{
-  switch (delivery_kind) {
-    case SubscriptionDeliveryKind::kData:
-      return protocol::kDeliveryKindData;
-    case SubscriptionDeliveryKind::kVideo:
-      return protocol::kDeliveryKindVideo;
-  }
-
-  throw std::invalid_argument("subscription delivery kind is invalid");
-}
 
 const std::string & requireRequesterIdentity(const std::string & requester_identity)
 {
@@ -85,11 +70,6 @@ const char * requesterRemovalReasonToString(RequesterLeaseRemovalReason reason)
   }
 
   return "unknown";
-}
-
-const char * subscriptionKindToString(SubscriptionTargetKind target_kind)
-{
-  return target_kind == SubscriptionTargetKind::Topic ? "topic" : "configured_source";
 }
 
 SubscriptionDemand normalizeSubscriptionDemand(const SubscriptionDemand & demand)
@@ -155,7 +135,7 @@ SubscriptionStatus SubscriptionRegistry::renewSubscription(
       const auto & sub = it->second;
       LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
       event.field("resource", sub.resource)
-        .field("kind", subscriptionKindToString(sub.target_kind))
+        .field("kind", subscriptionTargetKindString(sub.target_kind))
         .field("requester_identity", requester_identity);
       if (const auto * video = std::get_if<SubscriptionRegistry::VideoTrackResource>(&sub.resource_state)) {
         event.field("stream_key", video->stream_spec.stream_key).field("track_name", video->track_name);
@@ -188,7 +168,7 @@ SubscriptionStatus SubscriptionRegistry::renewSubscription(
       is_video_target ? tryResolveVideoStreamKey(*video_stream_config_, target, interface_type) : std::nullopt;
     LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
     event.field("resource", target.name)
-      .field("kind", subscriptionKindToString(target.kind))
+      .field("kind", subscriptionTargetKindString(target.kind))
       .field("requester_identity", requester_identity);
     if (stream_key.has_value()) {
       event.field("stream_key", *stream_key);
@@ -209,7 +189,7 @@ SubscriptionStatus SubscriptionRegistry::renewSubscription(
   SubscriptionStatus subscription_status = makeSubscriptionStatus(inserted_it->second);
   LogEvent event(kSubscriptionRegistryLogger, "subscription_created");
   event.field("resource", resource)
-    .field("kind", subscriptionKindToString(target_kind))
+    .field("kind", subscriptionTargetKindString(target_kind))
     .field("delivery", subscriptionDeliveryKindString(subscription_status.delivery_kind))
     .field("requester_identity", requester_identity);
   if (const auto * video = std::get_if<VideoTrackResource>(&inserted_it->second.resource_state)) {
@@ -541,9 +521,7 @@ int SubscriptionRegistry::computeAppliedIntervalMs(const std::map<std::string, R
 
 std::string SubscriptionRegistry::makeSubscriptionKey(SubscriptionTargetKind target_kind, const std::string & resource)
 {
-  return (target_kind == SubscriptionTargetKind::Topic ? kTopicSubscriptionKeyPrefix
-                                                       : kConfiguredSourceSubscriptionKeyPrefix) +
-         resource;
+  return std::string(subscriptionTargetKindString(target_kind)) + ":" + resource;
 }
 
 void SubscriptionRegistry::revokeRequesterLeasesIf(
@@ -572,7 +550,7 @@ void SubscriptionRegistry::revokeRequesterLeasesIf(
                                                                                    : static_cast<long>(delta_ms);
       LogEvent event(kSubscriptionRegistryLogger, "requester_lease_removed");
       event.field("resource", sub.resource)
-        .field("kind", subscriptionKindToString(sub.target_kind))
+        .field("kind", subscriptionTargetKindString(sub.target_kind))
         .field("requester_identity", requester_identity)
         .field("reason", requesterRemovalReasonToString(reason))
         .field("preferred_interval_ms", requester_lease.preferred_interval_ms)
@@ -615,7 +593,7 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
     if (const auto * data = dataStreamInstance(sub)) {
       LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
         .field("resource", sub.resource)
-        .field("kind", subscriptionKindToString(sub.target_kind))
+        .field("kind", subscriptionTargetKindString(sub.target_kind))
         .field("reason", requesterRemovalReasonToString(reason))
         .field("track_name", data->trackName())
         .info();
@@ -623,7 +601,7 @@ SubscriptionRegistry::SubscriptionStateMap::iterator SubscriptionRegistry::prune
       const auto & video = std::get<VideoTrackResource>(sub.resource_state);
       LogEvent(kSubscriptionRegistryLogger, "subscription_pruned")
         .field("resource", sub.resource)
-        .field("kind", subscriptionKindToString(sub.target_kind))
+        .field("kind", subscriptionTargetKindString(sub.target_kind))
         .field("reason", requesterRemovalReasonToString(reason))
         .field("stream_key", video.stream_spec.stream_key)
         .field("track_name", video.track_name)
@@ -650,7 +628,7 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
   if (auto * data = dataStreamInstance(sub)) {
     LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
       .field("resource", sub.resource)
-      .field("kind", subscriptionKindToString(sub.target_kind))
+      .field("kind", subscriptionTargetKindString(sub.target_kind))
       .field("interface_type", sub.interface_type)
       .field("track_name", data->trackName())
       .info();
@@ -663,7 +641,7 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
     const auto & video = std::get<VideoTrackResource>(sub.resource_state);
     LogEvent(kSubscriptionRegistryLogger, "subscription_destroyed")
       .field("resource", sub.resource)
-      .field("kind", subscriptionKindToString(sub.target_kind))
+      .field("kind", subscriptionTargetKindString(sub.target_kind))
       .field("interface_type", sub.interface_type)
       .field("stream_key", video.stream_spec.stream_key)
       .field("track_name", video.track_name)

@@ -27,7 +27,7 @@
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
-#include "utils/reentrant_quiesce_guard.hpp"
+#include "utils/reentrant_quiesce_gate.hpp"
 
 namespace livekit_ros2_bridge
 {

@@ -22,8 +22,8 @@
 #include <utility>
 
 #include "nlohmann/json.hpp"
+#include "payloads/json_object_parser.hpp"
 #include "protocol.hpp"
-#include "utils/json_object_parser.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
@@ -36,26 +36,11 @@ namespace
 
 constexpr int kNoPreferredIntervalOverrideMs = 0;
 
-const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
+SubscriptionTargetKind parseHeartbeatSubscriptionTargetKind(std::string_view raw_kind)
 {
-  switch (kind) {
-    case SubscriptionTargetKind::Topic:
-      return "topic";
-    case SubscriptionTargetKind::ConfiguredSource:
-      return "configured_source";
-  }
-
-  throw std::invalid_argument("subscription status target kind is invalid");
-}
-
-SubscriptionTargetKind parseSubscriptionTargetKind(std::string_view raw_kind)
-{
-  const std::string kind = trim(raw_kind);
-  if (kind == "topic") {
-    return SubscriptionTargetKind::Topic;
-  }
-  if (kind == "configured_source") {
-    return SubscriptionTargetKind::ConfiguredSource;
+  const auto kind = subscriptionTargetKindFromString(trim(raw_kind));
+  if (kind.has_value()) {
+    return *kind;
   }
 
   throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
@@ -64,18 +49,6 @@ SubscriptionTargetKind parseSubscriptionTargetKind(std::string_view raw_kind)
 std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
 {
   return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
-}
-
-const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind delivery_kind)
-{
-  switch (delivery_kind) {
-    case SubscriptionDeliveryKind::kData:
-      return protocol::kDeliveryKindData;
-    case SubscriptionDeliveryKind::kVideo:
-      return protocol::kDeliveryKindVideo;
-  }
-
-  throw std::invalid_argument("subscription status delivery kind is invalid");
 }
 
 int parsePreferredIntervalMs(const nlohmann::json & prefs)
@@ -114,7 +87,7 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & subscription_j
     throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
-  const SubscriptionTargetKind kind = parseSubscriptionTargetKind(kind_it->get_ref<const std::string &>());
+  const SubscriptionTargetKind kind = parseHeartbeatSubscriptionTargetKind(kind_it->get_ref<const std::string &>());
 
   const auto name_it = subscription_json.find("name");
   if (name_it == subscription_json.end() || !name_it->is_string()) {

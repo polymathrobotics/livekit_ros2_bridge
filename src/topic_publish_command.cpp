@@ -19,7 +19,7 @@
 
 #include "nlohmann/json.hpp"
 #include "payloads/cdr_payload.hpp"
-#include "utils/json_object_parser.hpp"
+#include "payloads/json_object_parser.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge

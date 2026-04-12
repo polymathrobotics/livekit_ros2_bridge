@@ -20,8 +20,8 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
+#include "payloads/cdr_base64.hpp"
 #include "protocol.hpp"
-#include "utils/base64.hpp"
 
 namespace livekit_ros2_bridge
 {

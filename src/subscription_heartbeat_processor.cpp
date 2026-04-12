@@ -38,18 +38,6 @@ namespace
 constexpr auto kRequesterLeaseDuration = std::chrono::seconds(45);
 constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
-const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
-{
-  switch (kind) {
-    case SubscriptionTargetKind::Topic:
-      return "topic";
-    case SubscriptionTargetKind::ConfiguredSource:
-      return "configured_source";
-  }
-
-  throw std::invalid_argument("heartbeat target kind is invalid");
-}
-
 nlohmann::json makeFlatTargetStatusJson(const SubscriptionTarget & target)
 {
   const char * kind_str = subscriptionTargetKindString(target.kind);

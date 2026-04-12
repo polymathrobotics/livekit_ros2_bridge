@@ -18,6 +18,7 @@
 #include <gst/video/video.h>
 
 #include <memory>
+#include <mutex>
 
 namespace livekit_ros2_bridge
 {
@@ -106,6 +107,12 @@ using GCharPtr = std::unique_ptr<gchar, GCharDeleter>;
 using GstIteratorPtr = std::unique_ptr<GstIterator, GstIteratorDeleter>;
 using GstBufferPtr = std::unique_ptr<GstBuffer, GstBufferDeleter>;
 using GstSamplePtr = std::unique_ptr<GstSample, GstSampleDeleter>;
+
+inline void ensureGstreamerInitialized()
+{
+  static std::once_flag init_once;
+  std::call_once(init_once, []() { gst_init(nullptr, nullptr); });
+}
 
 // GstIterator writes each result into a GValue. The value has to be reset between
 // iterations and fully unset before leaving scope to release any embedded refs.

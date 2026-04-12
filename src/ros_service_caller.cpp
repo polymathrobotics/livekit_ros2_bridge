@@ -18,7 +18,6 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -44,11 +43,12 @@
 #include "rosidl_runtime_cpp/message_initialization.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 #include "utils/event_throttle.hpp"
-#include "utils/interface_types.hpp"
+#include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
-#include "utils/reentrant_quiesce_guard.hpp"
+#include "utils/reentrant_quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
+#include "utils/serialized_message.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
 #if !RCLCPP_VERSION_GTE(28, 0, 0)
@@ -83,17 +83,6 @@ constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr char kAnyServiceLogValue[] = "*";
 const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
 using FailureCache = LruCache<std::string, std::exception_ptr>;
-
-rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
-{
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  if (!payload.empty()) {
-    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
-  }
-  rcl_msg.buffer_length = payload.size();
-  return serialized;
-}
 
 std::vector<std::uint8_t> unwrapSerializedPayload(const rclcpp::SerializedMessage & payload)
 {

@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "utils/interface_types.hpp"
+#include "utils/interface_type_utils.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge

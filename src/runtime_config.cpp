@@ -16,7 +16,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <mutex>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -41,12 +40,6 @@ const auto kRuntimeConfigLogger = rclcpp::get_logger("livekit_ros2_bridge.runtim
 constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
-
-void ensureGstreamerInitialized()
-{
-  static std::once_flag once;
-  std::call_once(once, []() { gst_init(nullptr, nullptr); });
-}
 
 RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
 {

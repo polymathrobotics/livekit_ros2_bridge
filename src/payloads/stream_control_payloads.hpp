@@ -14,71 +14,14 @@
 
 #pragma once
 
-#include <optional>
-#include <string>
-#include <vector>
-
 #include "nlohmann/json_fwd.hpp"
+#include "subscription_types.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 // Control-path subscription heartbeats carry lease-backed demands and report status. RPC
 // request/response naming stays separate for RPC payloads such as service calls.
-
-/// Stable subscription target discriminators used in heartbeat and subscription-status payloads.
-enum class SubscriptionTargetKind
-{
-  Topic,
-  ConfiguredSource,
-};
-
-/// A canonical subscription identifier shared by heartbeat parsing and subscription-status serialization.
-struct SubscriptionTarget
-{
-  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
-  std::string name;
-};
-
-/// A single lease-backed subscription demand plus any non-zero delivery preference overrides.
-struct SubscriptionDemand
-{
-  SubscriptionTarget target;
-  std::optional<int> preferred_interval_ms;
-};
-
-/// Parsed form of a subscriptions heartbeat carrying one demand set for a requester.
-struct SubscriptionHeartbeat
-{
-  /// Optional trimmed session identifier. Missing, null, or blank values are treated as absent.
-  std::optional<std::string> session_id;
-  /// Wire `subscriptions` array parsed into lease-backed `SubscriptionDemand` objects in
-  /// first-seen order after coalescing duplicate canonical targets.
-  std::vector<SubscriptionDemand> subscriptions;
-};
-
-/// Delivery mode reported in control-path subscription status. Runtime stream concepts keep
-/// `stream` naming when they refer to shared runtime resources.
-enum class SubscriptionDeliveryKind
-{
-  kData,
-  kVideo,
-};
-
-/// Control-path subscription status object serialized onto `ros.subscriptions.status`.
-struct SubscriptionStatus
-{
-  SubscriptionTarget target;
-  /// Omitted from the payload when empty.
-  std::string degraded_reason;
-  /// Omitted from the payload when empty.
-  std::string interface_type;
-  /// Serialized only for `data` delivery as `delivery.interval_ms`.
-  int applied_interval_ms = 0;
-  SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;
-  /// Serialized for both delivery modes.
-  std::string track_name;
-};
 
 /// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
 /// Each heartbeat demand must contain required `kind` and `name` strings, plus an optional

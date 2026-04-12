@@ -50,10 +50,10 @@ add_library(${PROJECT_NAME} SHARED
   src/data_stream_instance.cpp
   src/data_track_publisher.cpp
   src/control_packet_router.cpp
-  src/ros_image_format_mapping.cpp
   src/interface_definition_lookup.cpp
   src/node.cpp
   src/payloads/cdr_payload.cpp
+  src/payloads/cdr_base64.cpp
   src/payloads/interface_payloads.cpp
   src/payloads/resource_list_payloads.cpp
   src/payloads/service_call_payloads.cpp
@@ -69,7 +69,6 @@ add_library(${PROJECT_NAME} SHARED
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
   src/ros_topic_publisher.cpp
-  src/utils/base64.cpp
   src/video_stream_config.cpp
   src/video_frame_source.cpp
   src/video_stream_instance.cpp

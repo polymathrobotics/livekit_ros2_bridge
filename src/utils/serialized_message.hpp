@@ -12,39 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#pragma once
+#ifndef LIVEKIT_ROS2_BRIDGE__SERIALIZED_MESSAGE_HPP_
+#define LIVEKIT_ROS2_BRIDGE__SERIALIZED_MESSAGE_HPP_
 
-#include <cstddef>
 #include <cstdint>
-#include <string>
-#include <string_view>
+#include <cstring>
 #include <vector>
+
+#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-enum class Base64DecodeStatus
+inline rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
 {
-  kOk,
-  kInvalidEncoding,
-  kMissingPadding,
-};
-
-struct Base64DecodeResult
-{
-  std::vector<std::uint8_t> bytes;
-  Base64DecodeStatus status = Base64DecodeStatus::kOk;
-
-  explicit operator bool() const noexcept
-  {
-    return status == Base64DecodeStatus::kOk;
+  rclcpp::SerializedMessage serialized(payload.size());
+  auto & rcl_msg = serialized.get_rcl_serialized_message();
+  if (!payload.empty()) {
+    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
   }
-};
-
-std::string base64Encode(const std::uint8_t * data, std::size_t size);
-Base64DecodeResult base64Decode(std::string_view value);
-
-std::string base64UrlEncode(const std::uint8_t * data, std::size_t size);
-Base64DecodeResult base64UrlDecode(std::string_view value);
+  rcl_msg.buffer_length = payload.size();
+  return serialized;
+}
 
 }  // namespace livekit_ros2_bridge
+
+#endif  // LIVEKIT_ROS2_BRIDGE__SERIALIZED_MESSAGE_HPP_

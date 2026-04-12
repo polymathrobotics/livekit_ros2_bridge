@@ -27,7 +27,7 @@
 #include "subscription_qos.hpp"
 #include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
-#include "utils/quiesce_guard.hpp"
+#include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge
