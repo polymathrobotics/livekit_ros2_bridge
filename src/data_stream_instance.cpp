@@ -25,7 +25,6 @@
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
-#include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
 #include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
@@ -40,59 +39,59 @@ constexpr std::size_t kDataSubscriptionDepth = 2U;
 constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
 const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance");
 
+std::string deriveTrackName(const std::string & normalized_topic)
+{
+  std::string name = "ros.data";
+  for (char ch : normalized_topic) {
+    name.push_back(ch == '/' ? '.' : ch);
+  }
+  return name;
+}
+
 }  // namespace
 
+DataStreamSpec makeDataStreamSpec(std::string topic, std::string interface_type)
+{
+  DataStreamSpec spec;
+  spec.topic = std::move(topic);
+  spec.interface_type = std::move(interface_type);
+  spec.track_name = deriveTrackName(spec.topic);
+  return spec;
+}
+
 std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
+  DataStreamSpec spec,
   rclcpp::Node & node,
   RoomConnection & room_connection,
-  SubscriptionRegistry & subscription_registry,
-  std::string topic,
-  std::string interface_type,
-  int applied_interval_ms,
-  std::size_t publish_generation,
+  DataTrackPublicationObserver & publication_observer,
   QuiesceGate & message_callback_gate,
   const SubscriptionQosConfig * subscription_qos_config)
 {
   auto instance = std::shared_ptr<DataStreamInstance>(new DataStreamInstance(
-    node,
-    room_connection,
-    subscription_registry,
-    std::move(topic),
-    std::move(interface_type),
-    applied_interval_ms,
-    publish_generation,
-    message_callback_gate,
-    subscription_qos_config));
+    std::move(spec), node, room_connection, publication_observer, message_callback_gate, subscription_qos_config));
   instance->initializeSubscription();
   return instance;
 }
 
 DataStreamInstance::DataStreamInstance(
+  DataStreamSpec spec,
   rclcpp::Node & node,
   RoomConnection & room_connection,
-  SubscriptionRegistry & subscription_registry,
-  std::string topic,
-  std::string interface_type,
-  int applied_interval_ms,
-  std::size_t publish_generation,
+  DataTrackPublicationObserver & publication_observer,
   QuiesceGate & message_callback_gate,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
-, topic_(std::move(topic))
-, interface_type_(std::move(interface_type))
-, track_name_(deriveTrackName(topic_))
-, data_track_publisher_(room_connection, track_name_, node_.get_clock())
-, applied_interval_ms_(applied_interval_ms)
-, generation_(publish_generation)
+, spec_(std::move(spec))
+, data_track_publisher_(room_connection, spec_.track_name, node_.get_clock())
 , callback_generation_(message_callback_gate.currentGeneration())
-, subscription_registry_(subscription_registry)
+, publication_observer_(publication_observer)
 , message_callback_gate_(message_callback_gate)
 , subscription_qos_config_(subscription_qos_config)
 {}
 
 const std::string & DataStreamInstance::trackName() const
 {
-  return track_name_;
+  return spec_.track_name;
 }
 
 int DataStreamInstance::appliedIntervalMs() const
@@ -110,16 +109,17 @@ void DataStreamInstance::updateAppliedIntervalMs(int applied_interval_ms)
   applied_interval_ms_ = applied_interval_ms;
 }
 
-void DataStreamInstance::start(const std::string & requester_identity)
+void DataStreamInstance::start(const std::string & requester_identity, std::size_t publish_generation)
 {
   if (state_ != State::kNone && state_ != State::kFailed) {
     return;
   }
 
+  generation_ = publish_generation;
   publishPendingDataTrack(requester_identity);
 }
 
-void DataStreamInstance::republish(const std::string & requester_identity)
+void DataStreamInstance::republish(const std::string & requester_identity, std::size_t publish_generation)
 {
   if (state_ != State::kPublished) {
     return;
@@ -128,6 +128,7 @@ void DataStreamInstance::republish(const std::string & requester_identity)
   data_track_publisher_.unpublish();
   state_ = State::kNone;
   last_sent_time_.reset();
+  generation_ = publish_generation;
   publishPendingDataTrack(requester_identity);
 }
 
@@ -142,9 +143,9 @@ bool DataStreamInstance::onPublishComplete(std::size_t generation)
 
   state_ = State::kPublished;
   LogEvent(kDataStreamInstanceLogger, "data_track_published")
-    .field("resource", topic_)
+    .field("resource", spec_.topic)
     .field("kind", "topic")
-    .field("track_name", track_name_)
+    .field("track_name", spec_.track_name)
     .info();
   return true;
 }
@@ -152,9 +153,9 @@ bool DataStreamInstance::onPublishComplete(std::size_t generation)
 void DataStreamInstance::onPublishFailed()
 {
   LogEvent(kDataStreamInstanceLogger, "data_track_publish_failed")
-    .field("resource", topic_)
+    .field("resource", spec_.topic)
     .field("kind", "topic")
-    .field("track_name", track_name_)
+    .field("track_name", spec_.track_name)
     .warn();
   state_ = State::kFailed;
 }
@@ -171,13 +172,13 @@ void DataStreamInstance::initializeSubscription()
 {
   const rclcpp::QoS base_qos(kDataSubscriptionDepth);
   const ResolvedSubscriptionQos resolved_qos =
-    resolveTopicSubscriptionQos(node_, topic_, base_qos, subscription_qos_config_);
+    resolveTopicSubscriptionQos(node_, spec_.topic, base_qos, subscription_qos_config_);
 
   LogEvent(kDataStreamInstanceLogger, "subscription_qos_resolved")
-    .field("resource", topic_)
+    .field("resource", spec_.topic)
     .field("kind", "topic")
     .field("delivery", protocol::kDeliveryKindData)
-    .field("interface_type", interface_type_)
+    .field("interface_type", spec_.interface_type)
     .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
     .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
     .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
@@ -190,8 +191,8 @@ void DataStreamInstance::initializeSubscription()
 
   const std::weak_ptr<DataStreamInstance> weak_self = weak_from_this();
   subscription_handle_ = node_.create_generic_subscription(
-    topic_,
-    interface_type_,
+    spec_.topic,
+    spec_.interface_type,
     resolved_qos.qos,
     [weak_self, callback_generation = callback_generation_, &message_callback_gate = message_callback_gate_](
       std::shared_ptr<rclcpp::SerializedMessage> message) {
@@ -227,9 +228,9 @@ void DataStreamInstance::handleSerializedMessage(const rclcpp::SerializedMessage
     data_track_publisher_.tryPush(rcl_msg.buffer, rcl_msg.buffer_length);
   } catch (const std::exception & exc) {
     LogEvent(kDataStreamInstanceLogger, "data_track_delivery_failed")
-      .field("resource", topic_)
+      .field("resource", spec_.topic)
       .field("kind", "topic")
-      .field("track_name", track_name_)
+      .field("track_name", spec_.track_name)
       .field("error", exc.what())
       .warnThrottle(*node_.get_clock(), kTrackDeliveryFailureLogThrottlePeriod);
   }
@@ -256,24 +257,15 @@ void DataStreamInstance::publishPendingDataTrack(const std::string & requester_i
 {
   state_ = State::kPending;
   LogEvent(kDataStreamInstanceLogger, "data_track_pending")
-    .field("resource", topic_)
+    .field("resource", spec_.topic)
     .field("kind", "topic")
-    .field("track_name", track_name_)
+    .field("track_name", spec_.track_name)
     .field("requester_identity", requester_identity)
     .info();
   data_track_publisher_.publish(
     generation_,
-    [this](std::size_t generation) { return subscription_registry_.onDataTrackPublished(track_name_, generation); },
-    [this]() { subscription_registry_.onDataTrackFailed(track_name_); });
-}
-
-std::string DataStreamInstance::deriveTrackName(const std::string & normalized_topic)
-{
-  std::string name = "ros.data";
-  for (char ch : normalized_topic) {
-    name.push_back(ch == '/' ? '.' : ch);
-  }
-  return name;
+    [this](std::size_t generation) { return publication_observer_.onDataTrackPublished(spec_.track_name, generation); },
+    [this]() { publication_observer_.onDataTrackFailed(spec_.track_name); });
 }
 
 }  // namespace livekit_ros2_bridge

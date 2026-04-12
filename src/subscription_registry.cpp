@@ -183,7 +183,8 @@ SubscriptionStatus SubscriptionRegistry::renewSubscription(
   auto inserted_it = subscriptions_.find(subscription_key);
 
   if (auto * data = dataStreamInstance(inserted_it->second)) {
-    data->start(requester_identity);
+    const std::size_t publish_generation = registry_generation_.load();
+    data->start(requester_identity, publish_generation);
   }
 
   SubscriptionStatus subscription_status = makeSubscriptionStatus(inserted_it->second);
@@ -247,6 +248,7 @@ void SubscriptionRegistry::republishDataTracksForRequester(const std::string & r
     return;
   }
 
+  const std::size_t publish_generation = registry_generation_.load();
   for (auto & [subscription_key, sub] : subscriptions_) {
     (void)subscription_key;
     auto * data = dataStreamInstance(sub);
@@ -263,7 +265,7 @@ void SubscriptionRegistry::republishDataTracksForRequester(const std::string & r
       .field("track_name", data->trackName())
       .field("requester_identity", requester_identity)
       .info();
-    data->republish(requester_identity);
+    data->republish(requester_identity, publish_generation);
   }
 }
 
@@ -275,6 +277,7 @@ void SubscriptionRegistry::renewExistingLease(
   updated_requesters[requester_identity] = requester_lease;
 
   if (auto * data = dataStreamInstance(sub)) {
+    const std::size_t publish_generation = registry_generation_.load();
     sub.requesters = std::move(updated_requesters);
     data->updateAppliedIntervalMs(computeAppliedIntervalMs(sub.requesters));
     if (!requester_already_present && data->state() == DataStreamInstance::State::kPublished) {
@@ -284,7 +287,7 @@ void SubscriptionRegistry::renewExistingLease(
       requesters_needing_data_track_republish_.insert(requester_identity);
     }
     if (data->state() == DataStreamInstance::State::kNone || data->state() == DataStreamInstance::State::kFailed) {
-      data->start(requester_identity);
+      data->start(requester_identity, publish_generation);
     }
     return;
   }
@@ -326,7 +329,7 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createDataSubscrip
   sub.resource = target.name;
   sub.interface_type = interface_type;
   sub.requesters.emplace(requester_identity, requester_lease);
-  sub.resource_state = createDataStreamInstance(target.name, interface_type, sub.requesters);
+  sub.resource_state = createDataStreamInstance(makeDataStreamSpec(target.name, interface_type), sub.requesters);
   return sub;
 }
 
@@ -337,20 +340,12 @@ void SubscriptionRegistry::assignVideoMetadata(
 }
 
 std::shared_ptr<DataStreamInstance> SubscriptionRegistry::createDataStreamInstance(
-  const std::string & topic,
-  const std::string & interface_type,
-  const std::map<std::string, RequesterLease> & requesters)
+  DataStreamSpec spec, const std::map<std::string, RequesterLease> & requesters)
 {
-  return DataStreamInstance::create(
-    node_,
-    room_connection_,
-    *this,
-    topic,
-    interface_type,
-    computeAppliedIntervalMs(requesters),
-    registry_generation_.load(),
-    message_callback_gate_,
-    subscription_qos_config_);
+  auto instance = DataStreamInstance::create(
+    std::move(spec), node_, room_connection_, *this, message_callback_gate_, subscription_qos_config_);
+  instance->updateAppliedIntervalMs(computeAppliedIntervalMs(requesters));
+  return instance;
 }
 
 VideoStreamRegistry & SubscriptionRegistry::videoStreamRegistry() const

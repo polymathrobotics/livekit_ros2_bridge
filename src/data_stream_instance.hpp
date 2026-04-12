@@ -36,7 +36,24 @@ namespace livekit_ros2_bridge
 struct SubscriptionQosConfig;
 class QuiesceGate;
 class RoomConnection;
-class SubscriptionRegistry;
+
+struct DataStreamSpec
+{
+  std::string topic;
+  std::string interface_type;
+  std::string track_name;
+};
+
+DataStreamSpec makeDataStreamSpec(std::string topic, std::string interface_type);
+
+class DataTrackPublicationObserver
+{
+public:
+  virtual ~DataTrackPublicationObserver() = default;
+
+  virtual bool onDataTrackPublished(const std::string & track_name, std::size_t generation) = 0;
+  virtual void onDataTrackFailed(const std::string & track_name) = 0;
+};
 
 // SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
 // when that topic needs a data delivery runtime. Each DataStreamInstance owns the ROS
@@ -55,13 +72,10 @@ public:
   };
 
   static std::shared_ptr<DataStreamInstance> create(
+    DataStreamSpec spec,
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    SubscriptionRegistry & subscription_registry,
-    std::string topic,
-    std::string interface_type,
-    int applied_interval_ms,
-    std::size_t publish_generation,
+    DataTrackPublicationObserver & publication_observer,
     QuiesceGate & message_callback_gate,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
@@ -76,21 +90,18 @@ public:
   State state() const;
 
   void updateAppliedIntervalMs(int applied_interval_ms);
-  void start(const std::string & requester_identity);
-  void republish(const std::string & requester_identity);
+  void start(const std::string & requester_identity, std::size_t publish_generation);
+  void republish(const std::string & requester_identity, std::size_t publish_generation);
   bool onPublishComplete(std::size_t generation);
   void onPublishFailed();
   void shutdown();
 
 private:
   DataStreamInstance(
+    DataStreamSpec spec,
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    SubscriptionRegistry & subscription_registry,
-    std::string topic,
-    std::string interface_type,
-    int applied_interval_ms,
-    std::size_t publish_generation,
+    DataTrackPublicationObserver & publication_observer,
     QuiesceGate & message_callback_gate,
     const SubscriptionQosConfig * subscription_qos_config);
 
@@ -98,20 +109,17 @@ private:
   void handleSerializedMessage(const rclcpp::SerializedMessage & message);
   bool shouldSkipDueToInterval();
   void publishPendingDataTrack(const std::string & requester_identity);
-  static std::string deriveTrackName(const std::string & normalized_topic);
 
   rclcpp::Node & node_;
-  std::string topic_;
-  std::string interface_type_;
+  DataStreamSpec spec_;
   std::shared_ptr<rclcpp::GenericSubscription> subscription_handle_;
   std::optional<Clock::time_point> last_sent_time_;
-  std::string track_name_;
   DataTrackPublisher data_track_publisher_;
   int applied_interval_ms_ = 0;
   State state_ = State::kNone;
   std::size_t generation_ = 0U;
   std::size_t callback_generation_ = 0U;
-  SubscriptionRegistry & subscription_registry_;
+  DataTrackPublicationObserver & publication_observer_;
   QuiesceGate & message_callback_gate_;
   const SubscriptionQosConfig * subscription_qos_config_;
 };

@@ -55,7 +55,7 @@ enum class RequesterLeaseRemovalReason
 // delivery state.
 // For data topics, the registry owns one DataStreamInstance per shared topic lease set, and each
 // instance owns its one DataTrackPublisher for the LiveKit publication.
-class SubscriptionRegistry final
+class SubscriptionRegistry final : public DataTrackPublicationObserver
 {
 public:
   using Clock = std::chrono::steady_clock;
@@ -90,9 +90,9 @@ public:
   void resetSessionState();
   void shutdown();
 
-  bool onDataTrackPublished(const std::string & track_name, std::size_t generation);
+  bool onDataTrackPublished(const std::string & track_name, std::size_t generation) override;
   std::size_t registryGeneration() const;
-  void onDataTrackFailed(const std::string & track_name);
+  void onDataTrackFailed(const std::string & track_name) override;
 
 private:
   struct RequesterLease
@@ -140,9 +140,7 @@ private:
     const RequesterLease & requester_lease);
   void assignVideoMetadata(SubscriptionState & sub, VideoStreamSpec stream_spec, std::string track_name);
   std::shared_ptr<DataStreamInstance> createDataStreamInstance(
-    const std::string & topic,
-    const std::string & interface_type,
-    const std::map<std::string, RequesterLease> & requesters);
+    DataStreamSpec spec, const std::map<std::string, RequesterLease> & requesters);
   VideoStreamRegistry & videoStreamRegistry() const;
   const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
   static DataStreamInstance * dataStreamInstance(SubscriptionState & sub);
