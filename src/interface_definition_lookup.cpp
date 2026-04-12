@@ -27,7 +27,7 @@
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "ament_index_cpp/version.h"
-#include "utils/bounded_lru_cache.hpp"
+#include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -71,7 +71,7 @@ std::string readInterfaceDefinitionFile(const std::string & path)
   return contents.str();
 }
 
-using InterfaceLookupFailureCache = BoundedLruCache<std::string, std::exception_ptr>;
+using InterfaceLookupFailureCache = LruCache<std::string, std::exception_ptr>;
 
 InterfaceLookupFailureCache & interfaceLookupFailureCache()
 {

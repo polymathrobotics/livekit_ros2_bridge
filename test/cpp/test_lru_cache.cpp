@@ -18,7 +18,7 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "utils/bounded_lru_cache.hpp"
+#include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -39,9 +39,9 @@ std::string expectRuntimeErrorMessage(const std::function<void()> & action)
   return "";
 }
 
-TEST(BoundedLruCacheTest, StoresAndReturnsGenericValues)
+TEST(LruCacheTest, StoresAndReturnsGenericValues)
 {
-  BoundedLruCache<std::string, int> cache(2U);
+  LruCache<std::string, int> cache(2U);
   cache.insertOrAssign("alpha", 7);
 
   ASSERT_EQ(cache.size(), 1U);
@@ -50,9 +50,9 @@ TEST(BoundedLruCacheTest, StoresAndReturnsGenericValues)
   EXPECT_FALSE(cache.get("missing").has_value());
 }
 
-TEST(BoundedLruCacheTest, TouchingHitPreservesItDuringLruEviction)
+TEST(LruCacheTest, TouchingHitPreservesItDuringLruEviction)
 {
-  BoundedLruCache<std::string, int> cache(2U);
+  LruCache<std::string, int> cache(2U);
   cache.insertOrAssign("alpha", 1);
   cache.insertOrAssign("beta", 2);
 
@@ -66,9 +66,9 @@ TEST(BoundedLruCacheTest, TouchingHitPreservesItDuringLruEviction)
   EXPECT_EQ(*cache.get("gamma"), 3);
 }
 
-TEST(BoundedLruCacheTest, PeekDoesNotRefreshRecencyButTouchDoes)
+TEST(LruCacheTest, PeekDoesNotRefreshRecencyButTouchDoes)
 {
-  BoundedLruCache<std::string, int> peek_cache(2U);
+  LruCache<std::string, int> peek_cache(2U);
   peek_cache.insertOrAssign("alpha", 1);
   peek_cache.insertOrAssign("beta", 2);
 
@@ -76,7 +76,7 @@ TEST(BoundedLruCacheTest, PeekDoesNotRefreshRecencyButTouchDoes)
   peek_cache.insertOrAssign("gamma", 3);
   EXPECT_FALSE(peek_cache.peek("alpha").has_value());
 
-  BoundedLruCache<std::string, int> touch_cache(2U);
+  LruCache<std::string, int> touch_cache(2U);
   touch_cache.insertOrAssign("alpha", 1);
   touch_cache.insertOrAssign("beta", 2);
   ASSERT_TRUE(touch_cache.touch("alpha"));
@@ -85,9 +85,9 @@ TEST(BoundedLruCacheTest, PeekDoesNotRefreshRecencyButTouchDoes)
   EXPECT_FALSE(touch_cache.peek("beta").has_value());
 }
 
-TEST(BoundedLruCacheTest, InsertReturnsEvictedEntryWhenCapacityExceeded)
+TEST(LruCacheTest, InsertReturnsEvictedEntryWhenCapacityExceeded)
 {
-  BoundedLruCache<std::string, int> cache(1U);
+  LruCache<std::string, int> cache(1U);
   EXPECT_FALSE(cache.insertOrAssign("alpha", 1).has_value());
 
   const auto evicted = cache.insertOrAssign("beta", 2);
@@ -96,9 +96,9 @@ TEST(BoundedLruCacheTest, InsertReturnsEvictedEntryWhenCapacityExceeded)
   EXPECT_EQ(evicted->value, 1);
 }
 
-TEST(BoundedLruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
+TEST(LruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
 {
-  BoundedLruCache<std::string, std::exception_ptr> cache(2U);
+  LruCache<std::string, std::exception_ptr> cache(2U);
   cache.insertOrAssign("alpha", std::make_exception_ptr(std::runtime_error("bad alpha")));
 
   const auto failure = cache.get("alpha");

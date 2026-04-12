@@ -29,7 +29,7 @@ namespace livekit_ros2_bridge
 // Small thread-safe LRU cache for copyable values. Reads touch recency, and
 // inserts evict the least-recently used entry once the fixed capacity is exceeded.
 template <typename Key, typename Value, typename Hash = std::hash<Key>, typename KeyEqual = std::equal_to<Key>>
-class BoundedLruCache
+class LruCache
 {
 public:
   struct EvictedEntry
@@ -38,12 +38,12 @@ public:
     Value value;
   };
 
-  explicit BoundedLruCache(std::size_t capacity)
+  explicit LruCache(std::size_t capacity)
   : capacity_(capacity)
   {}
 
-  BoundedLruCache(const BoundedLruCache &) = delete;
-  BoundedLruCache & operator=(const BoundedLruCache &) = delete;
+  LruCache(const LruCache &) = delete;
+  LruCache & operator=(const LruCache &) = delete;
 
   std::optional<Value> get(const Key & key)
   {

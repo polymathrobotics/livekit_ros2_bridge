@@ -26,8 +26,8 @@
 #include "rclcpp/node.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "topic_publish_command.hpp"
-#include "utils/bounded_lru_cache.hpp"
 #include "utils/event_throttle.hpp"
+#include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -70,7 +70,7 @@ private:
   AccessPolicy access_policy_;
   std::size_t max_cached_publishers_ = 0U;
   std::atomic<bool> is_shutdown_{false};
-  BoundedLruCache<std::string, CachedPublisher> cached_publishers_;
+  LruCache<std::string, CachedPublisher> cached_publishers_;
   std::function<void()> before_publish_hook_for_test_;
   EventThrottle evicted_publisher_warning_throttle_{kEvictedPublisherWarningThrottlePeriod};
 };

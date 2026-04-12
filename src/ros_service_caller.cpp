@@ -43,10 +43,10 @@
 #include "rmw/types.h"
 #include "rosidl_runtime_cpp/message_initialization.hpp"
 #include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
-#include "utils/bounded_lru_cache.hpp"
 #include "utils/event_throttle.hpp"
 #include "utils/interface_types.hpp"
 #include "utils/log_event.hpp"
+#include "utils/lru_cache.hpp"
 #include "utils/reentrant_quiesce_guard.hpp"
 #include "utils/scope_exit.hpp"
 
@@ -82,7 +82,7 @@ constexpr int kMaxInflightPerRequester = 4;
 constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr char kAnyServiceLogValue[] = "*";
 const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
-using FailureCache = BoundedLruCache<std::string, std::exception_ptr>;
+using FailureCache = LruCache<std::string, std::exception_ptr>;
 
 rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
 {

@@ -116,8 +116,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_base64 test/cpp/test_base64.cpp)
   target_link_libraries(test_base64 ${PROJECT_NAME})
 
-  ament_add_gtest(test_bounded_lru_cache test/cpp/test_bounded_lru_cache.cpp)
-  target_link_libraries(test_bounded_lru_cache ${PROJECT_NAME})
+  ament_add_gtest(test_lru_cache test/cpp/test_lru_cache.cpp)
+  target_link_libraries(test_lru_cache ${PROJECT_NAME})
 
   ament_add_gtest(test_data_track_publisher test/cpp/test_data_track_publisher.cpp)
   target_link_libraries(test_data_track_publisher ${PROJECT_NAME})
@@ -214,7 +214,7 @@ if(BUILD_TESTING)
   set(livekit_ros2_bridge_test_targets
     test_access_policy
     test_base64
-    test_bounded_lru_cache
+    test_lru_cache
     test_data_stream_instance
     test_data_track_publisher
     test_control_packet_router
