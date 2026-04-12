@@ -32,7 +32,7 @@ namespace livekit_ros2_bridge
 {
 
 // Owned by a VideoStreamInstance. The paired VideoFrameSource handles input
-// normalization and this type owns only the LiveKit publication side.
+// normalization and this publisher owns only one LiveKit video publication.
 class VideoTrackPublisher final : public VideoFrameSink
 {
 public:

@@ -63,13 +63,13 @@ int sanitizePreferredIntervalMs(int preferred_interval_ms)
 }
 
 std::optional<std::string> tryResolveVideoStreamKey(
-  const VideoConfig & video_config, const SubscriptionTarget & target, const std::string & interface_type)
+  const VideoStreamConfig & video_stream_config, const SubscriptionTarget & target, const std::string & interface_type)
 {
   try {
     if (target.kind == SubscriptionTargetKind::ConfiguredSource) {
-      return resolveConfiguredSourceVideoStreamSpec(video_config, target.name).stream_key;
+      return resolveConfiguredSourceVideoStreamSpec(video_stream_config, target.name).stream_key;
     }
-    return resolveRosVideoStreamSpec(video_config, target.name, interface_type).stream_key;
+    return resolveRosVideoStreamSpec(video_stream_config, target.name, interface_type).stream_key;
   } catch (...) {
     return std::nullopt;
   }
@@ -123,13 +123,13 @@ SubscriptionRegistry::SubscriptionRegistry(
   rclcpp::Node & node,
   RoomSession & room_session,
   VideoStreamRegistry * video_stream_registry,
-  const VideoConfig * video_config,
+  const VideoStreamConfig * video_stream_config,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , room_session_(room_session)
 , video_stream_registry_(video_stream_registry)
-, default_video_config_(makeDefaultVideoConfig())
-, video_config_(video_config == nullptr ? &default_video_config_ : video_config)
+, default_video_stream_config_(makeDefaultVideoStreamConfig())
+, video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
 , subscription_qos_config_(subscription_qos_config)
 {}
 
@@ -185,7 +185,7 @@ StreamStatus SubscriptionRegistry::renewSubscription(
     const bool is_video_target = target.kind == SubscriptionTargetKind::ConfiguredSource ||
                                  (!interface_type.empty() && classifyRosVideoInterfaceType(interface_type).has_value());
     const std::optional<std::string> stream_key =
-      is_video_target ? tryResolveVideoStreamKey(*video_config_, target, interface_type) : std::nullopt;
+      is_video_target ? tryResolveVideoStreamKey(*video_stream_config_, target, interface_type) : std::nullopt;
     LogEvent event(kSubscriptionRegistryLogger, "subscription_renew_failed");
     event.field("resource", target.name)
       .field("kind", subscriptionKindToString(target.kind))
@@ -328,8 +328,8 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   sub.requesters.emplace(requester_identity, requester_lease);
 
   const VideoStreamSpec stream_spec = target.kind == SubscriptionTargetKind::ConfiguredSource
-                                        ? resolveConfiguredSourceVideoStreamSpec(*video_config_, target.name)
-                                        : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
+                                        ? resolveConfiguredSourceVideoStreamSpec(*video_stream_config_, target.name)
+                                        : resolveRosVideoStreamSpec(*video_stream_config_, target.name, interface_type);
   assignVideoMetadata(sub, stream_spec, ensureVideoStreamRunning(videoStreamRegistry(), stream_spec));
   return sub;
 }

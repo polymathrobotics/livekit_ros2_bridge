@@ -121,7 +121,7 @@ std::string videoInputKindToString(VideoInputKind kind)
 }
 
 VideoStreamSpec resolveRosVideoStreamSpec(
-  const VideoConfig & config, const std::string & topic, const std::string & interface_type)
+  const VideoStreamConfig & stream_config, const std::string & topic, const std::string & interface_type)
 {
   const std::string normalized = normalizeRosResourceName(topic);
   if (normalized.empty()) {
@@ -132,10 +132,10 @@ VideoStreamSpec resolveRosVideoStreamSpec(
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 
-  const RosTopicRule * matched_rule = nullptr;
+  const RosVideoTopicRule * matched_rule = nullptr;
   std::size_t best_len = 0;
   // Update only on a strictly longer pattern so same-length matches stay first-declared.
-  for (const auto & rule : config.ros_topic_rules) {
+  for (const auto & rule : stream_config.ros_topic_rules) {
     const bool is_better_match = matched_rule == nullptr || rule.pattern.size() > best_len;
     if (rosResourceMatchesPattern(normalized, rule.pattern) && is_better_match) {
       matched_rule = &rule;
@@ -153,26 +153,26 @@ VideoStreamSpec resolveRosVideoStreamSpec(
   spec.interface_type = interface_type;
   spec.input_kind = VideoInputKind::RosTopic;
   spec.ingest_mode = std::string(interface_classification->ingest_mode);
-  spec.selected_config_id = matched_rule->id;
-  spec.transform_fragment = matched_rule->transform;
-  spec.publish_config = matched_rule->publish;
+  spec.selected_config_id = matched_rule->rule_id;
+  spec.transform_fragment = matched_rule->transform_fragment;
+  spec.publish_config = matched_rule->publish_config;
   return spec;
 }
 
 VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
-  const VideoConfig & config, const std::string & configured_source_name)
+  const VideoStreamConfig & stream_config, const std::string & configured_source_name)
 {
   const std::string trimmed_name = trimConfiguredSourceName(configured_source_name);
   if (trimmed_name.empty()) {
     throw std::invalid_argument("Invalid configured source name.");
   }
 
-  const auto source_it = config.configured_sources.find(trimmed_name);
-  if (source_it == config.configured_sources.end()) {
+  const auto source_it = stream_config.configured_sources.find(trimmed_name);
+  if (source_it == stream_config.configured_sources.end()) {
     throw std::invalid_argument("Unknown configured video source '" + trimmed_name + "'.");
   }
 
-  const auto & configured_source_config = source_it->second;
+  const auto & configured_source = source_it->second;
 
   VideoStreamSpec spec;
   // stream_key, configured_source_name, and selected_config_id all use the same trimmed configured-source name.
@@ -181,10 +181,10 @@ VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
   spec.configured_source_name = trimmed_name;
   spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.selected_config_id = trimmed_name;
-  spec.ingress_fragment = configured_source_config.ingress_fragment;
-  spec.transform_fragment = configured_source_config.transform_fragment;
+  spec.ingress_fragment = configured_source.ingress_fragment;
+  spec.transform_fragment = configured_source.transform_fragment;
   spec.ingest_mode = kConfiguredSourceIngestMode;
-  spec.publish_config = configured_source_config.publish;
+  spec.publish_config = configured_source.publish_config;
 
   return spec;
 }

@@ -70,7 +70,7 @@ add_library(${PROJECT_NAME} SHARED
   src/topic_publish_command.cpp
   src/topic_publisher.cpp
   src/utils/base64.cpp
-  src/video_config.cpp
+  src/video_stream_config.cpp
   src/video_frame_source.cpp
   src/video_stream_instance.cpp
   src/video_stream_registry.cpp

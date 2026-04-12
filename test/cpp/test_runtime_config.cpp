@@ -166,17 +166,18 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_params", options);
 
-  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
-  const auto & front_rule = startup_config.video_config.ros_topic_rules.front();
+  ASSERT_FALSE(startup_config.video_stream_config.ros_topic_rules.empty());
+  const auto & front_rule = startup_config.video_stream_config.ros_topic_rules.front();
   EXPECT_EQ(front_rule.pattern, "/camera/front/*");
-  EXPECT_EQ(front_rule.id, "front_camera");
-  EXPECT_EQ(front_rule.transform, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
-  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
+  EXPECT_EQ(front_rule.rule_id, "front_camera");
+  EXPECT_EQ(front_rule.transform_fragment, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
+  ASSERT_EQ(startup_config.video_stream_config.configured_sources.size(), 1U);
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("front_rtsp").ingress_fragment,
+    startup_config.video_stream_config.configured_sources.at("front_rtsp").ingress_fragment,
     "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
+    startup_config.video_stream_config.configured_sources.at("front_rtsp").transform_fragment,
+    "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
@@ -189,10 +190,10 @@ TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_video_publish_params", options);
 
-  EXPECT_EQ(startup_config.video_config.publish.codec, VideoPublishCodec::H264);
-  EXPECT_EQ(startup_config.video_config.publish.max_bitrate_bps, 900000U);
-  EXPECT_DOUBLE_EQ(startup_config.video_config.publish.max_framerate, 24.0);
-  EXPECT_EQ(startup_config.video_config.publish.simulcast, VideoPublishSimulcast::Enabled);
+  EXPECT_EQ(startup_config.video_stream_config.default_publish_config.codec, VideoPublishCodec::H264);
+  EXPECT_EQ(startup_config.video_stream_config.default_publish_config.max_bitrate_bps, 900000U);
+  EXPECT_DOUBLE_EQ(startup_config.video_stream_config.default_publish_config.max_framerate, 24.0);
+  EXPECT_EQ(startup_config.video_stream_config.default_publish_config.simulcast, VideoPublishSimulcast::Enabled);
 }
 
 TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
@@ -271,11 +272,11 @@ TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_ros_empty_transform", options);
 
-  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
-  EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().id, "front");
-  EXPECT_EQ(startup_config.video_config.ros_topic_rules.front().transform, "");
+  ASSERT_FALSE(startup_config.video_stream_config.ros_topic_rules.empty());
+  EXPECT_EQ(startup_config.video_stream_config.ros_topic_rules.front().rule_id, "front");
+  EXPECT_EQ(startup_config.video_stream_config.ros_topic_rules.front().transform_fragment, "");
   expectPublishConfigEq(
-    startup_config.video_config.ros_topic_rules.front().publish,
+    startup_config.video_stream_config.ros_topic_rules.front().publish_config,
     VideoPublishCodec::Auto,
     0U,
     0.0,
@@ -295,11 +296,11 @@ TEST_F(RuntimeConfigTest, RosVideoPublishOverrideCanSetSingleFieldWithoutTransfo
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_ros_publish_override", options);
 
-  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
-  const auto & rule = startup_config.video_config.ros_topic_rules.front();
-  EXPECT_EQ(rule.id, "front");
-  EXPECT_EQ(rule.transform, "");
-  expectPublishConfigEq(rule.publish, VideoPublishCodec::H264, 900000U, 15.0, VideoPublishSimulcast::Enabled);
+  ASSERT_FALSE(startup_config.video_stream_config.ros_topic_rules.empty());
+  const auto & rule = startup_config.video_stream_config.ros_topic_rules.front();
+  EXPECT_EQ(rule.rule_id, "front");
+  EXPECT_EQ(rule.transform_fragment, "");
+  expectPublishConfigEq(rule.publish_config, VideoPublishCodec::H264, 900000U, 15.0, VideoPublishSimulcast::Enabled);
 }
 
 TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldWithoutTransform)
@@ -316,11 +317,11 @@ TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldW
   const RuntimeConfig startup_config =
     loadRuntimeConfigForNode("startup_config_configured_source_publish_override", options);
 
-  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
-  const auto & configured_source_config = startup_config.video_config.configured_sources.at("front");
-  EXPECT_EQ(configured_source_config.transform_fragment, "");
+  ASSERT_EQ(startup_config.video_stream_config.configured_sources.size(), 1U);
+  const auto & configured_source = startup_config.video_stream_config.configured_sources.at("front");
+  EXPECT_EQ(configured_source.transform_fragment, "");
   expectPublishConfigEq(
-    configured_source_config.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
+    configured_source.publish_config, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
 }
 
 TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
@@ -339,9 +340,9 @@ TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
 
   const RuntimeConfig startup_config = loadRuntimeConfigForNode("startup_config_publish_override_reset", options);
 
-  ASSERT_FALSE(startup_config.video_config.ros_topic_rules.empty());
+  ASSERT_FALSE(startup_config.video_stream_config.ros_topic_rules.empty());
   expectPublishConfigEq(
-    startup_config.video_config.ros_topic_rules.front().publish,
+    startup_config.video_stream_config.ros_topic_rules.front().publish_config,
     VideoPublishCodec::Auto,
     0U,
     0.0,
@@ -437,12 +438,12 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctConfiguredSources)
   options.arguments({"--ros-args", "--params-file", params_path.string()});
   const RuntimeConfig startup_config = loadRuntimeConfigForNode(node_name, options);
 
-  ASSERT_EQ(startup_config.video_config.configured_sources.size(), 2U);
+  ASSERT_EQ(startup_config.video_stream_config.configured_sources.size(), 2U);
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("/front_rtsp").ingress_fragment,
+    startup_config.video_stream_config.configured_sources.at("/front_rtsp").ingress_fragment,
     "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    startup_config.video_config.configured_sources.at("/front_rtsp/").ingress_fragment,
+    startup_config.video_stream_config.configured_sources.at("/front_rtsp/").ingress_fragment,
     "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);

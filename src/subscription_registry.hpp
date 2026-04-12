@@ -62,7 +62,7 @@ public:
     rclcpp::Node & node,
     RoomSession & room_session,
     VideoStreamRegistry * video_stream_registry,
-    const VideoConfig * video_config = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
   StreamStatus renewSubscription(
@@ -157,8 +157,8 @@ private:
   rclcpp::Node & node_;
   RoomSession & room_session_;
   VideoStreamRegistry * video_stream_registry_;
-  VideoConfig default_video_config_;
-  const VideoConfig * video_config_;
+  VideoStreamConfig default_video_stream_config_;
+  const VideoStreamConfig * video_stream_config_;
   const SubscriptionQosConfig * subscription_qos_config_;
   // Subscriptions capture the gate's current generation in their message callback.
   // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from

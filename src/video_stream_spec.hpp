@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-#include "video_config.hpp"
+#include "video_stream_config.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -42,6 +42,7 @@ enum class VideoInputKind
 
 struct VideoStreamSpec
 {
+  // Resolved runtime inputs for one shared video stream instance.
   // Stable video runtime key: "topic:<normalized topic>" or "configured_source:<trimmed configured source name>".
   std::string stream_key;
   // Stable LiveKit track name exposed to subscribers.
@@ -54,7 +55,7 @@ struct VideoStreamSpec
   std::string configured_source_name;
   VideoInputKind input_kind = VideoInputKind::RosTopic;
   std::string ingest_mode;
-  // ROS sources store the matched rule id; configured sources store the canonical trimmed configured source name.
+  // ROS sources store the matched rule_id; configured sources store the canonical trimmed configured source name.
   std::string selected_config_id;
   std::optional<std::string> degraded_reason;
   // Configured sources set this to the configured ingress fragment. ROS sources leave it empty.
@@ -73,9 +74,9 @@ std::string videoInputKindToString(VideoInputKind kind);
 
 // Resolves against normalized topic patterns. The longest match wins; same-length matches keep declaration order.
 VideoStreamSpec resolveRosVideoStreamSpec(
-  const VideoConfig & config, const std::string & topic, const std::string & interface_type);
+  const VideoStreamConfig & stream_config, const std::string & topic, const std::string & interface_type);
 // Trims the configured source name before lookup and fills only the configured-source fields in the result.
 VideoStreamSpec resolveConfiguredSourceVideoStreamSpec(
-  const VideoConfig & config, const std::string & configured_source_name);
+  const VideoStreamConfig & stream_config, const std::string & configured_source_name);
 
 }  // namespace livekit_ros2_bridge

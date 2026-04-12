@@ -124,13 +124,13 @@ bool publishUntil(
   return predicate();
 }
 
-VideoConfig makeConfiguredVideoConfig()
+VideoStreamConfig makeConfiguredVideoStreamConfig()
 {
-  VideoConfig config = makeDefaultVideoConfig();
-  ConfiguredVideoSourceConfig configured_source_config;
-  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(configured_source_config));
-  return config;
+  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
+  ConfiguredVideoStreamSource configured_source;
+  configured_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  stream_config.configured_sources.emplace("/sources/front", std::move(configured_source));
+  return stream_config;
 }
 
 void expectInvalidArgumentMessage(const std::function<void()> & fn, const char * expected_message)
@@ -244,7 +244,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomSession session;
   VideoStreamRegistry video_stream_registry(*node, session);
-  const VideoConfig video_config = makeConfiguredVideoConfig();
+  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
   (void)publisher;
@@ -253,7 +253,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, session, &video_stream_registry, &video_config);
+  SubscriptionRegistry registry(*node, session, &video_stream_registry, &video_stream_config);
 
   const auto topic_response = registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(

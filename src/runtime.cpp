@@ -51,7 +51,7 @@ Runtime::Runtime(
   FailFastCallbacks fail_fast_callbacks)
 : node_(node)
 , room_session_(std::move(session))
-, video_config_(std::move(runtime_config.video_config))
+, video_stream_config_(std::move(runtime_config.video_stream_config))
 , subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
 , room_(runtime_config.room_connection_config.room)
 , fail_fast_callbacks_(std::move(fail_fast_callbacks))
@@ -82,7 +82,7 @@ Runtime::Runtime(
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_session_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_, *room_session_, video_stream_registry_.get(), &video_config_, &subscription_qos_config_);
+    node_, *room_session_, video_stream_registry_.get(), &video_stream_config_, &subscription_qos_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_session_, runtime_config.access_policy, node_.get_clock());

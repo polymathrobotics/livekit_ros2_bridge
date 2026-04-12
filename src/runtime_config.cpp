@@ -442,18 +442,18 @@ const typename EntryMap::mapped_type & requireUniqueGeneratedEntry(
 
 }  // namespace
 
-VideoConfig loadVideoConfig(const Params & params)
+VideoStreamConfig loadVideoStreamConfig(const Params & params)
 {
-  VideoConfig config = makeDefaultVideoConfig();
-  config.publish = parseVideoPublishConfig(params);
-  for (auto & rule : config.ros_topic_rules) {
-    rule.publish = config.publish;
+  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
+  stream_config.default_publish_config = parseVideoPublishConfig(params);
+  for (auto & rule : stream_config.ros_topic_rules) {
+    rule.publish_config = stream_config.default_publish_config;
   }
 
   // Rebuild user rules ahead of the built-in catch-all so longest-match selection
   // still works and same-length ties stay first-declared.
-  auto builtin_rules = std::move(config.ros_topic_rules);
-  config.ros_topic_rules.clear();
+  auto builtin_rules = std::move(stream_config.ros_topic_rules);
+  stream_config.ros_topic_rules.clear();
 
   std::unordered_set<std::string> seen_topic_rule_ids;
   std::unordered_set<std::string> seen_configured_source_ids;
@@ -473,13 +473,13 @@ VideoConfig loadVideoConfig(const Params & params)
     const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
     validateVideoTopicRuleTransformFragment(entry_id, transform_fragment);
 
-    RosTopicRule rule;
+    RosVideoTopicRule rule;
     rule.pattern = pattern;
-    rule.id = entry_id;
-    rule.transform = transform_fragment;
-    rule.publish =
-      mergeVideoPublishConfig(config.publish, parseVideoPublishOverride(entry, "video topic rule '" + entry_id + "'"));
-    config.ros_topic_rules.push_back(std::move(rule));
+    rule.rule_id = entry_id;
+    rule.transform_fragment = transform_fragment;
+    rule.publish_config = mergeVideoPublishConfig(
+      stream_config.default_publish_config, parseVideoPublishOverride(entry, "video topic rule '" + entry_id + "'"));
+    stream_config.ros_topic_rules.push_back(std::move(rule));
   }
 
   // Keep video_configured_source_ids at the root until generate_parameter_library
@@ -507,21 +507,22 @@ VideoConfig loadVideoConfig(const Params & params)
     }
     requireUniqueEntryKey(seen_configured_source_names, trimmed_configured_source_name, "configured video source name");
 
-    ConfiguredVideoSourceConfig configured_source_config;
-    configured_source_config.ingress_fragment = ingress_fragment;
-    configured_source_config.transform_fragment = transform_fragment;
-    configured_source_config.publish = mergeVideoPublishConfig(
-      config.publish, parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
-    config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_source_config));
+    ConfiguredVideoStreamSource configured_source;
+    configured_source.ingress_fragment = ingress_fragment;
+    configured_source.transform_fragment = transform_fragment;
+    configured_source.publish_config = mergeVideoPublishConfig(
+      stream_config.default_publish_config,
+      parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
+    stream_config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_source));
   }
 
   // Append built-in catch-all after user entries.
-  config.ros_topic_rules.insert(
-    config.ros_topic_rules.end(),
+  stream_config.ros_topic_rules.insert(
+    stream_config.ros_topic_rules.end(),
     std::make_move_iterator(builtin_rules.begin()),
     std::make_move_iterator(builtin_rules.end()));
 
-  return config;
+  return stream_config;
 }
 
 namespace
@@ -586,7 +587,7 @@ RuntimeConfig loadRuntimeConfig(
     runtime_config.health_config = loadHealthConfig(runtime_config.loaded_params);
     runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
     runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
-    runtime_config.video_config = loadVideoConfig(runtime_config.loaded_params);
+    runtime_config.video_stream_config = loadVideoStreamConfig(runtime_config.loaded_params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .field("phase", "startup")

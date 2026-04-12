@@ -41,14 +41,14 @@ namespace
 using test_support::ScopedRclcppInit;
 using test_support::waitForTopicType;
 
-VideoConfig makeConfiguredVideoConfig()
+VideoStreamConfig makeConfiguredVideoStreamConfig()
 {
-  VideoConfig config = makeDefaultVideoConfig();
+  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
 
-  ConfiguredVideoSourceConfig configured_source_config;
-  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(configured_source_config));
-  return config;
+  ConfiguredVideoStreamSource configured_source;
+  configured_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  stream_config.configured_sources.emplace("/sources/front", std::move(configured_source));
+  return stream_config;
 }
 
 SubscriptionHeartbeat makeSubscriptionHeartbeat(const nlohmann::json & body)
@@ -112,9 +112,9 @@ protected:
   }
 
   SubscriptionRegistry makeRegistry(
-    VideoStreamRegistry * video_stream_registry = nullptr, const VideoConfig * video_config = nullptr)
+    VideoStreamRegistry * video_stream_registry = nullptr, const VideoStreamConfig * video_stream_config = nullptr)
   {
-    return SubscriptionRegistry(*node_, *fake_session_, video_stream_registry, video_config);
+    return SubscriptionRegistry(*node_, *fake_session_, video_stream_registry, video_stream_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
@@ -194,10 +194,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
 TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const VideoConfig video_config = makeConfiguredVideoConfig();
+  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
   VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&video_stream_registry, &video_config);
+  auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/front"}}}}};
@@ -214,10 +214,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
 {
-  const VideoConfig video_config = makeConfiguredVideoConfig();
+  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
   VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&video_stream_registry, &video_config);
+  auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/missing"}}}}};

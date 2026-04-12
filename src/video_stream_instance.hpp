@@ -34,7 +34,7 @@ class VideoFrameSource;
 class VideoTrackPublisher;
 
 // VideoStreamRegistry owns one VideoStreamInstance per resolved stream key.
-// Each instance owns the input-side VideoFrameSource plus the paired
+// Each instance owns one live runtime: the input-side VideoFrameSource plus the paired
 // VideoTrackPublisher for the matching LiveKit video publication.
 class VideoStreamInstance final
 {

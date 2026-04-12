@@ -34,7 +34,7 @@ public:
 };
 
 // VideoStreamInstance owns one frame source on the input side and wires it to a
-// VideoTrackPublisher through this sink interface.
+// VideoTrackPublisher through this sink interface. Sources produce frames into the sink.
 class VideoFrameSource
 {
 public:

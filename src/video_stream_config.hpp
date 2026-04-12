@@ -22,14 +22,6 @@
 namespace livekit_ros2_bridge
 {
 
-namespace video_defaults
-{
-
-inline constexpr char kDefaultRosProfileId[] = "default_ros";
-inline constexpr char kDefaultRosTransform[] = "";
-
-}  // namespace video_defaults
-
 enum class VideoPublishCodec
 {
   Auto,
@@ -55,29 +47,33 @@ struct VideoPublishConfig
   VideoPublishSimulcast simulcast = VideoPublishSimulcast::Auto;
 };
 
-struct RosTopicRule
+// Declared config for one ROS topic rule before it is resolved into a stream spec.
+struct RosVideoTopicRule
 {
   std::string pattern;
-  std::string id;
-  std::string transform;
-  VideoPublishConfig publish;
+  std::string rule_id;
+  std::string transform_fragment;
+  VideoPublishConfig publish_config;
 };
 
-struct ConfiguredVideoSourceConfig
+// Declared config for one configured video source before it is resolved into a stream spec.
+struct ConfiguredVideoStreamSource
 {
   std::string ingress_fragment;
   std::string transform_fragment;
-  VideoPublishConfig publish;
+  VideoPublishConfig publish_config;
 };
 
-struct VideoConfig
+// Declared video configuration. Stream specs resolve from this config, instances own the shared
+// live runtime, publishers own one LiveKit publication, and sources produce frames into a sink.
+struct VideoStreamConfig
 {
-  std::vector<RosTopicRule> ros_topic_rules;
+  std::vector<RosVideoTopicRule> ros_topic_rules;
   // Keyed by the trimmed configured-source name used during stream-spec resolution.
-  std::unordered_map<std::string, ConfiguredVideoSourceConfig> configured_sources;
-  VideoPublishConfig publish;
+  std::unordered_map<std::string, ConfiguredVideoStreamSource> configured_sources;
+  VideoPublishConfig default_publish_config;
 };
 
-VideoConfig makeDefaultVideoConfig();
+VideoStreamConfig makeDefaultVideoStreamConfig();
 
 }  // namespace livekit_ros2_bridge

@@ -12,23 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_config.hpp"
+#include "video_stream_config.hpp"
+
+#include <utility>
 
 namespace livekit_ros2_bridge
 {
 
-VideoConfig makeDefaultVideoConfig()
+namespace
 {
-  VideoConfig config;
 
-  RosTopicRule default_rule;
+constexpr char kDefaultRosVideoTopicRuleId[] = "default_ros";
+constexpr char kDefaultRosVideoTopicRuleTransform[] = "";
+
+}  // namespace
+
+VideoStreamConfig makeDefaultVideoStreamConfig()
+{
+  VideoStreamConfig stream_config;
+
+  RosVideoTopicRule default_rule;
   default_rule.pattern = "/*";
-  default_rule.id = video_defaults::kDefaultRosProfileId;
-  default_rule.transform = video_defaults::kDefaultRosTransform;
-  default_rule.publish = config.publish;
-  config.ros_topic_rules.push_back(std::move(default_rule));
+  default_rule.rule_id = kDefaultRosVideoTopicRuleId;
+  default_rule.transform_fragment = kDefaultRosVideoTopicRuleTransform;
+  default_rule.publish_config = stream_config.default_publish_config;
+  stream_config.ros_topic_rules.push_back(std::move(default_rule));
 
-  return config;
+  return stream_config;
 }
 
 }  // namespace livekit_ros2_bridge

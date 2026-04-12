@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-#include "video_config.hpp"
+#include "video_stream_config.hpp"
 
 namespace livekit
 {
