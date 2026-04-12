@@ -20,7 +20,7 @@
 
 #include "rclcpp/node.hpp"
 #include "subscription_qos.hpp"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

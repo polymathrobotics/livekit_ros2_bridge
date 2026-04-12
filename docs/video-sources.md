@@ -1,6 +1,6 @@
 # Video sources
 
-The bridge resolves each video subscription to one canonical in-process `VideoStreamSpec` and keeps one shared `VideoStreamManager` stream alive for that spec's `stream_key`.
+The bridge resolves each video subscription to one canonical in-process `VideoStreamSpec` and keeps one shared `VideoStreamRegistry` runtime alive for that spec's `stream_key`.
 
 Video requests start from one of two inputs:
 
@@ -137,7 +137,7 @@ In the default ROS case with no override and no publish overrides:
 
 ## Shared stream lifecycle
 
-`VideoStreamManager` owns one in-process runtime per resolved `stream_key`.
+`VideoStreamRegistry` owns one in-process runtime per resolved `stream_key`.
 
 Important behavior:
 

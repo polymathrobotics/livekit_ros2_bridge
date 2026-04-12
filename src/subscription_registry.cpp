@@ -26,7 +26,7 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/scope_exit.hpp"
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -112,10 +112,10 @@ SubscriptionRequest normalizeSubscriptionRequest(const SubscriptionRequest & ent
   return SubscriptionRequest{{target.kind, canonical_name}, entry.preferred_interval_ms};
 }
 
-std::string ensureVideoStreamRunning(VideoStreamManager & video_stream_manager, const VideoStreamSpec & spec)
+std::string ensureVideoStreamRunning(VideoStreamRegistry & video_stream_registry, const VideoStreamSpec & spec)
 {
   try {
-    return video_stream_manager.ensureStreamRunning(spec);
+    return video_stream_registry.ensureStreamRunning(spec);
   } catch (const std::exception & exc) {
     throw StreamUnavailableError(exc.what());
   }
@@ -128,14 +128,14 @@ SubscriptionRegistry::SubscriptionRegistry(
   SendDataMessageFn send_data_fn,
   PublishDataTrackFn publish_data_track_fn,
   UnpublishDataTrackFn unpublish_data_track_fn,
-  VideoStreamManager * video_stream_manager,
+  VideoStreamRegistry * video_stream_registry,
   const VideoConfig * video_config,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , send_data_fn_(std::move(send_data_fn))
 , publish_data_track_fn_(std::move(publish_data_track_fn))
 , unpublish_data_track_fn_(std::move(unpublish_data_track_fn))
-, video_stream_manager_(video_stream_manager)
+, video_stream_registry_(video_stream_registry)
 , default_video_config_(makeDefaultVideoConfig())
 , video_config_(video_config == nullptr ? &default_video_config_ : video_config)
 , subscription_qos_config_(subscription_qos_config)
@@ -310,7 +310,7 @@ void SubscriptionRegistry::renewExistingLease(
     return;
   }
 
-  const std::string track_name = ensureVideoStreamRunning(videoStreamManager(), videoStreamSpec(sub));
+  const std::string track_name = ensureVideoStreamRunning(videoStreamRegistry(), videoStreamSpec(sub));
   sub.requesters = std::move(updated_requesters);
   std::get<VideoTrackResource>(sub.resource_state).track_name = track_name;
 }
@@ -331,7 +331,7 @@ SubscriptionRegistry::SubscriptionState SubscriptionRegistry::createVideoSubscri
   const VideoStreamSpec stream_spec = target.kind == SubscriptionTargetKind::ConfiguredSource
                                         ? resolveConfiguredSourceVideoStreamSpec(*video_config_, target.name)
                                         : resolveRosVideoStreamSpec(*video_config_, target.name, interface_type);
-  assignVideoMetadata(sub, stream_spec, ensureVideoStreamRunning(videoStreamManager(), stream_spec));
+  assignVideoMetadata(sub, stream_spec, ensureVideoStreamRunning(videoStreamRegistry(), stream_spec));
   return sub;
 }
 
@@ -421,13 +421,13 @@ void SubscriptionRegistry::publishPendingDataTrack(
   publish_data_track_fn_(data.track_name, data.generation);
 }
 
-VideoStreamManager & SubscriptionRegistry::videoStreamManager() const
+VideoStreamRegistry & SubscriptionRegistry::videoStreamRegistry() const
 {
-  if (video_stream_manager_ == nullptr) {
-    throw StreamUnavailableError("Video stream manager is unavailable.");
+  if (video_stream_registry_ == nullptr) {
+    throw StreamUnavailableError("Video stream registry is unavailable.");
   }
 
-  return *video_stream_manager_;
+  return *video_stream_registry_;
 }
 
 const VideoStreamSpec & SubscriptionRegistry::videoStreamSpec(const SubscriptionState & sub) const
@@ -787,7 +787,7 @@ void SubscriptionRegistry::destroyResource(SubscriptionState & sub)
       .field("stream_key", video.stream_spec.stream_key)
       .field("track_name", video.track_name)
       .info();
-    videoStreamManager().stopStream(video.stream_spec.stream_key);
+    videoStreamRegistry().stopStream(video.stream_spec.stream_key);
   }
 }
 

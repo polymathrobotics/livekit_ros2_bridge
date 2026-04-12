@@ -35,12 +35,12 @@
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
 #include "utils/quiesce_guard.hpp"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class VideoStreamManager;
+class VideoStreamRegistry;
 
 using SendDataMessageFn =
   std::function<void(const std::string & track_name, const std::uint8_t * data, std::size_t size)>;
@@ -71,7 +71,7 @@ public:
     SendDataMessageFn send_data_fn,
     PublishDataTrackFn publish_data_track_fn,
     UnpublishDataTrackFn unpublish_data_track_fn,
-    VideoStreamManager * video_stream_manager,
+    VideoStreamRegistry * video_stream_registry,
     const VideoConfig * video_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
@@ -173,7 +173,7 @@ private:
     const std::string & requester_identity);
   void publishPendingDataTrack(
     const std::string & topic, DataTrackResource & data, const std::string & requester_identity);
-  VideoStreamManager & videoStreamManager() const;
+  VideoStreamRegistry & videoStreamRegistry() const;
   const VideoStreamSpec & videoStreamSpec(const SubscriptionState & sub) const;
   void revokeRequesterLeasesIf(
     const RequesterIdentityLeasePredicate & should_remove,
@@ -191,7 +191,7 @@ private:
   SendDataMessageFn send_data_fn_;
   PublishDataTrackFn publish_data_track_fn_;
   UnpublishDataTrackFn unpublish_data_track_fn_;
-  VideoStreamManager * video_stream_manager_;
+  VideoStreamRegistry * video_stream_registry_;
   VideoConfig default_video_config_;
   const VideoConfig * video_config_;
   const SubscriptionQosConfig * subscription_qos_config_;

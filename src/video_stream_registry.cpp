@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 #include <memory>
 #include <mutex>
@@ -34,11 +34,11 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kVideoStreamManagerLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_manager");
+const auto kVideoStreamRegistryLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
 }  // namespace
 
-class VideoStreamManager::VideoStreamRuntime final : public IVideoFrameSink
+class VideoStreamRegistry::VideoStreamRuntime final : public IVideoFrameSink
 {
 public:
   VideoStreamRuntime(
@@ -98,7 +98,7 @@ public:
       ingestor->shutdown();
     }
     if (published_track) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_track_unpublishing")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_track_unpublishing")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .info();
@@ -150,7 +150,7 @@ private:
 
     const bool republishing = published_track_ != nullptr;
     if (published_track_) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_track_replacing")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_track_replacing")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("previous_width", published_width_)
@@ -168,7 +168,7 @@ private:
     published_height_ = height;
 
     LogEvent(
-      kVideoStreamManagerLogger, republishing ? "video_stream_track_republished" : "video_stream_track_published")
+      kVideoStreamRegistryLogger, republishing ? "video_stream_track_republished" : "video_stream_track_published")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .field("width", width)
@@ -189,25 +189,25 @@ private:
   const SubscriptionQosConfig * subscription_qos_config_;
 };
 
-VideoStreamManager::VideoStreamManager(
+VideoStreamRegistry::VideoStreamRegistry(
   rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , session_(session)
 , subscription_qos_config_(subscription_qos_config)
 {}
 
-VideoStreamManager::~VideoStreamManager()
+VideoStreamRegistry::~VideoStreamRegistry()
 {
   shutdown();
 }
 
-std::string VideoStreamManager::ensureStreamRunning(const VideoStreamSpec & spec)
+std::string VideoStreamRegistry::ensureStreamRunning(const VideoStreamSpec & spec)
 {
   std::shared_ptr<VideoStreamRuntime> runtime;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
-      throw std::runtime_error("Video stream manager is shut down.");
+      throw std::runtime_error("Video stream registry is shut down.");
     }
 
     auto [it, inserted] = stream_runtimes_.try_emplace(spec.stream_key);
@@ -220,7 +220,7 @@ std::string VideoStreamManager::ensureStreamRunning(const VideoStreamSpec & spec
   return runtime->ensureRunning();
 }
 
-void VideoStreamManager::stopStream(const std::string & stream_key)
+void VideoStreamRegistry::stopStream(const std::string & stream_key)
 {
   std::shared_ptr<VideoStreamRuntime> runtime;
   {
@@ -238,7 +238,7 @@ void VideoStreamManager::stopStream(const std::string & stream_key)
   }
 }
 
-void VideoStreamManager::shutdown()
+void VideoStreamRegistry::shutdown()
 {
   std::unordered_map<std::string, std::shared_ptr<VideoStreamRuntime>> stream_runtimes;
   {

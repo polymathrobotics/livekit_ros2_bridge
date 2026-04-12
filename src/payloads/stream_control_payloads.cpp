@@ -25,7 +25,7 @@
 #include "protocol.hpp"
 #include "utils/json_object_parser.hpp"
 #include "utils/ros_resource_name_utils.hpp"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

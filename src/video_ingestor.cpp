@@ -50,7 +50,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kVideoStreamManagerLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_manager");
+const auto kVideoStreamRegistryLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 constexpr char kAppSrcName[] = "bridge_video_src";
 constexpr char kAppSinkName[] = "bridge_video_sink";
 constexpr auto kConfiguredSourceRestartDelay = std::chrono::milliseconds(250);
@@ -326,7 +326,7 @@ protected:
     ensureGstreamerInitialized();
     first_sample_logged_ = false;
 
-    LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_starting")
+    LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_starting")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .field("ingest_mode", spec_.ingest_mode)
@@ -379,7 +379,7 @@ protected:
 
     const GstStateChangeReturn change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
     if (change != GST_STATE_CHANGE_FAILURE) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_playing")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_playing")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("state_change", static_cast<int>(change))
@@ -456,7 +456,7 @@ private:
     try {
       frame = copySampleToPackedI420(sample.get());
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_sample_unpack_failed")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_sample_unpack_failed")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("error", exc.what())
@@ -478,7 +478,7 @@ private:
       }
 
       if (!first_sample_logged_) {
-        LogEvent(kVideoStreamManagerLogger, "video_stream_sample_received")
+        LogEvent(kVideoStreamRegistryLogger, "video_stream_sample_received")
           .field("stream_key", spec_.stream_key)
           .field("track_name", spec_.track_name)
           .field("width", frame.width)
@@ -494,7 +494,7 @@ private:
       frame_sink_.handleFrame(frame.width, frame.height, std::move(frame.data), timestamp_us);
       return GST_FLOW_OK;
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_capture_failed")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_capture_failed")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("error", exc.what())
@@ -532,7 +532,7 @@ private:
       return;
     }
 
-    LogEvent(kVideoStreamManagerLogger, "video_stream_pipeline_failed")
+    LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_failed")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .field("reason", reason)
@@ -570,7 +570,7 @@ private:
     try {
       restartAfterFailureLocked();
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_restart_failed")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_restart_failed")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("error", exc.what())
@@ -630,7 +630,7 @@ private:
     const ResolvedSubscriptionQos resolved_qos =
       resolveTopicSubscriptionQos(node_, spec_.ros_topic, base_qos, subscription_qos_config_);
 
-    LogEvent(kVideoStreamManagerLogger, "subscription_qos_resolved")
+    LogEvent(kVideoStreamRegistryLogger, "subscription_qos_resolved")
       .field("resource", spec_.ros_topic)
       .field("kind", "topic")
       .field("delivery", "video")
@@ -653,7 +653,7 @@ private:
           self->handleRawImageMessage(message);
         }
       });
-    LogEvent(kVideoStreamManagerLogger, "video_stream_subscription_started")
+    LogEvent(kVideoStreamRegistryLogger, "video_stream_subscription_started")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .field("topic", spec_.ros_topic)
@@ -670,7 +670,7 @@ private:
 
     try {
       if (!first_input_logged_) {
-        LogEvent(kVideoStreamManagerLogger, "video_stream_input_received")
+        LogEvent(kVideoStreamRegistryLogger, "video_stream_input_received")
           .field("stream_key", spec_.stream_key)
           .field("track_name", spec_.track_name)
           .field("encoding", message->encoding)
@@ -689,7 +689,7 @@ private:
 
       pushRawImageLocked(*message, config);
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_push_failed")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_push_failed")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("error", exc.what())
@@ -815,7 +815,7 @@ private:
     const ResolvedSubscriptionQos resolved_qos =
       resolveTopicSubscriptionQos(node_, spec_.ros_topic, base_qos, subscription_qos_config_);
 
-    LogEvent(kVideoStreamManagerLogger, "subscription_qos_resolved")
+    LogEvent(kVideoStreamRegistryLogger, "subscription_qos_resolved")
       .field("resource", spec_.ros_topic)
       .field("kind", "topic")
       .field("delivery", "video")
@@ -838,7 +838,7 @@ private:
           self->handleCompressedImageMessage(message);
         }
       });
-    LogEvent(kVideoStreamManagerLogger, "video_stream_subscription_started")
+    LogEvent(kVideoStreamRegistryLogger, "video_stream_subscription_started")
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .field("topic", spec_.ros_topic)
@@ -855,7 +855,7 @@ private:
 
     try {
       if (!first_input_logged_) {
-        LogEvent(kVideoStreamManagerLogger, "video_stream_input_received")
+        LogEvent(kVideoStreamRegistryLogger, "video_stream_input_received")
           .field("stream_key", spec_.stream_key)
           .field("track_name", spec_.track_name)
           .field("format", message->format)
@@ -876,7 +876,7 @@ private:
 
       pushCompressedImageLocked(*message);
     } catch (const std::exception & exc) {
-      LogEvent(kVideoStreamManagerLogger, "video_stream_push_failed")
+      LogEvent(kVideoStreamRegistryLogger, "video_stream_push_failed")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("error", exc.what())

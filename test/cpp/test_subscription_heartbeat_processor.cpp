@@ -32,7 +32,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "subscription_registry.hpp"
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -45,9 +45,9 @@ VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredVideoPipeline configured_pipeline;
-  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(configured_pipeline));
+  ConfiguredVideoSourceConfig configured_source_config;
+  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front", std::move(configured_source_config));
   return config;
 }
 
@@ -121,10 +121,10 @@ protected:
   }
 
   SubscriptionRegistry makeRegistry(
-    VideoStreamManager * video_stream_manager = nullptr, const VideoConfig * video_config = nullptr)
+    VideoStreamRegistry * video_stream_registry = nullptr, const VideoConfig * video_config = nullptr)
   {
     return SubscriptionRegistry(
-      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, video_stream_manager, video_config);
+      *node_, ignoreSerializedMessage, ignoreTrackReservation, ignoreTrackRelease, video_stream_registry, video_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
@@ -179,7 +179,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
   EXPECT_EQ(stream["error"]["reason"], "not_found");
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamManagerReturnsUnavailable)
+TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnavailable)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
@@ -205,9 +205,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  VideoStreamManager video_stream_manager(*node_, *fake_session_);
+  VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&video_stream_manager, &video_config);
+  auto registry = makeRegistry(&video_stream_registry, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/front"}}}}};
@@ -225,9 +225,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
 {
   const VideoConfig video_config = makeConfiguredVideoConfig();
-  VideoStreamManager video_stream_manager(*node_, *fake_session_);
+  VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
 
-  auto registry = makeRegistry(&video_stream_manager, &video_config);
+  auto registry = makeRegistry(&video_stream_registry, &video_config);
   SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/missing"}}}}};

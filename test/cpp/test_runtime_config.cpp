@@ -317,10 +317,10 @@ TEST_F(RuntimeConfigTest, ConfiguredSourceVideoPublishOverrideCanSetSingleFieldW
     loadRuntimeConfigForNode("startup_config_configured_source_publish_override", options);
 
   ASSERT_EQ(startup_config.video_config.configured_sources.size(), 1U);
-  const auto & configured_pipeline = startup_config.video_config.configured_sources.at("front");
-  EXPECT_EQ(configured_pipeline.transform_fragment, "");
+  const auto & configured_source_config = startup_config.video_config.configured_sources.at("front");
+  EXPECT_EQ(configured_source_config.transform_fragment, "");
   expectPublishConfigEq(
-    configured_pipeline.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
+    configured_source_config.publish, VideoPublishCodec::H265, 500000U, 30.0, VideoPublishSimulcast::Disabled);
 }
 
 TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)

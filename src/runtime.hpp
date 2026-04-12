@@ -38,7 +38,7 @@ class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionRegistry;
 class RosTopicPublisher;
-class VideoStreamManager;
+class VideoStreamRegistry;
 
 struct FailFastCallbacks
 {
@@ -87,7 +87,7 @@ private:
   std::unique_ptr<RpcRouter> rpc_router_;
   std::unique_ptr<DataTrackPublisher> data_track_publisher_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
-  std::unique_ptr<VideoStreamManager> video_stream_manager_;
+  std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;

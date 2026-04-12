@@ -29,6 +29,7 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -406,7 +407,7 @@ void validateVideoTopicRuleTransformFragment(const std::string & entry_id, const
     context, composeBridgeOwnedVideoPipelineDescription(makeRosValidationPrefix(), transform_fragment), true);
 }
 
-void validateConfiguredSourcePipelineFragments(
+void validateConfiguredSourceConfigFragments(
   const std::string & entry_id, const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   const std::string context = "video configured source '" + entry_id + "'";
@@ -495,7 +496,7 @@ VideoConfig loadVideoConfig(const Params & params)
 
     const std::string ingress_fragment = parseConfiguredSourceIngressFragment(entry_id, entry.source);
     const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
-    validateConfiguredSourcePipelineFragments(entry_id, ingress_fragment, transform_fragment);
+    validateConfiguredSourceConfigFragments(entry_id, ingress_fragment, transform_fragment);
 
     // Configured sources are keyed by the trimmed configured-source name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
@@ -506,12 +507,12 @@ VideoConfig loadVideoConfig(const Params & params)
     }
     requireUniqueEntryKey(seen_configured_source_names, trimmed_configured_source_name, "configured video source name");
 
-    ConfiguredVideoPipeline configured_pipeline;
-    configured_pipeline.ingress_fragment = ingress_fragment;
-    configured_pipeline.transform_fragment = transform_fragment;
-    configured_pipeline.publish = mergeVideoPublishConfig(
+    ConfiguredVideoSourceConfig configured_source_config;
+    configured_source_config.ingress_fragment = ingress_fragment;
+    configured_source_config.transform_fragment = transform_fragment;
+    configured_source_config.publish = mergeVideoPublishConfig(
       config.publish, parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
-    config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_pipeline));
+    config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_source_config));
   }
 
   // Append built-in catch-all after user entries.

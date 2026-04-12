@@ -31,7 +31,7 @@
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_registry.hpp"
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -141,9 +141,9 @@ bool publishUntil(
 VideoConfig makeConfiguredVideoConfig()
 {
   VideoConfig config = makeDefaultVideoConfig();
-  ConfiguredVideoPipeline configured_pipeline;
-  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front", std::move(configured_pipeline));
+  ConfiguredVideoSourceConfig configured_source_config;
+  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front", std::move(configured_source_config));
   return config;
 }
 
@@ -368,7 +368,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesVideoSubscription)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const std::string topic = "/camera/front";
   const std::string requested_topic = "  camera/front  ";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
@@ -379,7 +379,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesVideoSubscription)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
   SubscriptionRegistry registry(
-    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_registry);
 
   const auto response = registry.renewSubscription("alice", requested_topic, 0, kFarFuture);
   const auto second_response = registry.renewSubscription("bob", topic, 0, kFarFuture);
@@ -396,11 +396,11 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionCreatesConfiguredSourceSubscript
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_configured_source_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const VideoConfig video_config = makeConfiguredVideoConfig();
 
   SubscriptionRegistry registry(
-    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_registry, &video_config);
 
   const auto response = registry.renewSubscription(
     "alice",
@@ -420,7 +420,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionTrimsRawConfiguredSourceHeartbea
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_raw_configured_source_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const VideoConfig video_config = makeConfiguredVideoConfig();
   const std::string configured_source_name = "/sources/front";
   const SubscriptionRequest raw_subscription{
@@ -429,7 +429,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionTrimsRawConfiguredSourceHeartbea
     {SubscriptionTargetKind::ConfiguredSource, configured_source_name}, std::nullopt};
 
   SubscriptionRegistry registry(
-    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_registry, &video_config);
 
   const auto raw_response = registry.renewSubscription("alice", raw_subscription, kFarFuture);
   const auto canonical_response = registry.renewSubscription("bob", canonical_subscription, kFarFuture);
@@ -451,7 +451,7 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_distinct_target_names_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const std::string shared_name = "/sources/front";
   const VideoConfig video_config = makeConfiguredVideoConfig();
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(shared_name, rclcpp::QoS(10));
@@ -462,7 +462,7 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   ASSERT_TRUE(waitForTopicType(executor, node, shared_name, "sensor_msgs/msg/BatteryState"));
 
   SubscriptionRegistry registry(
-    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_registry, &video_config);
 
   const auto topic_response = registry.renewSubscription("alice", shared_name, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
@@ -476,7 +476,7 @@ TEST(SubscriptionRegistryTest, TopicAndConfiguredSourceStayDistinctWhenNamesMatc
   EXPECT_TRUE(registry.hasSubscription(shared_name, SubscriptionTargetKind::ConfiguredSource));
 }
 
-TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoStreamManager)
+TEST(SubscriptionRegistryTest, ThrowsUnavailableWhenNoVideoStreamRegistry)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_unavailable_test");
@@ -497,7 +497,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_remove_requester_shared_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const std::string alice_only_topic = "/battery/alice_only";
   const std::string shared_data_topic = "/battery/shared";
   const std::string shared_video_topic = "/camera/shared";
@@ -521,7 +521,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
     noopDataSend(),
     noopDataTrackPublish(),
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
-    &video_stream_manager);
+    &video_stream_registry);
 
   const auto alice_only = registry.renewSubscription("alice", alice_only_topic, 50, kFarFuture);
   const auto shared_data = registry.renewSubscription("alice", shared_data_topic, 50, kFarFuture);
@@ -659,7 +659,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_reset_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const std::string data_topic = "/battery/state";
   const std::string video_topic = "/camera/front";
   auto data_pub = node->create_publisher<sensor_msgs::msg::BatteryState>(data_topic, rclcpp::QoS(10));
@@ -679,7 +679,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
     noopDataSend(),
     [&published_track_names](const std::string & name, std::size_t) { published_track_names.push_back(name); },
     [&unpublished_track_names](const std::string & name) { unpublished_track_names.push_back(name); },
-    &video_stream_manager);
+    &video_stream_registry);
 
   const auto response = registry.renewSubscription("alice", data_topic, 0, kFarFuture);
   registry.renewSubscription("alice", video_topic, 0, kFarFuture);
@@ -860,11 +860,11 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionRejectsHeartbeatEntriesThatNorma
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_heartbeat_target_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const VideoConfig video_config = makeConfiguredVideoConfig();
 
   SubscriptionRegistry registry(
-    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_manager, &video_config);
+    *node, noopDataSend(), noopDataTrackPublish(), noopDataTrackUnpublish(), &video_stream_registry, &video_config);
 
   const auto expect_invalid_argument = [&](const SubscriptionRequest & subscription, const char * expected_message) {
     expectInvalidArgumentMessage(
@@ -885,7 +885,7 @@ TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPub
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_test");
   FakeRoomSession session;
-  VideoStreamManager video_stream_manager(*node, session);
+  VideoStreamRegistry video_stream_registry(*node, session);
   const std::string published_topic = "/battery/shutdown_published";
   const std::string pending_topic = "/battery/shutdown_pending";
   const std::string video_topic = "/camera/shutdown_video";
@@ -909,7 +909,7 @@ TEST(SubscriptionRegistryTest, ShutdownClearsVideoSubscriptionsAndUnpublishesPub
     noopDataSend(),
     [&published_names](const std::string & name, std::size_t) { published_names.push_back(name); },
     [&unpublished_names](const std::string & name) { unpublished_names.push_back(name); },
-    &video_stream_manager);
+    &video_stream_registry);
 
   registry.renewSubscription("alice", published_topic, 0, kFarFuture);
   ASSERT_EQ(published_names.size(), 1U);

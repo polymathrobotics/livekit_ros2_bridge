@@ -15,7 +15,7 @@
 #include <utility>
 
 #include "gtest/gtest.h"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -50,7 +50,7 @@ RosTopicRule makeRosRule(const char * id, const char * pattern, const char * tra
   return rule;
 }
 
-TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
+TEST(VideoStreamSpecTest, DefaultConfigResolvesBuiltInRawImageRule)
 {
   const auto config = makeDefaultVideoConfig();
 
@@ -73,7 +73,7 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInRawImageRule)
   expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
-TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
+TEST(VideoStreamSpecTest, DefaultConfigResolvesBuiltInCompressedImageRule)
 {
   const auto config = makeDefaultVideoConfig();
 
@@ -90,7 +90,7 @@ TEST(VideoConfigTest, DefaultConfigResolvesBuiltInCompressedImageRule)
   expectPublishConfigEq(spec.publish_config, config.publish);
 }
 
-TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
+TEST(VideoStreamSpecTest, ResolveRosVideoStreamSpecUsesLongestMatch)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -110,7 +110,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecUsesLongestMatch)
   expectPublishConfigEq(spec.publish_config, specific_rule.publish);
 }
 
-TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
+TEST(VideoStreamSpecTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -127,7 +127,7 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecSameLengthUsesFirstDeclared)
   expectPublishConfigEq(spec.publish_config, first_rule.publish);
 }
 
-TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
+TEST(VideoStreamSpecTest, UserCatchAllOverridesBuiltInDefault)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
@@ -141,7 +141,7 @@ TEST(VideoConfigTest, UserCatchAllOverridesBuiltInDefault)
   expectPublishConfigEq(spec.publish_config, user_rule.publish);
 }
 
-TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholders)
+TEST(VideoStreamSpecTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholders)
 {
   VideoConfig config = makeDefaultVideoConfig();
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), makeRosRule("front", "/camera/front/*", "{topic}"));
@@ -152,23 +152,23 @@ TEST(VideoConfigTest, ResolveRosVideoStreamSpecDoesNotInterpolateTopicPlaceholde
   expectPublishConfigEq(spec.publish_config, config.ros_topic_rules.front().publish);
 }
 
-TEST(VideoConfigTest, TrimConfiguredSourceNameOnlyRemovesSurroundingWhitespace)
+TEST(VideoStreamSpecTest, TrimConfiguredSourceNameOnlyRemovesSurroundingWhitespace)
 {
   EXPECT_EQ(trimConfiguredSourceName("  front_camera  "), "front_camera");
   EXPECT_EQ(trimConfiguredSourceName("  /sources/front/  "), "/sources/front/");
   EXPECT_EQ(trimConfiguredSourceName(" \t\n "), "");
 }
 
-TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredSourceName)
+TEST(VideoStreamSpecTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredSourceName)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredVideoPipeline configured_pipeline;
-  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  configured_pipeline.transform_fragment = "videobalance saturation=0.0";
-  configured_pipeline.publish =
+  ConfiguredVideoSourceConfig configured_source_config;
+  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  configured_source_config.transform_fragment = "videobalance saturation=0.0";
+  configured_source_config.publish =
     makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
-  config.configured_sources.emplace("front_camera", std::move(configured_pipeline));
+  config.configured_sources.emplace("front_camera", std::move(configured_source_config));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "  front_camera  ");
 
@@ -184,20 +184,20 @@ TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecTrimsConfiguredSourc
     spec.publish_config, makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled));
 }
 
-TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecPercentEncodesTrackNameSuffix)
+TEST(VideoStreamSpecTest, ResolveConfiguredSourceVideoStreamSpecPercentEncodesTrackNameSuffix)
 {
   VideoConfig config = makeDefaultVideoConfig();
 
-  ConfiguredVideoPipeline configured_pipeline;
-  configured_pipeline.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.configured_sources.emplace("/sources/front:rgb%", std::move(configured_pipeline));
+  ConfiguredVideoSourceConfig configured_source_config;
+  configured_source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  config.configured_sources.emplace("/sources/front:rgb%", std::move(configured_source_config));
 
   const auto spec = resolveConfiguredSourceVideoStreamSpec(config, "/sources/front:rgb%");
 
   EXPECT_EQ(spec.track_name, "ros.video.configured_source.%2Fsources%2Ffront%3Argb%25");
 }
 
-TEST(VideoConfigTest, ResolveConfiguredSourceVideoStreamSpecRejectsUnknownConfiguredSourceName)
+TEST(VideoStreamSpecTest, ResolveConfiguredSourceVideoStreamSpecRejectsUnknownConfiguredSourceName)
 {
   const VideoConfig config = makeDefaultVideoConfig();
 

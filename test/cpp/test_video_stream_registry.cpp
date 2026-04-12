@@ -24,7 +24,7 @@
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -158,7 +158,7 @@ VideoStreamSpec makeConfiguredSourceSpec(const std::string & configured_source_n
 
 }  // namespace
 
-class VideoStreamManagerTest : public ::testing::Test
+class VideoStreamRegistryTest : public ::testing::Test
 {
 protected:
   static void SetUpTestSuite()
@@ -167,11 +167,11 @@ protected:
   }
 };
 
-TEST_F(VideoStreamManagerTest, SharedRosStreamUsesSingleSubscriptionAndSinglePublishedTrack)
+TEST_F(VideoStreamRegistryTest, SharedRosStreamUsesSingleSubscriptionAndSinglePublishedTrack)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_shared_ros"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shared_ros"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/shared";
   const auto spec = makeRosSpec(topic, "ros.video.camera.shared");
@@ -180,8 +180,8 @@ TEST_F(VideoStreamManagerTest, SharedRosStreamUsesSingleSubscriptionAndSinglePub
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -193,11 +193,11 @@ TEST_F(VideoStreamManagerTest, SharedRosStreamUsesSingleSubscriptionAndSinglePub
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, StopStreamUnpublishesRosTrackAndRemovesSubscription)
+TEST_F(VideoStreamRegistryTest, StopStreamUnpublishesRosTrackAndRemovesSubscription)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_stop_ros"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_stop_ros"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/stop";
   const auto spec = makeRosSpec(topic, "ros.video.camera.stop");
@@ -206,25 +206,25 @@ TEST_F(VideoStreamManagerTest, StopStreamUnpublishesRosTrackAndRemovesSubscripti
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  manager.ensureStreamRunning(spec);
+  registry.ensureStreamRunning(spec);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage();
   ASSERT_TRUE(publishUntil(
     executor, publisher, image, [&session]() { return session.state->published_video_track_names.size() == 1U; }));
 
-  manager.stopStream(spec.stream_key);
+  registry.stopStream(spec.stream_key);
 
   ASSERT_EQ(session.state->unpublished_video_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_video_track_names[0], spec.track_name);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 0U; }));
 }
 
-TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
+TEST_F(VideoStreamRegistryTest, ReliableRosPublisherPublishesTrack)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_reliable_ros"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_reliable_ros"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/reliable";
   const auto spec = makeRosSpec(topic, "ros.video.camera.reliable");
@@ -233,7 +233,7 @@ TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -245,11 +245,11 @@ TEST_F(VideoStreamManagerTest, ReliableRosPublisherPublishesTrack)
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, RawRosPublisherAcceptsOddSizedFrames)
+TEST_F(VideoStreamRegistryTest, RawRosPublisherAcceptsOddSizedFrames)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_odd_dimensions"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_odd_dimensions"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/odd_dimensions";
   const auto spec = makeRosSpec(topic, "ros.video.camera.odd_dimensions");
@@ -258,7 +258,7 @@ TEST_F(VideoStreamManagerTest, RawRosPublisherAcceptsOddSizedFrames)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -270,11 +270,11 @@ TEST_F(VideoStreamManagerTest, RawRosPublisherAcceptsOddSizedFrames)
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJpegFormat)
+TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyleJpegFormat)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_compressed_ros"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_compressed_ros"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/compressed";
   const auto spec = makeCompressedRosSpec(topic, "ros.video.camera.compressed");
@@ -283,7 +283,7 @@ TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJ
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -299,54 +299,54 @@ TEST_F(VideoStreamManagerTest, CompressedRosPublisherAcceptsImageTransportStyleJ
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
+TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_configured_source"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.%2Fsources%2Ffront");
 
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names[0], spec.track_name);
 
-  manager.stopStream(spec.stream_key);
+  registry.stopStream(spec.stream_key);
 
   ASSERT_EQ(session.state->unpublished_video_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_video_track_names[0], spec.track_name);
 }
 
-TEST_F(VideoStreamManagerTest, ShutdownUnpublishesActiveTracksAndRejectsNewStreams)
+TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndRejectsNewStreams)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_shutdown"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.%2Fsources%2Fshutdown");
-  EXPECT_EQ(manager.ensureStreamRunning(spec), spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(spec), spec.track_name);
 
   ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
 
-  manager.shutdown();
+  registry.shutdown();
 
   ASSERT_EQ(session.state->unpublished_video_track_names.size(), 1U);
   EXPECT_EQ(session.state->unpublished_video_track_names[0], spec.track_name);
 
   try {
-    (void)manager.ensureStreamRunning(spec);
+    (void)registry.ensureStreamRunning(spec);
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
-    EXPECT_STREQ(exc.what(), "Video stream manager is shut down.");
+    EXPECT_STREQ(exc.what(), "Video stream registry is shut down.");
   }
 }
 
-TEST_F(VideoStreamManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedTrack)
+TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTrack)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_manager_publish_config"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_publish_config"));
   FakeRoomSession session;
-  VideoStreamManager manager(*node, session);
+  VideoStreamRegistry registry(*node, session);
 
   const std::string first_topic = "/camera/publish_config/one";
   const std::string second_topic = "/camera/publish_config/two";
@@ -366,8 +366,8 @@ TEST_F(VideoStreamManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedTra
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  EXPECT_EQ(manager.ensureStreamRunning(first_spec), first_spec.track_name);
-  EXPECT_EQ(manager.ensureStreamRunning(second_spec), second_spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(first_spec), first_spec.track_name);
+  EXPECT_EQ(registry.ensureStreamRunning(second_spec), second_spec.track_name);
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 

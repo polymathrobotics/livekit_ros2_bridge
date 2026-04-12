@@ -19,7 +19,7 @@
 
 #include "gtest/gtest.h"
 #include "utils/interface_types.hpp"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

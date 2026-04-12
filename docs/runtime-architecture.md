@@ -15,7 +15,7 @@ The important boundary is simple:
 - `RosExecutorQueue`: custom waitable that wakes the ROS executor and drains queued work on that executor thread
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
 - `SubscriptionRegistry`: shared lease state, data-track republish bookkeeping, and video stream bindings
-- `VideoStreamManager`: one shared in-process video runtime per resolved stream key
+- `VideoStreamRegistry`: one shared in-process video runtime per resolved stream key
 - `RosTopicPublisher`: best-effort topic ingress with a bounded publisher cache
 - `RpcRouter` and `ControlPacketRouter`: the LiveKit-facing entry points
 

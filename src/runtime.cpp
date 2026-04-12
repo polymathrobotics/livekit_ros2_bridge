@@ -30,7 +30,7 @@
 #include "topic_publish_command.hpp"
 #include "topic_publisher.hpp"
 #include "utils/log_event.hpp"
-#include "video_stream_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -81,7 +81,7 @@ Runtime::Runtime(
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   data_track_publisher_ = std::make_unique<DataTrackPublisher>(*room_session_, node_.get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
-  video_stream_manager_ = std::make_unique<VideoStreamManager>(node_, *room_session_, &subscription_qos_config_);
+  video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_session_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
     node_,
@@ -94,7 +94,7 @@ Runtime::Runtime(
       });
     },
     [this](const std::string & track_name) { data_track_publisher_->unpublishTrack(track_name); },
-    video_stream_manager_.get(),
+    video_stream_registry_.get(),
     &video_config_,
     &subscription_qos_config_);
 
@@ -218,8 +218,8 @@ void Runtime::shutdown()
   if (data_track_publisher_ != nullptr) {
     data_track_publisher_->unpublishAll();
   }
-  if (video_stream_manager_ != nullptr) {
-    video_stream_manager_->shutdown();
+  if (video_stream_registry_ != nullptr) {
+    video_stream_registry_->shutdown();
   }
   if (ros_service_caller_ != nullptr) {
     ros_service_caller_->shutdown();

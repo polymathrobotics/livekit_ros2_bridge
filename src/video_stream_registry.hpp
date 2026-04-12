@@ -22,18 +22,18 @@
 #include "rclcpp/node.hpp"
 #include "room_session.hpp"
 #include "subscription_qos.hpp"
-#include "video_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-// Owns one in-process video runtime per resolved stream key.
-class VideoStreamManager final
+// Registry of shared in-process video runtimes keyed by resolved stream key.
+class VideoStreamRegistry final
 {
 public:
-  VideoStreamManager(
+  VideoStreamRegistry(
     rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config = nullptr);
-  ~VideoStreamManager();
+  ~VideoStreamRegistry();
 
   std::string ensureStreamRunning(const VideoStreamSpec & spec);
   void stopStream(const std::string & stream_key);

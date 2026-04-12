@@ -71,7 +71,8 @@ add_library(${PROJECT_NAME} SHARED
   src/utils/base64.cpp
   src/video_config.cpp
   src/video_ingestor.cpp
-  src/video_stream_manager.cpp
+  src/video_stream_registry.cpp
+  src/video_stream_spec.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"
@@ -195,11 +196,11 @@ if(BUILD_TESTING)
   ament_add_gtest(test_topic_publisher test/cpp/test_topic_publisher.cpp)
   target_link_libraries(test_topic_publisher ${PROJECT_NAME} ${std_msgs_TARGETS} ${test_msgs_TARGETS})
 
-  ament_add_gtest(test_video_config test/cpp/test_video_config.cpp)
-  target_link_libraries(test_video_config ${PROJECT_NAME})
+  ament_add_gtest(test_video_stream_spec test/cpp/test_video_stream_spec.cpp)
+  target_link_libraries(test_video_stream_spec ${PROJECT_NAME})
 
-  ament_add_gtest(test_video_stream_manager test/cpp/test_video_stream_manager.cpp)
-  target_link_libraries(test_video_stream_manager ${PROJECT_NAME} ${sensor_msgs_TARGETS})
+  ament_add_gtest(test_video_stream_registry test/cpp/test_video_stream_registry.cpp)
+  target_link_libraries(test_video_stream_registry ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
   set(livekit_ros2_bridge_test_targets
     test_access_policy
@@ -231,8 +232,8 @@ if(BUILD_TESTING)
     test_subscription_registry
     test_topic_publish_command
     test_topic_publisher
-    test_video_config
-    test_video_stream_manager
+    test_video_stream_spec
+    test_video_stream_registry
   )
   foreach(test_target IN LISTS livekit_ros2_bridge_test_targets)
     target_include_directories(${test_target} PRIVATE
