@@ -133,38 +133,40 @@ private:
   std::optional<DataTrackPushError> error_;
 };
 
-struct RoomSessionCallbacks
+struct RoomConnectionCallbacks
 {
   // Called when a room connection becomes active.
   std::function<void()> on_connected;
   // Called when the current room connection begins a reconnect episode. The reason is a stable
   // internal string such as `room_disconnected` or `connection_state_disconnected`.
   std::function<void(const std::string &)> on_reconnect_requested;
-  // Called after a connected room session has been torn down and any per-session room state
+  // Called after a connected room connection has been torn down and any per-connection state
   // should be rebuilt on the next connect.
-  std::function<void()> on_session_reset;
+  std::function<void()> on_connection_reset;
   // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
-  // session suppresses transient participant disconnects so leases can survive browser refreshes.
+  // connection suppresses transient participant disconnects so leases can survive browser refreshes.
   std::function<void(const std::string &)> on_participant_disconnected;
-  // Delivers one incoming control packet. Callbacks may run on session-managed background threads
+  // Delivers one incoming control packet. Callbacks may run on connection-managed background
+  // threads
   // and must hand off ROS work instead of assuming executor-thread affinity.
   std::function<void(const IncomingControlPacket &)> on_incoming_control_packet_received;
 };
 
-class RoomSession
+// Bridge-owned LiveKit room transport lifecycle.
+class RoomConnection
 {
 public:
-  virtual ~RoomSession() = default;
+  virtual ~RoomConnection() = default;
 
   // Starts the background connection and reconnect loop. Repeated calls after a successful start
   // are ignored until stop() returns.
   virtual void start(
     RoomConnectionConfig config,
     std::string access_token,
-    RoomSessionCallbacks callbacks,
+    RoomConnectionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
     std::chrono::milliseconds max_backoff) = 0;
-  // Stops the reconnect loop and waits for any session-owned background thread to exit.
+  // Stops the reconnect loop and waits for any connection-owned background thread to exit.
   virtual void stop() = 0;
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
   // participant is available.
@@ -182,6 +184,6 @@ public:
   virtual void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) = 0;
 };
 
-std::unique_ptr<RoomSession> makeRoomSession();
+std::unique_ptr<RoomConnection> makeRoomConnection();
 
 }  // namespace livekit_ros2_bridge

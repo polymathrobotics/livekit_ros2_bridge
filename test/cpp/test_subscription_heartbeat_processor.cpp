@@ -22,11 +22,11 @@
 #include <vector>
 
 #include "access_policy.hpp"
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "protocol.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -65,7 +65,7 @@ AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vecto
 }
 
 nlohmann::json extractSinglePublishedStatusEnvelope(
-  const FakeRoomSessionState & state, const std::string & requester_identity)
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
   if (state.published_outgoing_control_packets.size() != 1U) {
     ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_control_packets.size();
@@ -84,7 +84,8 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
-nlohmann::json extractSinglePublishedStream(const FakeRoomSessionState & state, const std::string & requester_identity)
+nlohmann::json extractSinglePublishedStream(
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
   const auto response = extractSinglePublishedStatusEnvelope(state, requester_identity);
   if (!response.contains("streams") || response["streams"].size() != 1U) {
@@ -106,27 +107,27 @@ protected:
   void SetUp() override
   {
     node_ = std::make_shared<rclcpp::Node>("test_hb_node");
-    fake_session_ = std::make_unique<FakeRoomSession>();
-    state_ = fake_session_->state;
+    fake_room_connection_ = std::make_unique<FakeRoomConnection>();
+    state_ = fake_room_connection_->state;
     access_policy_ = makeSubscribePolicy({"*"});
   }
 
   SubscriptionRegistry makeRegistry(
     VideoStreamRegistry * video_stream_registry = nullptr, const VideoStreamConfig * video_stream_config = nullptr)
   {
-    return SubscriptionRegistry(*node_, *fake_session_, video_stream_registry, video_stream_config);
+    return SubscriptionRegistry(*node_, *fake_room_connection_, video_stream_registry, video_stream_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
-  std::unique_ptr<FakeRoomSession> fake_session_;
-  std::shared_ptr<FakeRoomSessionState> state_;
+  std::unique_ptr<FakeRoomConnection> fake_room_connection_;
+  std::shared_ptr<FakeRoomConnectionState> state_;
   AccessPolicy access_policy_;
 };
 
 TEST_F(SubscriptionHeartbeatProcessorTest, EmptyHeartbeatDoesNotBroadcast)
 {
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", nlohmann::json::array()}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
@@ -140,7 +141,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {
     {"subscriptions", {{{"topic", "/battery_state"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
@@ -156,7 +157,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
 {
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
     {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};
@@ -178,7 +179,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
   ASSERT_TRUE(waitForTopicType(executor, node_, "/camera/front", "sensor_msgs/msg/Image"));
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"topic", "/camera/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
@@ -195,10 +196,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
-  VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
+  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
 
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, deny_all, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, deny_all, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/front"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
@@ -215,10 +216,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
 {
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
-  VideoStreamRegistry video_stream_registry(*node_, *fake_session_);
+  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
 
   auto registry = makeRegistry(&video_stream_registry, &video_stream_config);
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {{"subscriptions", {{{"configured_source", "/sources/missing"}}}}};
   processor.process("requester-1", makeSubscriptionHeartbeat(body));
@@ -239,7 +240,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStat
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
     {"session_id", "session-1"},
@@ -268,7 +269,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesStreamStat
   (void)publisher;
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownSession)
+TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSession)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
@@ -277,7 +278,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownSession)
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState"));
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
     {"session_id", "session-1"},
@@ -296,10 +297,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownSession)
   (void)publisher;
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownSessionIsDropped)
+TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownClientSessionIsDropped)
 {
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
     {"session_id", "unknown-session"},
@@ -312,10 +313,10 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutKnownSession
   EXPECT_TRUE(state_->published_outgoing_control_packets.empty());
 }
 
-TEST_F(SubscriptionHeartbeatProcessorTest, SessionConflictDoesNotRebindRequesterIdentity)
+TEST_F(SubscriptionHeartbeatProcessorTest, ClientSessionConflictDoesNotRebindRequesterIdentity)
 {
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const auto body = makeSubscriptionHeartbeat(
     nlohmann::json{
@@ -337,7 +338,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
   AccessPolicy policy = makeSubscribePolicy({}, {"*"});
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, policy, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, policy, node_->get_clock());
 
   policy = makeSubscribePolicy({"*"});
 
@@ -357,7 +358,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledG
   state_->throw_on_publish_control_packet = true;
 
   auto registry = makeRegistry();
-  SubscriptionHeartbeatProcessor processor(registry, *fake_session_, access_policy_, node_->get_clock());
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   const nlohmann::json body = {
     {"subscriptions", {{{"topic", "/nonexistent_topic"}, {"delivery_preferences", {{"interval_ms", 100}}}}}}};

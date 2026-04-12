@@ -58,7 +58,7 @@ add_library(${PROJECT_NAME} SHARED
   src/payloads/resource_list_payloads.cpp
   src/payloads/service_call_payloads.cpp
   src/payloads/stream_control_payloads.cpp
-  src/room_session.cpp
+  src/room_connection.cpp
   src/ros_executor_queue.cpp
   src/ros_service_caller.cpp
   src/rpc_router.cpp

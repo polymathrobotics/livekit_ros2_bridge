@@ -20,7 +20,7 @@
 #include "payloads/stream_control_payloads.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "topic_publish_command.hpp"
 
 namespace livekit_ros2_bridge
@@ -40,7 +40,7 @@ public:
 
   // Routes only the control topics this bridge understands. Unknown topics, malformed payloads,
   // and anonymous publish commands are dropped before dispatch. Anonymous heartbeats are still
-  // forwarded so session_id-based fallback can recover the requester identity downstream.
+  // forwarded so client-session fallback can recover the requester identity downstream.
   void route(const IncomingControlPacket & packet) const;
 
 private:

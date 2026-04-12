@@ -1,6 +1,6 @@
 # Runtime architecture
 
-`Runtime` is the bridge's top-level owner for one ROS node and one `RoomSession`. It eagerly constructs the ROS-facing helpers, starts the LiveKit session, registers the RPC surface, and then spends the rest of its life moving LiveKit callbacks onto executor-affine ROS work.
+`Runtime` is the bridge's top-level owner for one ROS node and one `RoomConnection`. It eagerly constructs the ROS-facing helpers, starts the LiveKit room connection, registers the RPC surface, and then spends the rest of its life moving LiveKit callbacks onto executor-affine ROS work.
 
 The important boundary is simple:
 
@@ -11,7 +11,7 @@ The important boundary is simple:
 
 `Runtime` owns the long-lived pieces that need coordinated teardown:
 
-- `RoomSession`: background connect and reconnect loop plus the active LiveKit room
+- `RoomConnection`: background connect and reconnect loop plus the active LiveKit room transport
 - `RosExecutorQueue`: custom waitable that wakes the ROS executor and drains queued work on that executor thread
 - `RosServiceCaller`: dynamic ROS service clients plus a short poll timer that settles pending responses
 - `SubscriptionRegistry`: shared lease state, data-track republish bookkeeping, and video stream bindings
@@ -21,11 +21,11 @@ The important boundary is simple:
 
 ## Event flow
 
-Most LiveKit-originated events enter through `RoomSessionCallbacks`.
+Most LiveKit-originated events enter through `RoomConnectionCallbacks`.
 
 The flow looks like this:
 
-1. `RoomSession` receives a control packet, RPC, disconnect event, or reconnect event.
+1. `RoomConnection` receives a control packet, RPC, disconnect event, or reconnect event.
 2. `Runtime::submitExecutorWork()` queues executor-affine work onto `RosExecutorQueue`.
 3. `RosExecutorQueue::drain()` runs that work on the ROS executor thread.
 4. ROS-facing helpers do the actual graph lookups, topic writes, lease renewal, or service request creation.
@@ -38,14 +38,14 @@ Construction is eager rather than lazy:
 
 1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicWriter`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
-3. It starts `RoomSession` with callbacks for session reset, participant disconnect, and incoming control packets.
-4. After the session thread is running, it registers the LiveKit RPC methods.
+3. It starts `RoomConnection` with callbacks for connection reset, participant disconnect, and incoming control packets.
+4. After the connection thread is running, it registers the LiveKit RPC methods.
 
-That order matters. The ROS-side helpers exist before the session can emit callbacks, and the RPC surface is not exposed until the runtime has everything needed to serve those calls.
+That order matters. The ROS-side helpers exist before the connection can emit callbacks, and the RPC surface is not exposed until the runtime has everything needed to serve those calls.
 
 ## Reconnect and reset behavior
 
-`RoomSession` runs one background loop:
+`RoomConnection` runs one background loop:
 
 - try to connect once
 - wait for disconnect or stop
@@ -54,11 +54,11 @@ That order matters. The ROS-side helpers exist before the session can emit callb
 
 The reset contract is per connection, not per `Runtime` instance:
 
-- `on_session_reset` unpublishes data tracks, resets `SubscriptionRegistry`, and fails pending service calls
+- `on_connection_reset` unpublishes data tracks, resets `SubscriptionRegistry`, and fails pending service calls
 - participant disconnect callbacks are suppressed during transport reconnect so transient reconnects do not look like permanent departures
 - when a requester really disconnects outside reconnect handling, the bridge keeps the lease state, marks that requester for data-track republish, and cancels only that requester's pending service calls
 
-That is why browser refresh can keep lease state alive while still forcing data-track publications to be rebuilt for the new participant session.
+That is why browser refresh can keep lease state alive while still forcing data-track publications to be rebuilt for the new participant_session.
 
 ## Why service calls span two phases
 
@@ -80,7 +80,7 @@ Phase 2 happens later on `RosServiceCaller`'s poll timer:
 
 That split keeps executor-affine request creation safe without blocking the executor until the remote service replies.
 
-Immediate failures such as shutdown, bad requests, quota limits, or client creation errors fail at phase 1. Later failures such as timeout, requester disconnect, session reset, or shutdown settle the stored promise at phase 2.
+Immediate failures such as shutdown, bad requests, quota limits, or client creation errors fail at phase 1. Later failures such as timeout, requester disconnect, connection reset, or shutdown settle the stored promise at phase 2.
 
 ## Shutdown order
 
@@ -88,9 +88,9 @@ Immediate failures such as shutdown, bad requests, quota limits, or client creat
 
 1. flip the shutdown flag so new work is dropped
 2. stop the lease GC timer
-3. unregister RPC methods from the active session
-4. stop `RoomSession` so no new SDK callbacks can enqueue ROS work
+3. unregister RPC methods from the active connection
+4. stop `RoomConnection` so no new SDK callbacks can enqueue ROS work
 5. shut down `RosExecutorQueue`
 6. shut down `SubscriptionRegistry`, unpublish data tracks, stop video streams, shut down `RosServiceCaller`, and clear cached ROS topic publishers
 
-The key invariant is that the session stops before the executor queue is torn down. Already accepted work may still be draining at that point, so the runtime also checks the shutdown flag inside queued lambdas.
+The key invariant is that the connection stops before the executor queue is torn down. Already accepted work may still be draining at that point, so the runtime also checks the shutdown flag inside queued lambdas.

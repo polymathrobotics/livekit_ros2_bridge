@@ -35,7 +35,7 @@ namespace livekit_ros2_bridge
 
 struct SubscriptionQosConfig;
 class QuiesceGate;
-class RoomSession;
+class RoomConnection;
 class SubscriptionRegistry;
 
 // SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
@@ -56,7 +56,7 @@ public:
 
   static std::shared_ptr<DataStreamInstance> create(
     rclcpp::Node & node,
-    RoomSession & room_session,
+    RoomConnection & room_connection,
     SubscriptionRegistry & subscription_registry,
     std::string topic,
     std::string interface_type,
@@ -85,7 +85,7 @@ public:
 private:
   DataStreamInstance(
     rclcpp::Node & node,
-    RoomSession & room_session,
+    RoomConnection & room_connection,
     SubscriptionRegistry & subscription_registry,
     std::string topic,
     std::string interface_type,

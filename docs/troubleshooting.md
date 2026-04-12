@@ -8,7 +8,7 @@ This page covers the common failures people hit during setup, connection, subscr
 | --- | --- | --- |
 | Node exits during startup | `runtime_config_load_failed`, `node_startup_failed`, `runtime_startup_failed` | missing `livekit.url`, missing `livekit.room`, missing token, invalid video config |
 | Room never stabilizes | `room_token_load_failed`, `room_connect_failed`, `room_reconnect_backoff` | bad or expired token, empty token, unreachable LiveKit URL |
-| Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, session ownership mismatch |
+| Heartbeat sent but no usable status returns | `control_packet_rejected`, `heartbeat_dropped`, `heartbeat_client_session_conflict`, `subscription_status_publish_failed` | malformed JSON, anonymous heartbeat without a valid `session_id`, client-session ownership mismatch |
 | Service call rejected or times out | `rpc_request_rejected`, `service_call_failed`, `service_calls_settled` | missing caller identity, access denied, bad payload, request build failure, timeout, requester disconnect |
 | Data-track topic subscription appears but data does not flow | `subscription_renew_failed`, `subscription_qos_resolved`, `data_track_pending`, `data_track_published`, `data_track_publish_failed`, `data_track_delivery_failed`, `data_track_delivery_dropped` | ambiguous topic type, QoS mismatch, track publish failure, LiveKit queue backpressure |
 | Video source never appears | `subscription_renew_failed`, `subscription_qos_resolved`, `video_stream_subscription_started`, `video_stream_pipeline_starting`, `video_stream_push_failed`, `video_stream_pipeline_failed` | QoS mismatch, invalid video source or transform config, unsupported image encoding, unhealthy source pipeline |
@@ -51,7 +51,7 @@ Look for:
 
 - `event=room_reconnect_requested`
 - `event=room_reconnect_backoff`
-- `event=room_session_reset`
+- `event=room_connection_reset`
 
 Common causes:
 

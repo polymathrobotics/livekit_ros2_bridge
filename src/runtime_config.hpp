@@ -22,7 +22,7 @@
 #include "access_policy.hpp"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "subscription_qos.hpp"
 #include "video_stream_config.hpp"
 

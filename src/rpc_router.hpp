@@ -21,7 +21,7 @@
 
 #include "access_policy.hpp"
 #include "rclcpp/node.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -41,11 +41,11 @@ public:
     RosExecutorQueue & ros_executor_queue,
     RosServiceCaller & ros_service_caller);
 
-  // Attempts to register every supported RPC method on the session. Returns
+  // Attempts to register every supported RPC method on the room connection. Returns
   // false if any individual registration fails; successful handlers remain
   // installed until unregisterRpcMethods() is called.
-  bool registerRpcMethods(RoomSession & session);
-  void unregisterRpcMethods(RoomSession & session);
+  bool registerRpcMethods(RoomConnection & room_connection);
+  void unregisterRpcMethods(RoomConnection & room_connection);
 
 private:
   std::array<std::pair<const char *, RpcHandler>, 4> rpcEntrypoints();

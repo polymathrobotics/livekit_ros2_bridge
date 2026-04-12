@@ -20,7 +20,7 @@
 #include <unordered_map>
 
 #include "rclcpp/node.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "subscription_qos.hpp"
 #include "video_stream_spec.hpp"
 
@@ -34,7 +34,9 @@ class VideoStreamRegistry final
 {
 public:
   VideoStreamRegistry(
-    rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config = nullptr);
+    rclcpp::Node & node,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * subscription_qos_config = nullptr);
   ~VideoStreamRegistry();
 
   std::string ensureStreamRunning(const VideoStreamSpec & spec);
@@ -43,7 +45,7 @@ public:
 
 private:
   rclcpp::Node & node_;
-  RoomSession & session_;
+  RoomConnection & room_connection_;
   const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;

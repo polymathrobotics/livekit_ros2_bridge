@@ -22,9 +22,9 @@ namespace livekit_ros2_bridge
 {
 
 VideoStreamRegistry::VideoStreamRegistry(
-  rclcpp::Node & node, RoomSession & session, const SubscriptionQosConfig * subscription_qos_config)
+  rclcpp::Node & node, RoomConnection & room_connection, const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
-, session_(session)
+, room_connection_(room_connection)
 , subscription_qos_config_(subscription_qos_config)
 {}
 
@@ -44,7 +44,7 @@ std::string VideoStreamRegistry::ensureStreamRunning(const VideoStreamSpec & spe
 
     auto [it, inserted] = stream_instances_.try_emplace(spec.stream_key);
     if (inserted) {
-      it->second = std::make_shared<VideoStreamInstance>(node_, session_, spec, subscription_qos_config_);
+      it->second = std::make_shared<VideoStreamInstance>(node_, room_connection_, spec, subscription_qos_config_);
     }
     instance = it->second;
   }

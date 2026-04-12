@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 
-#include "room_session.hpp"
+#include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -37,9 +37,9 @@ struct PushedDataTrackFrame
   std::vector<std::uint8_t> payload;
 };
 
-struct FakeRoomSessionState
+struct FakeRoomConnectionState
 {
-  RoomSessionCallbacks callbacks;
+  RoomConnectionCallbacks callbacks;
   bool started = false;
   bool stopped = false;
   std::string access_token;
@@ -57,7 +57,7 @@ struct FakeRoomSessionState
   std::vector<std::string> unpublish_rejected_data_track_names;
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
-  std::function<void(const RoomSessionCallbacks & callbacks)> stop_hook;
+  std::function<void(const RoomConnectionCallbacks & callbacks)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
@@ -65,17 +65,17 @@ struct FakeRoomSessionState
   int publish_control_packet_call_count = 0;
 };
 
-class FakeRoomSession final : public RoomSession
+class FakeRoomConnection final : public RoomConnection
 {
 public:
-  FakeRoomSession()
-  : state(std::make_shared<FakeRoomSessionState>())
+  FakeRoomConnection()
+  : state(std::make_shared<FakeRoomConnectionState>())
   {}
 
   void start(
     RoomConnectionConfig config,
     std::string access_token,
-    RoomSessionCallbacks callbacks,
+    RoomConnectionCallbacks callbacks,
     std::chrono::milliseconds initial_backoff,
     std::chrono::milliseconds max_backoff) override
   {
@@ -190,10 +190,10 @@ public:
     }
   }
 
-  void emitSessionReset() const
+  void emitConnectionReset() const
   {
-    if (state->callbacks.on_session_reset) {
-      state->callbacks.on_session_reset();
+    if (state->callbacks.on_connection_reset) {
+      state->callbacks.on_connection_reset();
     }
   }
 
@@ -225,7 +225,7 @@ public:
     }
   }
 
-  std::shared_ptr<FakeRoomSessionState> state;
+  std::shared_ptr<FakeRoomConnectionState> state;
 
 private:
   std::shared_ptr<livekit::LocalDataTrack> makeSyntheticDataTrack()

@@ -121,12 +121,12 @@ std::string ensureVideoStreamRunning(VideoStreamRegistry & video_stream_registry
 
 SubscriptionRegistry::SubscriptionRegistry(
   rclcpp::Node & node,
-  RoomSession & room_session,
+  RoomConnection & room_connection,
   VideoStreamRegistry * video_stream_registry,
   const VideoStreamConfig * video_stream_config,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
-, room_session_(room_session)
+, room_connection_(room_connection)
 , video_stream_registry_(video_stream_registry)
 , default_video_stream_config_(makeDefaultVideoStreamConfig())
 , video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
@@ -363,7 +363,7 @@ std::shared_ptr<DataStreamInstance> SubscriptionRegistry::createDataStreamInstan
 {
   return DataStreamInstance::create(
     node_,
-    room_session_,
+    room_connection_,
     *this,
     topic,
     interface_type,

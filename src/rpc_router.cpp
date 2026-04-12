@@ -289,24 +289,24 @@ std::array<std::pair<const char *, RpcHandler>, 4> RpcRouter::rpcEntrypoints()
   }};
 }
 
-bool RpcRouter::registerRpcMethods(RoomSession & session)
+bool RpcRouter::registerRpcMethods(RoomConnection & room_connection)
 {
   bool all_registered = true;
   for (const auto & method : rpcEntrypoints()) {
-    if (!session.registerRpcMethod(method.first, method.second)) {
+    if (!room_connection.registerRpcMethod(method.first, method.second)) {
       LogEvent(kRpcRouterLogger, "rpc_method_registration_failed").field("method", method.first).error();
       // Registration is best-effort rather than transactional so one failure
-      // does not hide other methods that can still be served on this session.
+      // does not hide other methods that can still be served on this connection.
       all_registered = false;
     }
   }
   return all_registered;
 }
 
-void RpcRouter::unregisterRpcMethods(RoomSession & session)
+void RpcRouter::unregisterRpcMethods(RoomConnection & room_connection)
 {
   for (const auto & method : rpcEntrypoints()) {
-    if (!session.unregisterRpcMethod(method.first)) {
+    if (!room_connection.unregisterRpcMethod(method.first)) {
       LogEvent(kRpcRouterLogger, "rpc_method_unregistration_failed").field("method", method.first).error();
     }
   }

@@ -27,13 +27,13 @@ namespace livekit_ros2_bridge
 
 VideoStreamInstance::VideoStreamInstance(
   rclcpp::Node & node,
-  RoomSession & session,
+  RoomConnection & room_connection,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config)
 : node_(node)
 , spec_(std::move(spec))
 , subscription_qos_config_(subscription_qos_config)
-, video_track_publisher_(std::make_unique<VideoTrackPublisher>(session, spec_))
+, video_track_publisher_(std::make_unique<VideoTrackPublisher>(room_connection, spec_))
 {}
 
 VideoStreamInstance::~VideoStreamInstance()

@@ -44,7 +44,7 @@ const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance"
 
 std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
   rclcpp::Node & node,
-  RoomSession & room_session,
+  RoomConnection & room_connection,
   SubscriptionRegistry & subscription_registry,
   std::string topic,
   std::string interface_type,
@@ -55,7 +55,7 @@ std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
 {
   auto instance = std::shared_ptr<DataStreamInstance>(new DataStreamInstance(
     node,
-    room_session,
+    room_connection,
     subscription_registry,
     std::move(topic),
     std::move(interface_type),
@@ -69,7 +69,7 @@ std::shared_ptr<DataStreamInstance> DataStreamInstance::create(
 
 DataStreamInstance::DataStreamInstance(
   rclcpp::Node & node,
-  RoomSession & room_session,
+  RoomConnection & room_connection,
   SubscriptionRegistry & subscription_registry,
   std::string topic,
   std::string interface_type,
@@ -81,7 +81,7 @@ DataStreamInstance::DataStreamInstance(
 , topic_(std::move(topic))
 , interface_type_(std::move(interface_type))
 , track_name_(deriveTrackName(topic_))
-, data_track_publisher_(room_session, track_name_, node_.get_clock())
+, data_track_publisher_(room_connection, track_name_, node_.get_clock())
 , applied_interval_ms_(applied_interval_ms)
 , generation_(publish_generation)
 , callback_generation_(message_callback_gate.currentGeneration())

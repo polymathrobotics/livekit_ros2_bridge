@@ -21,7 +21,7 @@
 #include "livekit/data_track_error.h"
 #include "livekit/local_data_track.h"
 #include "rclcpp/logging.hpp"
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -33,13 +33,15 @@ const auto kDataTrackPublisherLogger = rclcpp::get_logger("data_track_publisher"
 constexpr auto kPushFailureLogThrottlePeriod = std::chrono::seconds(5);
 
 void unpublishTrackNoThrow(
-  RoomSession & session, const std::string & track_name, const std::shared_ptr<livekit::LocalDataTrack> & track)
+  RoomConnection & room_connection,
+  const std::string & track_name,
+  const std::shared_ptr<livekit::LocalDataTrack> & track)
 {
   if (track == nullptr) {
     return;
   }
   try {
-    session.unpublishDataTrack(track);
+    room_connection.unpublishDataTrack(track);
     LogEvent(kDataTrackPublisherLogger, "data_track_unpublished").field("track_name", track_name).info();
   } catch (const std::exception & exc) {
     LogEvent(kDataTrackPublisherLogger, "data_track_unpublish_failed")
@@ -52,8 +54,9 @@ void unpublishTrackNoThrow(
 }
 }  // namespace
 
-DataTrackPublisher::DataTrackPublisher(RoomSession & session, std::string track_name, rclcpp::Clock::SharedPtr clock)
-: session_(session)
+DataTrackPublisher::DataTrackPublisher(
+  RoomConnection & room_connection, std::string track_name, rclcpp::Clock::SharedPtr clock)
+: room_connection_(room_connection)
 , track_name_(std::move(track_name))
 , clock_(std::move(clock))
 {}
@@ -63,7 +66,7 @@ void DataTrackPublisher::tryPush(const std::uint8_t * data, std::size_t size)
   if (published_track_ == nullptr) {
     return;
   }
-  auto result = session_.tryPushDataTrack(published_track_, std::vector<std::uint8_t>(data, data + size));
+  auto result = room_connection_.tryPushDataTrack(published_track_, std::vector<std::uint8_t>(data, data + size));
   if (!result) {
     if (result.error().code == DataTrackPushErrorCode::kQueueFull) {
       // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
@@ -86,7 +89,7 @@ void DataTrackPublisher::publish(
   std::size_t generation, const PublishAcceptedFn & publish_accepted_fn, const PublishFailedFn & publish_failed_fn)
 {
   try {
-    auto track = session_.publishDataTrack(track_name_);
+    auto track = room_connection_.publishDataTrack(track_name_);
     // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
@@ -97,7 +100,7 @@ void DataTrackPublisher::publish(
         .field("generation", generation)
         .field("reason", "stale_registry_state")
         .info();
-      unpublishTrackNoThrow(session_, track_name_, track);
+      unpublishTrackNoThrow(room_connection_, track_name_, track);
       return;
     }
     published_track_ = std::move(track);
@@ -129,7 +132,7 @@ void DataTrackPublisher::unpublish()
 
   auto published_track = std::move(published_track_);
   published_track_.reset();
-  unpublishTrackNoThrow(session_, track_name_, published_track);
+  unpublishTrackNoThrow(room_connection_, track_name_, published_track);
 }
 
 void DataTrackPublisher::shutdown()

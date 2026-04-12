@@ -30,7 +30,7 @@ class LocalDataTrack;
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
+class RoomConnection;
 
 // SubscriptionRegistry coordinates shared leases, DataStreamInstance owns each topic-level ROS
 // data runtime, and DataTrackPublisher only owns the LiveKit data-track publications.
@@ -40,7 +40,7 @@ public:
   using PublishAcceptedFn = std::function<bool(std::size_t generation)>;
   using PublishFailedFn = std::function<void()>;
 
-  DataTrackPublisher(RoomSession & session, std::string track_name, rclcpp::Clock::SharedPtr clock);
+  DataTrackPublisher(RoomConnection & room_connection, std::string track_name, rclcpp::Clock::SharedPtr clock);
 
   // Best-effort push to an already-published data track carrying ROS CDR payloads. Missing
   // tracks and backpressure are dropped so ROS message delivery never blocks waiting on LiveKit's
@@ -54,7 +54,7 @@ public:
   void shutdown();
 
 private:
-  RoomSession & session_;
+  RoomConnection & room_connection_;
   std::string track_name_;
   rclcpp::Clock::SharedPtr clock_;
   std::shared_ptr<livekit::LocalDataTrack> published_track_;

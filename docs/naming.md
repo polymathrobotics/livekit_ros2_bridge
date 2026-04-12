@@ -81,7 +81,7 @@ Examples:
 
 Preferred for LiveKit -> ROS best-effort writes. A `writer` executes ingress commands into ROS and is distinct from a LiveKit publication owner.
 
-Preferred example:
+Example:
 
 - `RosTopicWriter`
 
@@ -102,7 +102,7 @@ Examples:
 
 - requester lease
 - stream lease
-- session lease
+- client session lease
 
 ### `track`
 
@@ -141,7 +141,10 @@ This boundary is important enough to be explicit:
 - `Track` means LiveKit transport.
 - `Stream` means the bridge runtime spanning source, publication, and lease behavior.
 
-The preferred internal ingress name is `RosTopicWriter`. Existing uses of `RosTopicPublisher` are legacy terminology and should migrate toward `RosTopicWriter` as code is touched.
+Use `RosTopicWriter` for the best-effort LiveKit -> ROS ingress component. Concrete ROS publisher
+handles owned by that writer may still use `publisher` where they literally refer to
+`rclcpp::GenericPublisher` objects.
+`DataTrackPublisher` and `VideoTrackPublisher` remain ROS -> LiveKit publication owners.
 
 ## Data pipeline
 
@@ -261,21 +264,60 @@ Rule:
 
 For mixed topic and configured-source runtime state, prefer names like `target_name`, `target_kind`, or `target_key` instead of a generic `resource` field.
 
-## Sessions and leases
+## Connections, sessions, and leases
 
-The codebase currently has two different ideas hiding behind `session`:
+These three terms are distinct and should not be used interchangeably.
 
-- the bridge's LiveKit room lifecycle owner
-- the remote client or browser lifecycle used by heartbeat `session_id` fallback
+### `connection`
 
-Guidance:
+Use `connection` for the bridge-owned LiveKit room transport lifecycle.
 
-- use `RoomSession` for the LiveKit room connection lifecycle
-- qualify requester-side session concepts as `client_session`, `tab_session`, or `requester_session` in new internal names and comments
-- avoid introducing new bare `session` names for requester/browser lifecycle state
-- keep `lease` separate from connection lifecycle; a lease is time-bound ownership, not a transport connection
+A connection is one active or reconnecting attachment between the bridge and a LiveKit room. It
+owns transport-scoped state such as the active room handle, registered RPC methods, and published
+track bindings that must be rebuilt after reconnect. Reconnect tears down one connection and
+establishes another.
 
-This keeps `session_id` fallback understandable without confusing it with the bridge's own LiveKit room session.
+Examples:
+
+- `RoomConnection`
+- `RoomConnectionCallbacks`
+- `makeRoomConnection()`
+- `FakeRoomConnection`
+- `on_connection_reset`
+
+### `session`
+
+Use `session` only for actor-scoped logical lifetimes, never for the bridge's room transport.
+
+A session belongs to a requester or participant identity, not to the bridge transport. Sessions
+can outlive or be replaced independently of stream leases and independently of the bridge's room
+connection.
+
+Examples:
+
+- `client_session_id`: the caller-provided wire `session_id` used for heartbeat fallback
+- `ClientSessionLease`: the time-bound binding from `client_session_id` to `requester_identity`
+- `participant_session`: the LiveKit participant incarnation that owns a publication surface
+
+Rules:
+
+- do not use bare `Session` or bare `session` for new internal names unless the code is directly
+  mirroring the wire field name `session_id`
+- use `connection` for bridge transport state
+- use `client_session` or `participant_session` when session semantics are required
+
+### `lease`
+
+Use `lease` for time-bound ownership or identity binding.
+
+A lease is not a transport connection and is not itself a participant incarnation. Leases apply to
+shared stream ownership and to client-session fallback bindings.
+
+Examples:
+
+- requester lease
+- stream lease
+- client session lease
 
 ## Concurrency and lifecycle
 
@@ -325,12 +367,5 @@ Examples:
 - Prefer `command`, `heartbeat`, `status`, `entry`, or `update` for fire-and-forget control paths.
 - Use `resource` only for actual ROS graph entities.
 - Use `target` for caller-selected identifiers that may include non-ROS configured sources.
-- Avoid naked `session` for requester/browser lifecycle state in new internal names.
-
-## Current migration notes
-
-- Preferred ingress name: `RosTopicWriter`
-- Legacy ingress name to phase out: `RosTopicPublisher`
-- `Publisher` remains reserved for ROS -> LiveKit names such as `DataTrackPublisher` and `VideoTrackPublisher`
-- Mixed topic/configured-source state should move toward `target_*` naming instead of bare `resource`
-- New internal names for requester/browser lifecycle should qualify the meaning instead of introducing more bare `session` names
+- Use `connection` for bridge transport state, `session` only for qualified actor lifetimes, and `lease`
+  for time-bound ownership or identity binding.

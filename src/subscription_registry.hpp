@@ -36,7 +36,7 @@
 namespace livekit_ros2_bridge
 {
 
-class RoomSession;
+class RoomConnection;
 class VideoStreamRegistry;
 
 struct StreamUnavailableError : std::runtime_error
@@ -60,7 +60,7 @@ public:
 
   SubscriptionRegistry(
     rclcpp::Node & node,
-    RoomSession & room_session,
+    RoomConnection & room_connection,
     VideoStreamRegistry * video_stream_registry,
     const VideoStreamConfig * video_stream_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
@@ -155,7 +155,7 @@ private:
   void clearSubscriptions();
 
   rclcpp::Node & node_;
-  RoomSession & room_session_;
+  RoomConnection & room_connection_;
   VideoStreamRegistry * video_stream_registry_;
   VideoStreamConfig default_video_stream_config_;
   const VideoStreamConfig * video_stream_config_;

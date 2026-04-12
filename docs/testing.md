@@ -1,6 +1,6 @@
 # Testing
 
-Most of the suite is small-unit `gtest`, but the more valuable maintenance coverage lives in the integration-style tests under `test/cpp/`. Those tests build a real `rclcpp::Node`, attach a `SingleThreadedExecutor`, and replace the LiveKit edge with `FakeRoomSession`.
+Most of the suite is small-unit `gtest`, but the more valuable maintenance coverage lives in the integration-style tests under `test/cpp/`. Those tests build a real `rclcpp::Node`, attach a `SingleThreadedExecutor`, and replace the LiveKit edge with `FakeRoomConnection`.
 
 ## Run tests
 
@@ -42,7 +42,7 @@ just test --ctest-args -R test_subscription_heartbeat_processor
 
 Good entry points:
 
-- `test_runtime.cpp`: end-to-end runtime wiring around `FakeRoomSession`
+- `test_runtime.cpp`: end-to-end runtime wiring around `FakeRoomConnection`
 - `test_subscription_heartbeat_processor.cpp`: heartbeat parsing, status envelopes, access control, and video-source edge cases
 - `test_subscription_registry.cpp`: lease sharing, interval handling, data-track republish, and video stream interactions
 - `test_rpc_router.cpp`: RPC request parsing, graph filtering, and error mapping
@@ -51,7 +51,7 @@ Good entry points:
 
 ## Common harness pattern
 
-Reusable test helpers live in `test/cpp/ros_test_support.hpp` and `test/cpp/fake_room_session.hpp`.
+Reusable test helpers live in `test/cpp/ros_test_support.hpp` and `test/cpp/fake_room_connection.hpp`.
 
 The common pattern is:
 
@@ -69,9 +69,9 @@ Useful helpers:
 
 If `waitForTopicType(...)` times out, it logs `event=wait_for_topic_type_timeout`, which is usually the first useful clue.
 
-## When to use `FakeRoomSession`
+## When to use `FakeRoomConnection`
 
-`FakeRoomSession` is more than a transport stub. Its `state` object is the assertion surface.
+`FakeRoomConnection` is more than a transport stub. Its `state` object is the assertion surface.
 
 Use it when you need to verify:
 
@@ -79,9 +79,9 @@ Use it when you need to verify:
 - which control packets were published, and to which recipients
 - which data tracks were published, unpublished, or rejected
 - which callbacks `Runtime` installed
-- how reconnect-like events behave when injected with `emitSessionReset()`, `emitParticipantDisconnected()`, or `emitIncomingControlPacket(...)`
+- how reconnect-like events behave when injected with `emitConnectionReset()`, `emitParticipantDisconnected()`, or `emitIncomingControlPacket(...)`
 
-Configure the fake before constructing `Runtime` or other owners. Several startup and teardown behaviors read `FakeRoomSessionState` only once.
+Configure the fake before constructing `Runtime` or other owners. Several startup and teardown behaviors read `FakeRoomConnectionState` only once.
 
 ## A reliable async rule
 

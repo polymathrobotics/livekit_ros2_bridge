@@ -19,7 +19,7 @@
 #include <thread>
 
 #include "data_track_publisher.hpp"
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
@@ -67,7 +67,7 @@ TEST(DataTrackPublisherTest, QueueFullPushDropsFrameWithoutRecordingPayload)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_queue_full_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/queue_full";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -93,7 +93,7 @@ TEST(DataTrackPublisherTest, ResetSessionStateSwallowsUnpublishErrorAndClearsSub
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_reset_unpublish_error_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/reset_unpublish_error";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
@@ -117,7 +117,7 @@ TEST(DataTrackPublisherTest, PublishFailureInvokesFailureCallbackWithoutRetainin
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_publish_failure_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   session.state->publish_data_track_handler = [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     throw std::runtime_error("simulated publish failure");
   };
@@ -139,7 +139,7 @@ TEST(DataTrackPublisherTest, RejectedPublishIsImmediatelyReclaimedAndNotRetained
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_stale_reclaim_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   DataTrackPublisher publisher(session, "ros.data.battery.stale_reclaim", node->get_clock());
   bool publish_failed = false;
 
@@ -161,7 +161,7 @@ TEST(DataTrackPublisherTest, ShutdownUnpublishesAcceptedTrackOnce)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_shutdown_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/shutdown";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;

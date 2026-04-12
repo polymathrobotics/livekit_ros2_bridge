@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
@@ -151,7 +151,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_data_track_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/state";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
@@ -178,7 +178,7 @@ TEST(SubscriptionRegistryTest, PushesRawCdrFramesForDataSubscriptions)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_delivery_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/send";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -203,7 +203,7 @@ TEST(SubscriptionRegistryTest, AppliesMinimumRequesterIntervalAndClampsNegativeT
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_interval_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/interval";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -242,7 +242,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry video_stream_registry(*node, session);
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
   const std::string video_topic = "/camera/front";
@@ -269,7 +269,7 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_republish_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/refresh_replay";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
@@ -296,7 +296,7 @@ TEST(SubscriptionRegistryTest, OnDataTrackPublishedReturnsFalseForUnknownTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_unknown_publish_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   SubscriptionRegistry registry(*node, session, nullptr);
 
   EXPECT_FALSE(registry.onDataTrackPublished("ros.data.no.such.topic", 0));
@@ -306,7 +306,7 @@ TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/new_requester";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
@@ -332,7 +332,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_revoke_shared_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry video_stream_registry(*node, session);
   const std::string alice_only_topic = "/battery/alice_only";
   const std::string shared_data_topic = "/battery/shared";
@@ -375,7 +375,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_prune_unpublish_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/prune_expired";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
@@ -399,7 +399,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_reset_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry video_stream_registry(*node, session);
   const std::string data_topic = "/battery/reset";
   const std::string video_topic = "/camera/reset";
@@ -433,7 +433,7 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_quiesce_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/shutdown_quiesce";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -485,7 +485,7 @@ TEST(SubscriptionRegistryTest, QueueFullPushDropsFrameAndLeavesSubscriptionActiv
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_queue_full_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/queue_full";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -510,7 +510,7 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   SubscriptionRegistry registry(*node, session, nullptr);
 
   expectInvalidArgumentMessage(

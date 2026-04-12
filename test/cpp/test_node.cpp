@@ -37,7 +37,7 @@ protected:
   }
 };
 
-TEST_F(NodeTest, ConstructsWithDefaultRoomSession)
+TEST_F(NodeTest, ConstructsWithDefaultRoomConnection)
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.url", "not-a-url");

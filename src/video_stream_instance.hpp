@@ -29,7 +29,7 @@ namespace livekit_ros2_bridge
 {
 
 struct SubscriptionQosConfig;
-class RoomSession;
+class RoomConnection;
 class VideoFrameSource;
 class VideoTrackPublisher;
 
@@ -41,7 +41,7 @@ class VideoStreamInstance final
 public:
   VideoStreamInstance(
     rclcpp::Node & node,
-    RoomSession & session,
+    RoomConnection & room_connection,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config);
   ~VideoStreamInstance();

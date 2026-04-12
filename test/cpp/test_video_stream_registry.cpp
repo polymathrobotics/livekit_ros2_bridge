@@ -19,7 +19,7 @@
 #include <string>
 #include <thread>
 
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
@@ -170,7 +170,7 @@ protected:
 TEST_F(VideoStreamRegistryTest, SharedRosStreamUsesSingleSubscriptionAndSinglePublishedTrack)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shared_ros"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/shared";
@@ -196,7 +196,7 @@ TEST_F(VideoStreamRegistryTest, SharedRosStreamUsesSingleSubscriptionAndSinglePu
 TEST_F(VideoStreamRegistryTest, StopStreamUnpublishesRosTrackAndRemovesSubscription)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_stop_ros"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/stop";
@@ -223,7 +223,7 @@ TEST_F(VideoStreamRegistryTest, StopStreamUnpublishesRosTrackAndRemovesSubscript
 TEST_F(VideoStreamRegistryTest, ReliableRosPublisherPublishesTrack)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_reliable_ros"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/reliable";
@@ -248,7 +248,7 @@ TEST_F(VideoStreamRegistryTest, ReliableRosPublisherPublishesTrack)
 TEST_F(VideoStreamRegistryTest, RawRosPublisherAcceptsOddSizedFrames)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_odd_dimensions"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/odd_dimensions";
@@ -273,7 +273,7 @@ TEST_F(VideoStreamRegistryTest, RawRosPublisherAcceptsOddSizedFrames)
 TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyleJpegFormat)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_compressed_ros"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string topic = "/camera/compressed";
@@ -302,7 +302,7 @@ TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyle
 TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const auto spec = makeConfiguredSourceSpec("/sources/front", "ros.video.configured_source.%2Fsources%2Ffront");
@@ -321,7 +321,7 @@ TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnp
 TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndRejectsNewStreams)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "ros.video.configured_source.%2Fsources%2Fshutdown");
@@ -345,7 +345,7 @@ TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndRejectsNewStre
 TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTrack)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_publish_config"));
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoStreamRegistry registry(*node, session);
 
   const std::string first_topic = "/camera/publish_config/one";

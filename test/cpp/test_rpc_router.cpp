@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "access_policy.hpp"
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "payloads/cdr_payload.hpp"
@@ -188,7 +188,7 @@ public:
   std::shared_ptr<rclcpp::Node> node;
   RosExecutorQueue ros_executor_queue;
   RosServiceCaller ros_service_caller;
-  FakeRoomSession session;
+  FakeRoomConnection session;
   RpcRouter rpc_router;
 };
 

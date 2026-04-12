@@ -19,7 +19,7 @@
 #include <mutex>
 #include <vector>
 
-#include "room_session.hpp"
+#include "room_connection.hpp"
 #include "video_frame_source.hpp"
 #include "video_stream_spec.hpp"
 
@@ -36,7 +36,7 @@ namespace livekit_ros2_bridge
 class VideoTrackPublisher final : public VideoFrameSink
 {
 public:
-  VideoTrackPublisher(RoomSession & session, VideoStreamSpec spec);
+  VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec);
 
   void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override;
   void shutdown();
@@ -44,7 +44,7 @@ public:
 private:
   void ensurePublishedTrackLocked(int width, int height);
 
-  RoomSession & session_;
+  RoomConnection & room_connection_;
   VideoStreamSpec spec_;
   std::mutex mutex_;
   bool is_shutdown_ = false;

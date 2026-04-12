@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "payloads/cdr_payload.hpp"
@@ -84,7 +84,7 @@ std::vector<std::uint8_t> serializeMessage(const MessageT & message)
 }
 
 nlohmann::json extractSinglePublishedStatusEnvelope(
-  const FakeRoomSessionState & state, const std::string & requester_identity)
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
   if (state.published_outgoing_control_packets.size() != 1U) {
     ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_control_packets.size();
@@ -134,37 +134,39 @@ private:
 struct RuntimeHarness
 {
   std::shared_ptr<rclcpp::Node> node;
-  FakeRoomSession * fake_session = nullptr;
-  std::shared_ptr<FakeRoomSessionState> state;
+  FakeRoomConnection * fake_room_connection = nullptr;
+  std::shared_ptr<FakeRoomConnectionState> state;
   std::unique_ptr<Runtime> runtime;
 };
 
-template <typename ConfigureSessionT>
+template <typename ConfigureConnectionT>
 RuntimeHarness makeRuntimeHarness(
-  const rclcpp::NodeOptions & options, ConfigureSessionT configure_session, FailFastCallbacks fail_fast_callbacks = {})
+  const rclcpp::NodeOptions & options,
+  ConfigureConnectionT configure_room_connection,
+  FailFastCallbacks fail_fast_callbacks = {})
 {
   RuntimeHarness harness;
   harness.node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), options);
 
-  auto session = std::make_unique<FakeRoomSession>();
-  harness.fake_session = session.get();
-  harness.state = session->state;
-  configure_session(*session);
+  auto room_connection = std::make_unique<FakeRoomConnection>();
+  harness.fake_room_connection = room_connection.get();
+  harness.state = room_connection->state;
+  configure_room_connection(*room_connection);
 
   RuntimeConfig startup_config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
   harness.runtime = std::make_unique<Runtime>(
-    *harness.node, std::move(session), std::move(startup_config), std::move(fail_fast_callbacks));
+    *harness.node, std::move(room_connection), std::move(startup_config), std::move(fail_fast_callbacks));
   return harness;
 }
 
 RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options)
 {
-  return makeRuntimeHarness(options, [](FakeRoomSession &) {});
+  return makeRuntimeHarness(options, [](FakeRoomConnection &) {});
 }
 
 RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, FailFastCallbacks fail_fast_callbacks)
 {
-  return makeRuntimeHarness(options, [](FakeRoomSession &) {}, std::move(fail_fast_callbacks));
+  return makeRuntimeHarness(options, [](FakeRoomConnection &) {}, std::move(fail_fast_callbacks));
 }
 
 struct FailFastExitCapture
@@ -207,7 +209,7 @@ TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
   EXPECT_EQ(harness.state->rpc_handlers.size(), expected_methods.size());
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_session_reset));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_participant_disconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_control_packet_received));
 }
@@ -238,7 +240,7 @@ TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
-  harness.fake_session->emitConnected();
+  harness.fake_room_connection->emitConnected();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -255,8 +257,8 @@ TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
-  harness.fake_session->emitConnected();
-  harness.fake_session->emitReconnectRequested("room_disconnected");
+  harness.fake_room_connection->emitConnected();
+  harness.fake_room_connection->emitReconnectRequested("room_disconnected");
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -275,9 +277,9 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
   FailFastExitCapture capture;
   auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
   ASSERT_NE(harness.runtime, nullptr);
-  harness.fake_session->emitConnected();
-  harness.fake_session->emitReconnectRequested("room_disconnected");
-  harness.fake_session->emitConnected();
+  harness.fake_room_connection->emitConnected();
+  harness.fake_room_connection->emitReconnectRequested("room_disconnected");
+  harness.fake_room_connection->emitConnected();
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
@@ -286,7 +288,7 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
   EXPECT_EQ(capture.exit_call_count.load(), 0);
 }
 
-TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedSession)
+TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("health.fail_fast.enabled", false);
@@ -323,13 +325,13 @@ TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
 TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), makeStaticTokenOptions());
-  auto session = std::make_unique<FakeRoomSession>();
-  auto state = session->state;
+  auto room_connection = std::make_unique<FakeRoomConnection>();
+  auto state = room_connection->state;
   state->rejected_rpc_methods = {protocol::kRpcInterfacesGet};
   RuntimeConfig startup_config = loadRuntimeConfig(node->get_node_parameters_interface());
 
   try {
-    Runtime runtime(*node, std::move(session), std::move(startup_config));
+    Runtime runtime(*node, std::move(room_connection), std::move(startup_config));
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Failed to register required RPC methods");
@@ -397,7 +399,7 @@ TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
       {"message", serializeCdrPayload(serializeMessage(expected_message))},
     }
       .dump();
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(payload.begin(), payload.end()),
       protocol::kControlTopicPublish,
@@ -431,7 +433,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
@@ -440,8 +442,8 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
-  harness.fake_session->emitParticipantDisconnected("participant-1");
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitParticipantDisconnected("participant-1");
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
@@ -474,7 +476,7 @@ TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
@@ -483,7 +485,7 @@ TEST_F(RuntimeTest, NewParticipantRepublishesDataTrackOnFirstHeartbeat)
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
@@ -513,7 +515,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
 
   const std::string heartbeat = R"({"subscriptions":[{"topic":"/camera/front"}]})";
-  harness.fake_session->emitIncomingControlPacket(
+  harness.fake_room_connection->emitIncomingControlPacket(
     IncomingControlPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
       protocol::kControlSubscriptionsHeartbeat,
@@ -561,10 +563,10 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"topic":"/battery","delivery_preferences":{"interval_ms":125}}]})";
-  auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomSession & session) {
-    session.state->stop_hook = [heartbeat](const RoomSessionCallbacks & callbacks) {
-      if (callbacks.on_session_reset) {
-        callbacks.on_session_reset();
+  auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
+    room_connection.state->stop_hook = [heartbeat](const RoomConnectionCallbacks & callbacks) {
+      if (callbacks.on_connection_reset) {
+        callbacks.on_connection_reset();
       }
       if (callbacks.on_participant_disconnected) {
         callbacks.on_participant_disconnected("participant-1");
@@ -624,8 +626,8 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   auto release_publish = release_publish_promise.get_future().share();
   std::atomic<bool> publish_started_once{false};
   auto harness = makeRuntimeHarness(
-    options, [&publish_started_promise, &release_publish, &publish_started_once](FakeRoomSession & session) {
-      session.state->publish_data_track_handler =
+    options, [&publish_started_promise, &release_publish, &publish_started_once](FakeRoomConnection & room_connection) {
+      room_connection.state->publish_data_track_handler =
         [&publish_started_promise, &release_publish, &publish_started_once](const std::string &) {
           if (!publish_started_once.exchange(true)) {
             publish_started_promise.set_value();

@@ -31,8 +31,8 @@ const auto kVideoStreamRegistryLogger = rclcpp::get_logger("livekit_ros2_bridge.
 
 }  // namespace
 
-VideoTrackPublisher::VideoTrackPublisher(RoomSession & session, VideoStreamSpec spec)
-: session_(session)
+VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec)
+: room_connection_(room_connection)
 , spec_(std::move(spec))
 {}
 
@@ -72,7 +72,7 @@ void VideoTrackPublisher::shutdown()
       .field("stream_key", spec_.stream_key)
       .field("track_name", spec_.track_name)
       .info();
-    session_.unpublishVideoTrack(published_track);
+    room_connection_.unpublishVideoTrack(published_track);
   }
 }
 
@@ -94,12 +94,12 @@ void VideoTrackPublisher::ensurePublishedTrackLocked(int width, int height)
       .field("next_width", width)
       .field("next_height", height)
       .info();
-    session_.unpublishVideoTrack(published_track_);
+    room_connection_.unpublishVideoTrack(published_track_);
     published_track_.reset();
   }
 
   video_source_ = std::make_shared<livekit::VideoSource>(width, height);
-  published_track_ = session_.publishVideoTrack(spec_.track_name, video_source_, spec_.publish_config);
+  published_track_ = room_connection_.publishVideoTrack(spec_.track_name, video_source_, spec_.publish_config);
   published_width_ = width;
   published_height_ = height;
 

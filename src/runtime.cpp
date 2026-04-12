@@ -46,11 +46,11 @@ constexpr auto kFailFastExitDelay = std::chrono::milliseconds(100);
 
 Runtime::Runtime(
   rclcpp::Node & node,
-  std::unique_ptr<RoomSession> session,
+  std::unique_ptr<RoomConnection> room_connection,
   RuntimeConfig runtime_config,
   FailFastCallbacks fail_fast_callbacks)
 : node_(node)
-, room_session_(std::move(session))
+, room_connection_(std::move(room_connection))
 , video_stream_config_(std::move(runtime_config.video_stream_config))
 , subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
 , room_(runtime_config.room_connection_config.room)
@@ -58,8 +58,8 @@ Runtime::Runtime(
 , fail_fast_enabled_(runtime_config.health_config.fail_fast_enabled)
 , fail_fast_disconnect_grace_(runtime_config.health_config.fail_fast_disconnect_grace)
 {
-  if (room_session_ == nullptr) {
-    throw std::runtime_error("Failed to create LiveKit session");
+  if (room_connection_ == nullptr) {
+    throw std::runtime_error("Failed to create LiveKit room connection");
   }
   if (!fail_fast_callbacks_.shutdown_callback) {
     fail_fast_callbacks_.shutdown_callback = []() {
@@ -79,13 +79,13 @@ Runtime::Runtime(
 
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   ros_topic_writer_ = std::make_unique<RosTopicWriter>(node_, runtime_config.access_policy);
-  video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_session_, &subscription_qos_config_);
+  video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_connection_, &subscription_qos_config_);
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_, *room_session_, video_stream_registry_.get(), &video_stream_config_, &subscription_qos_config_);
+    node_, *room_connection_, video_stream_registry_.get(), &video_stream_config_, &subscription_qos_config_);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-    *subscription_registry_, *room_session_, runtime_config.access_policy, node_.get_clock());
+    *subscription_registry_, *room_connection_, runtime_config.access_policy, node_.get_clock());
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
   rpc_router_ =
     std::make_unique<RpcRouter>(node_, runtime_config.access_policy, *ros_executor_queue_, *ros_service_caller_);
@@ -108,7 +108,7 @@ Runtime::Runtime(
 
   lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitExecutorWork([this]() {
-      subscription_heartbeat_processor_->pruneExpiredSessionLeases();
+      subscription_heartbeat_processor_->pruneExpiredClientSessionLeases();
       subscription_registry_->pruneExpiredLeases();
     });
   });
@@ -118,10 +118,10 @@ Runtime::Runtime(
   }
   fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
 
-  room_session_->start(
+  room_connection_->start(
     runtime_config.room_connection_config,
     runtime_config.access_token,
-    RoomSessionCallbacks{
+    RoomConnectionCallbacks{
       [this]() { handleRoomConnected(); },
       [this](const std::string & reason) { handleReconnectRequested(reason); },
       [this]() {
@@ -135,7 +135,7 @@ Runtime::Runtime(
         submitExecutorWork([this, requester_identity, gen]() {
           // Keep leases alive across a browser refresh, but remember that the requester will
           // need fresh data-track publications because LiveKit binds those publications to the
-          // old participant session that just disconnected.
+          // old participant_session that just disconnected.
           subscription_registry_->markRequesterForDataTrackRepublish(requester_identity, gen);
           ros_service_caller_->cancelCallsForRequester(requester_identity);
         });
@@ -144,7 +144,7 @@ Runtime::Runtime(
     },
     kReconnectInitialBackoff,
     kReconnectMaxBackoff);
-  if (!rpc_router_->registerRpcMethods(*room_session_)) {
+  if (!rpc_router_->registerRpcMethods(*room_connection_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .field("phase", "startup")
       .field("reason", "required_rpc_registration_failed")
@@ -186,13 +186,13 @@ void Runtime::shutdown()
   lease_gc_timer_.reset();
   fail_fast_timer_.reset();
 
-  if (rpc_router_ != nullptr && room_session_ != nullptr) {
-    rpc_router_->unregisterRpcMethods(*room_session_);
+  if (rpc_router_ != nullptr && room_connection_ != nullptr) {
+    rpc_router_->unregisterRpcMethods(*room_connection_);
   }
-  // Stop the room session before shutting down the executor queue so SDK callbacks can no longer
+  // Stop the room connection before shutting down the executor queue so SDK callbacks can no longer
   // enqueue fresh ROS work while already-running executor tasks finish.
-  if (room_session_ != nullptr) {
-    room_session_->stop();
+  if (room_connection_ != nullptr) {
+    room_connection_->stop();
   }
   if (ros_executor_queue_ != nullptr) {
     ros_executor_queue_->shutdown();

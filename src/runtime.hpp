@@ -47,16 +47,16 @@ struct FailFastCallbacks
   std::function<void(int)> exit_callback;
 };
 
-// Wires one RoomSession to the ROS-facing ingress helpers, publication owners,
+// Wires one RoomConnection to the ROS-facing ingress helpers, publication owners,
 // RPC handlers, and in-process video streams for a node.
-// Construction performs eager startup; destruction shuts the room session down before the ROS
+// Construction performs eager startup; destruction shuts the room connection down before the ROS
 // ingress helpers are torn down.
 class Runtime final
 {
 public:
   Runtime(
     rclcpp::Node & node,
-    std::unique_ptr<RoomSession> session,
+    std::unique_ptr<RoomConnection> room_connection,
     RuntimeConfig runtime_config,
     FailFastCallbacks fail_fast_callbacks = {});
   ~Runtime();
@@ -81,7 +81,7 @@ private:
   void handleIncomingControlPacket(const IncomingControlPacket & packet) const;
 
   rclcpp::Node & node_;
-  std::unique_ptr<RoomSession> room_session_;
+  std::unique_ptr<RoomConnection> room_connection_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
   std::unique_ptr<RpcRouter> rpc_router_;
   std::unique_ptr<RosTopicWriter> ros_topic_writer_;

@@ -22,7 +22,7 @@
 #include <thread>
 #include <vector>
 
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
@@ -95,7 +95,7 @@ TEST(DataStreamInstanceTest, PublishesTrackAndPushesSerializedMessagesThroughOwn
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_stream_instance_delivery_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/per_instance_delivery";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10).best_effort());
 
@@ -124,7 +124,7 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_stream_instance_interval_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/per_instance_interval";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -153,7 +153,7 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionAndRequestsNewPublish)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_stream_instance_republish_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/per_instance_republish";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 
@@ -184,7 +184,7 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_stream_instance_shutdown_test");
-  FakeRoomSession session;
+  FakeRoomConnection session;
   const std::string topic = "/battery/per_instance_shutdown";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
 

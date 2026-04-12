@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-#include "fake_room_session.hpp"
+#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
 #include "video_track_publisher.hpp"
@@ -47,7 +47,7 @@ std::vector<std::uint8_t> makeI420Frame(int width, int height)
 TEST(VideoTrackPublisherTest, PublishesOnFirstFrame)
 {
   ScopedRclcppInit init;
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoTrackPublisher publisher(session, makeSpec("stream:first_frame", "ros.video.camera.first_frame"));
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
@@ -60,7 +60,7 @@ TEST(VideoTrackPublisherTest, PublishesOnFirstFrame)
 TEST(VideoTrackPublisherTest, SameSizeFramesReuseCurrentPublication)
 {
   ScopedRclcppInit init;
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoTrackPublisher publisher(session, makeSpec("stream:same_size", "ros.video.camera.same_size"));
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
@@ -74,7 +74,7 @@ TEST(VideoTrackPublisherTest, SameSizeFramesReuseCurrentPublication)
 TEST(VideoTrackPublisherTest, DimensionChangeRepublishesTrack)
 {
   ScopedRclcppInit init;
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoTrackPublisher publisher(session, makeSpec("stream:resize", "ros.video.camera.resize"));
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
@@ -94,7 +94,7 @@ TEST(VideoTrackPublisherTest, DimensionChangeRepublishesTrack)
 TEST(VideoTrackPublisherTest, ShutdownUnpublishesActiveTrack)
 {
   ScopedRclcppInit init;
-  FakeRoomSession session;
+  FakeRoomConnection session;
   VideoTrackPublisher publisher(session, makeSpec("stream:shutdown", "ros.video.camera.shutdown"));
 
   publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
