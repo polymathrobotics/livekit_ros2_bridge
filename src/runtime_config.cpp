@@ -267,7 +267,7 @@ VideoPublishConfig mergeVideoPublishConfig(const VideoPublishConfig & defaults, 
   return merged;
 }
 
-std::string composeBridgeOwnedVideoPipelineDescription(
+std::string composeVideoPipelineDescription(
   const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   std::string pipeline = ingress_fragment;
@@ -286,7 +286,7 @@ std::string composeBridgeOwnedVideoPipelineDescription(
   return pipeline;
 }
 
-void validateBridgeOwnedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_owned_appsrc)
+void validateReservedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
 {
   guint appsrc_count = 0;
   guint appsink_count = 0;
@@ -338,7 +338,7 @@ void validateBridgeOwnedEndpoints(const std::string & context, GstElement * pipe
     item.reset();
   }
 
-  if (expect_bridge_owned_appsrc) {
+  if (expect_bridge_appsrc) {
     if (
       appsrc_count != 1U || named_bridge_appsrc_count != 1U || appsink_count != 1U || named_bridge_appsink_count != 1U)
     {
@@ -353,7 +353,7 @@ void validateBridgeOwnedEndpoints(const std::string & context, GstElement * pipe
 }
 
 void validatePipelineDescription(
-  const std::string & context, const std::string & pipeline_description, bool expect_bridge_owned_appsrc)
+  const std::string & context, const std::string & pipeline_description, bool expect_bridge_appsrc)
 {
   ensureGstreamerInitialized();
 
@@ -369,7 +369,7 @@ void validatePipelineDescription(
     throw std::runtime_error(context + " must parse to a GstBin");
   }
 
-  validateBridgeOwnedEndpoints(context, pipeline.get(), expect_bridge_owned_appsrc);
+  validateReservedEndpoints(context, pipeline.get(), expect_bridge_appsrc);
 }
 
 std::string makeRosValidationPrefix()
@@ -399,15 +399,14 @@ void validateVideoTopicRuleTransformFragment(const std::string & entry_id, const
 {
   const std::string context = "video topic rule '" + entry_id + "' transform";
   validatePipelineDescription(
-    context, composeBridgeOwnedVideoPipelineDescription(makeRosValidationPrefix(), transform_fragment), true);
+    context, composeVideoPipelineDescription(makeRosValidationPrefix(), transform_fragment), true);
 }
 
 void validateConfiguredSourceConfigFragments(
   const std::string & entry_id, const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   const std::string context = "video configured source '" + entry_id + "'";
-  validatePipelineDescription(
-    context, composeBridgeOwnedVideoPipelineDescription(ingress_fragment, transform_fragment), false);
+  validatePipelineDescription(context, composeVideoPipelineDescription(ingress_fragment, transform_fragment), false);
 }
 
 void requireUniqueEntryKey(std::unordered_set<std::string> & seen_keys, const std::string & key, const char * context)

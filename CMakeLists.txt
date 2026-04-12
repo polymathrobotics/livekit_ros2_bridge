@@ -47,13 +47,13 @@ pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
 
 add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
+  src/control_packet_router.cpp
   src/data_stream_instance.cpp
   src/data_track_publisher.cpp
-  src/control_packet_router.cpp
   src/interface_definition_lookup.cpp
   src/node.cpp
-  src/payloads/cdr_payload.cpp
   src/payloads/cdr_base64.cpp
+  src/payloads/cdr_payload.cpp
   src/payloads/interface_payloads.cpp
   src/payloads/resource_list_payloads.cpp
   src/payloads/service_call_payloads.cpp
@@ -61,16 +61,18 @@ add_library(${PROJECT_NAME} SHARED
   src/room_connection.cpp
   src/ros_executor_queue.cpp
   src/ros_service_caller.cpp
+  src/ros_topic_publisher.cpp
   src/rpc_router.cpp
   src/runtime_config.cpp
   src/runtime.cpp
-  src/subscription_qos.cpp
   src/subscription_heartbeat_processor.cpp
+  src/subscription_qos.cpp
   src/subscription_registry.cpp
   src/topic_publish_command.cpp
-  src/ros_topic_publisher.cpp
+  src/video_frame_source/configured_source_video_frame_source.cpp
+  src/video_frame_source/ros_topic_video_frame_sources.cpp
+  src/video_frame_source/video_pipeline_frame_source.cpp
   src/video_stream_config.cpp
-  src/video_frame_source.cpp
   src/video_stream_instance.cpp
   src/video_stream_registry.cpp
   src/video_stream_spec.cpp
@@ -213,16 +215,16 @@ if(BUILD_TESTING)
   set(livekit_ros2_bridge_test_targets
     test_access_policy
     test_base64
-    test_lru_cache
+    test_control_packet_router
     test_data_stream_instance
     test_data_track_publisher
-    test_control_packet_router
     test_event_throttle
     test_gstreamer_raii
     test_interface_definition_lookup
     test_interface_payloads
     test_interface_type_utils
     test_log_event
+    test_lru_cache
     test_node
     test_quiesce_guard
     test_reentrant_quiesce_guard
@@ -230,19 +232,19 @@ if(BUILD_TESTING)
     test_ros_executor_queue
     test_ros_resource_name_utils
     test_ros_service_caller
+    test_ros_topic_publisher
     test_rpc_router
     test_runtime
     test_runtime_config
     test_scope_exit
     test_service_call_payloads
     test_stream_control_payloads
-    test_subscription_qos
     test_subscription_heartbeat_processor
+    test_subscription_qos
     test_subscription_registry
     test_topic_publish_command
-    test_ros_topic_publisher
-    test_video_stream_spec
     test_video_stream_registry
+    test_video_stream_spec
     test_video_track_publisher
   )
   foreach(test_target IN LISTS livekit_ros2_bridge_test_targets)
