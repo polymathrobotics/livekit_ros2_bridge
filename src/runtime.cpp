@@ -50,76 +50,83 @@ Runtime::Runtime(
   RuntimeConfig runtime_config,
   FailFastCallbacks fail_fast_callbacks)
 : node_(node)
-, room_connection_(std::move(room_connection))
-, video_stream_config_(std::move(runtime_config.video_stream_config))
-, subscription_qos_config_(std::move(runtime_config.subscription_qos_config))
-, room_(runtime_config.room_connection_config.room)
-, fail_fast_callbacks_(std::move(fail_fast_callbacks))
-, fail_fast_enabled_(runtime_config.health_config.fail_fast_enabled)
-, fail_fast_disconnect_grace_(runtime_config.health_config.fail_fast_disconnect_grace)
+, config_{
+    std::move(runtime_config.video_stream_config),
+    std::move(runtime_config.subscription_qos_config),
+    runtime_config.room_connection_config.room,
+    std::move(fail_fast_callbacks),
+    runtime_config.health_config.fail_fast_enabled,
+    runtime_config.health_config.fail_fast_disconnect_grace,
+  }
 {
-  if (room_connection_ == nullptr) {
+  components_.room_connection = std::move(room_connection);
+  if (components_.room_connection == nullptr) {
     throw std::runtime_error("Failed to create LiveKit room connection");
   }
-  if (!fail_fast_callbacks_.shutdown_callback) {
-    fail_fast_callbacks_.shutdown_callback = []() {
+  if (!config_.fail_fast_callbacks.shutdown_callback) {
+    config_.fail_fast_callbacks.shutdown_callback = []() {
       if (rclcpp::ok()) {
         rclcpp::shutdown();
       }
     };
   }
-  if (!fail_fast_callbacks_.exit_callback) {
-    fail_fast_callbacks_.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
+  if (!config_.fail_fast_callbacks.exit_callback) {
+    config_.fail_fast_callbacks.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
   }
 
   LogEvent(node_.get_logger(), "runtime_startup_begin")
     .field("phase", "startup")
-    .fieldOr("room", room_, "<unset>")
+    .fieldOr("room", config_.room, "<unset>")
     .info();
 
-  ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
-  ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
-  video_stream_registry_ = std::make_unique<VideoStreamRegistry>(node_, *room_connection_, &subscription_qos_config_);
+  components_.ros_executor_queue = std::make_unique<RosExecutorQueue>(node_);
+  components_.ros_topic_publisher = std::make_unique<RosTopicPublisher>(node_, runtime_config.access_policy);
+  components_.video_stream_registry =
+    std::make_unique<VideoStreamRegistry>(node_, *components_.room_connection, &config_.subscription_qos);
 
-  subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_, *room_connection_, video_stream_registry_.get(), &video_stream_config_, &subscription_qos_config_);
+  components_.subscription_registry = std::make_unique<SubscriptionRegistry>(
+    node_,
+    *components_.room_connection,
+    components_.video_stream_registry.get(),
+    &config_.video_stream,
+    &config_.subscription_qos);
 
-  subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-    *subscription_registry_, *room_connection_, runtime_config.access_policy, node_.get_clock());
+  components_.subscription_heartbeat_processor = std::make_unique<SubscriptionHeartbeatProcessor>(
+    *components_.subscription_registry, *components_.room_connection, runtime_config.access_policy, node_.get_clock());
 
-  ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
-  rpc_router_ =
-    std::make_unique<RpcRouter>(node_, runtime_config.access_policy, *ros_executor_queue_, *ros_service_caller_);
-  control_packet_router_ = std::make_unique<ControlPacketRouter>(
+  components_.ros_service_caller = std::make_unique<RosServiceCaller>(node_);
+  components_.rpc_router = std::make_unique<RpcRouter>(
+    node_, runtime_config.access_policy, *components_.ros_executor_queue, *components_.ros_service_caller);
+  components_.control_packet_router = std::make_unique<ControlPacketRouter>(
     node_.get_logger(),
     node_.get_clock(),
     ControlPacketRouter::Callbacks{
       [this](std::string requester_identity, SubscriptionHeartbeat heartbeat) {
         submitExecutorWork(
           [this, requester_identity = std::move(requester_identity), heartbeat = std::move(heartbeat)]() {
-            subscription_heartbeat_processor_->process(requester_identity, heartbeat);
+            components_.subscription_heartbeat_processor->process(requester_identity, heartbeat);
           });
       },
       [this](std::string requester_identity, TopicPublishCommand command) {
         submitExecutorWork([this, requester_identity = std::move(requester_identity), command = std::move(command)]() {
-          ros_topic_publisher_->publish(requester_identity, command);
+          components_.ros_topic_publisher->publish(requester_identity, command);
         });
       },
     });
 
-  lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
+  timers_.lease_gc = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitExecutorWork([this]() {
-      subscription_heartbeat_processor_->pruneExpiredClientSessionLeases();
-      subscription_registry_->pruneExpiredLeases();
+      components_.subscription_heartbeat_processor->pruneExpiredClientSessionLeases();
+      components_.subscription_registry->pruneExpiredLeases();
     });
   });
-  if (fail_fast_enabled_) {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
-    disconnect_deadline_ = SteadyClock::now() + fail_fast_disconnect_grace_;
+  if (config_.fail_fast_enabled) {
+    std::lock_guard<std::mutex> lock(state_.mutex);
+    state_.disconnect_deadline = SteadyClock::now() + config_.fail_fast_disconnect_grace;
   }
-  fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
+  timers_.fail_fast = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { evaluateFailFast(); });
 
-  room_connection_->start(
+  components_.room_connection->start(
     runtime_config.room_connection_config,
     runtime_config.access_token,
     RoomConnectionCallbacks{
@@ -127,18 +134,18 @@ Runtime::Runtime(
       [this](const std::string & reason) { handleReconnectRequested(reason); },
       [this]() {
         submitExecutorWork([this]() {
-          subscription_registry_->resetSessionState();
-          ros_service_caller_->resetSessionState();
+          components_.subscription_registry->resetSessionState();
+          components_.ros_service_caller->resetSessionState();
         });
       },
       [this](const std::string & requester_identity) {
-        const std::size_t gen = subscription_registry_->registryGeneration();
+        const std::size_t gen = components_.subscription_registry->registryGeneration();
         submitExecutorWork([this, requester_identity, gen]() {
           // Keep leases alive across a browser refresh, but remember that the requester will
           // need fresh data-track publications because LiveKit binds those publications to the
           // old participant_session that just disconnected.
-          subscription_registry_->markRequesterForDataTrackRepublish(requester_identity, gen);
-          ros_service_caller_->cancelCallsForRequester(requester_identity);
+          components_.subscription_registry->markRequesterForDataTrackRepublish(requester_identity, gen);
+          components_.ros_service_caller->cancelCallsForRequester(requester_identity);
         });
       },
       [this](const IncomingControlPacket & packet) { handleIncomingControlPacket(packet); },
@@ -146,21 +153,21 @@ Runtime::Runtime(
     kReconnectInitialBackoff,
     kReconnectMaxBackoff);
 
-  if (!rpc_router_->registerRpcMethods(*room_connection_)) {
+  if (!components_.rpc_router->registerRpcMethods(*components_.room_connection)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .field("phase", "startup")
       .field("reason", "required_rpc_registration_failed")
-      .fieldOr("room", room_, "<unset>")
+      .fieldOr("room", config_.room, "<unset>")
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
   bool emit_ready_logs = false;
   {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
-    rpc_methods_ready_ = true;
-    if (connected_ && !ready_once_) {
-      ready_once_ = true;
+    std::lock_guard<std::mutex> lock(state_.mutex);
+    state_.rpc_methods_ready = true;
+    if (state_.connected && !state_.ready_once) {
+      state_.ready_once = true;
       emit_ready_logs = true;
     }
   }
@@ -176,51 +183,51 @@ Runtime::~Runtime()
 
 void Runtime::shutdown()
 {
-  if (shutting_down_.exchange(true)) {
+  if (state_.shutting_down.exchange(true)) {
     return;
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_start")
     .field("phase", "shutdown")
-    .fieldOr("room", room_, "<unset>")
+    .fieldOr("room", config_.room, "<unset>")
     .info();
 
-  lease_gc_timer_.reset();
-  fail_fast_timer_.reset();
+  timers_.lease_gc.reset();
+  timers_.fail_fast.reset();
 
-  if (rpc_router_ != nullptr && room_connection_ != nullptr) {
-    rpc_router_->unregisterRpcMethods(*room_connection_);
+  if (components_.rpc_router != nullptr && components_.room_connection != nullptr) {
+    components_.rpc_router->unregisterRpcMethods(*components_.room_connection);
   }
   // Stop the room connection before shutting down the executor queue so SDK callbacks can no longer
   // enqueue fresh ROS work while already-running executor tasks finish.
-  if (room_connection_ != nullptr) {
-    room_connection_->stop();
+  if (components_.room_connection != nullptr) {
+    components_.room_connection->stop();
   }
-  if (ros_executor_queue_ != nullptr) {
-    ros_executor_queue_->shutdown();
+  if (components_.ros_executor_queue != nullptr) {
+    components_.ros_executor_queue->shutdown();
   }
-  if (subscription_registry_ != nullptr) {
-    subscription_registry_->shutdown();
+  if (components_.subscription_registry != nullptr) {
+    components_.subscription_registry->shutdown();
   }
-  if (video_stream_registry_ != nullptr) {
-    video_stream_registry_->shutdown();
+  if (components_.video_stream_registry != nullptr) {
+    components_.video_stream_registry->shutdown();
   }
-  if (ros_service_caller_ != nullptr) {
-    ros_service_caller_->shutdown();
+  if (components_.ros_service_caller != nullptr) {
+    components_.ros_service_caller->shutdown();
   }
-  if (ros_topic_publisher_ != nullptr) {
-    ros_topic_publisher_->shutdown();
+  if (components_.ros_topic_publisher != nullptr) {
+    components_.ros_topic_publisher->shutdown();
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_complete")
     .field("phase", "shutdown")
-    .fieldOr("room", room_, "<unset>")
+    .fieldOr("room", config_.room, "<unset>")
     .info();
 }
 
 bool Runtime::isShuttingDown() const
 {
-  return shutting_down_.load();
+  return state_.shutting_down.load();
 }
 
 void Runtime::handleRoomConnected()
@@ -231,12 +238,12 @@ void Runtime::handleRoomConnected()
 
   bool emit_ready_logs = false;
   {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
-    connected_ = true;
-    disconnect_deadline_.reset();
-    last_reconnect_reason_.clear();
-    if (rpc_methods_ready_ && !ready_once_) {
-      ready_once_ = true;
+    std::lock_guard<std::mutex> lock(state_.mutex);
+    state_.connected = true;
+    state_.disconnect_deadline.reset();
+    state_.last_reconnect_reason.clear();
+    if (state_.rpc_methods_ready && !state_.ready_once) {
+      state_.ready_once = true;
       emit_ready_logs = true;
     }
   }
@@ -252,37 +259,37 @@ void Runtime::handleReconnectRequested(const std::string & reason)
     return;
   }
 
-  std::lock_guard<std::mutex> lock(connection_state_mutex_);
-  connected_ = false;
-  last_reconnect_reason_ = reason;
-  if (fail_fast_enabled_) {
-    disconnect_deadline_ = SteadyClock::now() + fail_fast_disconnect_grace_;
+  std::lock_guard<std::mutex> lock(state_.mutex);
+  state_.connected = false;
+  state_.last_reconnect_reason = reason;
+  if (config_.fail_fast_enabled) {
+    state_.disconnect_deadline = SteadyClock::now() + config_.fail_fast_disconnect_grace;
   } else {
-    disconnect_deadline_.reset();
+    state_.disconnect_deadline.reset();
   }
 }
 
 void Runtime::evaluateFailFast()
 {
-  if (!fail_fast_enabled_ || isShuttingDown()) {
+  if (!config_.fail_fast_enabled || isShuttingDown()) {
     return;
   }
 
   std::string disconnect_reason;
   bool ready_once = false;
   {
-    std::lock_guard<std::mutex> lock(connection_state_mutex_);
-    if (fail_fast_triggered_ || connected_ || !disconnect_deadline_.has_value()) {
+    std::lock_guard<std::mutex> lock(state_.mutex);
+    if (state_.fail_fast_triggered || state_.connected || !state_.disconnect_deadline.has_value()) {
       return;
     }
-    if (SteadyClock::now() < *disconnect_deadline_) {
+    if (SteadyClock::now() < *state_.disconnect_deadline) {
       return;
     }
 
-    fail_fast_triggered_ = true;
-    ready_once = ready_once_;
-    if (ready_once_) {
-      disconnect_reason = last_reconnect_reason_.empty() ? "reconnect_timeout" : last_reconnect_reason_;
+    state_.fail_fast_triggered = true;
+    ready_once = state_.ready_once;
+    if (state_.ready_once) {
+      disconnect_reason = state_.last_reconnect_reason.empty() ? "reconnect_timeout" : state_.last_reconnect_reason;
     } else {
       disconnect_reason = "initial_connect_timeout";
     }
@@ -293,8 +300,11 @@ void Runtime::evaluateFailFast()
 
 void Runtime::emitReadyLogs()
 {
-  LogEvent(node_.get_logger(), "runtime_ready").field("phase", "startup").fieldOr("room", room_, "<unset>").info();
-  LogEvent(node_.get_logger(), "node_ready").field("phase", "startup").fieldOr("room", room_, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_ready")
+    .field("phase", "startup")
+    .fieldOr("room", config_.room, "<unset>")
+    .info();
+  LogEvent(node_.get_logger(), "node_ready").field("phase", "startup").fieldOr("room", config_.room, "<unset>").info();
 }
 
 void Runtime::terminateForFailFast(const std::string & disconnect_reason, bool ready_once)
@@ -303,13 +313,13 @@ void Runtime::terminateForFailFast(const std::string & disconnect_reason, bool r
     .field("phase", ready_once ? "reconnect" : "startup")
     .field("reason", "disconnect_grace_expired")
     .field("disconnect_reason", disconnect_reason)
-    .fieldOr("room", room_, "<unset>")
-    .field("grace_seconds", fail_fast_disconnect_grace_.count() / 1000.0)
+    .fieldOr("room", config_.room, "<unset>")
+    .field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0)
     .field("ready_once", ready_once)
     .error();
-  fail_fast_callbacks_.shutdown_callback();
+  config_.fail_fast_callbacks.shutdown_callback();
   std::this_thread::sleep_for(kFailFastExitDelay);
-  fail_fast_callbacks_.exit_callback(EXIT_FAILURE);
+  config_.fail_fast_callbacks.exit_callback(EXIT_FAILURE);
 }
 
 void Runtime::submitExecutorWork(std::function<void()> fn)
@@ -325,14 +335,14 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
   };
 
   if (isShuttingDown()) {
-    logExecutorDrop("shutdown", "enqueue", executor_shutdown_enqueue_drop_throttle_);
+    logExecutorDrop("shutdown", "enqueue", diagnostics_.executor_shutdown_enqueue_drop);
     return;
   }
-  if (ros_executor_queue_ == nullptr) {
-    logExecutorDrop("executor_unavailable", "enqueue", executor_unavailable_drop_throttle_);
+  if (components_.ros_executor_queue == nullptr) {
+    logExecutorDrop("executor_unavailable", "enqueue", diagnostics_.executor_unavailable_drop);
     return;
   }
-  (void)ros_executor_queue_->submit([this, fn = std::move(fn)]() mutable {
+  (void)components_.ros_executor_queue->submit([this, fn = std::move(fn)]() mutable {
     auto logExecutorDrop = [this](const char * reason, const char * stage, EventThrottle & throttle) {
       if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
         LogEvent(node_.get_logger(), "executor_work_dropped")
@@ -345,7 +355,7 @@ void Runtime::submitExecutorWork(std::function<void()> fn)
 
     // The queue can still be draining work that was accepted before shutdown flipped the flag.
     if (isShuttingDown()) {
-      logExecutorDrop("shutdown", "execute", executor_shutdown_execute_drop_throttle_);
+      logExecutorDrop("shutdown", "execute", diagnostics_.executor_shutdown_execute_drop);
       return;
     }
     fn();
@@ -366,14 +376,14 @@ void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet) 
   };
 
   if (isShuttingDown()) {
-    logControlPacketDrop("shutdown", control_packet_shutdown_drop_throttle_);
+    logControlPacketDrop("shutdown", diagnostics_.control_packet_shutdown_drop);
     return;
   }
-  if (control_packet_router_ == nullptr) {
-    logControlPacketDrop("router_unavailable", control_packet_router_unavailable_drop_throttle_);
+  if (components_.control_packet_router == nullptr) {
+    logControlPacketDrop("router_unavailable", diagnostics_.control_packet_router_unavailable_drop);
     return;
   }
-  control_packet_router_->route(packet);
+  components_.control_packet_router->route(packet);
 }
 
 }  // namespace livekit_ros2_bridge

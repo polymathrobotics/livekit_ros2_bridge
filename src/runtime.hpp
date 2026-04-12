@@ -69,6 +69,58 @@ public:
 private:
   using SteadyClock = std::chrono::steady_clock;
 
+  struct Components
+  {
+    std::unique_ptr<RoomConnection> room_connection;
+    std::unique_ptr<RosExecutorQueue> ros_executor_queue;
+    std::unique_ptr<RpcRouter> rpc_router;
+    std::unique_ptr<RosTopicPublisher> ros_topic_publisher;
+    std::unique_ptr<VideoStreamRegistry> video_stream_registry;
+    std::unique_ptr<SubscriptionRegistry> subscription_registry;
+    std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor;
+    std::unique_ptr<RosServiceCaller> ros_service_caller;
+    std::unique_ptr<ControlPacketRouter> control_packet_router;
+  };
+
+  struct Config
+  {
+    VideoStreamConfig video_stream;
+    SubscriptionQosConfig subscription_qos;
+    std::string room;
+    FailFastCallbacks fail_fast_callbacks;
+    bool fail_fast_enabled = false;
+    std::chrono::milliseconds fail_fast_disconnect_grace{0};
+  };
+
+  struct Timers
+  {
+    rclcpp::TimerBase::SharedPtr lease_gc;
+    rclcpp::TimerBase::SharedPtr fail_fast;
+  };
+
+  struct ConnectionState
+  {
+    std::atomic<bool> shutting_down{false};
+    mutable std::mutex mutex;
+
+    // Guarded by mutex.
+    bool connected = false;
+    bool ready_once = false;
+    bool rpc_methods_ready = false;
+    bool fail_fast_triggered = false;
+    std::optional<SteadyClock::time_point> disconnect_deadline;
+    std::string last_reconnect_reason;
+  };
+
+  struct Diagnostics
+  {
+    EventThrottle executor_shutdown_enqueue_drop{std::chrono::seconds(5)};
+    EventThrottle executor_unavailable_drop{std::chrono::seconds(5)};
+    EventThrottle executor_shutdown_execute_drop{std::chrono::seconds(5)};
+    mutable EventThrottle control_packet_shutdown_drop{std::chrono::seconds(5)};
+    mutable EventThrottle control_packet_router_unavailable_drop{std::chrono::seconds(5)};
+  };
+
   bool isShuttingDown() const;
   void handleRoomConnected();
   void handleReconnectRequested(const std::string & reason);
@@ -81,39 +133,11 @@ private:
   void handleIncomingControlPacket(const IncomingControlPacket & packet) const;
 
   rclcpp::Node & node_;
-  std::unique_ptr<RoomConnection> room_connection_;
-  std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
-  std::unique_ptr<RpcRouter> rpc_router_;
-  std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
-  std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
-  std::unique_ptr<SubscriptionRegistry> subscription_registry_;
-  std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
-  std::unique_ptr<RosServiceCaller> ros_service_caller_;
-  std::unique_ptr<ControlPacketRouter> control_packet_router_;
-
-  VideoStreamConfig video_stream_config_;
-  SubscriptionQosConfig subscription_qos_config_;
-  rclcpp::TimerBase::SharedPtr lease_gc_timer_;
-  rclcpp::TimerBase::SharedPtr fail_fast_timer_;
-  std::string room_;
-  FailFastCallbacks fail_fast_callbacks_;
-  const bool fail_fast_enabled_;
-  const std::chrono::milliseconds fail_fast_disconnect_grace_;
-
-  std::atomic<bool> shutting_down_{false};
-  mutable std::mutex connection_state_mutex_;
-  bool connected_ = false;
-  bool ready_once_ = false;
-  bool rpc_methods_ready_ = false;
-  bool fail_fast_triggered_ = false;
-  std::optional<SteadyClock::time_point> disconnect_deadline_;
-  std::string last_reconnect_reason_;
-
-  EventThrottle executor_shutdown_enqueue_drop_throttle_{std::chrono::seconds(5)};
-  EventThrottle executor_unavailable_drop_throttle_{std::chrono::seconds(5)};
-  EventThrottle executor_shutdown_execute_drop_throttle_{std::chrono::seconds(5)};
-  mutable EventThrottle control_packet_shutdown_drop_throttle_{std::chrono::seconds(5)};
-  mutable EventThrottle control_packet_router_unavailable_drop_throttle_{std::chrono::seconds(5)};
+  Components components_;
+  Config config_;
+  Timers timers_;
+  ConnectionState state_;
+  Diagnostics diagnostics_;
 };
 
 }  // namespace livekit_ros2_bridge
