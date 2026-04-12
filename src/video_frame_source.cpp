@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_ingestor.hpp"
+#include "video_frame_source.hpp"
 
 #include <gst/app/gstappsink.h>
 #include <gst/app/gstappsrc.h>
@@ -263,16 +263,19 @@ PackedI420Frame copySampleToPackedI420(GstSample * sample)
   return frame;
 }
 
-class BridgeOwnedVideoPipelineIngestor : public IVideoIngestor,
-                                         public std::enable_shared_from_this<BridgeOwnedVideoPipelineIngestor>
+// Base implementation for source-side runtimes. Each VideoStreamRegistry
+// runtime owns one VideoFrameSource and one VideoTrackPublisher for a stream;
+// frame sources normalize input into I420 and push it into the publisher sink.
+class BridgeOwnedVideoPipelineFrameSource : public VideoFrameSource,
+                                            public std::enable_shared_from_this<BridgeOwnedVideoPipelineFrameSource>
 {
 public:
-  BridgeOwnedVideoPipelineIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
+  BridgeOwnedVideoPipelineFrameSource(VideoStreamSpec spec, VideoFrameSink & frame_sink)
   : spec_(std::move(spec))
   , frame_sink_(frame_sink)
   {}
 
-  virtual ~BridgeOwnedVideoPipelineIngestor() = default;
+  virtual ~BridgeOwnedVideoPipelineFrameSource() = default;
 
 protected:
   struct DetachedPipelineState
@@ -284,12 +287,12 @@ protected:
 
   static GstFlowReturn onNewSampleThunk(GstAppSink * sink, gpointer user_data)
   {
-    return static_cast<BridgeOwnedVideoPipelineIngestor *>(user_data)->onNewSample(sink);
+    return static_cast<BridgeOwnedVideoPipelineFrameSource *>(user_data)->onNewSample(sink);
   }
 
   static GstBusSyncReply onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
   {
-    static_cast<BridgeOwnedVideoPipelineIngestor *>(user_data)->onBusMessage(message);
+    static_cast<BridgeOwnedVideoPipelineFrameSource *>(user_data)->onBusMessage(message);
     return GST_BUS_PASS;
   }
 
@@ -360,11 +363,11 @@ protected:
     }
 
     GstAppSinkCallbacks callbacks{};
-    callbacks.new_sample = &BridgeOwnedVideoPipelineIngestor::onNewSampleThunk;
+    callbacks.new_sample = &BridgeOwnedVideoPipelineFrameSource::onNewSampleThunk;
     gst_app_sink_set_callbacks(GST_APP_SINK(sink.get()), &callbacks, this, nullptr);
 
     GstBusPtr bus(gst_element_get_bus(pipeline.get()));
-    gst_bus_set_sync_handler(bus.get(), &BridgeOwnedVideoPipelineIngestor::onBusMessageThunk, this, nullptr);
+    gst_bus_set_sync_handler(bus.get(), &BridgeOwnedVideoPipelineFrameSource::onBusMessageThunk, this, nullptr);
 
     pipeline_ = std::move(pipeline);
     appsink_.reset(GST_APP_SINK(sink.release()));
@@ -435,7 +438,7 @@ protected:
   {}
 
   VideoStreamSpec spec_;
-  IVideoFrameSink & frame_sink_;
+  VideoFrameSink & frame_sink_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_recovery_pending_ = false;
@@ -579,15 +582,15 @@ private:
   }
 };
 
-class RawRosVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
+class RawRosVideoFrameSource final : public BridgeOwnedVideoPipelineFrameSource
 {
 public:
-  RawRosVideoIngestor(
+  RawRosVideoFrameSource(
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
-    IVideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
+    VideoFrameSink & frame_sink)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -646,7 +649,7 @@ private:
       .info();
 
     auto weak_self =
-      std::weak_ptr<RawRosVideoIngestor>(std::static_pointer_cast<RawRosVideoIngestor>(shared_from_this()));
+      std::weak_ptr<RawRosVideoFrameSource>(std::static_pointer_cast<RawRosVideoFrameSource>(shared_from_this()));
     subscription_ = node_.create_subscription<sensor_msgs::msg::Image>(
       spec_.ros_topic, resolved_qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr message) {
         if (const auto self = weak_self.lock()) {
@@ -764,15 +767,15 @@ private:
   std::optional<RawSourceConfig> raw_source_config_;
 };
 
-class CompressedRosVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
+class CompressedRosVideoFrameSource final : public BridgeOwnedVideoPipelineFrameSource
 {
 public:
-  CompressedRosVideoIngestor(
+  CompressedRosVideoFrameSource(
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * subscription_qos_config,
-    IVideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
+    VideoFrameSink & frame_sink)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
   , node_(node)
   , subscription_qos_config_(subscription_qos_config)
   {}
@@ -830,8 +833,8 @@ private:
       .field("override_pattern", resolved_qos.matched_override_pattern)
       .info();
 
-    auto weak_self = std::weak_ptr<CompressedRosVideoIngestor>(
-      std::static_pointer_cast<CompressedRosVideoIngestor>(shared_from_this()));
+    auto weak_self = std::weak_ptr<CompressedRosVideoFrameSource>(
+      std::static_pointer_cast<CompressedRosVideoFrameSource>(shared_from_this()));
     subscription_ = node_.create_subscription<sensor_msgs::msg::CompressedImage>(
       spec_.ros_topic, resolved_qos.qos, [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr message) {
         if (const auto self = weak_self.lock()) {
@@ -938,11 +941,11 @@ private:
   std::string compressed_format_;
 };
 
-class ConfiguredSourceVideoIngestor final : public BridgeOwnedVideoPipelineIngestor
+class ConfiguredSourceVideoFrameSource final : public BridgeOwnedVideoPipelineFrameSource
 {
 public:
-  ConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
-  : BridgeOwnedVideoPipelineIngestor(std::move(spec), frame_sink)
+  ConfiguredSourceVideoFrameSource(VideoStreamSpec spec, VideoFrameSink & frame_sink)
+  : BridgeOwnedVideoPipelineFrameSource(std::move(spec), frame_sink)
   {}
 
   void ensureRunning() override
@@ -953,7 +956,7 @@ public:
     }
 
     if (pipeline_ == nullptr) {
-      startConfiguredSourceIngestLocked();
+      startConfiguredSourcePipelineLocked();
     }
   }
 
@@ -974,7 +977,7 @@ public:
   }
 
 private:
-  void startConfiguredSourceIngestLocked()
+  void startConfiguredSourcePipelineLocked()
   {
     startPipelineLocked(composeBridgeOwnedVideoPipeline(spec_.ingress_fragment, spec_.transform_fragment));
     playPipelineLocked();
@@ -995,33 +998,34 @@ private:
 
   void restartAfterFailureLocked() override
   {
-    startConfiguredSourceIngestLocked();
+    startConfiguredSourcePipelineLocked();
   }
 };
 
 }  // namespace
 
-std::shared_ptr<IVideoIngestor> makeRawRosVideoIngestor(
+std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  IVideoFrameSink & frame_sink)
+  VideoFrameSink & frame_sink)
 {
-  return std::make_shared<RawRosVideoIngestor>(node, std::move(spec), subscription_qos_config, frame_sink);
+  return std::make_shared<RawRosVideoFrameSource>(node, std::move(spec), subscription_qos_config, frame_sink);
 }
 
-std::shared_ptr<IVideoIngestor> makeCompressedRosVideoIngestor(
+std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  IVideoFrameSink & frame_sink)
+  VideoFrameSink & frame_sink)
 {
-  return std::make_shared<CompressedRosVideoIngestor>(node, std::move(spec), subscription_qos_config, frame_sink);
+  return std::make_shared<CompressedRosVideoFrameSource>(node, std::move(spec), subscription_qos_config, frame_sink);
 }
 
-std::shared_ptr<IVideoIngestor> makeConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink)
+std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
+  VideoStreamSpec spec, VideoFrameSink & frame_sink)
 {
-  return std::make_shared<ConfiguredSourceVideoIngestor>(std::move(spec), frame_sink);
+  return std::make_shared<ConfiguredSourceVideoFrameSource>(std::move(spec), frame_sink);
 }
 
 }  // namespace livekit_ros2_bridge

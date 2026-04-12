@@ -20,7 +20,7 @@
 #include <vector>
 
 #include "room_session.hpp"
-#include "video_ingestor.hpp"
+#include "video_frame_source.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit
@@ -31,7 +31,9 @@ class VideoSource;
 namespace livekit_ros2_bridge
 {
 
-class VideoTrackPublisher final : public IVideoFrameSink
+// Owned by a VideoStreamRegistry runtime. The paired VideoFrameSource handles
+// input normalization and this type owns only the LiveKit publication side.
+class VideoTrackPublisher final : public VideoFrameSink
 {
 public:
   VideoTrackPublisher(RoomSession & session, VideoStreamSpec spec);

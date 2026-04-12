@@ -21,12 +21,14 @@
 #include <utility>
 
 #include "subscription_qos.hpp"
-#include "video_ingestor.hpp"
+#include "video_frame_source.hpp"
 #include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
 
+// Each runtime owns the source side and publication side for one resolved
+// stream: one VideoFrameSource feeds one VideoTrackPublisher.
 class VideoStreamRegistry::VideoStreamRuntime final
 {
 public:
@@ -48,26 +50,26 @@ public:
 
   std::string ensureRunning()
   {
-    std::shared_ptr<IVideoIngestor> ingestor;
+    std::shared_ptr<VideoFrameSource> frame_source;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (is_shutdown_) {
         throw std::runtime_error("Video stream is shut down.");
       }
 
-      if (!ingestor_) {
-        ingestor_ = createIngestorLocked();
+      if (!frame_source_) {
+        frame_source_ = createFrameSourceLocked();
       }
-      ingestor = ingestor_;
+      frame_source = frame_source_;
     }
 
-    ingestor->ensureRunning();
+    frame_source->ensureRunning();
     return spec_.track_name;
   }
 
   void shutdown()
   {
-    std::shared_ptr<IVideoIngestor> ingestor;
+    std::shared_ptr<VideoFrameSource> frame_source;
     std::unique_ptr<VideoTrackPublisher> video_track_publisher;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -76,12 +78,12 @@ public:
       }
 
       is_shutdown_ = true;
-      ingestor = std::move(ingestor_);
+      frame_source = std::move(frame_source_);
       video_track_publisher = std::move(video_track_publisher_);
     }
 
-    if (ingestor) {
-      ingestor->shutdown();
+    if (frame_source) {
+      frame_source->shutdown();
     }
     if (video_track_publisher) {
       video_track_publisher->shutdown();
@@ -89,16 +91,16 @@ public:
   }
 
 private:
-  std::shared_ptr<IVideoIngestor> createIngestorLocked()
+  std::shared_ptr<VideoFrameSource> createFrameSourceLocked()
   {
     if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
-      return makeConfiguredSourceVideoIngestor(spec_, *video_track_publisher_);
+      return makeConfiguredSourceVideoFrameSource(spec_, *video_track_publisher_);
     }
     if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
-      return makeRawRosVideoIngestor(node_, spec_, subscription_qos_config_, *video_track_publisher_);
+      return makeRawRosVideoFrameSource(node_, spec_, subscription_qos_config_, *video_track_publisher_);
     }
     if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
-      return makeCompressedRosVideoIngestor(node_, spec_, subscription_qos_config_, *video_track_publisher_);
+      return makeCompressedRosVideoFrameSource(node_, spec_, subscription_qos_config_, *video_track_publisher_);
     }
 
     throw std::runtime_error(
@@ -111,7 +113,7 @@ private:
   const SubscriptionQosConfig * subscription_qos_config_;
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  std::shared_ptr<IVideoIngestor> ingestor_;
+  std::shared_ptr<VideoFrameSource> frame_source_;
   std::unique_ptr<VideoTrackPublisher> video_track_publisher_;
 };
 

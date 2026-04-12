@@ -25,35 +25,38 @@
 namespace livekit_ros2_bridge
 {
 
-class IVideoFrameSink
+class VideoFrameSink
 {
 public:
-  virtual ~IVideoFrameSink() = default;
+  virtual ~VideoFrameSink() = default;
 
   virtual void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
 };
 
-class IVideoIngestor
+// VideoStreamRegistry's per-stream runtime owns one frame source on the input
+// side and wires it to a VideoTrackPublisher through this sink interface.
+class VideoFrameSource
 {
 public:
-  virtual ~IVideoIngestor() = default;
+  virtual ~VideoFrameSource() = default;
 
   virtual void ensureRunning() = 0;
   virtual void shutdown() = 0;
 };
 
-std::shared_ptr<IVideoIngestor> makeRawRosVideoIngestor(
+std::shared_ptr<VideoFrameSource> makeRawRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  IVideoFrameSink & frame_sink);
+  VideoFrameSink & frame_sink);
 
-std::shared_ptr<IVideoIngestor> makeCompressedRosVideoIngestor(
+std::shared_ptr<VideoFrameSource> makeCompressedRosVideoFrameSource(
   rclcpp::Node & node,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * subscription_qos_config,
-  IVideoFrameSink & frame_sink);
+  VideoFrameSink & frame_sink);
 
-std::shared_ptr<IVideoIngestor> makeConfiguredSourceVideoIngestor(VideoStreamSpec spec, IVideoFrameSink & frame_sink);
+std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
+  VideoStreamSpec spec, VideoFrameSink & frame_sink);
 
 }  // namespace livekit_ros2_bridge
