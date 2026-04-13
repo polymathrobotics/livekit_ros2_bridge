@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -83,6 +84,8 @@ struct ResolvedSubscriptionQos
   // application. They explain why auto resolution chose the weaker policy.
   bool mixed_reliability = false;
   bool mixed_durability = false;
+  // Number of publisher profiles considered during resolution.
+  std::size_t publisher_count = 0;
   // Populated whenever an override matches this topic, even if some axes stay
   // on `kAuto` and are filled from publisher QoS or the caller's base QoS.
   std::string override_id;

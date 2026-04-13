@@ -150,6 +150,35 @@ TEST(VideoProfilingTest, RegistryCollectsOnlyActiveStreamSummariesAndResetsThem)
   EXPECT_TRUE(registry.takeSummaries().empty());
 }
 
+TEST(VideoProfilingTest, RegistryReusesExistingProfilerForStreamKeyDespiteDifferentRequestedIdentity)
+{
+  test_support::ScopedRclcppInit init;
+  const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_reused_stream_key_trace.json");
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto active_spec = makeSpec();
+  auto reused_spec = makeSpec();
+  reused_spec.track_name = "configured.video.front_camera";
+  reused_spec.input_kind = VideoInputKind::ConfiguredSource;
+  reused_spec.ingest_mode = kConfiguredSourceIngestMode;
+  reused_spec.source_name = "front_camera";
+
+  const auto profiler = registry.getOrCreateProfiler(active_spec);
+  const auto reused_profiler = registry.getOrCreateProfiler(reused_spec);
+  ASSERT_NE(profiler, nullptr);
+  ASSERT_EQ(reused_profiler, profiler);
+
+  reused_profiler->notePipelineStart();
+
+  const auto summaries = registry.takeSummaries();
+  ASSERT_EQ(summaries.size(), 1U);
+  const auto & summary = summaries.front();
+  EXPECT_EQ(summary.stream_key, active_spec.stream_key);
+  EXPECT_EQ(summary.track_name, active_spec.track_name);
+  EXPECT_EQ(summary.input_kind, videoInputKindToString(active_spec.input_kind));
+  EXPECT_EQ(summary.ingest_mode, active_spec.ingest_mode);
+  EXPECT_EQ(summary.pipeline_start_count, 1U);
+}
+
 TEST(VideoProfilingTest, SummaryTracksTimestampRejectionsWithoutRecordingLatencyMetrics)
 {
   test_support::ScopedRclcppInit init;

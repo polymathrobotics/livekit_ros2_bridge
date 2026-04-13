@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <exception>
 #include <functional>
@@ -25,9 +26,12 @@
 #include <type_traits>
 #include <utility>
 
+#include "rclcpp/clock.hpp"
+#include "rclcpp/logger.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
+#include "utils/log_event.hpp"
 #include "utils/reentrant_quiesce_gate.hpp"
 
 namespace livekit_ros2_bridge
@@ -76,13 +80,22 @@ public:
       }
     };
 
+    bool rejected = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (shutdown_) {
-        task.cancel();
-        return future;
+        rejected = true;
+      } else {
+        tasks_.push(std::move(task));
       }
-      tasks_.push(std::move(task));
+    }
+
+    if (rejected) {
+      LogEvent(logger_, "executor_task_rejected")
+        .field("reason", "shutdown")
+        .warnThrottle(*log_clock_, kRejectedSubmitWarningThrottlePeriod);
+      task.cancel();
+      return future;
     }
 
     wake();
@@ -106,6 +119,8 @@ private:
   void drain();
   void wake();
 
+  static constexpr auto kRejectedSubmitWarningThrottlePeriod = std::chrono::seconds(5);
+
   // Protects shutdown_ and all state shared between submit(), wake(), drain(),
   // and shutdown().
   std::mutex mutex_;
@@ -117,6 +132,8 @@ private:
   // node interfaces it was added to.
   rclcpp::CallbackGroup::SharedPtr default_callback_group_;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
+  rclcpp::Logger logger_;
+  rclcpp::Clock::SharedPtr log_clock_;
   // Once set, new submissions are rejected and only work already running in
   // drain() is allowed to finish.
   bool shutdown_ = false;

@@ -80,6 +80,7 @@ constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
 constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr char kAnyServiceLogValue[] = "*";
+constexpr char kInflightLimitReachedError[] = "Requester identity service call limit reached.";
 const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
 using FailureCache = LruCache<std::string, std::exception_ptr>;
 
@@ -98,6 +99,35 @@ const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * i
     throw std::runtime_error("Introspection type support handle is null");
   }
   return *static_cast<const MessageMembers *>(introspection_type_support->data);
+}
+
+LogEvent & addServiceCallIdentityFields(
+  LogEvent & event, const std::string & service, const std::string & interface_type, const std::string & requester)
+{
+  event.fieldOr("service", service);
+  if (!interface_type.empty()) {
+    event.field("interface_type", interface_type);
+  }
+  event.fieldOr("requester_identity", requester);
+  return event;
+}
+
+void logServiceCallRejected(
+  const ServiceCallRequest & request,
+  const std::string & requester,
+  const std::string & resolved_interface_type,
+  const char * reason,
+  const std::exception & exc,
+  bool include_error = true)
+{
+  LogEvent event(kRosServiceCallerLogger, "service_call_rejected");
+  const std::string & logged_interface_type =
+    resolved_interface_type.empty() ? request.interface_type : resolved_interface_type;
+  addServiceCallIdentityFields(event.field("reason", reason), request.service, logged_interface_type, requester);
+  if (include_error) {
+    event.field("error", exc.what());
+  }
+  event.warn();
 }
 
 class MessageStorage
@@ -355,25 +385,21 @@ struct RosServiceCaller::Impl
     }
 
     if (warn) {
-      LogEvent(kRosServiceCallerLogger, "service_calls_settled")
-        .field("reason", reason)
-        .field("action", "fail_futures")
-        .field("service", kAnyServiceLogValue)
-        .field("interface_type", kAnyServiceLogValue)
-        .field("requester_identity", requester)
-        .field("count", count)
-        .warn();
+      LogEvent event(kRosServiceCallerLogger, "service_calls_settled");
+      event.field("reason", reason).field("count", count);
+      if (requester != kAnyServiceLogValue) {
+        event.field("requester_identity", requester);
+      }
+      event.warn();
       return;
     }
 
-    LogEvent(kRosServiceCallerLogger, "service_calls_settled")
-      .field("reason", reason)
-      .field("action", "fail_futures")
-      .field("service", kAnyServiceLogValue)
-      .field("interface_type", kAnyServiceLogValue)
-      .field("requester_identity", requester)
-      .field("count", count)
-      .info();
+    LogEvent event(kRosServiceCallerLogger, "service_calls_settled");
+    event.field("reason", reason).field("count", count);
+    if (requester != kAnyServiceLogValue) {
+      event.field("requester_identity", requester);
+    }
+    event.info();
   }
 
   template <typename SettlePromiseFn>
@@ -468,7 +494,7 @@ void RosServiceCaller::Impl::reserveInflightSlot(const std::string & requester)
   }
   const int current = inflight_counts[requester];
   if (current >= kMaxInflightPerRequester) {
-    throw std::runtime_error("Requester identity service call limit reached.");
+    throw std::runtime_error(kInflightLimitReachedError);
   }
   inflight_counts[requester] = current + 1;
 }
@@ -549,7 +575,6 @@ void RosServiceCaller::Impl::drainResponses()
             .field("reason", "late_or_unknown_pending_call")
             .field("service", entry->service_name)
             .field("interface_type", entry->interface_type)
-            .field("sequence_number", static_cast<long long>(header.sequence_number))
             .field("count", count)
             .warn();
         }
@@ -608,19 +633,35 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   try {
     if (impl_->shutdown_flag) {
-      throw std::runtime_error("Service caller is shut down.");
+      const std::runtime_error exc("Service caller is shut down.");
+      logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
+      throw exc;
     }
     if (requester.empty()) {
-      throw std::invalid_argument("requester_identity is required");
+      const std::invalid_argument exc("requester_identity is required");
+      logServiceCallRejected(request, requester, interface_type, "missing_requester_identity", exc, false);
+      throw exc;
     }
 
-    interface_type =
-      request.interface_type.empty()
-        ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
-        : request.interface_type;
+    try {
+      interface_type =
+        request.interface_type.empty()
+          ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
+          : request.interface_type;
+    } catch (const std::exception & exc) {
+      logServiceCallRejected(request, requester, interface_type, "interface_type_resolution_failed", exc);
+      throw;
+    }
     // Reserve quota before client lookup, request deserialization, or send.
     // pending_calls takes ownership only after the entry is inserted.
-    Impl::InflightReservation inflight_reservation(*impl_, requester);
+    Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
+      try {
+        return Impl::InflightReservation(*impl_, requester);
+      } catch (const std::runtime_error & exc) {
+        logServiceCallRejected(request, requester, interface_type, "requester_inflight_limit_reached", exc, false);
+        throw;
+      }
+    }();
     PendingKey key;
     try {
       CachedServiceClient * client = nullptr;
@@ -648,24 +689,17 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
       key = PendingKey{client, sequence_number};
     } catch (const std::exception & exc) {
-      LogEvent(kRosServiceCallerLogger, "service_call_failed")
-        .field("reason", "start_failed")
-        .field("service", request.service)
-        .field("interface_type", interface_type)
-        .field("requester_identity", requester)
-        .field("action", "fail_future")
+      LogEvent event(kRosServiceCallerLogger, "service_call_failed");
+      addServiceCallIdentityFields(event.field("reason", "start_failed"), request.service, interface_type, requester)
         .field("error", exc.what())
         .error();
       throw;
     }
 
     if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
-      LogEvent(kRosServiceCallerLogger, "service_call_failed")
-        .field("reason", "duplicate_pending_key")
-        .field("service", request.service)
-        .field("interface_type", interface_type)
-        .field("requester_identity", requester)
-        .field("action", "fail_future")
+      LogEvent event(kRosServiceCallerLogger, "service_call_failed");
+      addServiceCallIdentityFields(
+        event.field("reason", "duplicate_pending_key"), request.service, interface_type, requester)
         .error();
       throw std::runtime_error("Duplicate pending service call key.");
     }

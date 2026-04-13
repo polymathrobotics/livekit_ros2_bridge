@@ -18,10 +18,19 @@
 #include <string>
 #include <vector>
 
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "video_stream_instance.hpp"
 
 namespace livekit_ros2_bridge
 {
+
+namespace
+{
+
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
+
+}  // namespace
 
 VideoStreamRegistry::VideoStreamRegistry(
   rclcpp::Node & node,
@@ -45,6 +54,10 @@ std::string VideoStreamRegistry::start(const VideoStreamSpec & spec)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
+      LogEvent(kLogger, "video_stream_registry_start_rejected")
+        .field("stream_key", spec.stream_key)
+        .field("reason", "shutdown")
+        .warn();
       throw std::runtime_error("Video stream registry is shut down.");
     }
 
@@ -87,6 +100,7 @@ void VideoStreamRegistry::stop(const std::string & stream_key)
 void VideoStreamRegistry::shutdown()
 {
   std::vector<std::shared_ptr<VideoStreamInstance>> instances;
+  std::size_t stream_count = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -94,11 +108,16 @@ void VideoStreamRegistry::shutdown()
     }
     // Mark shutdown before detaching entries so concurrent `start()` calls fail during teardown.
     is_shutdown_ = true;
-    instances.reserve(instances_.size());
+    stream_count = instances_.size();
+    instances.reserve(stream_count);
     for (auto & entry : instances_) {
       instances.push_back(std::move(entry.second));
     }
     instances_.clear();
+  }
+
+  if (stream_count > 0) {
+    LogEvent(kLogger, "video_stream_registry_shutdown_begin").field("stream_count", stream_count).info();
   }
 
   // Preserve ownership after clearing the map because shutdown touches external ROS and LiveKit

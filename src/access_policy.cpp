@@ -29,6 +29,20 @@ namespace
 const auto kAccessPolicyLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
 constexpr char kMatchAllEntry[] = "*";
 
+const char * accessOperationLogName(AccessOperation operation)
+{
+  switch (operation) {
+    case AccessOperation::Publish:
+      return "publish";
+    case AccessOperation::Subscribe:
+      return "subscribe";
+    case AccessOperation::CallService:
+      return "call_service";
+  }
+
+  return "unknown";
+}
+
 }  // namespace
 
 bool AccessPolicy::RuleEntries::matches(std::string_view name) const
@@ -73,7 +87,6 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
   // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
   // trimming, normalization, wildcard handling, and duplicate collapse.
   LogEvent event(kAccessPolicyLogger, "access_policy_loaded");
-  event.field("phase", "startup");
   event.field("publish_allow_all", publish_allow_.matches_all)
     .field("publish_allow_patterns", publish_allow_.patterns.size())
     .field("publish_deny_all", publish_deny_.matches_all)
@@ -93,6 +106,10 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_n
 {
   const std::string name = normalizeRosResourceName(resource_name);
   if (name.empty()) {
+    LogEvent(kAccessPolicyLogger, "access_check_rejected")
+      .field("operation", accessOperationLogName(operation))
+      .field("reason", "empty_resource_name")
+      .warn();
     return false;
   }
 

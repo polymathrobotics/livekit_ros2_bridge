@@ -14,6 +14,7 @@
 
 #include "payloads/stream_control_payloads.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -24,6 +25,8 @@
 #include "nlohmann/json.hpp"
 #include "payloads/json_object_parser.hpp"
 #include "protocol.hpp"
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
@@ -37,7 +40,49 @@ namespace stream_control_payloads
 namespace
 {
 
-int clampJsonIntegerToInt(const nlohmann::json & value, const char * error_message)
+constexpr auto kNormalizationLogThrottlePeriod = std::chrono::seconds(5);
+const auto kLogger = rclcpp::get_logger("stream_control_payloads");
+
+enum class IntegerClampBoundary
+{
+  kNone,
+  kIntMin,
+  kIntMax,
+};
+
+struct ClampedJsonInteger
+{
+  int value;
+  IntegerClampBoundary boundary = IntegerClampBoundary::kNone;
+};
+
+struct PreferredIntervalParseResult
+{
+  std::optional<int> interval_ms;
+  IntegerClampBoundary clamp_boundary = IntegerClampBoundary::kNone;
+};
+
+rclcpp::Clock & logClock()
+{
+  static rclcpp::Clock clock(RCL_STEADY_TIME);
+  return clock;
+}
+
+const char * integerClampBoundaryString(IntegerClampBoundary boundary)
+{
+  switch (boundary) {
+    case IntegerClampBoundary::kNone:
+      return "none";
+    case IntegerClampBoundary::kIntMin:
+      return "int_min";
+    case IntegerClampBoundary::kIntMax:
+      return "int_max";
+  }
+
+  return "unknown";
+}
+
+ClampedJsonInteger clampJsonIntegerToInt(const nlohmann::json & value, const char * error_message)
 {
   if (!value.is_number_integer()) {
     throw std::invalid_argument(error_message);
@@ -48,27 +93,30 @@ int clampJsonIntegerToInt(const nlohmann::json & value, const char * error_messa
   if (value.is_number_unsigned()) {
     const auto raw_interval = value.get<std::uint64_t>();
     const auto max_interval = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
-    return raw_interval > max_interval ? std::numeric_limits<int>::max() : static_cast<int>(raw_interval);
+    if (raw_interval > max_interval) {
+      return {std::numeric_limits<int>::max(), IntegerClampBoundary::kIntMax};
+    }
+    return {static_cast<int>(raw_interval), IntegerClampBoundary::kNone};
   }
 
   const auto raw_interval = value.get<std::int64_t>();
   const auto min_interval = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max_interval = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw_interval < min_interval) {
-    return std::numeric_limits<int>::min();
+    return {std::numeric_limits<int>::min(), IntegerClampBoundary::kIntMin};
   }
   if (raw_interval > max_interval) {
-    return std::numeric_limits<int>::max();
+    return {std::numeric_limits<int>::max(), IntegerClampBoundary::kIntMax};
   }
 
-  return static_cast<int>(raw_interval);
+  return {static_cast<int>(raw_interval), IntegerClampBoundary::kNone};
 }
 
-std::optional<int> parsePreferredIntervalMs(const nlohmann::json & entry)
+PreferredIntervalParseResult parsePreferredIntervalMs(const nlohmann::json & entry)
 {
   const auto delivery_preferences = entry.find("delivery_preferences");
   if (delivery_preferences == entry.end()) {
-    return std::nullopt;
+    return {};
   }
 
   if (!delivery_preferences->is_object()) {
@@ -77,15 +125,16 @@ std::optional<int> parsePreferredIntervalMs(const nlohmann::json & entry)
 
   const auto interval_field = delivery_preferences->find("interval_ms");
   if (interval_field == delivery_preferences->end()) {
-    return std::nullopt;
+    return {};
   }
 
-  const int interval_ms = clampJsonIntegerToInt(*interval_field, "delivery_preferences.interval_ms must be an integer");
+  const auto interval = clampJsonIntegerToInt(*interval_field, "delivery_preferences.interval_ms must be an integer");
+  const int interval_ms = interval.value;
   if (interval_ms == 0) {
-    return std::nullopt;
+    return {};
   }
 
-  return interval_ms;
+  return {interval_ms, interval.boundary};
 }
 
 SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
@@ -144,7 +193,15 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 
     SubscriptionDemand demand;
     demand.target = parseSubscriptionTarget(entry);
-    demand.preferred_interval_ms = parsePreferredIntervalMs(entry);
+    const auto preferred_interval = parsePreferredIntervalMs(entry);
+    demand.preferred_interval_ms = preferred_interval.interval_ms;
+    if (preferred_interval.clamp_boundary != IntegerClampBoundary::kNone) {
+      LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
+        .field("kind", subscriptionTargetKindString(demand.target.kind))
+        .field("name", demand.target.name)
+        .field("boundary", integerClampBoundaryString(preferred_interval.clamp_boundary))
+        .warnThrottle(logClock(), kNormalizationLogThrottlePeriod);
+    }
 
     // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and
     // configured_source identifiers may share the same text, so name alone would alias
@@ -201,6 +258,11 @@ nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status)
       return body;
   }
 
+  LogEvent(kLogger, "subscription_status_serialize_failed")
+    .field("kind", subscriptionTargetKindString(status.target.kind))
+    .field("name", status.target.name)
+    .field("delivery_kind", static_cast<int>(status.delivery_kind))
+    .error();
   throw std::invalid_argument("subscription status delivery kind is invalid");
 }
 }  // namespace stream_control_payloads

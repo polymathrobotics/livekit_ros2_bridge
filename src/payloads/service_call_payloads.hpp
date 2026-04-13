@@ -15,8 +15,10 @@
 #pragma once
 
 #include <cstdint>
+#include <exception>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace livekit_ros2_bridge
@@ -47,6 +49,11 @@ namespace service_call_payloads
 /// parser. Throws `std::invalid_argument` with caller-fixable validation text that the RPC layer
 /// surfaces as an invalid-request error.
 ServiceCallRequest parse(const std::string & payload);
+
+/// Return the request boundary associated with a service-call validation error when available.
+/// This lets higher layers add a precise `request_field` log field without parsing free-form
+/// human-readable exception text.
+std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 
 /// Serialize a successful service-call response as
 /// `{ "ok": true, "service": { "name", "interface_type" }, "response": <cdr>, "elapsed_ms": ... }`.

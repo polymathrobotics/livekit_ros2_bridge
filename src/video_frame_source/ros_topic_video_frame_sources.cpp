@@ -123,19 +123,78 @@ GstBufferPtr makeStampedGstBuffer(
 
 void logResolvedSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscriptionQos & qos)
 {
-  LogEvent(kLogger, "subscription_qos_resolved")
-    .field("resource", spec.ros_topic)
-    .field("kind", "topic")
+  LogEvent event(kLogger, "subscription_qos_resolved");
+  event.field("resource", spec.ros_topic)
     .field("delivery", "video")
     .field("interface_type", spec.interface_type)
+    .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))
     .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
-    .field("used_publisher_qos", qos.used_publisher_qos)
-    .field("mixed_reliability", qos.mixed_reliability)
-    .field("mixed_durability", qos.mixed_durability)
-    .field("override_id", qos.override_id)
-    .field("override_pattern", qos.override_pattern)
+    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()));
+  if (qos.used_publisher_qos) {
+    event.field("used_publisher_qos", true);
+  }
+  if (qos.mixed_reliability) {
+    event.field("mixed_reliability", true);
+  }
+  if (qos.mixed_durability) {
+    event.field("mixed_durability", true);
+  }
+  if (!qos.override_id.empty()) {
+    event.field("override_id", qos.override_id);
+  }
+  if (!qos.override_pattern.empty()) {
+    event.field("override_pattern", qos.override_pattern);
+  }
+  event.info();
+}
+
+const char * gstVideoFormatName(GstVideoFormat format)
+{
+  const char * format_name = gst_video_format_to_string(format);
+  return format_name != nullptr ? format_name : "unknown";
+}
+
+void logRawInputLayoutChanged(const VideoStreamSpec & spec, const FrameLayout & previous, const FrameLayout & current)
+{
+  LogEvent event(kLogger, "video_stream_input_layout_changed");
+  event.field("stream_key", spec.stream_key).field("topic", spec.ros_topic);
+  if (previous.width != current.width) {
+    event.field("previous_width", previous.width).field("width", current.width);
+  }
+  if (previous.height != current.height) {
+    event.field("previous_height", previous.height).field("height", current.height);
+  }
+  if (previous.stride != current.stride) {
+    event.field("previous_stride", previous.stride).field("stride", current.stride);
+  }
+  if (previous.format != current.format) {
+    event.field("previous_format", gstVideoFormatName(previous.format))
+      .field("format", gstVideoFormatName(current.format));
+  }
+  event.info();
+}
+
+const char * compressedImageCodecString(CompressedImageCodec codec)
+{
+  switch (codec) {
+    case CompressedImageCodec::kJpeg:
+      return "jpeg";
+    case CompressedImageCodec::kPng:
+      return "png";
+    default:
+      return "unknown";
+  }
+}
+
+void logCompressedInputCodecChanged(
+  const VideoStreamSpec & spec, CompressedImageCodec previous, CompressedImageCodec current)
+{
+  LogEvent(kLogger, "video_stream_input_codec_changed")
+    .field("stream_key", spec.stream_key)
+    .field("topic", spec.ros_topic)
+    .field("previous_codec", compressedImageCodecString(previous))
+    .field("codec", compressedImageCodecString(current))
     .info();
 }
 
@@ -175,13 +234,6 @@ void RawRosVideoFrameSource::start()
           self->onImage(image);
         }
       });
-
-    LogEvent(kLogger, "video_stream_subscription_started")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .field("topic", spec_.ros_topic)
-      .field("interface_type", spec_.interface_type)
-      .info();
   }
 }
 
@@ -219,17 +271,6 @@ void RawRosVideoFrameSource::onImage(const sensor_msgs::msg::Image::ConstSharedP
     if (profiler_ != nullptr) {
       profiler_->noteIngress(ingress_time, source_timestamp_us);
     }
-    if (!first_input_logged_) {
-      LogEvent(kLogger, "video_stream_input_received")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("encoding", image->encoding)
-        .field("width", image->width)
-        .field("height", image->height)
-        .field("step", image->step)
-        .info();
-      first_input_logged_ = true;
-    }
 
     const GstVideoFormat format = gstFormatForRosEncoding(image->encoding);
     if (format == GST_VIDEO_FORMAT_UNKNOWN) {
@@ -243,10 +284,13 @@ void RawRosVideoFrameSource::onImage(const sensor_msgs::msg::Image::ConstSharedP
     layout.stride = image->step;
     // Raw appsrc caps are fixed when the pipeline starts. A frame-shape or
     // stride change is treated as a stream reconfiguration and forces rebuild.
-    if (
-      !frame_layout_.has_value() || frame_layout_->width != layout.width || frame_layout_->height != layout.height ||
-      frame_layout_->format != layout.format || frame_layout_->stride != layout.stride || pipeline_ == nullptr)
-    {
+    const bool layout_changed =
+      frame_layout_.has_value() && (frame_layout_->width != layout.width || frame_layout_->height != layout.height ||
+                                    frame_layout_->format != layout.format || frame_layout_->stride != layout.stride);
+    if (layout_changed) {
+      logRawInputLayoutChanged(spec_, *frame_layout_, layout);
+    }
+    if (!frame_layout_.has_value() || layout_changed || pipeline_ == nullptr) {
       auto handles = takePipelineLocked();
       teardown(handles.pipeline, handles.appsrc, handles.appsink);
       startLocked(layout);
@@ -351,13 +395,6 @@ void CompressedRosVideoFrameSource::start()
           self->onImage(image);
         }
       });
-
-    LogEvent(kLogger, "video_stream_subscription_started")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .field("topic", spec_.ros_topic)
-      .field("interface_type", spec_.interface_type)
-      .info();
   }
 }
 
@@ -395,15 +432,6 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
     if (profiler_ != nullptr) {
       profiler_->noteIngress(ingress_time, source_timestamp_us);
     }
-    if (!first_input_logged_) {
-      LogEvent(kLogger, "video_stream_input_received")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("format", image->format)
-        .field("bytes", image->data.size())
-        .info();
-      first_input_logged_ = true;
-    }
 
     const auto codec = parseCompressedImageCodec(image->format);
     if (!codec.has_value()) {
@@ -412,6 +440,10 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
 
     // The decoder chain differs per codec (`jpegdec` vs `pngdec`), so the
     // pipeline is recreated whenever the advertised codec changes.
+    const bool codec_changed = codec_.has_value() && codec_ != codec;
+    if (codec_changed) {
+      logCompressedInputCodecChanged(spec_, *codec_, *codec);
+    }
     if (codec_ != codec || pipeline_ == nullptr) {
       auto handles = takePipelineLocked();
       teardown(handles.pipeline, handles.appsrc, handles.appsink);

@@ -15,6 +15,7 @@
 #include "payloads/resource_list_payloads.hpp"
 
 #include <cstdint>
+#include <stdexcept>
 
 #include "nlohmann/json.hpp"
 #include "payloads/json_object_parser.hpp"
@@ -29,6 +30,28 @@ namespace
 
 constexpr char kInvalidLimitMessage[] = "limit must be a positive integer";
 
+class ResourceListInvalidArgument final : public std::invalid_argument
+{
+public:
+  ResourceListInvalidArgument(std::string_view field_name, const char * message)
+  : std::invalid_argument(message)
+  , field_name_(field_name)
+  {}
+
+  std::string_view fieldName() const noexcept
+  {
+    return field_name_;
+  }
+
+private:
+  std::string_view field_name_;
+};
+
+[[noreturn]] void throwInvalidRequestField(std::string_view field_name, const char * message)
+{
+  throw ResourceListInvalidArgument(field_name, message);
+}
+
 }  // namespace
 
 namespace resource_list_payloads
@@ -36,29 +59,48 @@ namespace resource_list_payloads
 
 ResourceListRequest parse(const std::string & request_payload)
 {
-  const Json request_body =
-    parseJsonObject(request_payload, "Invalid JSON in list request", "List request must be a JSON object");
+  Json request_body;
+  try {
+    request_body =
+      parseJsonObject(request_payload, "Invalid JSON in list request", "List request must be a JSON object");
+  } catch (const std::invalid_argument & exc) {
+    throw ResourceListInvalidArgument("payload", exc.what());
+  }
 
   ResourceListRequest request;
   // Normalize blank and null queries to "no filter".
-  request.query = parseOptionalNonEmptyTrimmedStringField(request_body, "query", "query must be a string", true);
+  try {
+    request.query = parseOptionalNonEmptyTrimmedStringField(request_body, "query", "query must be a string", true);
+  } catch (const std::invalid_argument & exc) {
+    throw ResourceListInvalidArgument("query", exc.what());
+  }
+
   const auto limit_it = request_body.find("limit");
   if (limit_it != request_body.end() && !limit_it->is_null()) {
     if (!limit_it->is_number_integer()) {
-      throw std::invalid_argument(kInvalidLimitMessage);
+      throwInvalidRequestField("limit", kInvalidLimitMessage);
     }
 
     // Parse into a signed type first so negative JSON integers are rejected before converting to
     // the unsigned storage used by `ResourceListRequest::limit`.
     const auto limit = limit_it->get<std::int64_t>();
     if (limit <= 0) {
-      throw std::invalid_argument(kInvalidLimitMessage);
+      throwInvalidRequestField("limit", kInvalidLimitMessage);
     }
 
     request.limit = static_cast<std::size_t>(limit);
   }
 
   return request;
+}
+
+std::optional<std::string_view> invalidRequestField(const std::exception & exc)
+{
+  if (const auto * resource_list_error = dynamic_cast<const ResourceListInvalidArgument *>(&exc)) {
+    return resource_list_error->fieldName();
+  }
+
+  return std::nullopt;
 }
 
 std::string serializeServiceList(const std::vector<ResourceListEntry> & entries)

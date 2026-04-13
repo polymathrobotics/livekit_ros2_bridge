@@ -52,40 +52,74 @@ public:
     stream_ << std::boolalpha << "event=" << event_name;
   }
 
+  LogEvent(const LogEvent &) = delete;
+  LogEvent & operator=(const LogEvent &) = delete;
+  LogEvent(LogEvent &&) = default;
+  LogEvent & operator=(LogEvent &&) = default;
+
   template <typename T>
-  LogEvent & field(std::string_view key, const T & value)
+  LogEvent & field(std::string_view key, const T & value) &
   {
-    stream_ << " " << key << "=" << value;
+    appendField(key, value);
     return *this;
   }
 
-  LogEvent & field(std::string_view key, const char * value)
+  template <typename T>
+  LogEvent && field(std::string_view key, const T & value) &&
   {
-    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
+    appendField(key, value);
+    return std::move(*this);
+  }
+
+  LogEvent & field(std::string_view key, const char * value) &
+  {
+    appendField(key, value);
     return *this;
   }
 
-  LogEvent & fieldOr(std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent && field(std::string_view key, const char * value) &&
   {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
+    appendField(key, value);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldOr(
+    std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &
+  {
+    appendFieldOr(key, value, fallback);
     return *this;
   }
 
-  LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent && fieldOr(
+    std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &&
   {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
+    appendFieldOr(key, value, fallback);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &
+  {
+    appendFieldOr(key, value, fallback);
     return *this;
   }
 
-  LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue)
+  LogEvent && fieldOr(
+    std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &&
   {
-    stream_ << " " << key << "=";
-    if (value == nullptr || value[0] == '\0') {
-      stream_ << fallback;
-    } else {
-      stream_ << value;
-    }
+    appendFieldOr(key, value, fallback);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &
+  {
+    appendFieldOr(key, value, fallback);
     return *this;
+  }
+
+  LogEvent && fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &&
+  {
+    appendFieldOr(key, value, fallback);
+    return std::move(*this);
   }
 
   std::string str() const
@@ -122,6 +156,37 @@ public:
   }
 
 private:
+  template <typename T>
+  void appendField(std::string_view key, const T & value)
+  {
+    stream_ << " " << key << "=" << value;
+  }
+
+  void appendField(std::string_view key, const char * value)
+  {
+    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
+  }
+
+  void appendFieldOr(std::string_view key, const std::string & value, std::string_view fallback)
+  {
+    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
+  }
+
+  void appendFieldOr(std::string_view key, std::string_view value, std::string_view fallback)
+  {
+    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
+  }
+
+  void appendFieldOr(std::string_view key, const char * value, std::string_view fallback)
+  {
+    stream_ << " " << key << "=";
+    if (value == nullptr || value[0] == '\0') {
+      stream_ << fallback;
+    } else {
+      stream_ << value;
+    }
+  }
+
   rclcpp::Logger logger_;
   std::ostringstream stream_;
 };

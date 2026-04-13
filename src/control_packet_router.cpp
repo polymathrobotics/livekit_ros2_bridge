@@ -101,9 +101,7 @@ void ControlPacketRouter::logRejection(
   const IncomingControlPacket & packet, const char * reason, const char * error) const
 {
   LogEvent event(logger_, "control_packet_rejected");
-  event.field("reason", reason)
-    .field("control_topic", packet.control_topic)
-    .fieldOr("requester_identity", packet.requester_identity);
+  event.field("reason", reason).fieldOr("requester_identity", packet.requester_identity);
   if (error != nullptr) {
     event.field("error", error);
   }

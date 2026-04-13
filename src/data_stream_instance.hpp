@@ -68,10 +68,10 @@ public:
   // Starts one LiveKit publish attempt when this instance is idle or recovering from a failed
   // publish. The registry-supplied generation is echoed back through completion callbacks so
   // stale async results from an older lifetime can be ignored.
-  void start(const std::string & requester_identity, std::size_t generation);
+  void start(std::size_t generation);
   // Re-publishes the same deterministic track name without recreating the ROS subscription so a
   // rejoined participant session can observe the track again.
-  void republish(const std::string & requester_identity, std::size_t generation);
+  void republish(std::size_t generation);
   // Accepts publish completion only for the currently pending generation. Delayed completions
   // from a prior publish, reset, or replacement instance are rejected as stale.
   bool completePublish(std::size_t generation);

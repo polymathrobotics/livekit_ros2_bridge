@@ -16,7 +16,6 @@
 
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 
 #include "video_profiling.hpp"
@@ -74,12 +73,6 @@ public:
   void shutdown();
 
 private:
-  struct TrackDimensions
-  {
-    int width = 0;
-    int height = 0;
-  };
-
   rclcpp::Node & node_;
   VideoStreamSpec spec_;
   // Borrowed bridge-wide QoS overrides; the owner must outlive this instance.
@@ -88,9 +81,9 @@ private:
   // Guards shutdown state and protects owned runtime handles across public methods and callbacks.
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  // Set only while a track is currently published so final unpublish logging can
-  // report the last advertised dimensions without reaching back into publisher_.
-  std::optional<TrackDimensions> published_dimensions_;
+  // Tracks whether this instance currently has a published track so duplicate
+  // unpublish callbacks stay quiet during teardown.
+  bool has_published_track_ = false;
   // Created on first start() so unused streams do not allocate subscriptions or pipelines.
   std::shared_ptr<VideoFrameSource> source_;
   // Constructed eagerly because every frame source needs a stable sink/publisher reference.

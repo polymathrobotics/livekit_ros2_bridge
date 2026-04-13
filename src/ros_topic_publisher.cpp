@@ -36,6 +36,19 @@ constexpr std::size_t kDefaultPublisherCacheLimit = 50U;
 constexpr auto kRejectedPublishWarningThrottlePeriod = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("topic_publisher");
 
+LogEvent & addPublishRequestFields(
+  LogEvent & event,
+  const std::string & topic,
+  const std::string & requester_identity,
+  const std::string * interface_type = nullptr)
+{
+  event.field("topic", topic).field("requester_identity", requester_identity);
+  if (interface_type != nullptr) {
+    event.field("interface_type", *interface_type);
+  }
+  return event;
+}
+
 }  // namespace
 
 RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
@@ -55,22 +68,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   if (is_shutdown_.load()) {
     LogEvent event(kLogger, "publish_request_rejected");
-    event.field("reason", "shutdown")
-      .field("resource", "topics")
-      .field("topic", topic)
-      .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type);
+    addPublishRequestFields(event.field("reason", "shutdown"), topic, requester_identity);
     event.warnThrottle(*node_.get_clock(), kRejectedPublishWarningThrottlePeriod);
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
     LogEvent event(kLogger, "publish_request_rejected");
-    event.field("reason", "forbidden")
-      .field("resource", "topics")
-      .field("topic", topic)
-      .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type);
+    addPublishRequestFields(event.field("reason", "forbidden"), topic, requester_identity);
     event.warn();
     return;
   }
@@ -99,11 +104,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     }
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "publish_request_rejected");
-    event.field("reason", "invalid_request")
-      .field("resource", "topics")
-      .field("topic", topic)
-      .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type);
+    addPublishRequestFields(
+      event.field("reason", "invalid_request"), topic, requester_identity, &command.interface_type);
     event.field("error", exc.what()).warn();
     return;
   }
@@ -129,6 +131,9 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     // before_publish_handler_ can trigger shutdown after publisher creation, so
     // recheck before sending bytes.
     if (is_shutdown_.load()) {
+      LogEvent event(kLogger, "publish_request_dropped");
+      addPublishRequestFields(event.field("reason", "shutdown"), topic, requester_identity);
+      event.warn();
       return;
     }
 
@@ -155,18 +160,13 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
           .field("topic", topic)
           .field("evicted_topic", evicted->key)
           .field("count", count)
-          .field("policy", "lru")
           .field("max_topics", static_cast<int>(cache_limit_))
           .warn();
       }
     }
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "publish_request_failed");
-    event.field("reason", "internal")
-      .field("resource", "topics")
-      .field("topic", topic)
-      .field("requester_identity", requester_identity)
-      .field("interface_type", interface_type);
+    addPublishRequestFields(event.field("reason", "internal"), topic, requester_identity, &interface_type);
     event.field("error", exc.what()).error();
     return;
   }
@@ -183,7 +183,6 @@ void RosTopicPublisher::shutdown()
   const std::size_t cached_count = cache_.size();
   LogEvent(kLogger, "topic_publisher_state_changed")
     .field("reason", "shutdown")
-    .field("action", "clear_cached_publishers")
     .field("cached_publishers", cached_count)
     .info();
 

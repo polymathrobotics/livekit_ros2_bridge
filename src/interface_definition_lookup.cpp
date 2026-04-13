@@ -26,6 +26,7 @@
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "ament_index_cpp/version.h"
+#include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
@@ -37,6 +38,7 @@ namespace
 constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 constexpr char kServiceDefinitionSeparator[] = "---";
 constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
+const auto kLogger = rclcpp::get_logger("interface_definition_lookup");
 
 const std::set<std::string> kPrimitiveTypes = {
   "bool",
@@ -160,6 +162,7 @@ ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interfac
 
   notifyLookupAttempt(interface_type);
 
+  const char * failure_reason = "lookup_runtime_error";
   try {
     const InterfaceTypeParts parts = InterfaceTypeParts::parse(interface_type);
 
@@ -167,6 +170,7 @@ ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interfac
     try {
       share_dir = getPackageShareDirCompat(parts.package);
     } catch (const std::exception &) {
+      failure_reason = "package_not_found";
       throw std::runtime_error("Package '" + parts.package + "' not found in ament index");
     }
 
@@ -174,17 +178,27 @@ ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interfac
       std::filesystem::path(share_dir) / parts.kind / (parts.name + "." + parts.kind);
     std::ifstream definition_file(definition_path);
     if (!definition_file.is_open()) {
+      failure_reason = "definition_file_unavailable";
       throw std::runtime_error("Cannot open interface definition file: " + definition_path.string());
     }
 
     std::ostringstream contents;
     contents << definition_file.rdbuf();
     return {parts.package, contents.str()};
-  } catch (const std::invalid_argument &) {
+  } catch (const std::invalid_argument & exc) {
     lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    LogEvent(kLogger, "interface_definition_lookup_rejected")
+      .field("interface_type", interface_type)
+      .field("error", exc.what())
+      .warn();
     throw;
-  } catch (const std::runtime_error &) {
+  } catch (const std::runtime_error & exc) {
     lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    LogEvent(kLogger, "interface_definition_lookup_failed")
+      .field("interface_type", interface_type)
+      .field("reason", failure_reason)
+      .field("error", exc.what())
+      .error();
     throw;
   }
 }

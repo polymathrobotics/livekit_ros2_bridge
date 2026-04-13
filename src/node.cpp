@@ -28,11 +28,26 @@
 namespace livekit_ros2_bridge
 {
 
+namespace
+{
+
+void logNodeStartupFailure(
+  const rclcpp::Logger & logger, const char * reason, const char * error, const std::string * room = nullptr)
+{
+  LogEvent event(logger, "node_startup_failed");
+  event.field("reason", reason);
+  if (room != nullptr) {
+    event.fieldOr("room", *room, "<unset>");
+  }
+  event.field("error", error).error();
+}
+
+}  // namespace
+
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   const auto logger = get_logger();
-  LogEvent(logger, "node_startup_begin").field("phase", "startup").info();
 
   RuntimeConfig config;
   std::string room;
@@ -42,18 +57,10 @@ Node::Node(const rclcpp::NodeOptions & options)
     // still attribute the error to the intended room.
     room = config.room_connection_config.room;
   } catch (const std::exception & exc) {
-    LogEvent(logger, "node_startup_failed")
-      .field("phase", "startup")
-      .field("reason", "runtime_config_load_failed")
-      .field("error", exc.what())
-      .error();
+    logNodeStartupFailure(logger, "runtime_config_load_failed", exc.what());
     throw;
   } catch (...) {
-    LogEvent(logger, "node_startup_failed")
-      .field("phase", "startup")
-      .field("reason", "runtime_config_load_failed")
-      .field("error", "unknown_exception")
-      .error();
+    logNodeStartupFailure(logger, "runtime_config_load_failed", "unknown_exception");
     throw;
   }
 
@@ -62,31 +69,19 @@ Node::Node(const rclcpp::NodeOptions & options)
   try {
     runtime_ = std::make_unique<Runtime>(*this, createRoomConnection(), std::move(config));
   } catch (const std::exception & exc) {
-    LogEvent(logger, "node_startup_failed")
-      .field("phase", "startup")
-      .field("reason", "runtime_initialization_failed")
-      .fieldOr("room", room, "<unset>")
-      .field("error", exc.what())
-      .error();
+    logNodeStartupFailure(logger, "runtime_initialization_failed", exc.what(), &room);
     throw;
   } catch (...) {
-    LogEvent(logger, "node_startup_failed")
-      .field("phase", "startup")
-      .field("reason", "runtime_initialization_failed")
-      .fieldOr("room", room, "<unset>")
-      .field("error", "unknown_exception")
-      .error();
+    logNodeStartupFailure(logger, "runtime_initialization_failed", "unknown_exception", &room);
     throw;
   }
 }
 
 Node::~Node()
 {
-  LogEvent(get_logger(), "node_shutdown_start").field("phase", "shutdown").info();
   // Tear Runtime down before the component reports shutdown complete so its teardown can still use
   // this node's logger and interfaces.
   runtime_.reset();
-  LogEvent(get_logger(), "node_shutdown_complete").field("phase", "shutdown").info();
 }
 
 }  // namespace livekit_ros2_bridge

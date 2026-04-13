@@ -14,6 +14,7 @@
 
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -24,6 +25,18 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+void expectInvalidRequestField(
+  const std::string & payload, std::string_view expected_field, const char * expected_message)
+{
+  try {
+    (void)resource_list_payloads::parse(payload);
+    FAIL() << "Expected std::invalid_argument";
+  } catch (const std::invalid_argument & error) {
+    EXPECT_EQ(std::string(error.what()), std::string(expected_message));
+    EXPECT_EQ(resource_list_payloads::invalidRequestField(error), std::optional<std::string_view>(expected_field));
+  }
+}
+
 TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
   const auto request = resource_list_payloads::parse(R"({
@@ -61,6 +74,17 @@ TEST(ResourceListPayloadsTest, RejectsMalformedJsonAndNonObjectPayloads)
 {
   EXPECT_THROW(resource_list_payloads::parse("{"), std::invalid_argument);
   EXPECT_THROW(resource_list_payloads::parse(R"([])"), std::invalid_argument);
+}
+
+TEST(ResourceListPayloadsTest, ReportsRejectedRequestFieldForValidationFailures)
+{
+  expectInvalidRequestField("{", "payload", "Invalid JSON in list request");
+  expectInvalidRequestField(R"([])", "payload", "List request must be a JSON object");
+  expectInvalidRequestField(R"({"query":123})", "query", "query must be a string");
+  expectInvalidRequestField(R"({"limit":0})", "limit", "limit must be a positive integer");
+
+  const std::invalid_argument unrelated_error("other_validation_error");
+  EXPECT_EQ(resource_list_payloads::invalidRequestField(unrelated_error), std::nullopt);
 }
 
 TEST(ResourceListPayloadsTest, SerializesServiceList)

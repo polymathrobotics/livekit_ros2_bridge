@@ -194,6 +194,11 @@ std::string buildFrameSourcePipelineDescription(
   return pipeline;
 }
 
+LogEvent & addPipelineStreamFields(LogEvent & event, const VideoStreamSpec & spec)
+{
+  return event.field("stream_key", spec.stream_key).field("track_name", spec.track_name);
+}
+
 VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & frame_sink,
@@ -241,7 +246,6 @@ VideoPipelineFrameSource::PipelineHandles VideoPipelineFrameSource::takePipeline
 {
   resetLocked();
   recovery_pending_ = false;
-  first_sample_logged_ = false;
 
   PipelineHandles handles;
   handles.pipeline = std::move(pipeline_);
@@ -256,14 +260,6 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
   if (profiler_ != nullptr) {
     profiler_->notePipelineStart();
   }
-
-  LogEvent(kLogger, "video_stream_pipeline_starting")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("ingest_mode", spec_.ingest_mode)
-    .field("expect_appsrc", require_appsrc)
-    .field("pipeline", pipeline_description)
-    .info();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
@@ -299,8 +295,6 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
     handles.appsrc.reset(GST_APP_SRC(appsrc.release()));
   }
 
-  first_sample_logged_ = false;
-
   // Register callbacks before moving to PLAYING so startup-time samples or bus
   // errors are still routed through this instance.
   GstAppSinkCallbacks callbacks{};
@@ -320,11 +314,8 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
     throw std::runtime_error("Failed to set video pipeline to PLAYING.");
   }
 
-  LogEvent(kLogger, "video_stream_pipeline_playing")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("state_change", static_cast<int>(state_change))
-    .info();
+  LogEvent playing_event(kLogger, "video_stream_pipeline_playing");
+  addPipelineStreamFields(playing_event, spec_).info();
 }
 
 void VideoPipelineFrameSource::resetLocked()
@@ -380,18 +371,6 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     if (is_shutdown_) {
       return GST_FLOW_FLUSHING;
     }
-
-    if (!first_sample_logged_) {
-      LogEvent(kLogger, "video_stream_sample_received")
-        .field("stream_key", spec_.stream_key)
-        .field("track_name", spec_.track_name)
-        .field("width", frame.width)
-        .field("height", frame.height)
-        .field("bytes", frame.data.size())
-        .field("timestamp_us", timestamp_us)
-        .info();
-      first_sample_logged_ = true;
-    }
   }
 
   try {
@@ -442,9 +421,19 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
   }
   recovery_pending_ = true;
 
-  auto self = shared_from_this();
   const auto restart_delay =
     restart_config_.has_value() ? restart_config_->restart_delay : std::chrono::milliseconds(0);
+  auto recovery_log = LogEvent(
+    kLogger,
+    restart_config_.has_value() ? "video_stream_pipeline_recovery_scheduled"
+                                : "video_stream_pipeline_recovery_disabled");
+  addPipelineStreamFields(recovery_log, spec_).field("reason", reason);
+  if (restart_config_.has_value() && restart_delay.count() > 0) {
+    recovery_log.field("restart_delay_ms", restart_delay.count());
+  }
+  recovery_log.warn();
+
+  auto self = shared_from_this();
   // Bus sync handlers run on GStreamer-owned threads. Defer teardown/restart so
   // pipeline destruction never re-enters the bus callback stack.
   std::thread([self, restart_delay]() {

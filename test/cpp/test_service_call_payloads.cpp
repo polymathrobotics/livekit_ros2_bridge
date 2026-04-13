@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -41,6 +42,18 @@ void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
 void expectParseError(const nlohmann::json & body, const char * expected_message)
 {
   expectInvalidArgumentMessage([&body]() { (void)service_call_payloads::parse(body.dump()); }, expected_message);
+}
+
+template <typename Fn>
+void expectInvalidRequestField(Fn && fn, const char * expected_field)
+{
+  try {
+    fn();
+    ADD_FAILURE() << "Expected std::invalid_argument";
+    return;
+  } catch (const std::invalid_argument & error) {
+    ASSERT_EQ(service_call_payloads::invalidRequestField(error), std::string_view(expected_field));
+  }
 }
 
 nlohmann::json makeRequestBody()
@@ -100,6 +113,27 @@ TEST(ServiceCallPayloadsTest, RejectsNonObjectRoot)
 {
   expectInvalidArgumentMessage(
     []() { (void)service_call_payloads::parse(R"([1,2,3])"); }, "Service call request must be a JSON object");
+}
+
+TEST(ServiceCallPayloadsTest, ReportsInvalidRequestFieldForRejectedPayloads)
+{
+  expectInvalidRequestField([]() { (void)service_call_payloads::parse("{"); }, "payload");
+
+  auto body = makeRequestBody();
+  body.erase("service");
+  expectInvalidRequestField([&body]() { (void)service_call_payloads::parse(body.dump()); }, "service");
+
+  body = makeRequestBody();
+  body["interface_type"] = 123;
+  expectInvalidRequestField([&body]() { (void)service_call_payloads::parse(body.dump()); }, "interface_type");
+
+  body = makeRequestBody();
+  body["request"] = cdr_payload::serialize(std::vector<std::uint8_t>{});
+  expectInvalidRequestField([&body]() { (void)service_call_payloads::parse(body.dump()); }, "request");
+
+  body = makeRequestBody();
+  body["timeout_ms"] = "500";
+  expectInvalidRequestField([&body]() { (void)service_call_payloads::parse(body.dump()); }, "timeout_ms");
 }
 
 TEST(ServiceCallPayloadsTest, RejectsMissingServiceAndEmptyRequestPayload)

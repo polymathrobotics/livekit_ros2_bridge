@@ -18,11 +18,16 @@
 #include <stdexcept>
 #include <utility>
 
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
+
 namespace livekit_ros2_bridge
 {
 
 namespace
 {
+
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
 // Configured sources can restart immediately, but a small backoff avoids tight
 // loops on a broken static launch string.
@@ -49,31 +54,49 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
 
 void ConfiguredSourceVideoFrameSource::start()
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
-    throw std::runtime_error("Video stream is shut down.");
+  bool is_shutdown = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_shutdown_) {
+      is_shutdown = true;
+    } else if (pipeline_ == nullptr) {
+      const auto & restart_config = restart_config_.value();
+      startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
+    }
   }
 
-  if (pipeline_ == nullptr) {
-    const auto & restart_config = restart_config_.value();
-    startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
+  if (is_shutdown) {
+    throw std::runtime_error("Video stream is shut down.");
   }
 }
 
 void ConfiguredSourceVideoFrameSource::shutdown()
 {
   PipelineHandles handles;
+  bool had_pipeline = false;
+  bool restart_pending = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
 
+    had_pipeline = pipeline_ != nullptr;
+    restart_pending = recovery_pending_;
     is_shutdown_ = true;
     // Drop the internal handles while holding mutex_ so any in-flight
     // callbacks observe the terminal shutdown state before GStreamer teardown
     // removes callbacks and transitions the pipeline to NULL.
     handles = takePipelineLocked();
+  }
+
+  if (had_pipeline || restart_pending) {
+    LogEvent event(kLogger, "video_stream_source_shutdown");
+    event.field("stream_key", spec_.stream_key);
+    if (restart_pending) {
+      event.field("restart_pending", true);
+    }
+    event.info();
   }
 
   teardown(handles.pipeline, handles.appsrc, handles.appsink);

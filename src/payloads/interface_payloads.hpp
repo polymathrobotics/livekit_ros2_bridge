@@ -14,7 +14,10 @@
 
 #pragma once
 
+#include <exception>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "interface_definition_lookup.hpp"
@@ -33,6 +36,9 @@ namespace interface_payloads
 /// Throws `std::invalid_argument` with caller-fixable validation text that is surfaced through
 /// the RPC invalid-request path.
 std::vector<std::string> parse(const std::string & payload);
+
+/// Recover the request field associated with a parser validation failure when available.
+std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 
 /// Serialize interface definitions as
 /// `{ "interfaces": [{ "interface_type", "format", "definition" }, ...] }`

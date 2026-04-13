@@ -41,6 +41,11 @@ constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 
+void addRuntimeConfigIdentityFields(LogEvent & event, std::string_view room, std::string_view url)
+{
+  event.fieldOr("room", room, kUnsetLogValue).fieldOr("url", url, kUnsetLogValue);
+}
+
 std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
@@ -516,54 +521,57 @@ VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
 
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
 {
-  // Keep the last-known room outside the guarded load path so startup failure
-  // logs can still identify which room was being configured.
-  std::string room = kUnsetLogValue;
+  // Keep the last-known room and url outside the guarded load path so startup
+  // failure logs can still identify which room was being configured.
+  std::string room;
+  std::string url;
+  const char * stage = "parameters_interface_validation";
 
   try {
     if (parameters == nullptr) {
       throw std::invalid_argument("parameters_interface is required");
     }
 
+    stage = "parameter_snapshot";
     ParamListener listener(parameters);
     RuntimeConfig config;
     config.params = listener.get_params();
     const Params & params = config.params;
-    room = params.livekit.room.empty() ? kUnsetLogValue : params.livekit.room;
+    room = params.livekit.room;
+    url = params.livekit.url;
 
+    stage = "room_connection_config";
     config.room_connection_config = loadRequiredRoomConnectionConfig(params);
     config.access_token = params.livekit.token;
+    stage = "health_config";
     config.health_config = loadHealthConfig(params);
+    stage = "access_policy";
     config.access_policy = loadAccessPolicy(params);
+    stage = "subscription_qos_config";
     config.subscription_qos_config = loadSubscriptionQosConfig(params);
+    stage = "video_stream_config";
     config.video_stream_config = loadVideoStreamConfig(params);
+    stage = "video_profiling_config";
     config.video_profiling_config = loadVideoProfilingConfig(params);
 
-    LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
-      .field("phase", "startup")
-      .fieldOr("room", config.room_connection_config.room, kUnsetLogValue)
-      .field("auth_mode", "static_token")
-      .field("fail_fast_enabled", config.health_config.fail_fast_enabled)
-      .field("video_profiling_enabled", config.video_profiling_config.enabled)
-      .field("fail_fast_disconnect_grace_seconds", config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
+    LogEvent event(kRuntimeConfigLogger, "runtime_config_loaded");
+    addRuntimeConfigIdentityFields(event, config.room_connection_config.room, config.room_connection_config.url);
+    event.field("custom_video_rule_count", params.video_topic_rule_ids.size())
+      .field("configured_source_count", config.video_stream_config.configured_sources.size())
       .info();
 
     return config;
   } catch (const std::exception & exc) {
-    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
-      .field("phase", "startup")
-      .field("reason", "config_validation_failed")
-      .field("room", room)
-      .field("error", exc.what())
-      .error();
+    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
+    event.field("stage", stage);
+    addRuntimeConfigIdentityFields(event, room, url);
+    event.field("error", exc.what()).error();
     throw;
   } catch (...) {
-    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
-      .field("phase", "startup")
-      .field("reason", "config_validation_failed")
-      .field("room", room)
-      .field("error", "unknown_exception")
-      .error();
+    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
+    event.field("stage", stage);
+    addRuntimeConfigIdentityFields(event, room, url);
+    event.field("error", "unknown_exception").error();
     throw;
   }
 }

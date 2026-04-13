@@ -32,6 +32,30 @@ namespace
 const auto kDataTrackPublisherLogger = rclcpp::get_logger("data_track_publisher");
 constexpr auto kWriteLogThrottlePeriod = std::chrono::seconds(5);
 
+LogEvent dataTrackLog(const char * event_name, const std::string & track_name)
+{
+  LogEvent event(kDataTrackPublisherLogger, event_name);
+  event.field("track_name", track_name);
+  return event;
+}
+
+const char * dataTrackPushFailureReason(DataTrackPushErrorCode code)
+{
+  switch (code) {
+    case DataTrackPushErrorCode::kUnknown:
+      return "unknown";
+    case DataTrackPushErrorCode::kInvalidHandle:
+      return "invalid_handle";
+    case DataTrackPushErrorCode::kTrackUnpublished:
+      return "track_unpublished";
+    case DataTrackPushErrorCode::kQueueFull:
+      return "queue_full";
+    case DataTrackPushErrorCode::kInternal:
+      return "internal";
+  }
+  return "unknown";
+}
+
 // Cleanup runs on explicit teardown and on rejected/failed publish paths, so it logs and
 // swallows unpublish errors instead of letting recovery cascade into caller state handling.
 void tryUnpublishDataTrack(
@@ -42,14 +66,10 @@ void tryUnpublishDataTrack(
   }
   try {
     connection.unpublishDataTrack(track);
-    LogEvent(kDataTrackPublisherLogger, "data_track_unpublished").field("track_name", track_name).info();
   } catch (const std::exception & exc) {
-    LogEvent(kDataTrackPublisherLogger, "data_track_unpublish_failed")
-      .field("track_name", track_name)
-      .field("error", exc.what())
-      .warn();
+    dataTrackLog("data_track_unpublish_failed", track_name).field("error", exc.what()).warn();
   } catch (...) {
-    LogEvent(kDataTrackPublisherLogger, "data_track_unpublish_failed").field("track_name", track_name).warn();
+    dataTrackLog("data_track_unpublish_failed", track_name).warn();
   }
 }
 }  // namespace
@@ -76,32 +96,32 @@ void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
       // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
       // subscription callback non-blocking even when the participant is not draining the LiveKit
       // queue.
-      LogEvent(kDataTrackPublisherLogger, "data_track_delivery_dropped")
-        .field("track_name", track_name_)
+      dataTrackLog("data_track_delivery_dropped", track_name_)
         .field("reason", "queue_full")
         .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
       return;
     }
 
-    LogEvent(kDataTrackPublisherLogger, "data_track_push_failed")
-      .field("track_name", track_name_)
-      .field("error", error.message)
+    dataTrackLog("data_track_push_failed", track_name_)
+      .field("reason", dataTrackPushFailureReason(error.code))
+      .fieldOr("error", error.message)
       .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
   }
 }
 
 void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
 {
+  const char * failure_stage = "room_publish";
   try {
     auto track = room_connection_.publishDataTrack(track_name_);
+    failure_stage = "registry_accept";
 
     // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
     try {
       if (!on_accept(generation)) {
-        LogEvent(kDataTrackPublisherLogger, "data_track_publish_reclaimed")
-          .field("track_name", track_name_)
+        dataTrackLog("data_track_publish_reclaimed", track_name_)
           .field("generation", generation)
           .field("reason", "stale_registry_state")
           .info();
@@ -114,23 +134,15 @@ void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & o
     }
 
     published_track_ = std::move(track);
-    LogEvent(kDataTrackPublisherLogger, "data_track_publish_completed")
-      .field("track_name", track_name_)
-      .field("generation", generation)
-      .info();
   } catch (const std::exception & exc) {
     on_fail();
-    LogEvent(kDataTrackPublisherLogger, "data_track_publish_error")
-      .field("track_name", track_name_)
-      .field("generation", generation)
+    dataTrackLog("data_track_publish_error", track_name_)
+      .field("stage", failure_stage)
       .field("error", exc.what())
       .warn();
   } catch (...) {
     on_fail();
-    LogEvent(kDataTrackPublisherLogger, "data_track_publish_error")
-      .field("track_name", track_name_)
-      .field("generation", generation)
-      .warn();
+    dataTrackLog("data_track_publish_error", track_name_).field("stage", failure_stage).warn();
   }
 }
 

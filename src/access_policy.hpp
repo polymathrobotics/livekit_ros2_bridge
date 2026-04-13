@@ -61,7 +61,7 @@ public:
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
   /// Return whether `resource_name` is allowed after normalization. Empty or whitespace-only names
-  /// are denied.
+  /// are denied and logged.
   bool allows(AccessOperation operation, std::string_view resource_name) const;
 
 private:

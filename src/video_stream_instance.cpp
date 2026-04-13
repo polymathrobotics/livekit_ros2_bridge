@@ -60,13 +60,12 @@ void VideoStreamInstance::onTrackPublished(int width, int height, bool republish
     return;
   }
 
-  published_dimensions_ = TrackDimensions{width, height};
+  has_published_track_ = true;
   if (profiler_ != nullptr) {
     profiler_->noteTrackPublished(width, height, republished);
   }
   LogEvent(kLogger, republished ? "video_stream_track_republished" : "video_stream_track_published")
     .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
     .field("width", width)
     .field("height", height)
     .info();
@@ -75,20 +74,15 @@ void VideoStreamInstance::onTrackPublished(int width, int height, bool republish
 void VideoStreamInstance::onTrackUnpublishing()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!published_dimensions_) {
+  if (!has_published_track_) {
     return;
   }
 
-  LogEvent(kLogger, "video_stream_track_unpublishing")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("width", published_dimensions_->width)
-    .field("height", published_dimensions_->height)
-    .info();
   if (profiler_ != nullptr) {
     profiler_->noteTrackUnpublish();
   }
-  published_dimensions_.reset();
+  LogEvent(kLogger, "video_stream_track_unpublishing").field("stream_key", spec_.stream_key).info();
+  has_published_track_ = false;
 }
 
 void VideoStreamInstance::onSampleUnpackFailed(const std::string & error)
@@ -104,7 +98,6 @@ void VideoStreamInstance::onSampleUnpackFailed(const std::string & error)
 
   LogEvent(kLogger, "video_stream_sample_unpack_failed")
     .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
     .field("error", error)
     .warn();
 }
@@ -120,11 +113,7 @@ void VideoStreamInstance::onCaptureFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_capture_failed")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("error", error)
-    .warn();
+  LogEvent(kLogger, "video_stream_capture_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
 void VideoStreamInstance::onPipelineFailed(const std::string & reason)
@@ -132,17 +121,6 @@ void VideoStreamInstance::onPipelineFailed(const std::string & reason)
   if (profiler_ != nullptr) {
     profiler_->notePipelineFailure(reason);
   }
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
-    return;
-  }
-
-  LogEvent(kLogger, "video_stream_pipeline_failed")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("error", reason)
-    .warn();
 }
 
 void VideoStreamInstance::onRestartFailed(const std::string & error)
@@ -156,11 +134,7 @@ void VideoStreamInstance::onRestartFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_restart_failed")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("error", error)
-    .warn();
+  LogEvent(kLogger, "video_stream_restart_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
 void VideoStreamInstance::onPushFailed(const std::string & error)
@@ -174,11 +148,7 @@ void VideoStreamInstance::onPushFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_push_failed")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("error", error)
-    .warn();
+  LogEvent(kLogger, "video_stream_push_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
 std::string VideoStreamInstance::start()
@@ -187,6 +157,10 @@ std::string VideoStreamInstance::start()
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
+      LogEvent(kLogger, "video_stream_start_rejected")
+        .field("stream_key", spec_.stream_key)
+        .field("reason", "shutdown")
+        .warn();
       throw std::runtime_error("Video stream is shut down.");
     }
 
@@ -199,6 +173,12 @@ std::string VideoStreamInstance::start()
         source_ =
           std::make_shared<CompressedRosVideoFrameSource>(node_, spec_, qos_config_, *publisher_, *this, profiler_);
       } else {
+        LogEvent(kLogger, "video_stream_start_failed")
+          .field("stream_key", spec_.stream_key)
+          .field("input_kind", videoInputKindToString(spec_.input_kind))
+          .field("ingest_mode", spec_.ingest_mode)
+          .field("reason", "unsupported_input")
+          .warn();
         throw std::runtime_error(
           "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec_.input_kind) + "/" +
           spec_.ingest_mode + "'.");

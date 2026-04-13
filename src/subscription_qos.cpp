@@ -28,6 +28,7 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 {
   ResolvedSubscriptionQos resolved;
   resolved.qos = base_qos;
+  resolved.publisher_count = publisher_profiles.size();
 
   const TopicSubscriptionQosOverride * override_match = nullptr;
   if (config != nullptr) {

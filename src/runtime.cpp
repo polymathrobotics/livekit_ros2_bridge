@@ -42,6 +42,13 @@ constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
 constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
 constexpr auto kFailFastEvaluationInterval = std::chrono::milliseconds(250);
 constexpr auto kFailFastExitDelay = std::chrono::milliseconds(100);
+
+LogEvent runtimeLog(rclcpp::Logger logger, std::string_view event_name, const std::string & room)
+{
+  LogEvent event(std::move(logger), event_name);
+  event.fieldOr("room", room, "<unset>");
+  return event;
+}
 }  // namespace
 
 bool Runtime::State::markRpcRegistered()
@@ -51,13 +58,21 @@ bool Runtime::State::markRpcRegistered()
   return markReadyLocked();
 }
 
-bool Runtime::State::markRoomConnected()
+Runtime::State::RoomConnectedTransition Runtime::State::markRoomConnected()
 {
   std::lock_guard<std::mutex> lock(mutex);
+  const bool was_connected = room_connected;
+  const bool was_ready_once = ready_once;
+  std::string disconnect_reason = std::move(reason);
   room_connected = true;
   grace_deadline.reset();
   reason.clear();
-  return markReadyLocked();
+
+  RoomConnectedTransition transition;
+  transition.became_ready = markReadyLocked();
+  transition.recovered = was_ready_once && !was_connected;
+  transition.disconnect_reason = std::move(disconnect_reason);
+  return transition;
 }
 
 void Runtime::State::armGraceDeadline(std::chrono::milliseconds grace)
@@ -66,9 +81,12 @@ void Runtime::State::armGraceDeadline(std::chrono::milliseconds grace)
   armGraceDeadlineLocked(grace);
 }
 
-void Runtime::State::markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace)
+Runtime::State::DisconnectTransition Runtime::State::markDisconnected(
+  const std::string & reason, bool fail_fast, std::chrono::milliseconds grace)
 {
   std::lock_guard<std::mutex> lock(mutex);
+  DisconnectTransition transition;
+  transition.ready_once = ready_once;
   // Reconnects preserve the startup latches so fail-fast can distinguish recovery from startup,
   // and required RPC methods stay registered across reconnect attempts.
   room_connected = false;
@@ -78,6 +96,7 @@ void Runtime::State::markDisconnected(const std::string & reason, bool fail_fast
   } else {
     grace_deadline.reset();
   }
+  return transition;
 }
 
 std::optional<Runtime::State::FailFastTrigger> Runtime::State::takeFailFastTrigger(Runtime::SteadyClock::time_point now)
@@ -143,10 +162,7 @@ Runtime::Runtime(
     config_.fail_fast_callbacks.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
   }
 
-  LogEvent(node_.get_logger(), "runtime_startup_begin")
-    .field("phase", "startup")
-    .fieldOr("room", config_.room, "<unset>")
-    .info();
+  runtimeLog(node_.get_logger(), "runtime_startup_begin", config_.room).info();
 
   if (config.video_profiling_config.enabled) {
     components_.video_profiling_registry =
@@ -213,8 +229,15 @@ Runtime::Runtime(
         return;
       }
 
-      if (state_.markRoomConnected()) {
+      const auto transition = state_.markRoomConnected();
+      if (transition.became_ready) {
         logReady();
+        return;
+      }
+      if (transition.recovered) {
+        runtimeLog(node_.get_logger(), "runtime_reconnected", config_.room)
+          .fieldOr("disconnect_reason", transition.disconnect_reason, "connection_lost")
+          .info();
       }
     },
     [this](const std::string & reason) {
@@ -222,7 +245,17 @@ Runtime::Runtime(
         return;
       }
 
-      state_.markDisconnected(reason, config_.fail_fast_enabled, config_.fail_fast_disconnect_grace);
+      const auto transition =
+        state_.markDisconnected(reason, config_.fail_fast_enabled, config_.fail_fast_disconnect_grace);
+      LogEvent disconnect_log = runtimeLog(node_.get_logger(), "runtime_disconnect_observed", config_.room);
+      disconnect_log.field("phase", transition.ready_once ? "reconnect" : "startup")
+        .fieldOr("disconnect_reason", reason, "connection_lost");
+      if (config_.fail_fast_enabled) {
+        disconnect_log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
+        disconnect_log.warn();
+      } else {
+        disconnect_log.info();
+      }
     },
     [this]() { handleConnectionReset(); },
     [this](const std::string & requester_identity) { handleParticipantDisconnected(requester_identity); },
@@ -236,10 +269,8 @@ Runtime::Runtime(
     kReconnectMaxBackoff);
 
   if (!components_.rpc_router->registerRpcs(*components_.room_connection)) {
-    LogEvent(node_.get_logger(), "runtime_startup_failed")
-      .field("phase", "startup")
+    runtimeLog(node_.get_logger(), "runtime_startup_failed", config_.room)
       .field("reason", "required_rpc_registration_failed")
-      .fieldOr("room", config_.room, "<unset>")
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
@@ -260,10 +291,7 @@ void Runtime::shutdown()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start")
-    .field("phase", "shutdown")
-    .fieldOr("room", config_.room, "<unset>")
-    .info();
+  runtimeLog(node_.get_logger(), "runtime_shutdown_start", config_.room).info();
 
   // Disarm periodic work first so lease GC and fail-fast evaluation stop racing a deliberate
   // shutdown while the shared components below are being torn down.
@@ -299,10 +327,7 @@ void Runtime::shutdown()
     components_.video_profiling_registry->flushTrace();
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_complete")
-    .field("phase", "shutdown")
-    .fieldOr("room", config_.room, "<unset>")
-    .info();
+  runtimeLog(node_.get_logger(), "runtime_shutdown_complete", config_.room).info();
 }
 
 void Runtime::checkFailFast()
@@ -316,13 +341,10 @@ void Runtime::checkFailFast()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_fail_fast_triggered")
+  runtimeLog(node_.get_logger(), "runtime_fail_fast_triggered", config_.room)
     .field("phase", trigger->ready_once ? "reconnect" : "startup")
-    .field("reason", "disconnect_grace_expired")
     .field("disconnect_reason", trigger->reason)
-    .fieldOr("room", config_.room, "<unset>")
     .field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0)
-    .field("ready_once", trigger->ready_once)
     .error();
   // Give ROS shutdown and log flushing a brief head start before forcing process exit.
   config_.fail_fast_callbacks.shutdown_callback();
@@ -332,11 +354,8 @@ void Runtime::checkFailFast()
 
 void Runtime::logReady() const
 {
-  LogEvent(node_.get_logger(), "runtime_ready")
-    .field("phase", "startup")
-    .fieldOr("room", config_.room, "<unset>")
-    .info();
-  LogEvent(node_.get_logger(), "node_ready").field("phase", "startup").fieldOr("room", config_.room, "<unset>").info();
+  runtimeLog(node_.get_logger(), "runtime_ready", config_.room).info();
+  runtimeLog(node_.get_logger(), "node_ready", config_.room).info();
 }
 
 void Runtime::handleConnectionReset()

@@ -104,6 +104,18 @@ private:
 
   struct State
   {
+    struct RoomConnectedTransition
+    {
+      bool became_ready = false;
+      bool recovered = false;
+      std::string disconnect_reason;
+    };
+
+    struct DisconnectTransition
+    {
+      bool ready_once = false;
+    };
+
     struct FailFastTrigger
     {
       bool ready_once = false;
@@ -114,13 +126,14 @@ private:
     // These helpers keep the readiness/fail-fast state internally synchronized because those call
     // paths do not all run on the ROS executor.
     // Startup becomes ready only after both transport connectivity and required RPC registration
-    // succeed. Either prerequisite may complete first; markRoomConnected() and
-    // markRpcRegistered() return true only on the transition that satisfies the second
-    // prerequisite for the first time.
+    // succeed. Either prerequisite may complete first; markRpcRegistered() returns true only on
+    // the transition that satisfies the second prerequisite for the first time, while
+    // markRoomConnected() reports whether the connect completed initial readiness or recovered a
+    // previously ready runtime.
     bool markRpcRegistered();
-    bool markRoomConnected();
+    RoomConnectedTransition markRoomConnected();
     void armGraceDeadline(std::chrono::milliseconds grace);
-    void markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace);
+    DisconnectTransition markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace);
     std::optional<FailFastTrigger> takeFailFastTrigger(SteadyClock::time_point now);
 
   private:

@@ -19,11 +19,16 @@
 #include <stdexcept>
 #include <string>
 
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
+
 namespace livekit_ros2_bridge
 {
 
 namespace
 {
+
+const auto kLogger = rclcpp::get_logger("cdr_base64");
 
 // `EVP_DecodeBlock` accepts some non-canonical inputs, so we keep a local alphabet map
 // to validate pad placement and trailing pad bits before handing data to OpenSSL.
@@ -61,6 +66,7 @@ std::string encodeBase64(const std::uint8_t * bytes, std::size_t size)
     reinterpret_cast<const unsigned char *>(bytes),
     static_cast<int>(size));
   if (encoded_size < 0) {
+    LogEvent(kLogger, "base64_encode_failed").field("byte_count", size).error();
     throw std::runtime_error("Failed base64 encoding.");
   }
 
@@ -126,6 +132,7 @@ Base64DecodeResult decodeBase64(std::string_view base64)
     reinterpret_cast<const unsigned char *>(base64.data()),
     static_cast<int>(base64.size()));
   if (decoded_size < 0) {
+    LogEvent(kLogger, "base64_decode_failed").field("input_chars", base64.size()).error();
     return {{}, Base64Status::kInvalidEncoding};
   }
 

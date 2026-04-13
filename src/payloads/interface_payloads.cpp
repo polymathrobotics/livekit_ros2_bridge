@@ -14,6 +14,10 @@
 
 #include "payloads/interface_payloads.hpp"
 
+#include <exception>
+#include <optional>
+#include <stdexcept>
+#include <string_view>
 #include <utility>
 
 #include "nlohmann/json.hpp"
@@ -24,18 +28,66 @@ namespace livekit_ros2_bridge
 
 using Json = nlohmann::json;
 
+namespace
+{
+
+class InterfacePayloadInvalidArgument final : public std::invalid_argument
+{
+public:
+  InterfacePayloadInvalidArgument(std::string_view field_name, const char * message)
+  : std::invalid_argument(message)
+  , field_name_(field_name)
+  {}
+
+  std::string_view fieldName() const noexcept
+  {
+    return field_name_;
+  }
+
+private:
+  std::string_view field_name_;
+};
+
+}  // namespace
+
 namespace interface_payloads
 {
 
 std::vector<std::string> parse(const std::string & payload)
 {
-  return parseRequiredNonEmptyTrimmedStringArrayField(
-    parseJsonObject(payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object"),
-    "interface_types",
-    "interface_types must be an array",
-    "interface_types entries must be strings",
-    "interface_types entries must not be empty",
-    "interface_types must not be empty");
+  const auto body = [&payload]() {
+    try {
+      return parseJsonObject(
+        payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
+    } catch (const std::invalid_argument & exc) {
+      throw InterfacePayloadInvalidArgument("payload", exc.what());
+    }
+  }();
+
+  auto interface_types = [&body]() {
+    try {
+      return parseRequiredNonEmptyTrimmedStringArrayField(
+        body,
+        "interface_types",
+        "interface_types must be an array",
+        "interface_types entries must be strings",
+        "interface_types entries must not be empty",
+        "interface_types must not be empty");
+    } catch (const std::invalid_argument & exc) {
+      throw InterfacePayloadInvalidArgument("interface_types", exc.what());
+    }
+  }();
+
+  return interface_types;
+}
+
+std::optional<std::string_view> invalidRequestField(const std::exception & exc)
+{
+  if (const auto * interface_error = dynamic_cast<const InterfacePayloadInvalidArgument *>(&exc)) {
+    return interface_error->fieldName();
+  }
+
+  return std::nullopt;
 }
 
 std::string serialize(const std::vector<InterfaceDefinition> & definitions)

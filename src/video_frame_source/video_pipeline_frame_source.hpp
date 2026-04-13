@@ -103,7 +103,6 @@ protected:
   // Coalesces repeated EOS/ERROR notifications so only one async recovery path
   // tears down and rebuilds the current pipeline at a time.
   bool recovery_pending_ = false;
-  bool first_sample_logged_ = false;
   // Owned handles for the currently installed pipeline. They are moved out
   // under mutex_ before teardown so subsequent callbacks see detached members.
   GstElementPtr pipeline_;

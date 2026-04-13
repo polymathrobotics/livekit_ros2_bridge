@@ -15,8 +15,10 @@
 #pragma once
 
 #include <cstddef>
+#include <exception>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace livekit_ros2_bridge
@@ -46,6 +48,11 @@ namespace resource_list_payloads
 /// Throws `std::invalid_argument` when the payload is not a JSON object or `query` / `limit`
 /// violate the RPC contract. Missing, null, and blank queries normalize to "no filter".
 ResourceListRequest parse(const std::string & request_payload);
+
+/// Return the request boundary associated with a resource-list validation error when available.
+/// This lets higher layers add a precise `request_field` log field without parsing free-form
+/// human-readable exception text.
+std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 
 /// Serialize services as `{ "services": [{ "name", "interface_type" }, ...] }` in caller order.
 /// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to

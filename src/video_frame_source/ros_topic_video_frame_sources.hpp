@@ -69,7 +69,6 @@ private:
   rclcpp::Node & node_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
-  bool first_input_logged_ = false;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
   std::optional<FrameLayout> frame_layout_;
 };
@@ -97,7 +96,6 @@ private:
   rclcpp::Node & node_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
-  bool first_input_logged_ = false;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
   std::optional<CompressedImageCodec> codec_;
 };

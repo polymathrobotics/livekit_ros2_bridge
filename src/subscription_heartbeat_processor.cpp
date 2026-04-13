@@ -39,6 +39,13 @@ namespace
 constexpr auto kHeartbeatLeaseDuration = std::chrono::seconds(45);
 constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
+LogEvent & appendRequesterSessionFields(
+  LogEvent & event, const std::string & requester_identity, const std::optional<std::string> & session_id)
+{
+  return event.field("requester_identity", requester_identity)
+    .fieldOr("session_id", session_id.value_or(""), "<absent>");
+}
+
 void appendSubscriptionErrorStatus(
   nlohmann::json & statuses, const SubscriptionTarget & target, const char * reason, const std::string & message)
 {
@@ -84,19 +91,13 @@ SubscriptionHeartbeatProcessor::resolveHeartbeatLease(
 
   auto [it, inserted] = session_leases_.try_emplace(*session_id, SessionLease{requester_identity, lease_expiry});
   if (inserted) {
-    LogEvent(kLogger, "heartbeat_client_session_bound")
-      .field("session_id", *session_id)
-      .field("requester_identity", requester_identity)
-      .info();
     return ResolvedHeartbeatLease{requester_identity, session_id, lease_expiry};
   }
 
   if (it->second.requester_identity != requester_identity) {
     if (const std::size_t count = session_conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
-      LogEvent(kLogger, "heartbeat_client_session_conflict")
-        .field("reason", "requester_identity_mismatch")
-        .field("session_id", *session_id)
-        .field("requester_identity", requester_identity)
+      auto event = LogEvent(kLogger, "heartbeat_client_session_conflict");
+      appendRequesterSessionFields(event, requester_identity, session_id)
         .field("existing_requester_identity", it->second.requester_identity)
         .field("count", count)
         .warn();
@@ -132,10 +133,8 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   // browser tab and renew that client-session lease instead of dropping it.
   it->second.expiry = lease_expiry;
 
-  LogEvent(kLogger, "heartbeat_client_session_fallback")
-    .field("session_id", *session_id)
-    .field("requester_identity", it->second.requester_identity)
-    .field("reason", "anonymous_requester")
+  auto event = LogEvent(kLogger, "heartbeat_client_session_fallback");
+  appendRequesterSessionFields(event, it->second.requester_identity, session_id)
     .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   return it->second.requester_identity;
 }
@@ -178,10 +177,6 @@ void SubscriptionHeartbeatProcessor::pruneExpiredLeases()
       continue;
     }
 
-    LogEvent(kLogger, "heartbeat_client_session_expired")
-      .field("session_id", it->first)
-      .field("requester_identity", it->second.requester_identity)
-      .info();
     it = session_leases_.erase(it);
   }
 }
@@ -235,9 +230,8 @@ void SubscriptionHeartbeatProcessor::publishStatuses(
   try {
     room_connection_.publishControlPacket(packet);
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "subscription_status_publish_failed")
-      .field("requester_identity", lease.requester_identity)
-      .field("control_topic", packet.control_topic)
+    auto event = LogEvent(kLogger, "subscription_status_publish_failed");
+    appendRequesterSessionFields(event, lease.requester_identity, lease.session_id)
       .field("error", exc.what())
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   }

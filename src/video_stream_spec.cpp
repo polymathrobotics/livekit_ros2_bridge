@@ -16,6 +16,8 @@
 
 #include <stdexcept>
 
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
@@ -31,6 +33,7 @@ constexpr char kTopicTrackPrefix[] = "ros.video.";
 constexpr char kConfiguredSourceTrackPrefix[] = "ros.video.configured_source.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 constexpr char kUnnamedTrackSuffix[] = "unnamed";
+const auto kLogger = rclcpp::get_logger("video_stream_spec");
 
 // ROS-topic track names intentionally keep the historical slash/colon-to-dot mapping
 // that existing subscribers already consume, rather than percent-encoding the topic.
@@ -101,6 +104,11 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
     best_pattern_size = rule.pattern.size();
   }
   if (best_rule == nullptr) {
+    LogEvent(kLogger, "video_stream_spec_rejected")
+      .field("resource", normalized_topic)
+      .field("reason", "no_matching_ros_topic_rule")
+      .field("configured_rules", rules.size())
+      .warn();
     throw std::runtime_error("no matching video rule for topic '" + std::string(normalized_topic) + "'");
   }
   return *best_rule;
@@ -136,6 +144,11 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   }
   const auto ingest_mode = classifyRosVideoIngestMode(interface_type);
   if (!ingest_mode.has_value()) {
+    LogEvent(kLogger, "video_stream_spec_rejected")
+      .field("resource", normalized_topic)
+      .field("interface_type", interface_type)
+      .field("reason", "unsupported_ros_interface_type")
+      .warn();
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 

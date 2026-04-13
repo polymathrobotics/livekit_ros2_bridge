@@ -180,6 +180,8 @@ private:
 RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
 : default_callback_group_(node.get_node_base_interface()->get_default_callback_group())
 , waitables_(node.get_node_waitables_interface())
+, logger_(kRosExecutorQueueLogger)
+, log_clock_(node.get_clock())
 {
   waitable_ = std::make_shared<DrainWaitable>(*this, node.get_node_base_interface()->get_context());
   waitables_->add_waitable(waitable_, default_callback_group_);
@@ -207,15 +209,14 @@ void RosExecutorQueue::wake()
     waitable->wake();
   } catch (const std::exception & exc) {
     LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .field("reason", "exception")
       .field("action", "shutdown")
       .field("error", exc.what())
       .error();
     shutdown();
   } catch (...) {
     LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .field("reason", "unknown_error")
       .field("action", "shutdown")
+      .field("error", "unknown_exception")
       .error();
     shutdown();
   }
@@ -257,9 +258,8 @@ void RosExecutorQueue::shutdown()
   }
 
   if (canceled_count > 0U) {
-    LogEvent(kRosExecutorQueueLogger, "executor_queue_settled")
+    LogEvent(kRosExecutorQueueLogger, "executor_pending_tasks_canceled")
       .field("reason", "shutdown")
-      .field("action", "cancel_pending")
       .field("count", canceled_count)
       .warn();
   }
@@ -302,14 +302,13 @@ void RosExecutorQueue::drain()
       task.run();
     } catch (const std::exception & exc) {
       LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .field("reason", "exception")
         .field("action", "continue")
         .field("error", exc.what())
         .error();
     } catch (...) {
       LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .field("reason", "unknown_exception")
         .field("action", "continue")
+        .field("error", "unknown_exception")
         .error();
     }
   }

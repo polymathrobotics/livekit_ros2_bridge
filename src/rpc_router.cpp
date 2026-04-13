@@ -43,31 +43,24 @@ namespace
 {
 
 const auto kRpcRouterLogger = rclcpp::get_logger("rpc_router");
-constexpr char kUnknownLogValue[] = "<unknown>";
-
 using ResourcesByName = std::map<std::string, std::vector<std::string>>;
 
 struct RpcMethod
 {
   const char * name;
-  const char * resource;
 };
 
 constexpr RpcMethod kServiceCallRpcMethod{
   protocol::kRpcServiceCall,
-  "services",
 };
 constexpr RpcMethod kInterfacesGetRpcMethod{
   protocol::kRpcInterfacesGet,
-  "interfaces",
 };
 constexpr RpcMethod kServicesListRpcMethod{
   protocol::kRpcServicesList,
-  "services",
 };
 constexpr RpcMethod kTopicsListRpcMethod{
   protocol::kRpcTopicsList,
-  "topics",
 };
 constexpr std::array<const char *, 4> kRpcMethodNames{
   kServiceCallRpcMethod.name,
@@ -81,12 +74,8 @@ LogEvent & addLogFields(LogEvent & event, const RpcMethod & rpc_method, const Rp
   // Keep the request-scoped correlation fields uniform across every router
   // rejection/failure log so operators can trace one RPC through the bridge.
   event.field("method", rpc_method.name)
-    .field("request_id", invocation.request_id.empty() ? kUnknownLogValue : invocation.request_id.c_str())
-    .field(
-      "requester_identity", invocation.caller_identity.empty() ? kUnknownLogValue : invocation.caller_identity.c_str());
-  if (rpc_method.resource != nullptr) {
-    event.field("resource", rpc_method.resource);
-  }
+    .fieldOr("request_id", invocation.request_id)
+    .fieldOr("requester_identity", invocation.caller_identity);
   return event;
 }
 
@@ -135,11 +124,15 @@ const char * errorReason(std::uint32_t code)
   const char * reason = errorReason(code);
   LogEvent event(kRpcRouterLogger, code == protocol::kRpcErrorInternal ? "rpc_request_failed" : "rpc_request_rejected");
   addLogFields(event, rpc_method, invocation).field("reason", reason);
+  if (const auto request_field = interface_payloads::invalidRequestField(exc)) {
+    event.field("request_field", *request_field);
+  } else if (const auto request_field = service_call_payloads::invalidRequestField(exc)) {
+    event.field("request_field", *request_field);
+  } else if (const auto request_field = resource_list_payloads::invalidRequestField(exc)) {
+    event.field("request_field", *request_field);
+  }
 
   if (service.has_value()) {
-    if (rpc_method.resource == nullptr) {
-      event.field("resource", kUnknownLogValue);
-    }
     event.field("service", *service);
   }
   event.field("error", exc.what());
@@ -233,7 +226,6 @@ bool RpcRouter::registerRpcs(RoomConnection & room_connection)
   bool all_registered = true;
   const auto register_method = [&](const char * method_name, RpcHandler handler) {
     if (!room_connection.registerRpc(method_name, std::move(handler))) {
-      LogEvent(kRpcRouterLogger, "rpc_method_registration_failed").field("method", method_name).error();
       // Registration is best-effort rather than transactional so one failure
       // does not hide other methods that can still be served on this connection.
       all_registered = false;
@@ -255,9 +247,7 @@ bool RpcRouter::registerRpcs(RoomConnection & room_connection)
 void RpcRouter::unregisterRpcs(RoomConnection & room_connection)
 {
   for (const char * method_name : kRpcMethodNames) {
-    if (!room_connection.unregisterRpc(method_name)) {
-      LogEvent(kRpcRouterLogger, "rpc_method_unregistration_failed").field("method", method_name).error();
-    }
+    room_connection.unregisterRpc(method_name);
   }
 }
 

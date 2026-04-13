@@ -27,6 +27,13 @@ namespace livekit_ros2_bridge
 namespace
 {
 const auto kVideoTrackPublisherLogger = rclcpp::get_logger("video_track_publisher");
+
+LogEvent videoTrackLog(const char * event_name, const std::string & track_name)
+{
+  LogEvent event(kVideoTrackPublisherLogger, event_name);
+  event.field("track_name", track_name);
+  return event;
+}
 }  // namespace
 
 VideoTrackPublisher::VideoTrackPublisher(
@@ -58,25 +65,47 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
       active_source_ != nullptr && active_track_ != nullptr && active_width_ == width && active_height_ == height;
     if (!can_reuse) {
       const bool republished = has_published_;
-      if (active_track_ != nullptr) {
-        room_connection_.unpublishVideoTrack(active_track_);
+      const bool replacing_track = active_track_ != nullptr;
+      const char * failure_stage = nullptr;
+      if (replacing_track) {
+        failure_stage = "republish_unpublish";
       }
-      // Reset local publication state before publishing so a
-      // publishVideoTrack() failure forces the next frame to retry instead of
-      // reusing stale state.
-      active_source_.reset();
-      active_track_.reset();
-      active_width_ = 0;
-      active_height_ = 0;
+      const auto log_publish_failure = [&](const char * error = nullptr) {
+        auto event =
+          videoTrackLog("video_track_publish_failed", spec_.track_name).field("width", width).field("height", height);
+        if (replacing_track) {
+          event.field("stage", failure_stage);
+        }
+        event.fieldOr("error", error).warn();
+      };
+      try {
+        if (active_track_ != nullptr) {
+          room_connection_.unpublishVideoTrack(active_track_);
+          failure_stage = "republish_publish";
+        }
+        // Reset local publication state before publishing so a
+        // publishVideoTrack() failure forces the next frame to retry instead of
+        // reusing stale state.
+        active_source_.reset();
+        active_track_.reset();
+        active_width_ = 0;
+        active_height_ = 0;
 
-      auto track_source = std::make_shared<livekit::VideoSource>(width, height);
-      auto track = room_connection_.publishVideoTrack(spec_.track_name, track_source, spec_.publish_config);
-      active_source_ = std::move(track_source);
-      active_track_ = std::move(track);
-      active_width_ = width;
-      active_height_ = height;
-      has_published_ = true;
-      observer_.onTrackPublished(width, height, republished);
+        auto track_source = std::make_shared<livekit::VideoSource>(width, height);
+        auto track = room_connection_.publishVideoTrack(spec_.track_name, track_source, spec_.publish_config);
+        active_source_ = std::move(track_source);
+        active_track_ = std::move(track);
+        active_width_ = width;
+        active_height_ = height;
+        has_published_ = true;
+        observer_.onTrackPublished(width, height, republished);
+      } catch (const std::exception & exc) {
+        log_publish_failure(exc.what());
+        throw;
+      } catch (...) {
+        log_publish_failure();
+        throw;
+      }
     }
   }
   // LiveKit takes ownership of the VideoFrame buffer here, so this stays
@@ -112,15 +141,15 @@ void VideoTrackPublisher::shutdown()
     // closed state is already visible, so concurrent or reentrant write() calls
     // will drop frames instead of racing a new publish against shutdown().
     observer_.onTrackUnpublishing();
+    const auto log_unpublish_failure = [&](const char * error = nullptr) {
+      videoTrackLog("video_track_unpublish_failed", spec_.track_name).fieldOr("error", error).warn();
+    };
     try {
       room_connection_.unpublishVideoTrack(track);
     } catch (const std::exception & exc) {
-      LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
-        .field("track_name", spec_.track_name)
-        .field("error", exc.what())
-        .warn();
+      log_unpublish_failure(exc.what());
     } catch (...) {
-      LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed").field("track_name", spec_.track_name).warn();
+      log_unpublish_failure();
     }
   }
 }

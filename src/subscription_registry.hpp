@@ -145,7 +145,7 @@ private:
   void removeLeasesIf(
     const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
   EntryMap::iterator findDataByTrackName(const std::string & track_name);
-  void destroyRuntime(Entry & entry);
+  void destroyRuntime(Entry & entry, bool log_destroy = true);
   void clearSubscriptions();
 
   rclcpp::Node & node_;

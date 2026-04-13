@@ -154,6 +154,55 @@ void addMetricFields(LogEvent & event, const char * field_prefix, const VideoPro
     .field(base + "_max", metric.max_ms);
 }
 
+void addCountFieldIfNonZero(LogEvent & event, const char * field_name, std::size_t count)
+{
+  if (count == 0U) {
+    return;
+  }
+
+  event.field(field_name, count);
+}
+
+void addProfilerIdentityFields(LogEvent & event, const VideoStreamSpec & spec)
+{
+  event.field("stream_key", spec.stream_key)
+    .field("track_name", spec.track_name)
+    .field("input_kind", videoInputKindToString(spec.input_kind))
+    .field("ingest_mode", spec.ingest_mode);
+}
+
+void addProfilerIdentityFields(LogEvent & event, const VideoStreamProfileSummary & summary)
+{
+  event.field("stream_key", summary.stream_key)
+    .field("track_name", summary.track_name)
+    .field("input_kind", summary.input_kind)
+    .field("ingest_mode", summary.ingest_mode);
+}
+
+bool hasProfilerIdentityMismatch(const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
+{
+  return active_spec.track_name != requested_spec.track_name || active_spec.input_kind != requested_spec.input_kind ||
+         active_spec.ingest_mode != requested_spec.ingest_mode;
+}
+
+void addProfilerIdentityMismatchFields(
+  LogEvent & event, const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
+{
+  if (active_spec.track_name != requested_spec.track_name) {
+    event.field("active_track_name", active_spec.track_name).field("requested_track_name", requested_spec.track_name);
+  }
+
+  if (active_spec.input_kind != requested_spec.input_kind) {
+    event.field("active_input_kind", videoInputKindToString(active_spec.input_kind))
+      .field("requested_input_kind", videoInputKindToString(requested_spec.input_kind));
+  }
+
+  if (active_spec.ingest_mode != requested_spec.ingest_mode) {
+    event.field("active_ingest_mode", active_spec.ingest_mode)
+      .field("requested_ingest_mode", requested_spec.ingest_mode);
+  }
+}
+
 constexpr char kIngressTraceEventName[] = "source.received";
 constexpr char kSampledTraceEventName[] = "gst.sample_ready";
 constexpr char kCapturedTraceEventName[] = "livekit.frame_submitted";
@@ -963,6 +1012,9 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
   if (inserted || it->second == nullptr) {
     auto profiler = std::make_shared<VideoStreamProfiler>(spec);
     profiler->impl_->recorder = impl_->recorder;
+    LogEvent event(impl_->logger, "video_profile_stream_registered");
+    addProfilerIdentityFields(event, spec);
+    event.info();
     if (impl_->recorder != nullptr) {
       std::vector<TraceArg> args;
       addTraceArg(args, "track_name", spec.track_name);
@@ -972,6 +1024,11 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
         spec.stream_key, kStreamRegisteredTraceEventName, SteadyClock::now(), std::move(args));
     }
     it->second = std::move(profiler);
+  } else if (hasProfilerIdentityMismatch(it->second->impl_->spec, spec)) {
+    LogEvent event(impl_->logger, "video_profile_profiler_spec_mismatch");
+    event.field("stream_key", spec.stream_key);
+    addProfilerIdentityMismatchFields(event, it->second->impl_->spec, spec);
+    event.warn();
   }
   return it->second;
 }
@@ -1028,23 +1085,20 @@ void VideoProfilingRegistry::logSummaries()
   const auto summaries = takeSummaries();
   for (const auto & summary : summaries) {
     LogEvent event(impl_->logger, "video_profile_summary");
-    event.field("stream_key", summary.stream_key)
-      .field("track_name", summary.track_name)
-      .field("input_kind", summary.input_kind)
-      .field("ingest_mode", summary.ingest_mode)
-      .field(kFramesInCountFieldName, summary.frames_in)
+    addProfilerIdentityFields(event, summary);
+    event.field(kFramesInCountFieldName, summary.frames_in)
       .field(kFramesSampledCountFieldName, summary.frames_sampled)
-      .field(kFramesCapturedCountFieldName, summary.frames_captured)
-      .field(kPipelineStartCountFieldName, summary.pipeline_start_count)
-      .field(kPipelineFailureCountFieldName, summary.pipeline_failure_count)
-      .field(kRestartFailedCountFieldName, summary.restart_failed_count)
-      .field(kPushFailedCountFieldName, summary.push_failed_count)
-      .field(kSampleUnpackFailedCountFieldName, summary.sample_unpack_failed_count)
-      .field(kCaptureFailedCountFieldName, summary.capture_failed_count)
-      .field(kTrackPublishCountFieldName, summary.track_publish_count)
-      .field(kTrackRepublishCountFieldName, summary.track_republish_count)
-      .field(kTrackUnpublishCountFieldName, summary.track_unpublish_count)
-      .field(kSourceTimestampRegressionCountFieldName, summary.source_timestamp_regression_count);
+      .field(kFramesCapturedCountFieldName, summary.frames_captured);
+    addCountFieldIfNonZero(event, kPipelineStartCountFieldName, summary.pipeline_start_count);
+    addCountFieldIfNonZero(event, kPipelineFailureCountFieldName, summary.pipeline_failure_count);
+    addCountFieldIfNonZero(event, kRestartFailedCountFieldName, summary.restart_failed_count);
+    addCountFieldIfNonZero(event, kPushFailedCountFieldName, summary.push_failed_count);
+    addCountFieldIfNonZero(event, kSampleUnpackFailedCountFieldName, summary.sample_unpack_failed_count);
+    addCountFieldIfNonZero(event, kCaptureFailedCountFieldName, summary.capture_failed_count);
+    addCountFieldIfNonZero(event, kTrackPublishCountFieldName, summary.track_publish_count);
+    addCountFieldIfNonZero(event, kTrackRepublishCountFieldName, summary.track_republish_count);
+    addCountFieldIfNonZero(event, kTrackUnpublishCountFieldName, summary.track_unpublish_count);
+    addCountFieldIfNonZero(event, kSourceTimestampRegressionCountFieldName, summary.source_timestamp_regression_count);
     addMetricFields(event, kIngressArrivalGapFieldName, summary.ingress_arrival_gap_ms);
     addMetricFields(event, kOutputArrivalGapFieldName, summary.output_arrival_gap_ms);
     addMetricFields(event, kSourceTimestampGapFieldName, summary.source_timestamp_gap_ms);
@@ -1058,15 +1112,8 @@ void VideoProfilingRegistry::logSummaries()
 
   const std::size_t trace_drop_count = traceDroppedEventCount();
   const std::size_t trace_drop_delta = trace_drop_count - impl_->last_logged_drop_count;
-  if (!summaries.empty() || trace_drop_delta > 0U) {
-    LogEvent(impl_->logger, "video_profile_summary")
-      .field("stream_key", "<aggregate>")
-      .field("track_name", "<aggregate>")
-      .field("input_kind", "<aggregate>")
-      .field("ingest_mode", "<aggregate>")
-      .field("active_stream_count", summaries.size())
-      .field("trace_dropped_event_count", trace_drop_delta)
-      .info();
+  if (trace_drop_delta > 0U) {
+    LogEvent(impl_->logger, "video_profile_trace_events_dropped").field("dropped_event_count", trace_drop_delta).warn();
   }
   impl_->last_logged_drop_count = trace_drop_count;
 }
