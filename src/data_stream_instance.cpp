@@ -37,8 +37,8 @@ namespace
 {
 
 constexpr std::size_t kSubscriptionDepth = 2U;
-constexpr auto kDeliveryFailureLogThrottle = std::chrono::seconds(5);
-const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance");
+constexpr auto kLogThrottle = std::chrono::seconds(5);
+const auto kLogger = rclcpp::get_logger("data_stream_instance");
 
 // Keep the topic-to-track mapping deterministic so reconnect-driven republishes reuse the same
 // externally visible LiveKit identity for this ROS topic.
@@ -110,7 +110,7 @@ void DataStreamInstance::start(std::size_t generation)
   // matching completePublish() confirms this exact generation.
   publication_.beginPublish(generation);
   if (prev_state == State::kFailed) {
-    LogEvent(kDataStreamInstanceLogger, "data_track_pending")
+    LogEvent(kLogger, "data_track_pending")
       .field("resource", topic_)
       .field("track_name", track_name_)
       .field("reason", "retry_after_publish_failure")
@@ -147,10 +147,7 @@ bool DataStreamInstance::completePublish(std::size_t generation)
     return false;
   }
 
-  LogEvent(kDataStreamInstanceLogger, "data_track_published")
-    .field("resource", topic_)
-    .field("track_name", track_name_)
-    .info();
+  LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", track_name_).info();
   return true;
 }
 
@@ -172,7 +169,7 @@ void DataStreamInstance::subscribe()
   const rclcpp::QoS base_qos(kSubscriptionDepth);
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, topic_, base_qos, qos_config_);
 
-  LogEvent(kDataStreamInstanceLogger, "subscription_qos_resolved")
+  LogEvent(kLogger, "subscription_qos_resolved")
     .field("resource", topic_)
     .field("delivery", protocol::kDeliveryKindData)
     .field("interface_type", interface_type_)
@@ -231,11 +228,11 @@ void DataStreamInstance::forwardMessage(const rclcpp::SerializedMessage & messag
   try {
     publisher_.write(cdr.buffer, cdr.buffer_length);
   } catch (const std::exception & exc) {
-    LogEvent(kDataStreamInstanceLogger, "data_track_delivery_failed")
+    LogEvent(kLogger, "data_track_delivery_failed")
       .field("resource", topic_)
       .field("track_name", track_name_)
       .field("error", exc.what())
-      .warnThrottle(*node_.get_clock(), kDeliveryFailureLogThrottle);
+      .warnThrottle(*node_.get_clock(), kLogThrottle);
   }
 }
 

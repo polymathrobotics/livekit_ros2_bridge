@@ -90,9 +90,7 @@ public:
     }
 
     if (!submitted) {
-      LogEvent(logger_, "executor_task_rejected")
-        .field("reason", "shutdown")
-        .warnThrottle(*log_clock_, kRejectedWarningThrottlePeriod);
+      LogEvent(logger_, "executor_task_rejected").field("reason", "shutdown").warnThrottle(*log_clock_, kLogThrottle);
       task.cancel();
       return future;
     }
@@ -118,7 +116,7 @@ private:
   void drain();
   void wake();
 
-  static constexpr auto kRejectedWarningThrottlePeriod = std::chrono::seconds(5);
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   // Protects shutdown_ and all state shared between submit(), wake(), drain(),
   // and shutdown().

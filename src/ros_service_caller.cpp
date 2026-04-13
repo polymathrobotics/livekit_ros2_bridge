@@ -75,13 +75,13 @@ constexpr char kServiceTypeSupportSymbolPrefix[] = "__get_service_type_support_h
 constexpr char kRequestMessageTypeSuffix[] = "_Request";
 constexpr char kResponseMessageTypeSuffix[] = "_Response";
 constexpr auto kPollInterval = std::chrono::milliseconds(10);
-constexpr auto kResponseLogThrottleMs = 5000;
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr int kDefaultTimeoutMs = 2000;
 constexpr int kMaxInflightPerRequester = 4;
 constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr char kAnyServiceLogValue[] = "*";
 constexpr char kInflightLimitReachedError[] = "Requester identity service call limit reached.";
-const auto kRosServiceCallerLogger = rclcpp::get_logger("ros_service_caller");
+const auto kLogger = rclcpp::get_logger("ros_service_caller");
 using FailureCache = LruCache<std::string, std::exception_ptr>;
 
 const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * introspection_type_support)
@@ -102,7 +102,7 @@ void logServiceCallRejected(
 {
   const std::string & logged_interface_type =
     resolved_interface_type.empty() ? request.interface_type : resolved_interface_type;
-  LogEvent(kRosServiceCallerLogger, "service_call_rejected")
+  LogEvent(kLogger, "service_call_rejected")
     .field("reason", reason)
     .fieldOr("service", request.service)
     .fieldIfNotEmpty("interface_type", logged_interface_type)
@@ -364,7 +364,7 @@ struct RosServiceCaller::Impl
       return;
     }
 
-    auto event = LogEvent(kRosServiceCallerLogger, "service_calls_settled")
+    auto event = LogEvent(kLogger, "service_calls_settled")
                    .field("reason", reason)
                    .field("count", count)
                    .fieldIf(requester != kAnyServiceLogValue, "requester_identity", requester);
@@ -407,7 +407,7 @@ struct RosServiceCaller::Impl
   std::function<void()> on_poll_exit;
   std::function<void(const std::string &)> on_type_support_load;
   bool shutdown_flag = false;
-  EventThrottle late_response_throttle{std::chrono::milliseconds(kResponseLogThrottleMs)};
+  EventThrottle late_response_throttle{kLogThrottle};
 };
 
 CachedServiceClient::TypeSupport & RosServiceCaller::Impl::getServiceTypeSupport(const std::string & interface_type)
@@ -550,7 +550,7 @@ void RosServiceCaller::Impl::drainResponses()
         // reset session. Never match a late response by service name alone,
         // because a newer call on the same service may now be inflight.
         if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
-          LogEvent(kRosServiceCallerLogger, "service_response_dropped")
+          LogEvent(kLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
             .field("service", entry->service_name)
             .field("interface_type", entry->interface_type)
@@ -667,7 +667,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
       key = InflightKey{client, sequence_number};
     } catch (const std::exception & exc) {
-      LogEvent(kRosServiceCallerLogger, "service_call_failed")
+      LogEvent(kLogger, "service_call_failed")
         .field("reason", "start_failed")
         .fieldOr("service", request.service)
         .fieldIfNotEmpty("interface_type", interface_type)
@@ -678,7 +678,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
     }
 
     if (impl_->inflight_calls.find(key) != impl_->inflight_calls.end()) {
-      LogEvent(kRosServiceCallerLogger, "service_call_failed")
+      LogEvent(kLogger, "service_call_failed")
         .field("reason", "duplicate_pending_key")
         .fieldOr("service", request.service)
         .fieldIfNotEmpty("interface_type", interface_type)

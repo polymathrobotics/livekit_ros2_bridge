@@ -40,7 +40,7 @@ namespace stream_control_payloads
 namespace
 {
 
-constexpr auto kNormalizationLogThrottlePeriod = std::chrono::seconds(5);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("stream_control_payloads");
 
 enum class ClampBoundary
@@ -204,7 +204,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
         .field("kind", subscriptionTargetKindString(demand.target.kind))
         .field("name", demand.target.name)
         .field("boundary", clampBoundaryString(interval.boundary))
-        .warnThrottle(logClock(), kNormalizationLogThrottlePeriod);
+        .warnThrottle(logClock(), kLogThrottle);
     }
 
     // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and

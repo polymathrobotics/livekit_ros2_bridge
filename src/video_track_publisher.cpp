@@ -26,7 +26,7 @@ namespace livekit_ros2_bridge
 {
 namespace
 {
-const auto kVideoTrackPublisherLogger = rclcpp::get_logger("video_track_publisher");
+const auto kLogger = rclcpp::get_logger("video_track_publisher");
 }  // namespace
 
 VideoTrackPublisher::VideoTrackPublisher(
@@ -49,13 +49,13 @@ void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional
 
   const bool republished = has_published_;
   const char * stage = track_ != nullptr ? "republish_unpublish" : nullptr;
-  const auto logFailure = [&](const char * error = nullptr) {
-    LogEvent(kVideoTrackPublisherLogger, "video_track_publish_failed")
+  const auto logFailure = [&](std::exception_ptr exception = nullptr) {
+    LogEvent(kLogger, "video_track_publish_failed")
       .field("track_name", spec_.track_name)
       .field("width", width)
       .field("height", height)
       .fieldIfNotEmpty("stage", stage)
-      .fieldOr("error", error)
+      .fieldException("error", std::move(exception))
       .warn();
   };
   try {
@@ -80,11 +80,8 @@ void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional
     has_published_ = true;
     observer_.onTrackPublished(width, height, republished);
     // todo: is there another pattern we can use for this?
-  } catch (const std::exception & exc) {
-    logFailure(exc.what());
-    throw;
   } catch (...) {
-    logFailure();
+    logFailure(std::current_exception());
     throw;
   }
 }
@@ -139,15 +136,10 @@ void VideoTrackPublisher::shutdown()
   observer_.onTrackUnpublish();
   try {
     room_connection_.unpublishVideoTrack(track);
-  } catch (const std::exception & exc) {
-    LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
-      .field("track_name", spec_.track_name)
-      .fieldOr("error", exc.what())
-      .warn();
   } catch (...) {
-    LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
+    LogEvent(kLogger, "video_track_unpublish_failed")
       .field("track_name", spec_.track_name)
-      .fieldOr("error", static_cast<const char *>(nullptr))
+      .fieldException("error", std::current_exception())
       .warn();
   }
 }

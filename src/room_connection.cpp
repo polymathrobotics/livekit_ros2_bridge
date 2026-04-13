@@ -83,7 +83,7 @@ const DataTrackPushError & DataTrackPushResult::error() const
 namespace
 {
 
-const auto kRoomConnectionLogger = rclcpp::get_logger("livekit_ros2_bridge.room_connection");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.room_connection");
 constexpr char kUnknownLogValue[] = "<unknown>";
 constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kLocalParticipantUnavailable[] = "LiveKit local participant unavailable.";
@@ -184,10 +184,7 @@ public:
     try {
       participant->unregisterRpcMethod(method);
     } catch (const std::exception & exc) {
-      LogEvent(kRoomConnectionLogger, "rpc_method_unregistration_failed")
-        .field("method", method)
-        .field("error", exc.what())
-        .error();
+      LogEvent(kLogger, "rpc_method_unregistration_failed").field("method", method).field("error", exc.what()).error();
       return false;
     }
     return true;
@@ -321,7 +318,7 @@ public:
     if (snapshot.room_generation != room_generation_) {
       // reset() invalidated this room after publishTrack() returned, so the caller gets
       // a handle that is already stale and safely degrades to a later no-op.
-      LogEvent(kRoomConnectionLogger, "video_track_publish_stale")
+      LogEvent(kLogger, "video_track_publish_stale")
         .field("track_name", name)
         .field("track_sid", publication->sid())
         .field("reason", "room_reset")
@@ -460,7 +457,7 @@ private:
   void run()
   {
     if (!livekit::initialize()) {
-      LogEvent(kRoomConnectionLogger, "livekit_initialize_failed").field("reason", "initialize_returned_false").error();
+      LogEvent(kLogger, "livekit_initialize_failed").field("reason", "initialize_returned_false").error();
       return;
     }
 
@@ -500,7 +497,7 @@ private:
       }
 
       if (backoff.count() > 0) {
-        LogEvent(kRoomConnectionLogger, "room_reconnect_backoff")
+        LogEvent(kLogger, "room_reconnect_backoff")
           .field("reason", reason.c_str())
           .fieldOr("room", config_.room, kUnsetLogValue)
           .field("delay_seconds", backoff.count() / 1000.0)
@@ -532,7 +529,7 @@ private:
     }
 
     if (access_token.empty()) {
-      LogEvent(kRoomConnectionLogger, "room_token_load_failed")
+      LogEvent(kLogger, "room_token_load_failed")
         .field("reason", "empty_token")
         .fieldOr("room", config.room, kUnsetLogValue)
         .error();
@@ -550,7 +547,7 @@ private:
 
     try {
       if (!room->Connect(config.url, access_token, options)) {
-        LogEvent(kRoomConnectionLogger, "room_connect_failed")
+        LogEvent(kLogger, "room_connect_failed")
           .field("reason", "connect_returned_false")
           .field("url", config.url)
           .fieldOr("room", config.room, kUnsetLogValue)
@@ -560,28 +557,21 @@ private:
         room->setDelegate(nullptr);
         return false;
       }
-    } catch (const std::exception & exc) {
-      LogEvent(kRoomConnectionLogger, "room_connect_failed")
+    } catch (...) {
+      LogEvent(kLogger, "room_connect_failed")
         .field("reason", "exception")
         .field("url", config.url)
         .fieldOr("room", config.room, kUnsetLogValue)
-        .field("error", exc.what())
+        .fieldException("error", std::current_exception())
         .error();
-      room->setDelegate(nullptr);
-      return false;
-    } catch (...) {
-      LogEvent(kRoomConnectionLogger, "room_connect_failed")
-        .field("reason", "unknown_exception")
-        .field("url", config.url)
-        .fieldOr("room", config.room, kUnsetLogValue)
-        .error();
+
       room->setDelegate(nullptr);
       return false;
     }
 
     auto * participant = room->localParticipant();
     if (participant == nullptr) {
-      LogEvent(kRoomConnectionLogger, "room_connect_failed")
+      LogEvent(kLogger, "room_connect_failed")
         .field("reason", "local_participant_unavailable")
         .field("url", config.url)
         .fieldOr("room", config.room, kUnsetLogValue)
@@ -611,15 +601,13 @@ private:
     }
 
     if (!registered) {
-      LogEvent(kRoomConnectionLogger, "rpc_registration_incomplete")
-        .fieldOr("room", config.room, kUnsetLogValue)
-        .error();
+      LogEvent(kLogger, "rpc_registration_incomplete").fieldOr("room", config.room, kUnsetLogValue).error();
       reset(false);
       return false;
     }
 
     const std::string identity = participant->identity();
-    LogEvent(kRoomConnectionLogger, "room_connected")
+    LogEvent(kLogger, "room_connected")
       .fieldOr("room", info.name, kUnknownLogValue)
       .fieldOr("sid", info.sid.has_value() ? info.sid->c_str() : nullptr, kUnknownLogValue)
       .fieldOr("identity", identity, kUnknownLogValue)
@@ -664,7 +652,7 @@ private:
       return;
     }
 
-    LogEvent(kRoomConnectionLogger, "room_connection_reset")
+    LogEvent(kLogger, "room_connection_reset")
       .field("reason", reason.empty() ? "connection_reset" : reason.c_str())
       .fieldOr("room", room_name, kUnsetLogValue)
       .fieldIf(dropped_tracks > 0U, "dropped_video_tracks", dropped_tracks)
@@ -701,7 +689,7 @@ private:
       return;
     }
 
-    LogEvent(kRoomConnectionLogger, "room_reconnect_requested")
+    LogEvent(kLogger, "room_reconnect_requested")
       .field("reason", reason)
       .fieldOr("room", room_name, kUnsetLogValue)
       .warn();
@@ -742,29 +730,18 @@ private:
               });
           } catch (const RpcHandlerError & exc) {
             throw livekit::RpcError(exc.code(), exc.what());
-          } catch (const std::exception & exc) {
-            LogEvent(kRoomConnectionLogger, "rpc_request_failed")
-              .field("method", method)
-              .fieldOr("request_id", invocation.request_id, kUnknownLogValue)
-              .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
-              .field("error", exc.what())
-              .error();
-            throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
           } catch (...) {
-            LogEvent(kRoomConnectionLogger, "rpc_request_failed")
+            LogEvent(kLogger, "rpc_request_failed")
               .field("method", method)
               .fieldOr("request_id", invocation.request_id, kUnknownLogValue)
               .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
-              .field("error", "unknown_exception")
+              .fieldException("error", std::current_exception())
               .error();
             throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
           }
         });
     } catch (const std::exception & exc) {
-      LogEvent(kRoomConnectionLogger, "rpc_method_registration_failed")
-        .field("method", method)
-        .field("error", exc.what())
-        .error();
+      LogEvent(kLogger, "rpc_method_registration_failed").field("method", method).field("error", exc.what()).error();
       return false;
     }
     return true;

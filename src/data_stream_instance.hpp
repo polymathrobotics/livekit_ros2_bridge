@@ -38,6 +38,7 @@ class QuiesceGate;
 class RoomConnection;
 class SubscriptionRegistry;
 
+// todo: reword for clarity
 // SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
 // when that topic needs a data delivery runtime. Each DataStreamInstance owns the ROS
 // subscription plus one DataTrackPublisher for the matching LiveKit data track.
@@ -74,6 +75,7 @@ public:
   void republish(std::size_t generation);
   // Accepts publish completion only for the currently pending generation. Delayed completions
   // from a prior publish, reset, or replacement instance are rejected as stale.
+  // todo: rename for clarity
   bool completePublish(std::size_t generation);
   // Records a failed publish attempt while keeping the ROS subscription alive so a later lease
   // refresh can retry on the same topic runtime.
@@ -83,6 +85,7 @@ public:
 private:
   friend class SubscriptionRegistry;
 
+  // todo: get this noisy stuff moved elsewhere
   // Owns the state-machine contract for one deterministic LiveKit data track name. The reserved
   // generation advances only when a new publish attempt starts, and completion can succeed only
   // while that exact generation is still pending.
@@ -142,6 +145,7 @@ private:
     std::size_t reserved_generation = 0U;
   };
 
+  // todo: examples and get the noisy part moved elsewhere
   // Tracks the per-track interval suppression window. The window advances only when a
   // published track forwards a message, and it resets whenever the publication state is torn
   // down so the next successful publish can deliver immediately.
@@ -199,19 +203,24 @@ private:
   void forwardMessage(const rclcpp::SerializedMessage & message);
 
   rclcpp::Node & node_;
+
   std::string topic_;
   std::string interface_type_;
   std::string track_name_;
+
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
   DataTrackPublisher publisher_;
+  // todo: rename subscription_registry_
+  SubscriptionRegistry & registry_;
+
+  const SubscriptionQosConfig * qos_config_;
   SuppressionWindow suppression_window_;
   PublicationState publication_;
+
   // Captured from SubscriptionRegistry's QuiesceGate when this instance is created. Every queued
   // ROS callback must present the same gate generation before touching this instance.
   std::size_t gate_generation_ = 0U;
-  SubscriptionRegistry & registry_;
   QuiesceGate & callback_gate_;
-  const SubscriptionQosConfig * qos_config_;
 };
 
 }  // namespace livekit_ros2_bridge

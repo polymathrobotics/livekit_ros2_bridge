@@ -28,23 +28,6 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
-{
-
-// todo: inline this or use it everywhere if it's common practice.
-const char * currentExceptionMessage() noexcept
-{
-  try {
-    throw;
-  } catch (const std::exception & exc) {
-    return exc.what();
-  } catch (...) {
-    return "unknown_exception";
-  }
-}
-
-}  // namespace
-
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
@@ -60,7 +43,7 @@ Node::Node(const rclcpp::NodeOptions & options)
   } catch (...) {
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_config_load_failed")
-      .field("error", currentExceptionMessage())
+      .fieldException("error", std::current_exception())
       .error();
     throw;
   }
@@ -73,7 +56,7 @@ Node::Node(const rclcpp::NodeOptions & options)
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_initialization_failed")
       .fieldOr("room", room, "<unset>")
-      .field("error", currentExceptionMessage())
+      .fieldException("error", std::current_exception())
       .error();
     throw;
   }

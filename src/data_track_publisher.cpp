@@ -29,13 +29,8 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-const auto kDataTrackPublisherLogger = rclcpp::get_logger("data_track_publisher");
-constexpr auto kWriteLogThrottlePeriod = std::chrono::seconds(5);
-
-LogEvent dataTrackLog(const char * event, const std::string & name)
-{
-  return LogEvent(kDataTrackPublisherLogger, event).field("track_name", name);
-}
+const auto kLogger = rclcpp::get_logger("data_track_publisher");
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 
 const char * dataTrackPushReason(DataTrackPushErrorCode code)
 {
@@ -62,12 +57,14 @@ void tryUnpublishTrack(
   if (track == nullptr) {
     return;
   }
+
   try {
     connection.unpublishDataTrack(track);
-  } catch (const std::exception & exc) {
-    dataTrackLog("data_track_unpublish_failed", name).field("error", exc.what()).warn();
   } catch (...) {
-    dataTrackLog("data_track_unpublish_failed", name).warn();
+    LogEvent(kLogger, "data_track_unpublish_failed")
+      .field("track_name", name)
+      .fieldException("error", std::current_exception())
+      .warn();
   }
 }
 }  // namespace
@@ -96,16 +93,18 @@ void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
     // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
     // subscription callback non-blocking even when the participant is not draining the LiveKit
     // queue.
-    dataTrackLog("data_track_delivery_dropped", name_)
+    LogEvent(kLogger, "data_track_delivery_dropped")
+      .field("track_name", name_)
       .field("reason", "queue_full")
-      .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
+      .warnThrottle(*log_clock_, kLogThrottle);
     return;
   }
 
-  dataTrackLog("data_track_push_failed", name_)
+  LogEvent(kLogger, "data_track_push_failed")
+    .field("track_name", name_)
     .field("reason", dataTrackPushReason(error.code))
     .fieldOr("error", error.message)
-    .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
+    .warnThrottle(*log_clock_, kLogThrottle);
 }
 
 void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
@@ -128,17 +127,20 @@ void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & o
       throw;
     }
 
-    dataTrackLog("data_track_publish_reclaimed", name_)
+    LogEvent(kLogger, "data_track_publish_reclaimed")
+      .field("track_name", name_)
       .field("generation", generation)
       .field("reason", "stale_registry_state")
       .info();
     tryUnpublishTrack(room_connection_, name_, track);
-  } catch (const std::exception & exc) {
-    on_fail();
-    dataTrackLog("data_track_publish_error", name_).field("stage", stage).field("error", exc.what()).warn();
   } catch (...) {
+    const auto exception = std::current_exception();
     on_fail();
-    dataTrackLog("data_track_publish_error", name_).field("stage", stage).warn();
+    LogEvent(kLogger, "data_track_publish_error")
+      .field("track_name", name_)
+      .field("stage", stage)
+      .fieldException("error", exception)
+      .warn();
   }
 }
 

@@ -49,22 +49,11 @@ public:
 
   DataTrackPublisher(RoomConnection & connection, std::string name, rclcpp::Clock::SharedPtr clock);
 
-  // Best-effort write to an already-published data track carrying ROS CDR payloads. Missing
-  // tracks, backpressure, and transient LiveKit push failures are swallowed so ROS message
-  // delivery never blocks or tears down the current publication.
   void write(const std::uint8_t * cdr, std::size_t size);
-
-  // Publishes the LiveKit data track for a registry-reserved track name. Callbacks run inline,
-  // and the generation lets the registry reject stale completions after teardown or same-topic
-  // replacement.
   void publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail);
-
-  // Best-effort teardown of the currently accepted publication. After this returns, later writes
-  // are ignored even if LiveKit rejected the unpublish request.
   void unpublish();
 
 private:
-  // Non-owning room connection facade. The connection must outlive this publisher.
   RoomConnection & room_connection_;
   std::string name_;
   rclcpp::Clock::SharedPtr log_clock_;

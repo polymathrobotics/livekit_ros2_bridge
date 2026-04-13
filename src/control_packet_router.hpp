@@ -26,34 +26,25 @@
 namespace livekit_ros2_bridge
 {
 
-// Parses ingress control packets at the room-transport boundary and forwards only validated
-// commands to runtime-specific handlers. The router preserves caller-thread affinity and leaves any
-// required executor handoff or synchronization to those handlers.
+// Parses control packets and forwards commands to handlers. The router
+// preserves caller-thread affinity and leaves any required executor handoff or
+// synchronization to those handlers.  Payloads are passed by value so handlers can assume ownership
+// without depending on packet storage lifetimes.
 class ControlPacketRouter final
 {
 public:
-  // route() invokes handlers inline on the caller's thread after the matched control topic has
-  // been fully parsed and validated. Parsed payloads are passed by value so handlers can assume
-  // ownership without depending on packet storage lifetimes.
   using HeartbeatHandler = std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)>;
   using PublishHandler = std::function<void(std::string requester_identity, TopicPublishCommand command)>;
 
   struct Handlers
   {
-    // Heartbeats may be dispatched with an empty requester_identity so downstream session-based
-    // recovery can resolve the sender from heartbeat.session_id.
     HeartbeatHandler heartbeat_handler;
-    // Publish commands are dispatched only after requester_identity presence has been enforced.
     PublishHandler publish_handler;
   };
 
-  // The clock is used for throttled drop/rejection logs; all dependencies are required.
+  // todo: does it really need to inject the logger?
   ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers);
 
-  // Routes supported control topics synchronously. Unsupported topics, malformed payloads, and
-  // std::exception failures from parsing or handlers are converted into throttled logs instead of
-  // escaping the ingress path. Anonymous heartbeats are still forwarded so downstream session
-  // fallback can recover requester_identity; publish commands are not.
   void route(const IncomingControlPacket & packet) const;
 
 private:

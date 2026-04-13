@@ -37,7 +37,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 constexpr auto kHeartbeatLeaseDuration = std::chrono::seconds(45);
-constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
 const auto kLogger = rclcpp::get_logger("heartbeat_processor");
 }  // namespace
@@ -94,7 +93,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   if (!session_id.has_value()) {
     LogEvent(kLogger, "heartbeat_dropped")
       .field("reason", "anonymous_requester_without_client_session")
-      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
+      .warnThrottle(*clock_, kLogThrottle);
     return std::nullopt;
   }
 
@@ -103,7 +102,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
     LogEvent(kLogger, "heartbeat_dropped")
       .field("reason", "unknown_session_id")
       .field("session_id", *session_id)
-      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
+      .warnThrottle(*clock_, kLogThrottle);
     return std::nullopt;
   }
 
@@ -115,7 +114,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   LogEvent(kLogger, "heartbeat_client_session_fallback")
     .field("requester_identity", it->second.requester_identity)
     .fieldOr("session_id", session_id.value_or(""), "<absent>")
-    .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
+    .warnThrottle(*clock_, kLogThrottle);
   return it->second.requester_identity;
 }
 
@@ -228,7 +227,7 @@ void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease
       .field("requester_identity", lease.requester_identity)
       .fieldOr("session_id", lease.session_id.value_or(""), "<absent>")
       .field("error", exc.what())
-      .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
+      .warnThrottle(*clock_, kLogThrottle);
   }
 }
 

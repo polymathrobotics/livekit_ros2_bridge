@@ -164,11 +164,13 @@ private:
 
   struct Diagnostics
   {
-    EventThrottle executor_shutdown_enqueue_drop{std::chrono::seconds(5)};
-    EventThrottle executor_unavailable_drop{std::chrono::seconds(5)};
-    EventThrottle executor_shutdown_execute_drop{std::chrono::seconds(5)};
-    mutable EventThrottle control_packet_shutdown_drop{std::chrono::seconds(5)};
-    mutable EventThrottle control_packet_router_unavailable_drop{std::chrono::seconds(5)};
+    static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
+    EventThrottle executor_shutdown_enqueue_drop{kLogThrottle};
+    EventThrottle executor_unavailable_drop{kLogThrottle};
+    EventThrottle executor_shutdown_execute_drop{kLogThrottle};
+    mutable EventThrottle control_packet_shutdown_drop{kLogThrottle};
+    mutable EventThrottle control_packet_router_unavailable_drop{kLogThrottle};
   };
 
   void checkFailFast();

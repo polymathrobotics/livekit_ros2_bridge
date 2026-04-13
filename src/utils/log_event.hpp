@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -42,6 +43,7 @@ std::int64_t clampWarnThrottleIntervalMs(const std::chrono::duration<Rep, Period
 }  // namespace detail
 
 constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
+constexpr std::string_view kUnknownExceptionLogFieldValue = "unknown_exception";
 
 class LogEvent
 {
@@ -172,6 +174,20 @@ public:
     return std::move(*this);
   }
 
+  LogEvent & fieldException(
+    std::string_view key, std::exception_ptr exception, std::string_view fallback = kUnknownExceptionLogFieldValue) &
+  {
+    appendFieldException(key, std::move(exception), fallback);
+    return *this;
+  }
+
+  LogEvent && fieldException(
+    std::string_view key, std::exception_ptr exception, std::string_view fallback = kUnknownExceptionLogFieldValue) &&
+  {
+    appendFieldException(key, std::move(exception), fallback);
+    return std::move(*this);
+  }
+
   std::string str() const
   {
     return stream_.str();
@@ -263,6 +279,22 @@ private:
       stream_ << fallback;
     } else {
       stream_ << value;
+    }
+  }
+
+  void appendFieldException(std::string_view key, std::exception_ptr exception, std::string_view fallback)
+  {
+    if (exception == nullptr) {
+      appendField(key, fallback);
+      return;
+    }
+
+    try {
+      std::rethrow_exception(exception);
+    } catch (const std::exception & exc) {
+      appendField(key, exc.what());
+    } catch (...) {
+      appendField(key, fallback);
     }
   }
 

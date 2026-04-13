@@ -76,6 +76,7 @@ LookupFailureCache & lookupFailureCache()
 std::mutex attempt_hook_mutex;
 std::function<void(const std::string &)> attempt_hook;
 
+// todo: inline this
 [[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
 {
   throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);

@@ -30,7 +30,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kLogThrottle = std::chrono::milliseconds(5000);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 }  // namespace
 
 ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
@@ -54,6 +54,7 @@ ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::S
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
+  // todo: extract 2 route functions
   if (packet.control_topic == protocol::kControlTopicPublish) {
     bool missing_requester_identity = false;
     try {
@@ -71,39 +72,22 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         .fieldIf(!missing_requester_identity, "error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-    return;
-  }
-
-  if (packet.control_topic != protocol::kControlSubscriptionsHeartbeat) {
+  } else if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
+    try {
+      nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+      heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
+    } catch (const std::exception & exc) {
+      LogEvent(logger_, "control_packet_rejected")
+        .field("reason", "invalid_heartbeat")
+        .fieldOr("requester_identity", packet.requester_identity)
+        .field("error", exc.what())
+        .warnThrottle(*clock_, kLogThrottle);
+    }
+  } else {
     LogEvent(logger_, "control_packet_dropped")
       .field("reason", "unsupported_control_topic")
       .field("control_topic", packet.control_topic)
       .fieldOr("requester_identity", packet.requester_identity)
-      .warnThrottle(*clock_, kLogThrottle);
-    return;
-  }
-
-  // Keep transport-level JSON decoding separate from semantic heartbeat validation so the
-  // rejection reason distinguishes broken wire payloads from protocol-shape violations.
-  nlohmann::json body;
-  try {
-    body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-  } catch (const std::exception & exc) {
-    LogEvent(logger_, "control_packet_rejected")
-      .field("reason", "malformed_heartbeat")
-      .fieldOr("requester_identity", packet.requester_identity)
-      .field("error", exc.what())
-      .warnThrottle(*clock_, kLogThrottle);
-    return;
-  }
-
-  try {
-    heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
-  } catch (const std::exception & exc) {
-    LogEvent(logger_, "control_packet_rejected")
-      .field("reason", "invalid_heartbeat")
-      .fieldOr("requester_identity", packet.requester_identity)
-      .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
   }
 }

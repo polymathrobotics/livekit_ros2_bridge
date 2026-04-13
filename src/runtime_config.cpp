@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -36,7 +37,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kRuntimeConfigLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
 constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
@@ -516,14 +517,6 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   std::string room;
   std::string url;
   const char * stage = "parameters_interface_validation";
-  const auto logLoadFailure = [&](const char * error) {
-    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
-      .field("stage", stage)
-      .fieldOr("room", room, kUnsetLogValue)
-      .fieldOr("url", url, kUnsetLogValue)
-      .field("error", error)
-      .error();
-  };
 
   try {
     if (parameters == nullptr) {
@@ -541,18 +534,23 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     stage = "room_connection_config";
     config.room_connection = loadRoomConnectionConfig(params);
     config.access_token = params.livekit.token;
+
     stage = "health_config";
     config.health = loadHealthConfig(params);
+
     stage = "access_policy";
     config.access_policy = loadAccessPolicy(params);
+
     stage = "subscription_qos_config";
     config.subscription_qos = loadSubscriptionQosConfig(params);
+
     stage = "video_stream_config";
     config.video_stream = loadVideoStreamConfig(params);
+
     stage = "video_profiling_config";
     config.video_profiling = loadVideoProfilingConfig(params);
 
-    LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
+    LogEvent(kLogger, "runtime_config_loaded")
       .fieldOr("room", config.room_connection.room, kUnsetLogValue)
       .fieldOr("url", config.room_connection.url, kUnsetLogValue)
       .field("custom_video_rule_count", params.video_topic_rule_ids.size())
@@ -560,11 +558,14 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
       .info();
 
     return config;
-  } catch (const std::exception & exc) {
-    logLoadFailure(exc.what());
-    throw;
   } catch (...) {
-    logLoadFailure("unknown_exception");
+    LogEvent(kLogger, "runtime_config_load_failed")
+      .field("stage", stage)
+      .fieldOr("room", room, kUnsetLogValue)
+      .fieldOr("url", url, kUnsetLogValue)
+      .fieldException("error", std::current_exception())
+      .error();
+
     throw;
   }
 }

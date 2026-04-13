@@ -23,8 +23,8 @@ namespace livekit_ros2_bridge
 
 /// One ROS interface definition entry returned to a remote caller.
 /// Wire-format note: interface_payloads::serialize() maps these members directly to the
-/// `ros.interfaces.get` JSON response keys. Treat those keys and their meanings as public
-/// client-facing contract; do not rename or repurpose them without an explicit compatibility plan.
+/// `ros.interfaces.get` JSON response keys.
+// TODO: decouple serialization, make an explicit json object.
 struct InterfaceDefinition
 {
   /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
@@ -39,15 +39,9 @@ struct InterfaceDefinition
 /// definition plus any transitive message dependencies. The requested definition is always
 /// returned first, followed by unique dependencies in first-discovery order during recursive
 /// traversal.
-/// Throws `std::invalid_argument` for malformed `package/kind/Name` identifiers and
-/// `std::runtime_error` when the package or definition file cannot be found. Failures are
-/// memoized process-locally by interface type so repeated bad requests fail fast.
 std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
 
-// Test-only helpers for validating negative-cache behavior. They mutate process-global lookup
-// state, so use them only from tests that own `lookupInterfaceDefinitions()` for their duration.
-// The hook fires only on uncached lookup attempts, and
-// `resetInterfaceLookupForTest()` clears both the failure cache and any installed hook.
+// Test-only helpers for validating negative-cache behavior.
 void setInterfaceLookupAttemptHookForTest(std::function<void(const std::string &)> hook);
 void resetInterfaceLookupForTest();
 

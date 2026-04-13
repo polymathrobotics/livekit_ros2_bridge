@@ -26,16 +26,12 @@ namespace livekit_ros2_bridge
 
 struct AccessRuleConfig
 {
-  /// Raw allow/deny rules for one operation. `AccessPolicy` trims surrounding whitespace,
-  /// normalizes ROS resource names, and treats a literal `"*"` as an operation-wide override.
   std::vector<std::string> allow;
   std::vector<std::string> deny;
 };
 
 struct AccessPolicyConfig
 {
-  /// Rules are evaluated independently per operation; leaving one empty keeps that operation
-  /// default-deny.
   AccessRuleConfig publish;
   AccessRuleConfig subscribe;
   AccessRuleConfig service;
@@ -54,29 +50,24 @@ enum class AccessOperation
 /// exact patterns match one resource and `.../*` patterns match descendants.
 /// Instances are immutable after construction and can be shared across threads without
 /// external synchronization.
+/// TODO: "an empty rule config is default-deny for that op"" and stop talking about normalization and an example?
 class AccessPolicy
 {
 public:
   AccessPolicy() = default;
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
-  /// Return whether `raw_resource` is allowed after normalization. Empty or whitespace-only names
-  /// are denied and logged.
+  /// Whether `raw_resource` is allowed.
+  /// todo: rename `raw_resource` as resource
   bool allows(AccessOperation operation, std::string_view raw_resource) const;
 
 private:
   struct Rules
   {
-    /// Parse configured rules into normalized lookup state. `"*"` is tracked separately from
-    /// `patterns` so it keeps its policy-wide meaning instead of becoming the root-subtree
-    /// pattern `/*` during normalization.
     static Rules parse(const std::vector<std::string> & raw_rules);
 
-    /// Requires a normalized resource name.
     bool matches(std::string_view resource) const;
-
     bool matches_all = false;
-    // Normalized exact or subtree patterns. `"*"` is represented only by `matches_all`.
     std::set<std::string> patterns;
   };
 

@@ -31,7 +31,7 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-const auto kRosExecutorQueueLogger = rclcpp::get_logger("ros_executor_queue");
+const auto kLogger = rclcpp::get_logger("ros_executor_queue");
 constexpr int kReadyEntityId = 0;
 }  // namespace
 
@@ -181,7 +181,7 @@ private:
 RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
 : callback_group_(node.get_node_base_interface()->get_default_callback_group())
 , waitables_(node.get_node_waitables_interface())
-, logger_(kRosExecutorQueueLogger)
+, logger_(kLogger)
 , log_clock_(node.get_clock())
 {
   waitable_ = std::make_shared<DrainWaitable>(*this, node.get_node_base_interface()->get_context());
@@ -208,16 +208,10 @@ void RosExecutorQueue::wake()
 
   try {
     waitable->wake();
-  } catch (const std::exception & exc) {
-    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .field("action", "shutdown")
-      .field("error", exc.what())
-      .error();
-    shutdown();
   } catch (...) {
-    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
+    LogEvent(kLogger, "executor_wake_failed")
       .field("action", "shutdown")
-      .field("error", "unknown_exception")
+      .fieldException("error", std::current_exception())
       .error();
     shutdown();
   }
@@ -260,7 +254,7 @@ void RosExecutorQueue::shutdown()
   }
 
   if (canceled_count > 0U) {
-    LogEvent(kRosExecutorQueueLogger, "executor_pending_tasks_canceled")
+    LogEvent(kLogger, "executor_pending_tasks_canceled")
       .field("reason", "shutdown")
       .field("count", canceled_count)
       .warn();
@@ -302,15 +296,10 @@ void RosExecutorQueue::drain()
       // drain() always runs on the executor thread that consumed the waitable,
       // so queued work observes the same callback-group affinity as ROS callbacks.
       task.run();
-    } catch (const std::exception & exc) {
-      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .field("action", "continue")
-        .field("error", exc.what())
-        .error();
     } catch (...) {
-      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
+      LogEvent(kLogger, "executor_task_failed")
         .field("action", "continue")
-        .field("error", "unknown_exception")
+        .fieldException("error", std::current_exception())
         .error();
     }
   }

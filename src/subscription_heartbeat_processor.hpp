@@ -52,6 +52,8 @@ public:
   void pruneExpiredLeases();
 
 private:
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   // Tracks the requester identity bound to a wire `session_id` so anonymous heartbeats from an
   // already authenticated browser tab can renew until expiry.
   struct SessionLease
@@ -86,7 +88,7 @@ private:
   // jumps do not change anonymous-heartbeat acceptance.
   rclcpp::Clock::SharedPtr clock_;
   std::unordered_map<std::string, SessionLease> leases_;
-  EventThrottle conflict_throttle_{std::chrono::seconds(5)};
+  EventThrottle conflict_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge

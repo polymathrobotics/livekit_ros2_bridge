@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include <chrono>
+#include <exception>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -66,6 +68,41 @@ TEST(LogEventTest, UsesCustomFallbacksForStringViewAndCStringInputs)
       .str(),
     "event=sample_event empty_view=<missing> null_cstr=<missing> present_view=ready "
     "present_cstr=ok");
+}
+
+TEST(LogEventTest, FormatsStdExceptionMessagesViaExceptionPtr)
+{
+  std::exception_ptr exception;
+
+  try {
+    throw std::runtime_error("boom");
+  } catch (...) {
+    exception = std::current_exception();
+  }
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", exception).str(),
+    "event=sample_event error=boom");
+}
+
+TEST(LogEventTest, FallsBackForMissingOrNonStdExceptions)
+{
+  std::exception_ptr non_std_exception;
+
+  try {
+    throw 7;
+  } catch (...) {
+    non_std_exception = std::current_exception();
+  }
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", nullptr).str(),
+    "event=sample_event error=unknown_exception");
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .fieldException("error", non_std_exception, "<non_std>")
+      .str(),
+    "event=sample_event error=<non_std>");
 }
 
 TEST(LogEventTest, SupportsConditionalChainableFields)
