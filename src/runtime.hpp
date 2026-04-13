@@ -81,13 +81,6 @@ private:
     std::chrono::milliseconds fail_fast_disconnect_grace{0};
   };
 
-  struct Timers
-  {
-    rclcpp::TimerBase::SharedPtr lease_gc;
-    rclcpp::TimerBase::SharedPtr fail_fast;
-    rclcpp::TimerBase::SharedPtr video_profile_summary;
-  };
-
   struct State
   {
     struct RoomConnectedTransition
@@ -194,7 +187,9 @@ private:
   std::unique_ptr<PacketRouter> packet_router_;
 
   Config config_;
-  Timers timers_;
+  rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
+  rclcpp::TimerBase::SharedPtr fail_fast_timer_;
+  rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
   State state_;
   Diagnostics diagnostics_;
 };

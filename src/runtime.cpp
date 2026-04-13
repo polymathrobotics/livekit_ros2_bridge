@@ -183,7 +183,7 @@ void Runtime::initFailFast()
     state_.armGraceDeadline(config_.fail_fast_disconnect_grace);
   }
 
-  timers_.fail_fast = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { checkFailFast(); });
+  fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { checkFailFast(); });
 }
 
 void Runtime::initVideoProfiling(VideoProfilingConfig video_profiling)
@@ -194,7 +194,7 @@ void Runtime::initVideoProfiling(VideoProfilingConfig video_profiling)
 
   video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(video_profiling));
   video_profiling_registry_->logConfig();
-  timers_.video_profile_summary = node_.create_wall_timer(
+  video_profile_summary_timer_ = node_.create_wall_timer(
     video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
 }
 
@@ -216,7 +216,8 @@ void Runtime::initSubscriptionRuntime(const AccessPolicy & access_policy)
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_connection_, access_policy, node_.get_clock());
-  timers_.lease_gc = node_.create_wall_timer(kLeaseGcInterval, [this]() {
+
+  subscription_lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitToExecutor([this]() {
       subscription_heartbeat_processor_->pruneExpiredLeases();
       subscription_registry_->pruneExpiredLeases();
@@ -313,9 +314,9 @@ void Runtime::shutdown()
 
   // Disarm periodic work first so lease GC and fail-fast evaluation stop racing a deliberate
   // shutdown while the shared components below are being torn down.
-  timers_.lease_gc.reset();
-  timers_.fail_fast.reset();
-  timers_.video_profile_summary.reset();
+  subscription_lease_gc_timer_.reset();
+  fail_fast_timer_.reset();
+  video_profile_summary_timer_.reset();
 
   if (rpc_router_ != nullptr && room_connection_ != nullptr) {
     rpc_router_->unregisterRpcs(*room_connection_);
