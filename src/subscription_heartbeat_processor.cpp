@@ -215,13 +215,13 @@ void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease
   }
 
   const std::string body = envelope.dump();
-  OutgoingControlPacket packet;
+  OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {lease.requester_identity};
-  packet.control_topic = protocol::kControlSubscriptionsStatus;
+  packet.topic = protocol::kControlSubscriptionsStatus;
 
   try {
-    room_connection_.publishControlPacket(packet);
+    room_connection_.publishPacket(packet);
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "subscription_status_publish_failed")
       .field("requester_identity", lease.requester_identity)

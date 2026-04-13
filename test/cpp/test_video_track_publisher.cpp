@@ -64,12 +64,7 @@ public:
 class ThrowingUnpublishRoomConnection final : public RoomConnection
 {
 public:
-  void start(
-    RoomConnectionConfig,
-    std::string,
-    RoomConnectionCallbacks,
-    std::chrono::milliseconds,
-    std::chrono::milliseconds) override
+  void start(LiveKitConfig, RoomConnectionCallbacks) override
   {}
 
   void stop() override
@@ -85,7 +80,7 @@ public:
     return true;
   }
 
-  void publishControlPacket(const OutgoingControlPacket &) override
+  void publishPacket(const OutgoingPacket &) override
   {}
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string &) override
@@ -130,12 +125,7 @@ public:
   : fail_on_attempt_(fail_on_attempt)
   {}
 
-  void start(
-    RoomConnectionConfig,
-    std::string,
-    RoomConnectionCallbacks,
-    std::chrono::milliseconds,
-    std::chrono::milliseconds) override
+  void start(LiveKitConfig, RoomConnectionCallbacks) override
   {}
 
   void stop() override
@@ -151,7 +141,7 @@ public:
     return true;
   }
 
-  void publishControlPacket(const OutgoingControlPacket &) override
+  void publishPacket(const OutgoingPacket &) override
   {}
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string &) override
@@ -205,12 +195,7 @@ public:
   , release_publish_future_(release_publish_promise_.get_future().share())
   {}
 
-  void start(
-    RoomConnectionConfig,
-    std::string,
-    RoomConnectionCallbacks,
-    std::chrono::milliseconds,
-    std::chrono::milliseconds) override
+  void start(LiveKitConfig, RoomConnectionCallbacks) override
   {}
 
   void stop() override
@@ -226,7 +211,7 @@ public:
     return true;
   }
 
-  void publishControlPacket(const OutgoingControlPacket &) override
+  void publishPacket(const OutgoingPacket &) override
   {}
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string &) override

@@ -128,9 +128,9 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
 {
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_static_token", makeStaticTokenOptions());
 
-  EXPECT_EQ(config.room_connection.url, "ws://test:7880");
-  EXPECT_EQ(config.room_connection.room, "robot-room");
-  EXPECT_EQ(config.access_token, "static-token");
+  EXPECT_EQ(config.livekit.url, "ws://test:7880");
+  EXPECT_EQ(config.livekit.room, "robot-room");
+  EXPECT_EQ(config.livekit.access_token, "static-token");
 }
 
 TEST_F(RuntimeConfigTest, DefaultVideoConfigAddsBuiltInCatchAllRosRule)

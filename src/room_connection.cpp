@@ -43,6 +43,14 @@
 namespace livekit_ros2_bridge
 {
 
+namespace
+{
+
+constexpr auto kReconnectInitialBackoff = std::chrono::milliseconds(500);
+constexpr auto kReconnectMaxBackoff = std::chrono::milliseconds(10000);
+
+}  // namespace
+
 DataTrackPushResult::DataTrackPushResult(std::optional<DataTrackPushError> error)
 : error_(std::move(error))
 {}
@@ -114,27 +122,15 @@ public:
     stop();
   }
 
-  void start(
-    RoomConnectionConfig config,
-    std::string access_token,
-    RoomConnectionCallbacks callbacks,
-    std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff) override
+  void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_started_) {
       return;
     }
 
-    if (access_token.empty()) {
-      throw std::invalid_argument("LiveKit access_token is required.");
-    }
-
     config_ = std::move(config);
-    access_token_ = std::move(access_token);
     callbacks_ = std::move(callbacks);
-    initial_backoff_ = std::max(initial_backoff, std::chrono::milliseconds(0));
-    max_backoff_ = std::max(max_backoff, initial_backoff_);
     stop_requested_ = false;
     reconnect_requested_ = false;
     reconnect_reason_.clear();
@@ -190,13 +186,13 @@ public:
     return true;
   }
 
-  void publishControlPacket(const OutgoingControlPacket & packet) override
+  void publishPacket(const OutgoingPacket & packet) override
   {
     const auto snapshot = snapshotLocalParticipant();
     if (snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
-    snapshot.participant->publishData(packet.payload, true, packet.recipient_identities, packet.control_topic);
+    snapshot.participant->publishData(packet.payload, true, packet.recipient_identities, packet.topic);
   }
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
@@ -388,18 +384,18 @@ public:
 
   void onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event) override
   {
-    std::function<void(const IncomingControlPacket &)> on_packet;
+    std::function<void(const IncomingPacket &)> on_packet;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      on_packet = callbacks_.on_incoming_control_packet_received;
+      on_packet = callbacks_.on_incoming_packet_received;
     }
     if (!on_packet) {
       return;
     }
 
-    IncomingControlPacket packet;
+    IncomingPacket packet;
     packet.payload = event.data;
-    packet.control_topic = event.topic;
+    packet.topic = event.topic;
     if (const auto * participant = event.participant; participant != nullptr) {
       packet.requester_identity = participant->identity();
     }
@@ -519,21 +515,11 @@ private:
 
   bool connect()
   {
-    RoomConnectionConfig config;
-    std::string access_token;
+    LiveKitConfig config;
     std::function<void()> on_connected;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       config = config_;
-      access_token = access_token_;
-    }
-
-    if (access_token.empty()) {
-      LogEvent(kLogger, "room_token_load_failed")
-        .field("reason", "empty_token")
-        .fieldOr("room", config.room, kUnsetLogValue)
-        .error();
-      return false;
     }
 
     auto room = std::make_shared<livekit::Room>();
@@ -546,7 +532,7 @@ private:
     options.single_peer_connection = true;
 
     try {
-      if (!room->Connect(config.url, access_token, options)) {
+      if (!room->Connect(config.url, config.access_token, options)) {
         LogEvent(kLogger, "room_connect_failed")
           .field("reason", "connect_returned_false")
           .field("url", config.url)
@@ -752,8 +738,7 @@ private:
   std::thread worker_thread_;
 
   std::shared_ptr<livekit::Room> room_;
-  RoomConnectionConfig config_;
-  std::string access_token_;
+  LiveKitConfig config_;
   RoomConnectionCallbacks callbacks_;
 
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
@@ -761,8 +746,8 @@ private:
   // keeps late publish/unpublish completions from crossing a reconnect boundary.
   std::unordered_map<const VideoTrackHandle *, VideoTrackEntry> video_tracks_;
 
-  std::chrono::milliseconds initial_backoff_{500};
-  std::chrono::milliseconds max_backoff_{10000};
+  std::chrono::milliseconds initial_backoff_{kReconnectInitialBackoff};
+  std::chrono::milliseconds max_backoff_{kReconnectMaxBackoff};
 
   bool stop_requested_ = false;
   // Shared wakeup latch for reconnect requests and stop(); run() consults stop_requested_ after

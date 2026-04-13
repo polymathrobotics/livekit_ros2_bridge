@@ -90,13 +90,13 @@ std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
 nlohmann::json extractPublishedStatusEnvelope(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
-  if (state.published_outgoing_control_packets.size() != 1U) {
-    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_control_packets.size();
+  if (state.published_outgoing_packets.size() != 1U) {
+    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_packets.size();
     return nlohmann::json::object();
   }
 
-  const auto & packet = state.published_outgoing_control_packets.front();
-  EXPECT_EQ(packet.control_topic, protocol::kControlSubscriptionsStatus);
+  const auto & packet = state.published_outgoing_packets.front();
+  EXPECT_EQ(packet.topic, protocol::kControlSubscriptionsStatus);
 
   if (packet.recipient_identities.size() != 1U) {
     ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
@@ -296,7 +296,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
 
   const auto heartbeat = makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1"));
   processor.process("requester-1", heartbeat);
-  state_->published_outgoing_control_packets.clear();
+  state_->published_outgoing_packets.clear();
 
   processor.process("", heartbeat);
 
@@ -315,11 +315,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatWithoutResolvableCl
 
   processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("unknown-session")));
 
-  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
 
   processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
 }
 
 TEST_F(
@@ -338,11 +338,11 @@ TEST_F(
   const auto bind_heartbeat = makeHeartbeat({}, std::string("session-1"));
   processor.process("requester-1", bind_heartbeat);
 
-  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
 
   processor.process("requester-2", bind_heartbeat);
 
-  EXPECT_EQ(state_->publish_control_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
 
   processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
@@ -370,13 +370,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 
 TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledGracefully)
 {
-  state_->throw_on_publish_control_packet = true;
+  state_->throw_on_publish_packet = true;
 
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
   EXPECT_NO_THROW(processor.process("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)})));
-  EXPECT_EQ(state_->publish_control_packet_call_count, 1);
+  EXPECT_EQ(state_->publish_packet_call_count, 1);
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MixedSubscriptionResultsArePublishedInOneEnvelope)

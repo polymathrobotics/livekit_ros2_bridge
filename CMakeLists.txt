@@ -47,7 +47,7 @@ pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
 
 add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
-  src/control_packet_router.cpp
+  src/packet_router.cpp
   src/data_stream_instance.cpp
   src/data_track_publisher.cpp
   src/interface_definition_lookup.cpp
@@ -126,8 +126,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_data_stream_instance test/cpp/test_data_stream_instance.cpp)
   target_link_libraries(test_data_stream_instance ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
-  ament_add_gtest(test_control_packet_router test/cpp/test_control_packet_router.cpp)
-  target_link_libraries(test_control_packet_router ${PROJECT_NAME})
+  ament_add_gtest(test_packet_router test/cpp/test_packet_router.cpp)
+  target_link_libraries(test_packet_router ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
   ament_add_gtest(test_subscription_heartbeat_processor test/cpp/test_subscription_heartbeat_processor.cpp)
   target_link_libraries(test_subscription_heartbeat_processor ${PROJECT_NAME} ${sensor_msgs_TARGETS})
@@ -229,7 +229,7 @@ if(BUILD_TESTING)
   set(livekit_ros2_bridge_test_targets
     test_access_policy
     test_base64
-    test_control_packet_router
+    test_packet_router
     test_data_stream_instance
     test_data_track_publisher
     test_event_throttle

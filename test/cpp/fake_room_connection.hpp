@@ -47,7 +47,7 @@ struct FakeRoomConnectionState
   std::vector<std::string> registered_rpc_methods;
   std::vector<std::string> unregistered_rpc_methods;
   std::vector<std::string> event_log;
-  std::vector<OutgoingControlPacket> published_outgoing_control_packets;
+  std::vector<OutgoingPacket> published_outgoing_packets;
 
   std::vector<std::string> published_data_track_names;
   std::vector<PushedDataTrackFrame> pushed_data_track_frames;
@@ -66,8 +66,8 @@ struct FakeRoomConnectionState
   std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
 
-  bool throw_on_publish_control_packet = false;
-  int publish_control_packet_call_count = 0;
+  bool throw_on_publish_packet = false;
+  int publish_packet_call_count = 0;
 };
 
 class FakeRoomConnection final : public RoomConnection
@@ -77,18 +77,10 @@ public:
   : state(std::make_shared<FakeRoomConnectionState>())
   {}
 
-  void start(
-    RoomConnectionConfig config,
-    std::string access_token,
-    RoomConnectionCallbacks callbacks,
-    std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff) override
+  void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) override
   {
-    (void)config;
-    (void)initial_backoff;
-    (void)max_backoff;
     state->started = true;
-    state->access_token = std::move(access_token);
+    state->access_token = std::move(config.access_token);
     state->callbacks = std::move(callbacks);
   }
 
@@ -113,14 +105,14 @@ public:
     return true;
   }
 
-  void publishControlPacket(const OutgoingControlPacket & packet) override
+  void publishPacket(const OutgoingPacket & packet) override
   {
-    state->publish_control_packet_call_count++;
-    if (state->throw_on_publish_control_packet) {
-      throw std::runtime_error("simulated publishControlPacket failure");
+    state->publish_packet_call_count++;
+    if (state->throw_on_publish_packet) {
+      throw std::runtime_error("simulated publishPacket failure");
     }
-    state->event_log.push_back("publish_control_packet:" + packet.control_topic);
-    state->published_outgoing_control_packets.push_back(packet);
+    state->event_log.push_back("publish_packet:" + packet.topic);
+    state->published_outgoing_packets.push_back(packet);
   }
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
@@ -223,10 +215,10 @@ public:
     }
   }
 
-  void emitIncomingControlPacket(const IncomingControlPacket & packet) const
+  void emitIncomingPacket(const IncomingPacket & packet) const
   {
-    if (state->callbacks.on_incoming_control_packet_received) {
-      state->callbacks.on_incoming_control_packet_received(packet);
+    if (state->callbacks.on_incoming_packet_received) {
+      state->callbacks.on_incoming_packet_received(packet);
     }
   }
 

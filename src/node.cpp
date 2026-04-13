@@ -39,7 +39,7 @@ Node::Node(const rclcpp::NodeOptions & options)
     config = loadRuntimeConfig(get_node_parameters_interface());
     // Copy the room before Runtime takes ownership of config so later startup failures can
     // still attribute the error to the intended room.
-    room = config.room_connection.room;
+    room = config.livekit.room;
   } catch (...) {
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_config_load_failed")
@@ -51,7 +51,8 @@ Node::Node(const rclcpp::NodeOptions & options)
   // Keep configuration loading separate from runtime startup so startup logs distinguish
   // invalid parameters from room-connection or runtime initialization failures.
   try {
-    runtime_ = std::make_unique<Runtime>(*this, createRoomConnection(), std::move(config));
+    auto room_connection = createRoomConnection();
+    runtime_ = std::make_unique<Runtime>(*this, std::move(room_connection), std::move(config));
   } catch (...) {
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_initialization_failed")

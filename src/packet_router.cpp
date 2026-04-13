@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "control_packet_router.hpp"
+#include "packet_router.hpp"
 
 #include <chrono>
 #include <exception>
@@ -20,8 +20,11 @@
 #include <utility>
 
 #include "nlohmann/json.hpp"
+#include "payloads/stream_control_payloads.hpp"
 #include "protocol.hpp"
 #include "rclcpp/logging.hpp"
+#include "ros_topic_publisher.hpp"
+#include "subscription_heartbeat_processor.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -31,31 +34,36 @@ namespace
 {
 
 constexpr auto kLogThrottle = std::chrono::seconds(5);
+const auto kLogger = rclcpp::get_logger("packet_router");
 }  // namespace
 
-ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
-: logger_(std::move(logger))
-, clock_(std::move(clock))
-, heartbeat_handler_(std::move(handlers.heartbeat_handler))
-, publish_handler_(std::move(handlers.publish_handler))
+PacketRouter::PacketRouter(
+  rclcpp::Clock::SharedPtr clock,
+  SubmitToExecutorFunction submit_to_executor,
+  SubscriptionHeartbeatProcessor & subscription_heartbeat_processor,
+  RosTopicPublisher & ros_topic_publisher)
+: clock_(std::move(clock))
+, submit_to_executor_(std::move(submit_to_executor))
+, subscription_heartbeat_processor_(subscription_heartbeat_processor)
+, ros_topic_publisher_(ros_topic_publisher)
 {
   if (clock_ == nullptr) {
-    throw std::invalid_argument("ControlPacketRouter requires a clock.");
+    throw std::invalid_argument("PacketRouter requires a clock.");
   }
 
-  if (!heartbeat_handler_) {
-    throw std::invalid_argument("ControlPacketRouter requires a heartbeat callback.");
-  }
-
-  if (!publish_handler_) {
-    throw std::invalid_argument("ControlPacketRouter requires a publish callback.");
+  if (!submit_to_executor_) {
+    throw std::invalid_argument("PacketRouter requires a submitToExecutor callback.");
   }
 }
 
-void ControlPacketRouter::route(const IncomingControlPacket & packet) const
+void PacketRouter::submitToExecutor(std::function<void()> work) const
 {
-  // todo: extract 2 route functions
-  if (packet.control_topic == protocol::kControlTopicPublish) {
+  submit_to_executor_(std::move(work));
+}
+
+void PacketRouter::handle(const IncomingPacket & packet) const
+{
+  if (packet.topic == protocol::kControlTopicPublish) {
     bool missing_requester_identity = false;
     try {
       // Unlike heartbeats, publish commands have no session-based requester recovery path
@@ -64,29 +72,36 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
         missing_requester_identity = true;
         throw std::invalid_argument("requester_identity is required");
       }
-      publish_handler_(packet.requester_identity, parseTopicPublishCommand(packet.payload));
+      auto command = parseTopicPublishCommand(packet.payload);
+      submitToExecutor([this, requester_identity = packet.requester_identity, command = std::move(command)]() mutable {
+        ros_topic_publisher_.publish(requester_identity, command);
+      });
     } catch (const std::exception & exc) {
-      LogEvent(logger_, "control_packet_rejected")
+      LogEvent(kLogger, "packet_rejected")
         .field("reason", missing_requester_identity ? "missing_requester_identity" : "invalid_publish_command")
         .fieldOr("requester_identity", packet.requester_identity)
         .fieldIf(!missing_requester_identity, "error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-  } else if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
+  } else if (packet.topic == protocol::kControlSubscriptionsHeartbeat) {
     try {
       nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-      heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
+      auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+      submitToExecutor(
+        [this, requester_identity = packet.requester_identity, heartbeat = std::move(heartbeat)]() mutable {
+          subscription_heartbeat_processor_.process(requester_identity, heartbeat);
+        });
     } catch (const std::exception & exc) {
-      LogEvent(logger_, "control_packet_rejected")
+      LogEvent(kLogger, "packet_rejected")
         .field("reason", "invalid_heartbeat")
         .fieldOr("requester_identity", packet.requester_identity)
         .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
   } else {
-    LogEvent(logger_, "control_packet_dropped")
-      .field("reason", "unsupported_control_topic")
-      .field("control_topic", packet.control_topic)
+    LogEvent(kLogger, "packet_dropped")
+      .field("reason", "unsupported_topic")
+      .field("topic", packet.topic)
       .fieldOr("requester_identity", packet.requester_identity)
       .warnThrottle(*clock_, kLogThrottle);
   }

@@ -465,7 +465,7 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 
 // Keep the generated parameter-library field layout at the edge so startup
 // config assembly reads in terms of runtime-owned concepts.
-RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
+LiveKitConfig loadLiveKitConfig(const Params & params)
 {
   if (params.livekit.url.empty()) {
     throw std::runtime_error("livekit.url is required");
@@ -474,9 +474,10 @@ RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
     throw std::runtime_error("livekit.room is required");
   }
 
-  RoomConnectionConfig config;
+  LiveKitConfig config;
   config.url = params.livekit.url;
   config.room = params.livekit.room;
+  config.access_token = params.livekit.token;
   return config;
 }
 
@@ -531,9 +532,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     room = params.livekit.room;
     url = params.livekit.url;
 
-    stage = "room_connection_config";
-    config.room_connection = loadRoomConnectionConfig(params);
-    config.access_token = params.livekit.token;
+    stage = "livekit_config";
+    config.livekit = loadLiveKitConfig(params);
 
     stage = "health_config";
     config.health = loadHealthConfig(params);
@@ -551,8 +551,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     config.video_profiling = loadVideoProfilingConfig(params);
 
     LogEvent(kLogger, "runtime_config_loaded")
-      .fieldOr("room", config.room_connection.room, kUnsetLogValue)
-      .fieldOr("url", config.room_connection.url, kUnsetLogValue)
+      .fieldOr("room", config.livekit.room, kUnsetLogValue)
+      .fieldOr("url", config.livekit.url, kUnsetLogValue)
       .field("custom_video_rule_count", params.video_topic_rule_ids.size())
       .field("configured_source_count", config.video_stream.configured_sources.size())
       .info();

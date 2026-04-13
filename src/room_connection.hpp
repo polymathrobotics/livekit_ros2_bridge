@@ -35,10 +35,11 @@ class VideoSource;
 namespace livekit_ros2_bridge
 {
 
-struct RoomConnectionConfig
+struct LiveKitConfig
 {
   std::string url;
   std::string room;
+  std::string access_token;
 };
 
 struct RpcInvocation
@@ -82,18 +83,18 @@ private:
 
 using RpcHandler = std::function<std::optional<std::string>(const RpcInvocation &)>;
 
-struct IncomingControlPacket
+struct IncomingPacket
 {
   std::vector<std::uint8_t> payload;
-  std::string control_topic;
+  std::string topic;
   std::string requester_identity;
 };
 
-struct OutgoingControlPacket
+struct OutgoingPacket
 {
   std::vector<std::uint8_t> payload;
   std::vector<std::string> recipient_identities;
-  std::string control_topic;
+  std::string topic;
 };
 
 struct VideoTrackHandle
@@ -154,9 +155,9 @@ struct RoomConnectionCallbacks
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.
   std::function<void(const std::string &)> on_participant_disconnected;
 
-  // Delivers one incoming control packet on a connection-managed background thread; callbacks must
+  // Delivers one incoming packet on a connection-managed background thread; callbacks must
   // hand off ROS work instead of assuming executor-thread affinity.
-  std::function<void(const IncomingControlPacket &)> on_incoming_control_packet_received;
+  std::function<void(const IncomingPacket &)> on_incoming_packet_received;
 };
 
 // Thread-safe transport facade around a reconnecting room connection. Implementations own background
@@ -166,14 +167,9 @@ class RoomConnection
 public:
   virtual ~RoomConnection() = default;
 
-  // Starts the background connection and reconnect loop. Repeated calls after a successful start
-  // are ignored until stop() returns.
-  virtual void start(
-    RoomConnectionConfig config,
-    std::string access_token,
-    RoomConnectionCallbacks callbacks,
-    std::chrono::milliseconds initial_backoff,
-    std::chrono::milliseconds max_backoff) = 0;
+  // Starts the background connection and reconnect loop using the supplied immutable LiveKit
+  // startup config. Repeated calls after a successful start are ignored until stop() returns.
+  virtual void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) = 0;
 
   // Stops the reconnect loop and waits for any connection-owned background thread to exit.
   virtual void stop() = 0;
@@ -186,7 +182,7 @@ public:
   // These publication calls require an active local participant. Implementations may throw if
   // used while disconnected, except tryPushDataTrack(), which reports expected push failures
   // in-band.
-  virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;
+  virtual void publishPacket(const OutgoingPacket & packet) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
   virtual DataTrackPushResult tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;

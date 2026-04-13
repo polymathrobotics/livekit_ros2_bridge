@@ -53,7 +53,7 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
     throw std::invalid_argument("Publish command must be a JSON object.");
   }
 
-  // ControlPacketRouter already emits the operator-facing warn logs for invalid publish packets,
+  // PacketRouter already emits the operator-facing warn logs for invalid publish packets,
   // including the exact error text. Keep parser-local logs at debug level so local troubleshooting
   // can distinguish which contract boundary rejected the command without repeating that detail.
   std::string topic;

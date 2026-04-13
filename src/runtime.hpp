@@ -32,7 +32,7 @@ namespace livekit_ros2_bridge
 {
 
 class RpcRouter;
-class ControlPacketRouter;
+class PacketRouter;
 class SubscriptionHeartbeatProcessor;
 class RosExecutorQueue;
 class RosServiceCaller;
@@ -70,20 +70,6 @@ public:
 
 private:
   using SteadyClock = std::chrono::steady_clock;
-
-  struct Components
-  {
-    std::unique_ptr<RoomConnection> room_connection;
-    std::unique_ptr<RosExecutorQueue> ros_executor_queue;
-    std::unique_ptr<RpcRouter> rpc_router;
-    std::unique_ptr<RosTopicPublisher> ros_topic_publisher;
-    std::unique_ptr<VideoStreamRegistry> video_stream_registry;
-    std::unique_ptr<VideoProfilingRegistry> video_profiling_registry;
-    std::unique_ptr<SubscriptionRegistry> subscription_registry;
-    std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor;
-    std::unique_ptr<RosServiceCaller> ros_service_caller;
-    std::unique_ptr<ControlPacketRouter> control_packet_router;
-  };
 
   struct Config
   {
@@ -169,24 +155,44 @@ private:
     EventThrottle executor_shutdown_enqueue_drop{kLogThrottle};
     EventThrottle executor_unavailable_drop{kLogThrottle};
     EventThrottle executor_shutdown_execute_drop{kLogThrottle};
-    mutable EventThrottle control_packet_shutdown_drop{kLogThrottle};
-    mutable EventThrottle control_packet_router_unavailable_drop{kLogThrottle};
+    mutable EventThrottle packet_shutdown_drop{kLogThrottle};
+    mutable EventThrottle packet_router_unavailable_drop{kLogThrottle};
   };
 
   void checkFailFast();
-  void logReady() const;
   void handleConnectionReset();
+  void handleIncomingPacket(const IncomingPacket & packet);
   void handleParticipantDisconnected(std::string requester_identity);
-  void handleIncomingControlPacket(const IncomingControlPacket & packet);
-  void logControlPacketDrop(const IncomingControlPacket & packet, const char * reason, EventThrottle & throttle) const;
+  void handleReconnectRequested(const std::string & reason);
+  void handleRoomConnected();
+  void initPacketRouting();
+  void initFailFast();
+  void initRosInterfaces(const AccessPolicy & access_policy);
+  void initSubscriptionRuntime(const AccessPolicy & access_policy);
+  void initVideoProfiling(VideoProfilingConfig video_profiling);
+  void logPacketDrop(const IncomingPacket & packet, const char * reason, EventThrottle & throttle) const;
   void logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle);
+  void registerRequiredRpcs();
+  void startRoomConnection(const LiveKitConfig & livekit_config);
+
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
   // if it reaches the queue before the executor is shut down.
   void submitToExecutor(std::function<void()> work);
 
   rclcpp::Node & node_;
-  Components components_;
+
+  std::unique_ptr<RoomConnection> room_connection_;
+  std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
+  std::unique_ptr<RpcRouter> rpc_router_;
+  std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
+  std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
+  std::unique_ptr<VideoProfilingRegistry> video_profiling_registry_;
+  std::unique_ptr<SubscriptionRegistry> subscription_registry_;
+  std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
+  std::unique_ptr<RosServiceCaller> ros_service_caller_;
+  std::unique_ptr<PacketRouter> packet_router_;
+
   Config config_;
   Timers timers_;
   State state_;

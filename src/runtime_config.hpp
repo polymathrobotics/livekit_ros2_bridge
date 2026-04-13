@@ -43,9 +43,7 @@ struct RuntimeConfig
   };
 
   Params params;
-  RoomConnectionConfig room_connection;
-  // Startup token captured once and reused by reconnect attempts until restart.
-  std::string access_token;
+  LiveKitConfig livekit;
   HealthConfig health;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos;

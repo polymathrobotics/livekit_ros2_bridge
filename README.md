@@ -93,7 +93,7 @@ If you use this repository's dev-container workflow, `just build` runs the packa
      --params-file $(pwd)/livekit_bridge.params.yaml
    ```
 
-   Wait for `event=runtime_ready` and `event=node_ready`.
+   Wait for `event=runtime_ready`.
 
 5. Connect a LiveKit client to the same room and use the resources you allowed.
 
