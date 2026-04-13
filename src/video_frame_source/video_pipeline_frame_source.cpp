@@ -194,35 +194,6 @@ std::string buildFrameSourcePipelineDescription(
   return pipeline;
 }
 
-LogEvent & addPipelineStreamFields(LogEvent & event, const VideoStreamSpec & spec)
-{
-  return event.field("stream_key", spec.stream_key).field("track_name", spec.track_name);
-}
-
-GstAppSinkPtr requireNamedAppSink(GstElement * pipeline)
-{
-  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(pipeline), kAppSinkName));
-  if (appsink == nullptr) {
-    throw std::runtime_error("Video pipeline did not create the expected appsink.");
-  }
-  if (!GST_IS_APP_SINK(appsink.get())) {
-    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
-  }
-  return GstAppSinkPtr(GST_APP_SINK(appsink.release()));
-}
-
-GstAppSrcPtr requireNamedAppSrc(GstElement * pipeline)
-{
-  GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(pipeline), kVideoAppSrcName));
-  if (appsrc == nullptr) {
-    throw std::runtime_error("Video pipeline did not create the expected appsrc.");
-  }
-  if (!GST_IS_APP_SRC(appsrc.get())) {
-    throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
-  }
-  return GstAppSrcPtr(GST_APP_SRC(appsrc.release()));
-}
-
 VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & frame_sink,
@@ -237,6 +208,57 @@ VideoPipelineFrameSource::VideoPipelineFrameSource(
 {}
 
 VideoPipelineFrameSource::~VideoPipelineFrameSource() = default;
+
+void VideoPipelineFrameSource::start()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    throw std::runtime_error("Video stream is shut down.");
+  }
+
+  if (pipeline_ != nullptr) {
+    return;
+  }
+
+  if (!restart_config_.has_value()) {
+    throw std::logic_error("Video pipeline source start() requires a fixed restart config.");
+  }
+
+  const auto & restart_config = restart_config_.value();
+  startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
+}
+
+void VideoPipelineFrameSource::shutdown()
+{
+  PipelineHandles handles;
+  bool restart_pending = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_shutdown_) {
+      return;
+    }
+
+    restart_pending = recovery_pending_;
+    is_shutdown_ = true;
+    // Drop the internal handles while holding mutex_ so any in-flight
+    // callbacks observe the terminal shutdown state before GStreamer teardown
+    // removes callbacks and transitions the pipeline to NULL.
+    handles = takePipelineLocked();
+  }
+
+  if (!restart_pending && handles.pipeline == nullptr && handles.appsrc == nullptr && handles.appsink == nullptr) {
+    return;
+  }
+
+  if (handles.pipeline != nullptr || restart_pending) {
+    LogEvent(kLogger, "video_stream_source_shutdown")
+      .field("stream_key", spec_.stream_key)
+      .fieldIf(restart_pending, "restart_pending", true)
+      .info();
+  }
+
+  teardown(handles.pipeline, handles.appsrc, handles.appsink);
+}
 
 GstFlowReturn VideoPipelineFrameSource::onSampleThunk(GstAppSink * sink, gpointer user_data)
 {
@@ -298,10 +320,24 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
 
   PipelineHandles handles;
   handles.pipeline = std::move(pipeline);
-  handles.appsink = requireNamedAppSink(handles.pipeline.get());
+  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kAppSinkName));
+  if (appsink == nullptr) {
+    throw std::runtime_error("Video pipeline did not create the expected appsink.");
+  }
+  if (!GST_IS_APP_SINK(appsink.get())) {
+    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
+  }
+  handles.appsink = GstAppSinkPtr(GST_APP_SINK(appsink.release()));
 
   if (require_appsrc) {
-    handles.appsrc = requireNamedAppSrc(handles.pipeline.get());
+    GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kVideoAppSrcName));
+    if (appsrc == nullptr) {
+      throw std::runtime_error("Video pipeline did not create the expected appsrc.");
+    }
+    if (!GST_IS_APP_SRC(appsrc.get())) {
+      throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
+    }
+    handles.appsrc = GstAppSrcPtr(GST_APP_SRC(appsrc.release()));
   }
 
   // Register callbacks before moving to PLAYING so startup-time samples or bus
@@ -323,8 +359,10 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
     throw std::runtime_error("Failed to set video pipeline to PLAYING.");
   }
 
-  LogEvent playing_event(kLogger, "video_stream_pipeline_playing");
-  addPipelineStreamFields(playing_event, spec_).info();
+  LogEvent(kLogger, "video_stream_pipeline_playing")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .info();
 }
 
 void VideoPipelineFrameSource::resetLocked()
@@ -430,14 +468,14 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
   const RestartConfig * restart_config = restart_config_ ? &*restart_config_ : nullptr;
   const auto restart_delay =
     restart_config != nullptr ? restart_config->restart_delay : std::chrono::milliseconds::zero();
-  auto recovery_log = LogEvent(
+  LogEvent(
     kLogger,
-    restart_config != nullptr ? "video_stream_pipeline_recovery_scheduled" : "video_stream_pipeline_recovery_disabled");
-  addPipelineStreamFields(recovery_log, spec_).field("reason", reason);
-  if (restart_delay > std::chrono::milliseconds::zero()) {
-    recovery_log.field("restart_delay_ms", restart_delay.count());
-  }
-  recovery_log.warn();
+    restart_config != nullptr ? "video_stream_pipeline_recovery_scheduled" : "video_stream_pipeline_recovery_disabled")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("reason", reason)
+    .fieldIf(restart_delay > std::chrono::milliseconds::zero(), "restart_delay_ms", restart_delay.count())
+    .warn();
 
   auto self = shared_from_this();
   // Bus sync handlers run on GStreamer-owned threads. Defer teardown/restart so

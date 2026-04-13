@@ -69,14 +69,15 @@ constexpr std::array<const char *, 4> kRpcMethodNames{
   kTopicsListRpcMethod.name,
 };
 
-LogEvent & addLogFields(LogEvent & event, const RpcMethod & rpc_method, const RpcInvocation & invocation)
+template <typename EventT>
+EventT && addLogFields(EventT && event, const RpcMethod & rpc_method, const RpcInvocation & invocation)
 {
   // Keep the request-scoped correlation fields uniform across every router
   // rejection/failure log so operators can trace one RPC through the bridge.
   event.field("method", rpc_method.name)
     .fieldOr("request_id", invocation.request_id)
     .fieldOr("requester_identity", invocation.caller_identity);
-  return event;
+  return std::forward<EventT>(event);
 }
 
 std::uint32_t errorCodeFor(const std::exception & exc)
@@ -192,11 +193,10 @@ std::optional<std::string> withRequiredCallerIdentity(
   // Reject anonymous callers before parsing/dispatch, and centralize shared
   // exception-to-protocol translation for every RPC handler.
   if (invocation.caller_identity.empty()) {
-    LogEvent event(kRpcRouterLogger, "rpc_request_rejected");
-    addLogFields(event, rpc_method, invocation)
+    addLogFields(LogEvent(kRpcRouterLogger, "rpc_request_rejected"), rpc_method, invocation)
       .field("reason", "unauthorized")
-      .field("error", "caller_identity_required");
-    event.warn();
+      .field("error", "caller_identity_required")
+      .warn();
     throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
   }
 
@@ -263,12 +263,11 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
     }
 
     if (!access_policy_.allows(AccessOperation::CallService, request.service)) {
-      LogEvent event(kRpcRouterLogger, "rpc_request_rejected");
-      addLogFields(event, kServiceCallRpcMethod, invocation)
+      addLogFields(LogEvent(kRpcRouterLogger, "rpc_request_rejected"), kServiceCallRpcMethod, invocation)
         .field("reason", "forbidden")
         .field("service", request.service)
-        .field("error", "service_not_permitted");
-      event.warn();
+        .field("error", "service_not_permitted")
+        .warn();
       throw RpcHandlerError(protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
     }
 

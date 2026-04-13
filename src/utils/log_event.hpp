@@ -83,6 +83,56 @@ public:
     return std::move(*this);
   }
 
+  template <typename T>
+  LogEvent & fieldIf(bool condition, std::string_view key, const T & value) &
+  {
+    appendFieldIf(condition, key, value);
+    return *this;
+  }
+
+  template <typename T>
+  LogEvent && fieldIf(bool condition, std::string_view key, const T & value) &&
+  {
+    appendFieldIf(condition, key, value);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldIfNotEmpty(std::string_view key, const std::string & value) &
+  {
+    appendFieldIfNotEmpty(key, value);
+    return *this;
+  }
+
+  LogEvent && fieldIfNotEmpty(std::string_view key, const std::string & value) &&
+  {
+    appendFieldIfNotEmpty(key, value);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldIfNotEmpty(std::string_view key, std::string_view value) &
+  {
+    appendFieldIfNotEmpty(key, value);
+    return *this;
+  }
+
+  LogEvent && fieldIfNotEmpty(std::string_view key, std::string_view value) &&
+  {
+    appendFieldIfNotEmpty(key, value);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldIfNotEmpty(std::string_view key, const char * value) &
+  {
+    appendFieldIfNotEmpty(key, value);
+    return *this;
+  }
+
+  LogEvent && fieldIfNotEmpty(std::string_view key, const char * value) &&
+  {
+    appendFieldIfNotEmpty(key, value);
+    return std::move(*this);
+  }
+
   LogEvent & fieldOr(
     std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &
   {
@@ -162,9 +212,38 @@ private:
     stream_ << " " << key << "=" << value;
   }
 
+  template <typename T>
+  void appendFieldIf(bool condition, std::string_view key, const T & value)
+  {
+    if (condition) {
+      appendField(key, value);
+    }
+  }
+
   void appendField(std::string_view key, const char * value)
   {
     stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
+  }
+
+  void appendFieldIfNotEmpty(std::string_view key, const std::string & value)
+  {
+    if (!value.empty()) {
+      appendField(key, value);
+    }
+  }
+
+  void appendFieldIfNotEmpty(std::string_view key, std::string_view value)
+  {
+    if (!value.empty()) {
+      appendField(key, value);
+    }
+  }
+
+  void appendFieldIfNotEmpty(std::string_view key, const char * value)
+  {
+    if (value != nullptr && value[0] != '\0') {
+      appendField(key, value);
+    }
   }
 
   void appendFieldOr(std::string_view key, const std::string & value, std::string_view fallback)

@@ -68,6 +68,26 @@ TEST(LogEventTest, UsesCustomFallbacksForStringViewAndCStringInputs)
     "present_cstr=ok");
 }
 
+TEST(LogEventTest, SupportsConditionalChainableFields)
+{
+  const char * const null_value = nullptr;
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .field("required", true)
+      .fieldIf(false, "skipped", 7)
+      .fieldIf(true, "count", 3)
+      .fieldIfNotEmpty("present_string", std::string{"value"})
+      .fieldIfNotEmpty("empty_string", std::string{})
+      .fieldIfNotEmpty("present_view", std::string_view{"ready"})
+      .fieldIfNotEmpty("empty_view", std::string_view{})
+      .fieldIfNotEmpty("present_cstr", "ok")
+      .fieldIfNotEmpty("null_cstr", null_value)
+      .str(),
+    "event=sample_event required=true count=3 present_string=value present_view=ready "
+    "present_cstr=ok");
+}
+
 TEST(LogEventTest, ClampWarnThrottleIntervalKeepsMillisecondsNonNegative)
 {
   EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(-5)), 0);

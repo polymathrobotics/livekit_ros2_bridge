@@ -49,11 +49,6 @@ private:
   std::string_view field_name_;
 };
 
-[[noreturn]] void throwInvalidRequestField(std::string_view field_name, const char * message)
-{
-  throw ServiceCallInvalidArgument(field_name, message);
-}
-
 }  // namespace
 
 ServiceCallRequest parse(const std::string & payload)
@@ -93,13 +88,13 @@ ServiceCallRequest parse(const std::string & payload)
     throw ServiceCallInvalidArgument("request", exc.what());
   }
   if (request.request_payload.empty()) {
-    throwInvalidRequestField("request", "request.payload_base64 must not be empty");
+    throw ServiceCallInvalidArgument("request", "request.payload_base64 must not be empty");
   }
 
   const auto timeout_field = body.find("timeout_ms");
   if (timeout_field != body.end()) {
     if (!timeout_field->is_number_integer()) {
-      throwInvalidRequestField("timeout_ms", "timeout_ms must be an integer");
+      throw ServiceCallInvalidArgument("timeout_ms", "timeout_ms must be an integer");
     }
     // Preserve the wire value as-is when present; the caller layer decides whether non-positive
     // timeouts fall back to its default deadline.

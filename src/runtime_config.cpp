@@ -41,11 +41,6 @@ constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 
-void addRuntimeConfigIdentityFields(LogEvent & event, std::string_view room, std::string_view url)
-{
-  event.fieldOr("room", room, kUnsetLogValue).fieldOr("url", url, kUnsetLogValue);
-}
-
 std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
@@ -522,10 +517,12 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   std::string url;
   const char * stage = "parameters_interface_validation";
   const auto logLoadFailure = [&](const char * error) {
-    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
-    event.field("stage", stage);
-    addRuntimeConfigIdentityFields(event, room, url);
-    event.field("error", error).error();
+    LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
+      .field("stage", stage)
+      .fieldOr("room", room, kUnsetLogValue)
+      .fieldOr("url", url, kUnsetLogValue)
+      .field("error", error)
+      .error();
   };
 
   try {
@@ -555,9 +552,10 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     stage = "video_profiling_config";
     config.video_profiling_config = loadVideoProfilingConfig(params);
 
-    LogEvent event(kRuntimeConfigLogger, "runtime_config_loaded");
-    addRuntimeConfigIdentityFields(event, config.room_connection_config.room, config.room_connection_config.url);
-    event.field("custom_video_rule_count", params.video_topic_rule_ids.size())
+    LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
+      .fieldOr("room", config.room_connection_config.room, kUnsetLogValue)
+      .fieldOr("url", config.room_connection_config.url, kUnsetLogValue)
+      .field("custom_video_rule_count", params.video_topic_rule_ids.size())
       .field("configured_source_count", config.video_stream_config.configured_sources.size())
       .info();
 

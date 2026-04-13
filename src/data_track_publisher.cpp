@@ -34,9 +34,7 @@ constexpr auto kWriteLogThrottlePeriod = std::chrono::seconds(5);
 
 LogEvent dataTrackLog(const char * event_name, const std::string & track_name)
 {
-  LogEvent event(kDataTrackPublisherLogger, event_name);
-  event.field("track_name", track_name);
-  return event;
+  return LogEvent(kDataTrackPublisherLogger, event_name).field("track_name", track_name);
 }
 
 const char * dataTrackPushFailureReason(DataTrackPushErrorCode code)

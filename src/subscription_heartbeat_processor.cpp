@@ -39,24 +39,6 @@ namespace
 constexpr auto kHeartbeatLeaseDuration = std::chrono::seconds(45);
 constexpr auto kHeartbeatLogThrottlePeriod = std::chrono::seconds(5);
 
-LogEvent & appendRequesterSessionFields(
-  LogEvent & event, const std::string & requester_identity, const std::optional<std::string> & session_id)
-{
-  return event.field("requester_identity", requester_identity)
-    .fieldOr("session_id", session_id.value_or(""), "<absent>");
-}
-
-void appendSubscriptionErrorStatus(
-  nlohmann::json & statuses, const SubscriptionTarget & target, const char * reason, const std::string & message)
-{
-  statuses.push_back({
-    {"kind", subscriptionTargetKindString(target.kind)},
-    {"name", target.name},
-    {"status", "error"},
-    {"error", {{"reason", reason}, {"message", message}}},
-  });
-}
-
 const auto kLogger = rclcpp::get_logger("heartbeat_processor");
 }  // namespace
 
@@ -93,8 +75,9 @@ SubscriptionHeartbeatProcessor::resolveHeartbeatLease(
   auto & session_lease = it->second;
   if (!inserted && session_lease.requester_identity != requester_identity) {
     if (const std::size_t count = session_conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
-      auto event = LogEvent(kLogger, "heartbeat_client_session_conflict");
-      appendRequesterSessionFields(event, requester_identity, session_id)
+      LogEvent(kLogger, "heartbeat_client_session_conflict")
+        .field("requester_identity", requester_identity)
+        .fieldOr("session_id", session_id.value_or(""), "<absent>")
         .field("existing_requester_identity", session_lease.requester_identity)
         .field("count", count)
         .warn();
@@ -130,8 +113,9 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   // browser tab and renew that client-session lease instead of dropping it.
   it->second.expiry = lease_expiry;
 
-  auto event = LogEvent(kLogger, "heartbeat_client_session_fallback");
-  appendRequesterSessionFields(event, it->second.requester_identity, session_id)
+  LogEvent(kLogger, "heartbeat_client_session_fallback")
+    .field("requester_identity", it->second.requester_identity)
+    .fieldOr("session_id", session_id.value_or(""), "<absent>")
     .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   return it->second.requester_identity;
 }
@@ -148,7 +132,12 @@ nlohmann::json SubscriptionHeartbeatProcessor::renewSubscriptionStatuses(
     // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
     if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
     {
-      appendSubscriptionErrorStatus(statuses, target, "forbidden", "ROS topic '" + target.name + "' not permitted.");
+      statuses.push_back({
+        {"kind", subscriptionTargetKindString(target.kind)},
+        {"name", target.name},
+        {"status", "error"},
+        {"error", {{"reason", "forbidden"}, {"message", "ROS topic '" + target.name + "' not permitted."}}},
+      });
       continue;
     }
 
@@ -156,9 +145,19 @@ nlohmann::json SubscriptionHeartbeatProcessor::renewSubscriptionStatuses(
       auto status = subscription_registry_.renewSubscription(lease.requester_identity, demand, lease.expiry);
       statuses.push_back(stream_control_payloads::serializeSubscriptionStatus(status));
     } catch (const StreamUnavailableError & exc) {
-      appendSubscriptionErrorStatus(statuses, target, "unavailable", exc.what());
+      statuses.push_back({
+        {"kind", subscriptionTargetKindString(target.kind)},
+        {"name", target.name},
+        {"status", "error"},
+        {"error", {{"reason", "unavailable"}, {"message", exc.what()}}},
+      });
     } catch (const std::exception & exc) {
-      appendSubscriptionErrorStatus(statuses, target, "not_found", exc.what());
+      statuses.push_back({
+        {"kind", subscriptionTargetKindString(target.kind)},
+        {"name", target.name},
+        {"status", "error"},
+        {"error", {{"reason", "not_found"}, {"message", exc.what()}}},
+      });
     }
   }
 
@@ -227,8 +226,9 @@ void SubscriptionHeartbeatProcessor::publishStatuses(
   try {
     room_connection_.publishControlPacket(packet);
   } catch (const std::exception & exc) {
-    auto event = LogEvent(kLogger, "subscription_status_publish_failed");
-    appendRequesterSessionFields(event, lease.requester_identity, lease.session_id)
+    LogEvent(kLogger, "subscription_status_publish_failed")
+      .field("requester_identity", lease.requester_identity)
+      .fieldOr("session_id", lease.session_id.value_or(""), "<absent>")
       .field("error", exc.what())
       .warnThrottle(*clock_, kHeartbeatLogThrottlePeriod);
   }

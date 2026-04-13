@@ -163,20 +163,24 @@ void addCountFieldIfNonZero(LogEvent & event, const char * field_name, std::size
   event.field(field_name, count);
 }
 
-void addProfilerIdentityFields(LogEvent & event, const VideoStreamSpec & spec)
+template <typename EventT>
+EventT && addProfilerIdentityFields(EventT && event, const VideoStreamSpec & spec)
 {
   event.field("stream_key", spec.stream_key)
     .field("track_name", spec.track_name)
     .field("input_kind", videoInputKindToString(spec.input_kind))
     .field("ingest_mode", spec.ingest_mode);
+  return std::forward<EventT>(event);
 }
 
-void addProfilerIdentityFields(LogEvent & event, const VideoStreamProfileSummary & summary)
+template <typename EventT>
+EventT && addProfilerIdentityFields(EventT && event, const VideoStreamProfileSummary & summary)
 {
   event.field("stream_key", summary.stream_key)
     .field("track_name", summary.track_name)
     .field("input_kind", summary.input_kind)
     .field("ingest_mode", summary.ingest_mode);
+  return std::forward<EventT>(event);
 }
 
 bool hasProfilerIdentityMismatch(const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
@@ -185,8 +189,9 @@ bool hasProfilerIdentityMismatch(const VideoStreamSpec & active_spec, const Vide
          active_spec.ingest_mode != requested_spec.ingest_mode;
 }
 
-void addProfilerIdentityMismatchFields(
-  LogEvent & event, const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
+template <typename EventT>
+EventT && addProfilerIdentityMismatchFields(
+  EventT && event, const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
 {
   if (active_spec.track_name != requested_spec.track_name) {
     event.field("active_track_name", active_spec.track_name).field("requested_track_name", requested_spec.track_name);
@@ -201,6 +206,7 @@ void addProfilerIdentityMismatchFields(
     event.field("active_ingest_mode", active_spec.ingest_mode)
       .field("requested_ingest_mode", requested_spec.ingest_mode);
   }
+  return std::forward<EventT>(event);
 }
 
 constexpr char kIngressTraceEventName[] = "source.received";
@@ -980,9 +986,7 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
   if (inserted || profiler == nullptr) {
     profiler = std::make_shared<VideoStreamProfiler>(spec);
     profiler->impl_->recorder = impl_->recorder;
-    LogEvent event(impl_->logger, "video_profile_stream_registered");
-    addProfilerIdentityFields(event, spec);
-    event.info();
+    addProfilerIdentityFields(LogEvent(impl_->logger, "video_profile_stream_registered"), spec).info();
     if (impl_->recorder != nullptr) {
       std::vector<TraceArg> args;
       addTraceArg(args, "track_name", spec.track_name);
@@ -998,10 +1002,11 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
     return profiler;
   }
 
-  LogEvent event(impl_->logger, "video_profile_profiler_spec_mismatch");
-  event.field("stream_key", spec.stream_key);
-  addProfilerIdentityMismatchFields(event, profiler->impl_->spec, spec);
-  event.warn();
+  addProfilerIdentityMismatchFields(
+    LogEvent(impl_->logger, "video_profile_profiler_spec_mismatch").field("stream_key", spec.stream_key),
+    profiler->impl_->spec,
+    spec)
+    .warn();
   return profiler;
 }
 

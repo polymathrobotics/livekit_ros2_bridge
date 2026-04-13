@@ -31,14 +31,6 @@ public:
     VideoFrameSink & frame_sink,
     VideoStreamLifecycleObserver & lifecycle_observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
-
-  // Idempotent before shutdown(); EOS/ERROR recovery reuses the launch string
-  // captured at construction. After shutdown(), create a new instance.
-  void start() override;
-  // Safe to call repeatedly. Teardown is split into a detach-under-lock phase
-  // and a post-unlock GStreamer cleanup phase because pipeline shutdown can
-  // synchronously drain bus/appsink callbacks.
-  void shutdown() override;
 };
 
 }  // namespace livekit_ros2_bridge

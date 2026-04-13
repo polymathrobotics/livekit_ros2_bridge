@@ -15,8 +15,11 @@ then adds `key=value` pairs.
 ## `field` vs `fieldOr`
 
 - Use `field(...)` for required fields that should always be present.
+- Use `fieldIf(...)` when a simple boolean guard should keep the log builder chainable.
+- Use `fieldIfNotEmpty(...)` for optional string, `string_view`, or C-string fields when omission is better than a placeholder.
 - Use `fieldOr(...)` for optional string or string-like fields when keeping the key present improves comparison across related events or makes a shared log helper simpler.
 - Prefer `fieldOr(...)` over repeated hand-written `if (!value.empty()) event.field(...)` checks when the fallback value is acceptable and the stable key helps readability.
+- Prefer `fieldIf(...)` or `fieldIfNotEmpty(...)` over temporary `LogEvent` variables when the only goal is to gate one or two fields inline.
 - Do not use `fieldOr(...)` just to add noisy placeholders for fields that are not useful on most events.
 
 ## Optional And Count-Like Fields

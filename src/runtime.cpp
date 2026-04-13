@@ -45,9 +45,7 @@ constexpr auto kFailFastExitDelay = std::chrono::milliseconds(100);
 
 LogEvent runtimeLog(rclcpp::Logger logger, std::string_view event_name, const std::string & room)
 {
-  LogEvent event(std::move(logger), event_name);
-  event.fieldOr("room", room, "<unset>");
-  return event;
+  return LogEvent(std::move(logger), event_name).fieldOr("room", room, "<unset>");
 }
 }  // namespace
 

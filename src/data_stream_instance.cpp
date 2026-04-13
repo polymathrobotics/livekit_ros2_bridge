@@ -52,11 +52,6 @@ std::string makeDataTrackName(const std::string & topic)
   return track_name;
 }
 
-LogEvent & addTrackFields(LogEvent & event, const std::string & topic, const std::string & track_name)
-{
-  return event.field("resource", topic).field("track_name", track_name);
-}
-
 }  // namespace
 
 DataStreamInstance::DataStreamInstance(
@@ -115,9 +110,11 @@ void DataStreamInstance::start(std::size_t generation)
   // matching completePublish() confirms this exact generation.
   publication_.beginPublish(generation);
   if (previous_state == State::kFailed) {
-    LogEvent event(kDataStreamInstanceLogger, "data_track_pending");
-    addTrackFields(event, topic_, track_name_).field("reason", "retry_after_publish_failure");
-    event.info();
+    LogEvent(kDataStreamInstanceLogger, "data_track_pending")
+      .field("resource", topic_)
+      .field("track_name", track_name_)
+      .field("reason", "retry_after_publish_failure")
+      .info();
   }
   publisher_.publish(
     generation,
@@ -131,7 +128,9 @@ void DataStreamInstance::republish(std::size_t generation)
     return;
   }
 
-  resetPublication();
+  publisher_.unpublish();
+  publication_.reset();
+  suppression_window_.reset();
   // Enter pending before asking DataTrackPublisher to publish. ROS messages can still arrive
   // while the track handshake is in flight, and forwardMessage() must drop them until the
   // matching completePublish() confirms this exact generation.
@@ -148,9 +147,10 @@ bool DataStreamInstance::completePublish(std::size_t generation)
     return false;
   }
 
-  LogEvent event(kDataStreamInstanceLogger, "data_track_published");
-  addTrackFields(event, topic_, track_name_);
-  event.info();
+  LogEvent(kDataStreamInstanceLogger, "data_track_published")
+    .field("resource", topic_)
+    .field("track_name", track_name_)
+    .info();
   return true;
 }
 
@@ -161,15 +161,10 @@ void DataStreamInstance::failPublish()
 
 void DataStreamInstance::shutdown()
 {
-  resetPublication();
-  subscription_.reset();
-}
-
-void DataStreamInstance::resetPublication()
-{
   publisher_.unpublish();
   publication_.reset();
   suppression_window_.reset();
+  subscription_.reset();
 }
 
 void DataStreamInstance::subscribe()
@@ -177,30 +172,20 @@ void DataStreamInstance::subscribe()
   const rclcpp::QoS base_qos(kSubscriptionDepth);
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, topic_, base_qos, qos_config_);
 
-  LogEvent qos_log(kDataStreamInstanceLogger, "subscription_qos_resolved");
-  qos_log.field("resource", topic_)
+  LogEvent(kDataStreamInstanceLogger, "subscription_qos_resolved")
+    .field("resource", topic_)
     .field("delivery", protocol::kDeliveryKindData)
     .field("interface_type", interface_type_)
     .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))
     .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()));
-  if (qos.used_publisher_qos) {
-    qos_log.field("used_publisher_qos", true);
-  }
-  if (qos.mixed_reliability) {
-    qos_log.field("mixed_reliability", true);
-  }
-  if (qos.mixed_durability) {
-    qos_log.field("mixed_durability", true);
-  }
-  if (!qos.override_id.empty()) {
-    qos_log.field("override_id", qos.override_id);
-  }
-  if (!qos.override_pattern.empty()) {
-    qos_log.field("override_pattern", qos.override_pattern);
-  }
-  qos_log.info();
+    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+    .fieldIf(qos.used_publisher_qos, "used_publisher_qos", true)
+    .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
+    .fieldIf(qos.mixed_durability, "mixed_durability", true)
+    .fieldIfNotEmpty("override_id", qos.override_id)
+    .fieldIfNotEmpty("override_pattern", qos.override_pattern)
+    .info();
 
   // ROS may already have queued a callback when SubscriptionRegistry starts reset/shutdown.
   // The gate rejects old-session callbacks before they touch shared state, and the weak pointer
@@ -246,9 +231,11 @@ void DataStreamInstance::forwardMessage(const rclcpp::SerializedMessage & messag
   try {
     publisher_.write(cdr.buffer, cdr.buffer_length);
   } catch (const std::exception & exc) {
-    LogEvent event(kDataStreamInstanceLogger, "data_track_delivery_failed");
-    addTrackFields(event, topic_, track_name_).field("error", exc.what());
-    event.warnThrottle(*node_.get_clock(), kDeliveryFailureLogThrottle);
+    LogEvent(kDataStreamInstanceLogger, "data_track_delivery_failed")
+      .field("resource", topic_)
+      .field("track_name", track_name_)
+      .field("error", exc.what())
+      .warnThrottle(*node_.get_clock(), kDeliveryFailureLogThrottle);
   }
 }
 

@@ -38,9 +38,10 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
-bool frameLayoutsMatch(const FrameLayout & lhs, const FrameLayout & rhs)
+const char * gstVideoFormatName(GstVideoFormat format)
 {
-  return lhs.width == rhs.width && lhs.height == rhs.height && lhs.format == rhs.format && lhs.stride == rhs.stride;
+  const char * format_name = gst_video_format_to_string(format);
+  return format_name != nullptr ? format_name : "unknown";
 }
 
 GstVideoFormat gstFormatForRosEncoding(const std::string & encoding)
@@ -125,78 +126,19 @@ GstBufferPtr makeStampedGstBuffer(
 
 void logResolvedSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscriptionQos & qos)
 {
-  LogEvent event(kLogger, "subscription_qos_resolved");
-  event.field("resource", spec.ros_topic)
+  LogEvent(kLogger, "subscription_qos_resolved")
+    .field("resource", spec.ros_topic)
     .field("delivery", "video")
     .field("interface_type", spec.interface_type)
     .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))
     .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()));
-  if (qos.used_publisher_qos) {
-    event.field("used_publisher_qos", true);
-  }
-  if (qos.mixed_reliability) {
-    event.field("mixed_reliability", true);
-  }
-  if (qos.mixed_durability) {
-    event.field("mixed_durability", true);
-  }
-  if (!qos.override_id.empty()) {
-    event.field("override_id", qos.override_id);
-  }
-  if (!qos.override_pattern.empty()) {
-    event.field("override_pattern", qos.override_pattern);
-  }
-  event.info();
-}
-
-const char * gstVideoFormatName(GstVideoFormat format)
-{
-  const char * format_name = gst_video_format_to_string(format);
-  return format_name != nullptr ? format_name : "unknown";
-}
-
-void logRawInputLayoutChanged(const VideoStreamSpec & spec, const FrameLayout & previous, const FrameLayout & current)
-{
-  LogEvent event(kLogger, "video_stream_input_layout_changed");
-  event.field("stream_key", spec.stream_key).field("topic", spec.ros_topic);
-  if (previous.width != current.width) {
-    event.field("previous_width", previous.width).field("width", current.width);
-  }
-  if (previous.height != current.height) {
-    event.field("previous_height", previous.height).field("height", current.height);
-  }
-  if (previous.stride != current.stride) {
-    event.field("previous_stride", previous.stride).field("stride", current.stride);
-  }
-  if (previous.format != current.format) {
-    event.field("previous_format", gstVideoFormatName(previous.format))
-      .field("format", gstVideoFormatName(current.format));
-  }
-  event.info();
-}
-
-const char * compressedImageCodecString(CompressedImageCodec codec)
-{
-  switch (codec) {
-    case CompressedImageCodec::kJpeg:
-      return "jpeg";
-    case CompressedImageCodec::kPng:
-      return "png";
-    default:
-      return "unknown";
-  }
-}
-
-void logCompressedInputCodecChanged(
-  const VideoStreamSpec & spec, CompressedImageCodec previous, CompressedImageCodec current)
-{
-  LogEvent(kLogger, "video_stream_input_codec_changed")
-    .field("stream_key", spec.stream_key)
-    .field("topic", spec.ros_topic)
-    .field("previous_codec", compressedImageCodecString(previous))
-    .field("codec", compressedImageCodecString(current))
+    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+    .fieldIf(qos.used_publisher_qos, "used_publisher_qos", true)
+    .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
+    .fieldIf(qos.mixed_durability, "mixed_durability", true)
+    .fieldIfNotEmpty("override_id", qos.override_id)
+    .fieldIfNotEmpty("override_pattern", qos.override_pattern)
     .info();
 }
 
@@ -288,13 +230,31 @@ void RawRosVideoFrameSource::onImage(const sensor_msgs::msg::Image::ConstSharedP
     layout.stride = image->step;
     // Raw appsrc caps are fixed when the pipeline starts. A frame-shape or
     // stride change is treated as a stream reconfiguration and forces rebuild.
-    const bool layout_matches_existing = frame_layout_.has_value() && frameLayoutsMatch(*frame_layout_, layout);
+    const bool layout_matches_existing =
+      frame_layout_.has_value() && frame_layout_->width == layout.width && frame_layout_->height == layout.height &&
+      frame_layout_->format == layout.format && frame_layout_->stride == layout.stride;
     if (layout_matches_existing && pipeline_ != nullptr) {
       pushLocked(*image, layout);
       return;
     }
     if (frame_layout_.has_value() && !layout_matches_existing) {
-      logRawInputLayoutChanged(spec_, *frame_layout_, layout);
+      const FrameLayout & previous_layout = *frame_layout_;
+      const bool width_changed = previous_layout.width != layout.width;
+      const bool height_changed = previous_layout.height != layout.height;
+      const bool stride_changed = previous_layout.stride != layout.stride;
+      const bool format_changed = previous_layout.format != layout.format;
+      LogEvent(kLogger, "video_stream_input_layout_changed")
+        .field("stream_key", spec_.stream_key)
+        .field("topic", spec_.ros_topic)
+        .fieldIf(width_changed, "previous_width", previous_layout.width)
+        .fieldIf(width_changed, "width", layout.width)
+        .fieldIf(height_changed, "previous_height", previous_layout.height)
+        .fieldIf(height_changed, "height", layout.height)
+        .fieldIf(stride_changed, "previous_stride", previous_layout.stride)
+        .fieldIf(stride_changed, "stride", layout.stride)
+        .fieldIf(format_changed, "previous_format", gstVideoFormatName(previous_layout.format))
+        .fieldIf(format_changed, "format", gstVideoFormatName(layout.format))
+        .info();
     }
 
     auto handles = takePipelineLocked();
@@ -451,7 +411,36 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
       return;
     }
     if (codec_.has_value() && codec_ != codec) {
-      logCompressedInputCodecChanged(spec_, *codec_, *codec);
+      const char * previous_codec_name = "unknown";
+      switch (*codec_) {
+        case CompressedImageCodec::kJpeg:
+          previous_codec_name = "jpeg";
+          break;
+        case CompressedImageCodec::kPng:
+          previous_codec_name = "png";
+          break;
+        default:
+          break;
+      }
+
+      const char * current_codec_name = "unknown";
+      switch (*codec) {
+        case CompressedImageCodec::kJpeg:
+          current_codec_name = "jpeg";
+          break;
+        case CompressedImageCodec::kPng:
+          current_codec_name = "png";
+          break;
+        default:
+          break;
+      }
+
+      LogEvent(kLogger, "video_stream_input_codec_changed")
+        .field("stream_key", spec_.stream_key)
+        .field("topic", spec_.ros_topic)
+        .field("previous_codec", previous_codec_name)
+        .field("codec", current_codec_name)
+        .info();
     }
 
     auto handles = takePipelineLocked();

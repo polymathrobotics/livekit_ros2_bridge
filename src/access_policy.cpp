@@ -88,8 +88,8 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 {
   // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
   // trimming, normalization, wildcard handling, and duplicate collapse.
-  LogEvent event(kAccessPolicyLogger, "access_policy_loaded");
-  event.field("publish_allow_all", publish_allow_.matches_all)
+  LogEvent(kAccessPolicyLogger, "access_policy_loaded")
+    .field("publish_allow_all", publish_allow_.matches_all)
     .field("publish_allow_patterns", publish_allow_.patterns.size())
     .field("publish_deny_all", publish_deny_.matches_all)
     .field("publish_deny_patterns", publish_deny_.patterns.size())
@@ -100,8 +100,8 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
     .field("service_allow_all", service_allow_.matches_all)
     .field("service_allow_patterns", service_allow_.patterns.size())
     .field("service_deny_all", service_deny_.matches_all)
-    .field("service_deny_patterns", service_deny_.patterns.size());
-  event.info();
+    .field("service_deny_patterns", service_deny_.patterns.size())
+    .info();
 }
 
 bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_name) const
@@ -115,20 +115,13 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_n
     return false;
   }
 
-  const auto matches_policy = [&name](const RuleEntries & allow, const RuleEntries & deny) {
-    if (deny.matches(name)) {
-      return false;
-    }
-    return allow.matches(name);
-  };
-
   switch (operation) {
     case AccessOperation::Publish:
-      return matches_policy(publish_allow_, publish_deny_);
+      return !publish_deny_.matches(name) && publish_allow_.matches(name);
     case AccessOperation::Subscribe:
-      return matches_policy(subscribe_allow_, subscribe_deny_);
+      return !subscribe_deny_.matches(name) && subscribe_allow_.matches(name);
     case AccessOperation::CallService:
-      return matches_policy(service_allow_, service_deny_);
+      return !service_deny_.matches(name) && service_allow_.matches(name);
   }
 
   return false;

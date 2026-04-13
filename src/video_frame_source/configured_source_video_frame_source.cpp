@@ -15,19 +15,13 @@
 #include "video_frame_source/configured_source_video_frame_source.hpp"
 
 #include <chrono>
-#include <stdexcept>
 #include <utility>
-
-#include "rclcpp/logging.hpp"
-#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 namespace
 {
-
-const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
 // Configured sources can restart immediately, but a small backoff avoids tight
 // loops on a broken static launch string.
@@ -51,54 +45,5 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
       kRestartDelay,
     })
 {}
-
-void ConfiguredSourceVideoFrameSource::start()
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
-    throw std::runtime_error("Video stream is shut down.");
-  }
-
-  if (pipeline_ != nullptr) {
-    return;
-  }
-
-  const auto & restart_config = restart_config_.value();
-  startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
-}
-
-void ConfiguredSourceVideoFrameSource::shutdown()
-{
-  PipelineHandles handles;
-  bool restart_pending = false;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
-      return;
-    }
-
-    restart_pending = recovery_pending_;
-    is_shutdown_ = true;
-    // Drop the internal handles while holding mutex_ so any in-flight
-    // callbacks observe the terminal shutdown state before GStreamer teardown
-    // removes callbacks and transitions the pipeline to NULL.
-    handles = takePipelineLocked();
-  }
-
-  if (!restart_pending && handles.pipeline == nullptr && handles.appsrc == nullptr && handles.appsink == nullptr) {
-    return;
-  }
-
-  if (handles.pipeline != nullptr || restart_pending) {
-    LogEvent event(kLogger, "video_stream_source_shutdown");
-    event.field("stream_key", spec_.stream_key);
-    if (restart_pending) {
-      event.field("restart_pending", true);
-    }
-    event.info();
-  }
-
-  teardown(handles.pipeline, handles.appsrc, handles.appsink);
-}
 
 }  // namespace livekit_ros2_bridge

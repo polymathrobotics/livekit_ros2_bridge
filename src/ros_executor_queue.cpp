@@ -206,17 +206,20 @@ void RosExecutorQueue::wake()
     return;
   }
 
-  const auto shutdown_after_wake_failure = [this](const char * error) {
-    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed").field("action", "shutdown").field("error", error).error();
-    shutdown();
-  };
-
   try {
     waitable->wake();
   } catch (const std::exception & exc) {
-    shutdown_after_wake_failure(exc.what());
+    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
+      .field("action", "shutdown")
+      .field("error", exc.what())
+      .error();
+    shutdown();
   } catch (...) {
-    shutdown_after_wake_failure("unknown_exception");
+    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
+      .field("action", "shutdown")
+      .field("error", "unknown_exception")
+      .error();
+    shutdown();
   }
 }
 
@@ -280,9 +283,6 @@ void RosExecutorQueue::drain()
     return;
   }
   ScopeExit finish_drain([this]() { drain_gate_.leave(); });
-  const auto log_task_failure = [](const char * error) {
-    LogEvent(kRosExecutorQueueLogger, "executor_task_failed").field("action", "continue").field("error", error).error();
-  };
 
   // Keep draining until the queue is empty so tasks submitted from active
   // queue work are consumed by the same executor wakeup.
@@ -303,9 +303,15 @@ void RosExecutorQueue::drain()
       // so queued work observes the same callback-group affinity as ROS callbacks.
       task.run();
     } catch (const std::exception & exc) {
-      log_task_failure(exc.what());
+      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
+        .field("action", "continue")
+        .field("error", exc.what())
+        .error();
     } catch (...) {
-      log_task_failure("unknown_exception");
+      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
+        .field("action", "continue")
+        .field("error", "unknown_exception")
+        .error();
     }
   }
 }

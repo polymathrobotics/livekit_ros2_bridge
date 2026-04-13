@@ -31,12 +31,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-std::string makeNodeName(const std::string & prefix)
-{
-  static std::atomic<int> counter{0};
-  return prefix + "_" + std::to_string(counter.fetch_add(1));
-}
-
 template <typename FutureT>
 void expectRuntimeError(FutureT & future, const char * expected_message)
 {
@@ -51,7 +45,8 @@ void expectRuntimeError(FutureT & future, const char * expected_message)
 
 std::shared_ptr<rclcpp::Node> makeNode(const std::string & prefix)
 {
-  return std::make_shared<rclcpp::Node>(makeNodeName(prefix));
+  static std::atomic<int> counter{0};
+  return std::make_shared<rclcpp::Node>(prefix + "_" + std::to_string(counter.fetch_add(1)));
 }
 
 }  // namespace

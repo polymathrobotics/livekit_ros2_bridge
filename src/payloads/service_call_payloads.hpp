@@ -65,36 +65,6 @@ std::string serialize(
   const std::vector<std::uint8_t> & response,
   int elapsed_ms);
 
-inline ServiceCallRequest parseRequest(const std::string & payload)
-{
-  return parse(payload);
-}
-
-inline std::string serializeResponse(
-  const std::string & service,
-  const std::string & interface_type,
-  const std::vector<std::uint8_t> & response,
-  int elapsed_ms)
-{
-  return serialize(service, interface_type, response, elapsed_ms);
-}
-
 }  // namespace service_call_payloads
-
-// TODO: Remove these compatibility wrappers once remaining external call sites migrate to
-// `service_call_payloads::parse` / `service_call_payloads::serialize`.
-inline ServiceCallRequest parseServiceCallRequest(const std::string & payload)
-{
-  return service_call_payloads::parse(payload);
-}
-
-inline std::string serializeServiceCallResponse(
-  const std::string & service,
-  const std::string & interface_type,
-  const std::vector<std::uint8_t> & response,
-  int elapsed_ms)
-{
-  return service_call_payloads::serialize(service, interface_type, response, elapsed_ms);
-}
 
 }  // namespace livekit_ros2_bridge

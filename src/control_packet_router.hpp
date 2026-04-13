@@ -57,10 +57,6 @@ public:
   void route(const IncomingControlPacket & packet) const;
 
 private:
-  // Keeps all packet rejections on one throttled log path so malformed bursts stay observable
-  // without flooding logs.
-  void logRejection(const IncomingControlPacket & packet, const char * reason, const char * error = nullptr) const;
-
   rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr clock_;
   HeartbeatHandler heartbeat_handler_;

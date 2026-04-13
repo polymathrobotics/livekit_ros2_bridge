@@ -88,49 +88,12 @@ constexpr char kUnknownLogValue[] = "<unknown>";
 constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kLocalParticipantUnavailable[] = "LiveKit local participant unavailable.";
 
-LogEvent & addRpcRequestFields(
-  LogEvent & event, const std::string & method_name, const livekit::RpcInvocationData & invocation)
-{
-  return event.field("method", method_name)
-    .fieldOr("request_id", invocation.request_id, kUnknownLogValue)
-    .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue);
-}
-
-bool failRoomConnect(
-  const std::shared_ptr<livekit::Room> & room,
-  const RoomConnectionConfig & config,
-  const char * reason,
-  const char * error = nullptr)
-{
-  LogEvent event(kRoomConnectionLogger, "room_connect_failed");
-  event.field("reason", reason).field("url", config.url).fieldOr("room", config.room, kUnsetLogValue);
-  if (error != nullptr) {
-    event.field("error", error);
-  }
-  event.error();
-
-  // This Room only exists for the current connect attempt, so clear the delegate before dropping it
-  // on every failure path.
-  room->setDelegate(nullptr);
-  return false;
-}
-
 struct LocalParticipantSnapshot
 {
   // Keeps the SDK room alive while callers use participant after releasing mutex_.
   std::shared_ptr<livekit::Room> room;
   livekit::LocalParticipant * participant = nullptr;
   std::uint64_t room_generation = 0;
-
-  explicit operator bool() const noexcept
-  {
-    return participant != nullptr;
-  }
-
-  livekit::LocalParticipant * operator->() const noexcept
-  {
-    return participant;
-  }
 };
 
 struct PublishedVideoTrack
@@ -232,20 +195,21 @@ public:
 
   void publishControlPacket(const OutgoingControlPacket & packet) override
   {
-    const auto participant = snapshotLocalParticipant();
-    if (!participant) {
+    const auto participant_snapshot = snapshotLocalParticipant();
+    if (participant_snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
-    participant->publishData(packet.payload, true, packet.recipient_identities, packet.control_topic);
+    participant_snapshot.participant->publishData(
+      packet.payload, true, packet.recipient_identities, packet.control_topic);
   }
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
   {
-    const auto participant = snapshotLocalParticipant();
-    if (!participant) {
+    const auto participant_snapshot = snapshotLocalParticipant();
+    if (participant_snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
-    auto result = participant->publishDataTrack(name);
+    auto result = participant_snapshot.participant->publishDataTrack(name);
     if (!result) {
       throw std::runtime_error("Failed to publish data track '" + name + "': " + result.error().message);
     }
@@ -301,8 +265,8 @@ public:
       throw std::invalid_argument("Video source is required.");
     }
 
-    const auto participant = snapshotLocalParticipant();
-    if (!participant) {
+    const auto participant_snapshot = snapshotLocalParticipant();
+    if (participant_snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
     auto handle = std::make_shared<VideoTrackHandle>();
@@ -348,14 +312,14 @@ public:
         options.simulcast = false;
         break;
     }
-    participant->publishTrack(track, options);
+    participant_snapshot.participant->publishTrack(track, options);
     const auto publication = track == nullptr ? nullptr : track->publication();
     if (publication == nullptr) {
       throw std::runtime_error("Failed to publish video track '" + name + "'.");
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
-    if (participant.room_generation != room_generation_) {
+    if (participant_snapshot.room_generation != room_generation_) {
       // resetConnection() invalidated this room after publishTrack() returned, so the caller gets
       // a handle that is already stale and safely degrades to a later no-op.
       LogEvent(kRoomConnectionLogger, "video_track_publish_stale")
@@ -365,7 +329,7 @@ public:
         .warn();
       return handle;
     }
-    video_tracks_by_handle_[handle.get()] = PublishedVideoTrack{std::move(track), participant.room_generation};
+    video_tracks_by_handle_[handle.get()] = PublishedVideoTrack{std::move(track), participant_snapshot.room_generation};
     return handle;
   }
 
@@ -391,11 +355,14 @@ public:
       return;
     }
 
-    const auto participant = snapshotLocalParticipant();
-    if (!participant || participant.room_generation != published_track.room_generation) {
+    const auto participant_snapshot = snapshotLocalParticipant();
+    if (
+      participant_snapshot.participant == nullptr ||
+      participant_snapshot.room_generation != published_track.room_generation)
+    {
       return;
     }
-    participant->unpublishTrack(publication->sid());
+    participant_snapshot.participant->unpublishTrack(publication->sid());
   }
 
   void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
@@ -587,17 +554,44 @@ private:
 
     try {
       if (!room->Connect(config.url, access_token, options)) {
-        return failRoomConnect(room, config, "connect_returned_false");
+        LogEvent(kRoomConnectionLogger, "room_connect_failed")
+          .field("reason", "connect_returned_false")
+          .field("url", config.url)
+          .fieldOr("room", config.room, kUnsetLogValue)
+          .error();
+        // This Room only exists for the current connect attempt, so clear the delegate before
+        // dropping it on every failure path.
+        room->setDelegate(nullptr);
+        return false;
       }
     } catch (const std::exception & exc) {
-      return failRoomConnect(room, config, "exception", exc.what());
+      LogEvent(kRoomConnectionLogger, "room_connect_failed")
+        .field("reason", "exception")
+        .field("url", config.url)
+        .fieldOr("room", config.room, kUnsetLogValue)
+        .field("error", exc.what())
+        .error();
+      room->setDelegate(nullptr);
+      return false;
     } catch (...) {
-      return failRoomConnect(room, config, "unknown_exception");
+      LogEvent(kRoomConnectionLogger, "room_connect_failed")
+        .field("reason", "unknown_exception")
+        .field("url", config.url)
+        .fieldOr("room", config.room, kUnsetLogValue)
+        .error();
+      room->setDelegate(nullptr);
+      return false;
     }
 
     auto * participant = room->localParticipant();
     if (participant == nullptr) {
-      return failRoomConnect(room, config, "local_participant_unavailable");
+      LogEvent(kRoomConnectionLogger, "room_connect_failed")
+        .field("reason", "local_participant_unavailable")
+        .field("url", config.url)
+        .fieldOr("room", config.room, kUnsetLogValue)
+        .error();
+      room->setDelegate(nullptr);
+      return false;
     }
 
     bool rpc_registered = true;
@@ -674,13 +668,11 @@ private:
       return;
     }
 
-    LogEvent event(kRoomConnectionLogger, "room_connection_reset");
-    event.field("reason", reason.empty() ? "connection_reset" : reason.c_str())
-      .fieldOr("room", room_name, kUnsetLogValue);
-    if (dropped_video_track_count > 0) {
-      event.field("dropped_video_tracks", dropped_video_track_count);
-    }
-    event.info();
+    LogEvent(kRoomConnectionLogger, "room_connection_reset")
+      .field("reason", reason.empty() ? "connection_reset" : reason.c_str())
+      .fieldOr("room", room_name, kUnsetLogValue)
+      .fieldIf(dropped_video_track_count > 0U, "dropped_video_tracks", dropped_video_track_count)
+      .info();
 
     if (!on_reset) {
       return;
@@ -755,14 +747,20 @@ private:
           } catch (const RpcHandlerError & exc) {
             throw livekit::RpcError(exc.code(), exc.what());
           } catch (const std::exception & exc) {
-            LogEvent event(kRoomConnectionLogger, "rpc_request_failed");
-            addRpcRequestFields(event, method_name, invocation).field("error", exc.what());
-            event.error();
+            LogEvent(kRoomConnectionLogger, "rpc_request_failed")
+              .field("method", method_name)
+              .fieldOr("request_id", invocation.request_id, kUnknownLogValue)
+              .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
+              .field("error", exc.what())
+              .error();
             throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
           } catch (...) {
-            LogEvent event(kRoomConnectionLogger, "rpc_request_failed");
-            addRpcRequestFields(event, method_name, invocation).field("error", "unknown_exception");
-            event.error();
+            LogEvent(kRoomConnectionLogger, "rpc_request_failed")
+              .field("method", method_name)
+              .fieldOr("request_id", invocation.request_id, kUnknownLogValue)
+              .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
+              .field("error", "unknown_exception")
+              .error();
             throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
           }
         });

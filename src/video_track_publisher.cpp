@@ -27,13 +27,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 const auto kVideoTrackPublisherLogger = rclcpp::get_logger("video_track_publisher");
-
-LogEvent videoTrackLog(const char * event_name, const std::string & track_name)
-{
-  LogEvent event(kVideoTrackPublisherLogger, event_name);
-  event.field("track_name", track_name);
-  return event;
-}
 }  // namespace
 
 VideoTrackPublisher::VideoTrackPublisher(
@@ -59,12 +52,13 @@ void VideoTrackPublisher::ensureTrackForFrame(
   const bool republished = has_published_;
   const char * failure_stage = active_track_ != nullptr ? "republish_unpublish" : nullptr;
   const auto log_publish_failure = [&](const char * error = nullptr) {
-    auto event =
-      videoTrackLog("video_track_publish_failed", spec_.track_name).field("width", width).field("height", height);
-    if (failure_stage != nullptr) {
-      event.field("stage", failure_stage);
-    }
-    event.fieldOr("error", error).warn();
+    LogEvent(kVideoTrackPublisherLogger, "video_track_publish_failed")
+      .field("track_name", spec_.track_name)
+      .field("width", width)
+      .field("height", height)
+      .fieldIfNotEmpty("stage", failure_stage)
+      .fieldOr("error", error)
+      .warn();
   };
   try {
     if (failure_stage != nullptr) {
@@ -144,15 +138,18 @@ void VideoTrackPublisher::shutdown()
   // closed state is already visible, so concurrent or reentrant write() calls
   // will drop frames instead of racing a new publish against shutdown().
   observer_.onTrackUnpublishing();
-  const auto log_unpublish_failure = [&](const char * error = nullptr) {
-    videoTrackLog("video_track_unpublish_failed", spec_.track_name).fieldOr("error", error).warn();
-  };
   try {
     room_connection_.unpublishVideoTrack(track);
   } catch (const std::exception & exc) {
-    log_unpublish_failure(exc.what());
+    LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
+      .field("track_name", spec_.track_name)
+      .fieldOr("error", exc.what())
+      .warn();
   } catch (...) {
-    log_unpublish_failure();
+    LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
+      .field("track_name", spec_.track_name)
+      .fieldOr("error", static_cast<const char *>(nullptr))
+      .warn();
   }
 }
 

@@ -196,9 +196,6 @@ private:
     const SubscriptionQosConfig * qos_config);
 
   void subscribe();
-  // Drops only the current LiveKit publication state. The ROS subscription stays active so
-  // republish can reuse the same callback and suppression window bookkeeping.
-  void resetPublication();
   void forwardMessage(const rclcpp::SerializedMessage & message);
 
   rclcpp::Node & node_;

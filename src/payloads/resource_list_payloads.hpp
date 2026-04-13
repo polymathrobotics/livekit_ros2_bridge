@@ -64,42 +64,6 @@ std::string serializeServiceList(const std::vector<ResourceListEntry> & entries)
 /// the single `interface_type` wire shape before calling this helper.
 std::string serializeTopicList(const std::vector<ResourceListEntry> & entries);
 
-// TODO: Remove these compatibility wrappers once remaining call sites migrate to
-// `resource_list_payloads::parse` / `resource_list_payloads::serializeServiceList` /
-// `resource_list_payloads::serializeTopicList`.
-inline ResourceListRequest parseRequest(const std::string & request_payload)
-{
-  return parse(request_payload);
-}
-
-inline std::string serializeServices(const std::vector<ResourceListEntry> & entries)
-{
-  return serializeServiceList(entries);
-}
-
-inline std::string serializeTopics(const std::vector<ResourceListEntry> & entries)
-{
-  return serializeTopicList(entries);
-}
-
 }  // namespace resource_list_payloads
-
-// TODO: Remove these compatibility wrappers once remaining external call sites migrate to
-// `resource_list_payloads::parse` / `resource_list_payloads::serializeServiceList` /
-// `resource_list_payloads::serializeTopicList`.
-inline ResourceListRequest parseResourceListRequest(const std::string & request_payload)
-{
-  return resource_list_payloads::parse(request_payload);
-}
-
-inline std::string serializeServices(const std::vector<ResourceListEntry> & entries)
-{
-  return resource_list_payloads::serializeServiceList(entries);
-}
-
-inline std::string serializeTopics(const std::vector<ResourceListEntry> & entries)
-{
-  return resource_list_payloads::serializeTopicList(entries);
-}
 
 }  // namespace livekit_ros2_bridge

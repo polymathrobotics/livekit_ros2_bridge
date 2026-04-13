@@ -45,30 +45,6 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 /// while preserving the input order used by the caller to express dependency/result ordering.
 std::string serialize(const std::vector<InterfaceDefinition> & definitions);
 
-// TODO: Remove these compatibility wrappers once remaining call sites migrate to
-// `interface_payloads::parse` / `interface_payloads::serialize`.
-inline std::vector<std::string> parseRequest(const std::string & payload)
-{
-  return parse(payload);
-}
-
-inline std::string serializeResponse(const std::vector<InterfaceDefinition> & definitions)
-{
-  return serialize(definitions);
-}
-
 }  // namespace interface_payloads
-
-// TODO: Remove these compatibility wrappers once remaining external call sites migrate to
-// `interface_payloads::parse` / `interface_payloads::serialize`.
-inline std::vector<std::string> parseInterfaceTypes(const std::string & payload)
-{
-  return interface_payloads::parse(payload);
-}
-
-inline std::string serializeInterfaces(const std::vector<InterfaceDefinition> & definitions)
-{
-  return interface_payloads::serialize(definitions);
-}
 
 }  // namespace livekit_ros2_bridge

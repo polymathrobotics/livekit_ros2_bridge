@@ -42,17 +42,6 @@ const char * activeExceptionMessage() noexcept
   }
 }
 
-void logNodeStartupFailure(
-  const rclcpp::Logger & logger, const char * reason, const char * error, const std::string * room = nullptr)
-{
-  LogEvent event(logger, "node_startup_failed");
-  event.field("reason", reason);
-  if (room != nullptr) {
-    event.fieldOr("room", *room, "<unset>");
-  }
-  event.field("error", error).error();
-}
-
 }  // namespace
 
 Node::Node(const rclcpp::NodeOptions & options)
@@ -68,7 +57,10 @@ Node::Node(const rclcpp::NodeOptions & options)
     // still attribute the error to the intended room.
     room = config.room_connection_config.room;
   } catch (...) {
-    logNodeStartupFailure(logger, "runtime_config_load_failed", activeExceptionMessage());
+    LogEvent(logger, "node_startup_failed")
+      .field("reason", "runtime_config_load_failed")
+      .field("error", activeExceptionMessage())
+      .error();
     throw;
   }
 
@@ -77,7 +69,11 @@ Node::Node(const rclcpp::NodeOptions & options)
   try {
     runtime_ = std::make_unique<Runtime>(*this, createRoomConnection(), std::move(config));
   } catch (...) {
-    logNodeStartupFailure(logger, "runtime_initialization_failed", activeExceptionMessage(), &room);
+    LogEvent(logger, "node_startup_failed")
+      .field("reason", "runtime_initialization_failed")
+      .fieldOr("room", room, "<unset>")
+      .field("error", activeExceptionMessage())
+      .error();
     throw;
   }
 }

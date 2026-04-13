@@ -48,11 +48,6 @@ private:
   std::string_view field_name_;
 };
 
-[[noreturn]] void throwInvalidRequestField(std::string_view field_name, const char * message)
-{
-  throw ResourceListInvalidArgument(field_name, message);
-}
-
 std::optional<std::size_t> parseOptionalLimit(const Json & request_body)
 {
   const auto limit_it = request_body.find("limit");
@@ -61,14 +56,14 @@ std::optional<std::size_t> parseOptionalLimit(const Json & request_body)
   }
 
   if (!limit_it->is_number_integer()) {
-    throwInvalidRequestField("limit", kInvalidLimitMessage);
+    throw ResourceListInvalidArgument("limit", kInvalidLimitMessage);
   }
 
   // Parse into a signed type first so negative JSON integers are rejected before converting to
   // the unsigned storage used by `ResourceListRequest::limit`.
   const auto limit = limit_it->get<std::int64_t>();
   if (limit <= 0) {
-    throwInvalidRequestField("limit", kInvalidLimitMessage);
+    throw ResourceListInvalidArgument("limit", kInvalidLimitMessage);
   }
 
   return static_cast<std::size_t>(limit);

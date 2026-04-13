@@ -64,6 +64,10 @@ public:
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr,
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
+  // Default lifecycle for fixed-pipeline sources whose launch string is known
+  // at construction time. Sources with extra producer state override these.
+  void start() override;
+  void shutdown() override;
 
 protected:
   // Moves the live GStreamer handles out of member state while mutex_ is held

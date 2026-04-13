@@ -139,22 +139,6 @@ std::string getPackageShareDirCompat(const std::string & package)
 #endif
 }
 
-void notifyLookupAttempt(const std::string & interface_type)
-{
-  std::function<void(const std::string &)> hook;
-  {
-    // Copy the hook while holding the mutex, then invoke it after releasing the lock so tests can
-    // replace or clear the hook from inside callbacks without self-deadlocking.
-    std::lock_guard<std::mutex> lock(attempt_hook_mutex);
-    hook = attempt_hook;
-  }
-  if (!hook) {
-    return;
-  }
-
-  hook(interface_type);
-}
-
 ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interface_type)
 {
   // Keep the uncached lookup path together so traversal only has to reason about ordering and
@@ -163,7 +147,16 @@ ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interfac
     std::rethrow_exception(*failure);
   }
 
-  notifyLookupAttempt(interface_type);
+  std::function<void(const std::string &)> hook;
+  {
+    // Copy the hook while holding the mutex, then invoke it after releasing the lock so tests can
+    // replace or clear the hook from inside callbacks without self-deadlocking.
+    std::lock_guard<std::mutex> lock(attempt_hook_mutex);
+    hook = attempt_hook;
+  }
+  if (hook) {
+    hook(interface_type);
+  }
 
   const char * failure_reason = "lookup_runtime_error";
   try {
