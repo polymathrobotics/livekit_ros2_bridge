@@ -36,12 +36,12 @@ class VideoStreamRegistry final
 {
 public:
   // All dependencies are borrowed. `node` and `room_connection` must outlive the registry;
-  // `subscription_qos_config` must outlive any stream instances created from it;
+  // `qos_config` must outlive any stream instances created from it;
   // `profiling_registry` is only consulted while creating new instances.
   VideoStreamRegistry(
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    const SubscriptionQosConfig * subscription_qos_config = nullptr,
+    const SubscriptionQosConfig * qos_config = nullptr,
     VideoProfilingRegistry * profiling_registry = nullptr);
   ~VideoStreamRegistry();
 
@@ -58,8 +58,8 @@ public:
 private:
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
-  // Optional non-owning config forwarded into new stream instances.
-  const SubscriptionQosConfig * subscription_qos_config_;
+  // Optional non-owning QoS config forwarded into new stream instances.
+  const SubscriptionQosConfig * qos_config_;
   // Optional non-owning registry consulted only when creating a new stream instance.
   VideoProfilingRegistry * profiling_registry_;
   // Guards `is_shutdown_` and `instances_`. Per-stream lifecycle synchronization lives

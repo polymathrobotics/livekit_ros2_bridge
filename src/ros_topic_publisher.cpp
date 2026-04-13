@@ -33,21 +33,21 @@ namespace
 {
 
 constexpr std::size_t kPublisherDepth = 10U;
-constexpr std::size_t kDefaultPublisherCacheLimit = 50U;
+constexpr std::size_t kDefaultMaxTopics = 50U;
 constexpr auto kRejectedPublishWarningThrottlePeriod = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("topic_publisher");
 
 }  // namespace
 
 RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
-: RosTopicPublisher(node, std::move(access_policy), kDefaultPublisherCacheLimit)
+: RosTopicPublisher(node, std::move(access_policy), kDefaultMaxTopics)
 {}
 
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t cache_limit)
+RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics)
 : node_(node)
 , access_policy_(std::move(access_policy))
-, cache_limit_(cache_limit)
-, cache_(cache_limit)
+, max_topics_(max_topics)
+, publishers_(max_topics)
 {}
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
@@ -72,24 +72,24 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     return;
   }
 
-  std::string interface_type;
-  std::shared_ptr<rclcpp::GenericPublisher> ros_publisher;
-  std::optional<CachedPublisher> cached_publisher;
+  std::string type;
+  std::shared_ptr<rclcpp::GenericPublisher> publisher;
+  std::optional<PublisherEntry> cached;
   try {
-    cached_publisher = cache_.peek(topic);
+    cached = publishers_.peek(topic);
     // Cache hits deliberately skip the ROS graph. Once a publish succeeds, the
     // cached publisher pins the interface type for that topic until eviction or
     // shutdown clears the entry.
-    if (cached_publisher.has_value()) {
-      interface_type = cached_publisher->interface_type;
-      ros_publisher = cached_publisher->ros_publisher;
+    if (cached.has_value()) {
+      type = cached->type;
+      publisher = cached->publisher;
     } else {
-      const auto graph_topics = topic_graph_provider_ ? topic_graph_provider_() : node_.get_topic_names_and_types();
-      interface_type = requireSingleInterfaceType(graph_topics, topic, "topic");
+      const auto topics = topic_graph_provider_ ? topic_graph_provider_() : node_.get_topic_names_and_types();
+      type = requireSingleInterfaceType(topics, topic, "topic");
     }
 
-    if (interface_type != command.interface_type) {
-      throw std::invalid_argument("type mismatch expected=" + interface_type + " got=" + command.interface_type);
+    if (type != command.interface_type) {
+      throw std::invalid_argument("type mismatch expected=" + type + " got=" + command.interface_type);
     }
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_rejected")
@@ -112,9 +112,9 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   rcl_message.buffer_length = command.cdr.size();
 
   try {
-    if (!ros_publisher) {
+    if (!publisher) {
       const rclcpp::QoS qos(kPublisherDepth);
-      ros_publisher = node_.create_generic_publisher(topic, interface_type, qos);
+      publisher = node_.create_generic_publisher(topic, type, qos);
     }
 
     if (before_publish_handler_) {
@@ -131,7 +131,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       return;
     }
 
-    ros_publisher->publish(serialized);
+    publisher->publish(serialized);
     // If shutdown is already visible here, bail out before touching cache state
     // that teardown is intentionally trying to drop.
     if (is_shutdown_.load()) {
@@ -141,18 +141,18 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     // Refresh recency only after a successful publish. If an in-flight cached
     // publisher was evicted meanwhile, reinsert the handle that actually
     // published so later commands can still reuse it.
-    if (cached_publisher.has_value() && cache_.touch(topic)) {
+    if (cached.has_value() && publishers_.touch(topic)) {
       return;
     }
 
     // Enforce the cap only after the current publish succeeds.
-    const auto evicted = cache_.insertOrAssign(topic, CachedPublisher{interface_type, std::move(ros_publisher)});
+    const auto evicted = publishers_.insertOrAssign(topic, PublisherEntry{type, std::move(publisher)});
     if (!evicted.has_value()) {
       return;
     }
 
-    const std::size_t count = eviction_warning_throttle_.recordAndTakePendingCount();
-    if (count == 0U) {
+    const std::size_t evicted_count = eviction_warning_throttle_.recordAndTakePendingCount();
+    if (evicted_count == 0U) {
       return;
     }
 
@@ -160,15 +160,15 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("reason", "max_topics_exceeded")
       .field("topic", topic)
       .field("evicted_topic", evicted->key)
-      .field("count", count)
-      .field("max_topics", static_cast<int>(cache_limit_))
+      .field("count", evicted_count)
+      .field("max_topics", static_cast<int>(max_topics_))
       .warn();
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_failed")
       .field("reason", "internal")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", interface_type)
+      .field("interface_type", type)
       .field("error", exc.what())
       .error();
   }
@@ -182,13 +182,13 @@ void RosTopicPublisher::shutdown()
     return;
   }
 
-  const std::size_t cached_count = cache_.size();
+  const std::size_t publisher_count = publishers_.size();
   LogEvent(kLogger, "topic_publisher_state_changed")
     .field("reason", "shutdown")
-    .field("cached_publishers", cached_count)
+    .field("cached_publishers", publisher_count)
     .info();
 
-  cache_.clear();
+  publishers_.clear();
 }
 
 }  // namespace livekit_ros2_bridge

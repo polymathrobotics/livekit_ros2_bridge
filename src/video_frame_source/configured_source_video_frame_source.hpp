@@ -28,8 +28,8 @@ class ConfiguredSourceVideoFrameSource final : public VideoPipelineFrameSource
 public:
   ConfiguredSourceVideoFrameSource(
     VideoStreamSpec spec,
-    VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer,
+    VideoFrameSink & sink,
+    VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 };
 

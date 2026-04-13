@@ -40,7 +40,7 @@ class RosTopicPublisher final
 {
 public:
   RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy);
-  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t cache_limit);
+  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics);
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.
@@ -60,17 +60,17 @@ public:
 private:
   static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
 
-  struct CachedPublisher
+  struct PublisherEntry
   {
     // Cache the validated interface type alongside the reusable publisher so
     // cache hits can reject mismatched commands without another graph lookup.
-    std::string interface_type;
-    std::shared_ptr<rclcpp::GenericPublisher> ros_publisher;
+    std::string type;
+    std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
-  std::size_t cache_limit_ = 0U;
+  std::size_t max_topics_ = 0U;
   // Terminal lifecycle bit shared with in-flight publish() calls. publish()
   // rechecks it before reusing or updating cache state so shutdown() does not
   // resurrect bridge-owned publishers after teardown begins.
@@ -78,7 +78,7 @@ private:
   // Cache entries own the bridge's reusable publisher handles. The shared_ptr
   // lets an in-flight publish finish even if its topic is evicted or
   // shutdown() clears the cache concurrently.
-  LruCache<std::string, CachedPublisher> cache_;
+  LruCache<std::string, PublisherEntry> publishers_;
   // Test-only seam used to force deterministic failures or shutdown after
   // publisher resolution/creation but immediately before publish().
   std::function<void()> before_publish_handler_;

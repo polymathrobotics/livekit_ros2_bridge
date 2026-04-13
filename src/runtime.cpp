@@ -144,14 +144,15 @@ Runtime::Runtime(
   FailFastCallbacks fail_fast_callbacks)
 : node_(node)
 , config_{
-    std::move(config.video_stream_config),
-    std::move(config.subscription_qos_config),
-    config.room_connection_config.room,
+    std::move(config.video_stream),
+    std::move(config.subscription_qos),
+    config.room_connection.room,
     std::move(fail_fast_callbacks),
-    config.health_config.fail_fast_enabled,
-    config.health_config.fail_fast_disconnect_grace,
+    config.health.fail_fast_enabled,
+    config.health.fail_fast_disconnect_grace,
   }
 {
+  // todo: extract a lot of init calls?
   components_.room_connection = std::move(connection);
   if (components_.room_connection == nullptr) {
     throw std::runtime_error("Failed to create LiveKit room connection");
@@ -169,9 +170,9 @@ Runtime::Runtime(
 
   runtimeLog(node_.get_logger(), "runtime_startup_begin", config_.room).info();
 
-  if (config.video_profiling_config.enabled) {
+  if (config.video_profiling.enabled) {
     components_.video_profiling_registry =
-      std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(config.video_profiling_config));
+      std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(config.video_profiling));
     components_.video_profiling_registry->logConfig();
   }
 
@@ -228,7 +229,7 @@ Runtime::Runtime(
 
   // `start()` may deliver callbacks before RPC registration completes, so readiness is logged when
   // the second prerequisite arrives.
-  RoomConnectionCallbacks room_connection_callbacks{
+  RoomConnectionCallbacks connection_callbacks{
     [this]() {
       if (state_.shutting_down.load()) {
         return;
@@ -251,28 +252,28 @@ Runtime::Runtime(
         return;
       }
 
-      const auto transition =
+      const auto disconnect =
         state_.markDisconnected(reason, config_.fail_fast_enabled, config_.fail_fast_disconnect_grace);
-      LogEvent disconnect_log = runtimeLog(node_.get_logger(), "runtime_disconnect_observed", config_.room);
-      disconnect_log.field("phase", transition.ready_once ? "reconnect" : "startup")
+      LogEvent log = runtimeLog(node_.get_logger(), "runtime_disconnect_observed", config_.room);
+      log.field("phase", disconnect.ready_once ? "reconnect" : "startup")
         .fieldOr("disconnect_reason", reason, "connection_lost");
 
       if (!config_.fail_fast_enabled) {
-        disconnect_log.info();
+        log.info();
         return;
       }
 
-      disconnect_log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
-      disconnect_log.warn();
+      log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
+      log.warn();
     },
     [this]() { handleConnectionReset(); },
     [this](const std::string & requester_identity) { handleParticipantDisconnected(requester_identity); },
     [this](const IncomingControlPacket & packet) { handleIncomingControlPacket(packet); },
   };
   components_.room_connection->start(
-    config.room_connection_config,
+    config.room_connection,
     config.access_token,
-    std::move(room_connection_callbacks),
+    std::move(connection_callbacks),
     kReconnectInitialBackoff,
     kReconnectMaxBackoff);
 

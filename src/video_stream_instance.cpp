@@ -91,7 +91,7 @@ void VideoStreamInstance::onTrackPublished(int width, int height, bool republish
     return;
   }
 
-  has_published_track_ = true;
+  track_published_ = true;
   if (profiler_ != nullptr) {
     profiler_->noteTrackPublished(width, height, republished);
   }
@@ -102,10 +102,10 @@ void VideoStreamInstance::onTrackPublished(int width, int height, bool republish
     .info();
 }
 
-void VideoStreamInstance::onTrackUnpublishing()
+void VideoStreamInstance::onTrackUnpublish()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!has_published_track_) {
+  if (!track_published_) {
     return;
   }
 
@@ -113,7 +113,7 @@ void VideoStreamInstance::onTrackUnpublishing()
     profiler_->noteTrackUnpublish();
   }
   LogEvent(kLogger, "video_stream_track_unpublishing").field("stream_key", spec_.stream_key).info();
-  has_published_track_ = false;
+  track_published_ = false;
 }
 
 void VideoStreamInstance::onSampleUnpackFailed(const std::string & error)

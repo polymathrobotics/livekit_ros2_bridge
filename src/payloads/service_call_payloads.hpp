@@ -53,7 +53,7 @@ ServiceCallRequest parse(const std::string & payload);
 /// Return the request boundary associated with a service-call validation error when available.
 /// This lets higher layers add a precise `request_field` log field without parsing free-form
 /// human-readable exception text.
-std::optional<std::string_view> invalidRequestField(const std::exception & exc);
+std::optional<std::string_view> invalidRequestField(const std::exception & error);
 
 /// Serialize a successful service-call response as
 /// `{ "ok": true, "service": { "name", "interface_type" }, "response": <cdr>, "elapsed_ms": ... }`.

@@ -56,6 +56,6 @@ std::string encodeBase64(const std::uint8_t * bytes, std::size_t size);
 /// Decode padded standard base64 without accepting whitespace or unpadded variants.
 /// Returns `kMissingPadding` separately when the input is not quartet-aligned after
 /// basic validation so higher-level payload parsers can surface a more specific error.
-Base64DecodeResult decodeBase64(std::string_view base64);
+Base64DecodeResult decodeBase64(std::string_view text);
 
 }  // namespace livekit_ros2_bridge

@@ -92,7 +92,7 @@ public:
     if (!submitted) {
       LogEvent(logger_, "executor_task_rejected")
         .field("reason", "shutdown")
-        .warnThrottle(*log_clock_, kRejectedSubmitWarningThrottlePeriod);
+        .warnThrottle(*log_clock_, kRejectedWarningThrottlePeriod);
       task.cancel();
       return future;
     }
@@ -118,7 +118,7 @@ private:
   void drain();
   void wake();
 
-  static constexpr auto kRejectedSubmitWarningThrottlePeriod = std::chrono::seconds(5);
+  static constexpr auto kRejectedWarningThrottlePeriod = std::chrono::seconds(5);
 
   // Protects shutdown_ and all state shared between submit(), wake(), drain(),
   // and shutdown().
@@ -129,7 +129,7 @@ private:
   std::shared_ptr<DrainWaitable> waitable_;
   // Retained solely so shutdown() can unregister waitable_ from the same
   // node interfaces it was added to.
-  rclcpp::CallbackGroup::SharedPtr default_callback_group_;
+  rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
   rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr log_clock_;

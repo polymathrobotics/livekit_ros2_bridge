@@ -117,14 +117,14 @@ public:
 
   void set_on_ready_callback(std::function<void(size_t, int)> on_ready) override
   {
-    std::function<void(size_t, int)> ready_handler;
+    std::function<void(size_t, int)> callback;
     size_t pending_wakes = 0U;
 
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);
       on_ready_ = std::move(on_ready);
-      ready_handler = on_ready_;
-      if (ready_handler == nullptr) {
+      callback = on_ready_;
+      if (callback == nullptr) {
         return;
       }
 
@@ -137,7 +137,7 @@ public:
       return;
     }
 
-    ready_handler(pending_wakes, kReadyEntityId);
+    callback(pending_wakes, kReadyEntityId);
   }
 
   void clear_on_ready_callback() override
@@ -156,18 +156,18 @@ public:
     // If the executor has not installed a ready callback yet, remember this
     // wake so set_on_ready_callback() can replay it after registration.
     guard_condition_->trigger();
-    std::function<void(size_t, int)> ready_handler;
+    std::function<void(size_t, int)> callback;
 
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);
-      ready_handler = on_ready_;
-      if (ready_handler == nullptr) {
+      callback = on_ready_;
+      if (callback == nullptr) {
         ++pending_wakes_;
         return;
       }
     }
 
-    ready_handler(1U, kReadyEntityId);
+    callback(1U, kReadyEntityId);
   }
 
 private:
@@ -179,13 +179,13 @@ private:
 };
 
 RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
-: default_callback_group_(node.get_node_base_interface()->get_default_callback_group())
+: callback_group_(node.get_node_base_interface()->get_default_callback_group())
 , waitables_(node.get_node_waitables_interface())
 , logger_(kRosExecutorQueueLogger)
 , log_clock_(node.get_clock())
 {
   waitable_ = std::make_shared<DrainWaitable>(*this, node.get_node_base_interface()->get_context());
-  waitables_->add_waitable(waitable_, default_callback_group_);
+  waitables_->add_waitable(waitable_, callback_group_);
 }
 
 RosExecutorQueue::~RosExecutorQueue()
@@ -227,20 +227,20 @@ void RosExecutorQueue::shutdown()
 {
   // Only the thread that flips shutdown_ tears down the waitable and cancels
   // queued work. Concurrent shutdown callers just wait for drain() to go idle.
-  std::queue<Task> pending_tasks;
+  std::queue<Task> queued_tasks;
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
-  rclcpp::CallbackGroup::SharedPtr default_callback_group;
+  rclcpp::CallbackGroup::SharedPtr callback_group;
   bool owns_shutdown = false;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!shutdown_) {
       shutdown_ = true;
-      pending_tasks = std::move(tasks_);
+      queued_tasks = std::move(tasks_);
       waitable = std::move(waitable_);
       waitables = std::move(waitables_);
-      default_callback_group = std::move(default_callback_group_);
+      callback_group = std::move(callback_group_);
       owns_shutdown = true;
     }
   }
@@ -252,11 +252,11 @@ void RosExecutorQueue::shutdown()
     return;
   }
 
-  const std::size_t canceled_count = pending_tasks.size();
+  const std::size_t canceled_count = queued_tasks.size();
   drain_gate_.close();
 
-  if (waitable != nullptr && waitables != nullptr && default_callback_group != nullptr) {
-    waitables->remove_waitable(waitable, default_callback_group);
+  if (waitable != nullptr && waitables != nullptr && callback_group != nullptr) {
+    waitables->remove_waitable(waitable, callback_group);
   }
 
   if (canceled_count > 0U) {
@@ -266,9 +266,9 @@ void RosExecutorQueue::shutdown()
       .warn();
   }
 
-  while (!pending_tasks.empty()) {
-    Task task = std::move(pending_tasks.front());
-    pending_tasks.pop();
+  while (!queued_tasks.empty()) {
+    Task task = std::move(queued_tasks.front());
+    queued_tasks.pop();
     task.cancel();
   }
 

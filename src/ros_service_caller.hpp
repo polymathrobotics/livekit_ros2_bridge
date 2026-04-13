@@ -62,12 +62,12 @@ public:
   std::future<ServiceCallResponse> call(const std::string & requester, const ServiceCallRequest & request);
 
   void cancelCallsForRequester(const std::string & requester);
-  // Fails all pending calls and drops cached clients and type support so the
+  // Fails all inflight calls and drops cached clients and type support so the
   // next call rebuilds from current session and graph state.
   void resetSessionState();
 
   // Prevents new calls, waits for any active poll callback to finish, then
-  // fails remaining pending calls. This coordination is reentrant-safe so
+  // fails remaining inflight calls. This coordination is reentrant-safe so
   // shutdown can be triggered from code already running inside poll().
   void shutdown();
 

@@ -173,8 +173,7 @@ PackedI420Frame packI420Frame(GstSample * sample)
 
 }  // namespace
 
-std::string buildFrameSourcePipelineDescription(
-  const std::string & ingress_fragment, const std::string & transform_fragment)
+std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   std::string pipeline = ingress_fragment;
   if (!transform_fragment.empty()) {
@@ -196,13 +195,13 @@ std::string buildFrameSourcePipelineDescription(
 
 VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
-  VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer,
+  VideoFrameSink & sink,
+  VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler,
   std::optional<RestartConfig> restart_config)
 : spec_(std::move(spec))
-, frame_sink_(frame_sink)
-, lifecycle_observer_(lifecycle_observer)
+, sink_(sink)
+, observer_(observer)
 , profiler_(std::move(profiler))
 , restart_config_(std::move(restart_config))
 {}
@@ -224,21 +223,21 @@ void VideoPipelineFrameSource::start()
     throw std::logic_error("Video pipeline source start() requires a fixed restart config.");
   }
 
-  const auto & restart_config = restart_config_.value();
-  startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
+  const auto & config = restart_config_.value();
+  startPipelineLocked(config.pipeline_description, config.require_appsrc);
 }
 
 void VideoPipelineFrameSource::shutdown()
 {
   PipelineHandles handles;
-  bool restart_pending = false;
+  bool recovery_pending = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
 
-    restart_pending = recovery_pending_;
+    recovery_pending = recovery_pending_;
     is_shutdown_ = true;
     // Drop the internal handles while holding mutex_ so any in-flight
     // callbacks observe the terminal shutdown state before GStreamer teardown
@@ -246,14 +245,14 @@ void VideoPipelineFrameSource::shutdown()
     handles = takePipelineLocked();
   }
 
-  if (!restart_pending && handles.pipeline == nullptr && handles.appsrc == nullptr && handles.appsink == nullptr) {
+  if (!recovery_pending && handles.pipeline == nullptr && handles.appsrc == nullptr && handles.appsink == nullptr) {
     return;
   }
 
-  if (handles.pipeline != nullptr || restart_pending) {
+  if (handles.pipeline != nullptr || recovery_pending) {
     LogEvent(kLogger, "video_stream_source_shutdown")
       .field("stream_key", spec_.stream_key)
-      .fieldIf(restart_pending, "restart_pending", true)
+      .fieldIf(recovery_pending, "restart_pending", true)
       .info();
   }
 
@@ -300,7 +299,7 @@ VideoPipelineFrameSource::PipelineHandles VideoPipelineFrameSource::takePipeline
   return handles;
 }
 
-void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_description, bool require_appsrc)
+void VideoPipelineFrameSource::startPipelineLocked(const std::string & description, bool require_appsrc)
 {
   ensureGstreamerInitialized();
   if (profiler_ != nullptr) {
@@ -308,7 +307,7 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
   }
 
   GError * raw_error = nullptr;
-  GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
+  GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
   GErrorPtr error(raw_error);
   if (pipeline == nullptr) {
     const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
@@ -404,7 +403,7 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     VideoStreamProfiler::StageTimer unpack_timer(profiler_.get(), VideoProfileStage::kSampleUnpack, pts_us);
     frame = packI420Frame(sample.get());
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onSampleUnpackFailed(exc.what());
+    observer_.onSampleUnpackFailed(exc.what());
     return GST_FLOW_ERROR;
   }
 
@@ -421,10 +420,10 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     // The mutex only protects local lifecycle state. Writing to the sink may
     // block in downstream LiveKit code, so keep that handoff outside the lock.
     VideoStreamProfiler::StageTimer sink_timer(profiler_.get(), VideoProfileStage::kFrameSink, pts_us);
-    frame_sink_.write(frame.width, frame.height, std::move(frame.data), timestamp_us);
+    sink_.write(frame.width, frame.height, std::move(frame.data), timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onCaptureFailed(exc.what());
+    observer_.onCaptureFailed(exc.what());
     return GST_FLOW_ERROR;
   }
 }
@@ -433,7 +432,7 @@ void VideoPipelineFrameSource::onBusMessage(GstMessage * message)
 {
   switch (GST_MESSAGE_TYPE(message)) {
     case GST_MESSAGE_EOS:
-      handlePipelineFailure("eos");
+      handleFailure("eos");
       return;
     case GST_MESSAGE_ERROR:
       break;
@@ -448,29 +447,27 @@ void VideoPipelineFrameSource::onBusMessage(GstMessage * message)
   GCharPtr debug(raw_debug);
   (void)debug;
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-  handlePipelineFailure(reason);
+  handleFailure(reason);
 }
 
-void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
+void VideoPipelineFrameSource::handleFailure(const std::string & reason)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_ || pipeline_ == nullptr) {
     return;
   }
 
-  lifecycle_observer_.onPipelineFailed(reason);
+  observer_.onPipelineFailed(reason);
 
   if (recovery_pending_) {
     return;
   }
   recovery_pending_ = true;
 
-  const RestartConfig * restart_config = restart_config_ ? &*restart_config_ : nullptr;
-  const auto restart_delay =
-    restart_config != nullptr ? restart_config->restart_delay : std::chrono::milliseconds::zero();
+  const RestartConfig * config = restart_config_ ? &*restart_config_ : nullptr;
+  const auto restart_delay = config != nullptr ? config->restart_delay : std::chrono::milliseconds::zero();
   LogEvent(
-    kLogger,
-    restart_config != nullptr ? "video_stream_pipeline_recovery_scheduled" : "video_stream_pipeline_recovery_disabled")
+    kLogger, config != nullptr ? "video_stream_pipeline_recovery_scheduled" : "video_stream_pipeline_recovery_disabled")
     .field("stream_key", spec_.stream_key)
     .field("track_name", spec_.track_name)
     .field("reason", reason)
@@ -482,16 +479,16 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
   // pipeline destruction never re-enters the bus callback stack.
   std::thread([self, restart_delay]() {
     if (restart_delay <= std::chrono::milliseconds::zero()) {
-      self->recoverPipelineAfterFailure();
+      self->recoverAfterFailure();
       return;
     }
 
     std::this_thread::sleep_for(restart_delay);
-    self->recoverPipelineAfterFailure();
+    self->recoverAfterFailure();
   }).detach();
 }
 
-void VideoPipelineFrameSource::recoverPipelineAfterFailure()
+void VideoPipelineFrameSource::recoverAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -507,15 +504,15 @@ void VideoPipelineFrameSource::recoverPipelineAfterFailure()
   // immediately fails during startup or before the next steady-state frame.
   recovery_pending_ = false;
 
-  const RestartConfig * restart_config = restart_config_ ? &*restart_config_ : nullptr;
-  if (restart_config == nullptr) {
+  const RestartConfig * config = restart_config_ ? &*restart_config_ : nullptr;
+  if (config == nullptr) {
     return;
   }
 
   try {
-    startPipelineLocked(restart_config->pipeline_description, restart_config->require_appsrc);
+    startPipelineLocked(config->pipeline_description, config->require_appsrc);
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onRestartFailed(exc.what());
+    observer_.onRestartFailed(exc.what());
   }
 }
 

@@ -70,11 +70,11 @@ bool isUnreservedTrackByte(unsigned char byte)
 
 // Configured source names are free-form identifiers, so percent-encode reserved bytes
 // to keep the client-visible track suffix reversible and avoid dot-mapping collisions.
-std::string encodeSourceTrackSuffix(std::string_view source_name)
+std::string encodeConfiguredSourceTrackSuffix(std::string_view name)
 {
   std::string suffix;
-  suffix.reserve(source_name.size() * 3U);
-  for (const char ch : source_name) {
+  suffix.reserve(name.size() * 3U);
+  for (const char ch : name) {
     const auto byte = static_cast<unsigned char>(ch);
     if (isUnreservedTrackByte(byte)) {
       suffix.push_back(static_cast<char>(byte));
@@ -90,21 +90,21 @@ std::string encodeSourceTrackSuffix(std::string_view source_name)
 const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
   const std::vector<RosVideoTopicRule> & rules, std::string_view normalized_topic)
 {
-  const RosVideoTopicRule * best_rule = nullptr;
-  std::size_t best_pattern_size = 0;
+  const RosVideoTopicRule * match = nullptr;
+  std::size_t match_size = 0;
   for (const auto & rule : rules) {
     if (!rosResourceMatchesPattern(normalized_topic, rule.pattern)) {
       continue;
     }
     // Prefer the longest matching pattern; same-length matches keep declaration order.
     const auto pattern_size = rule.pattern.size();
-    if (best_rule != nullptr && pattern_size <= best_pattern_size) {
+    if (match != nullptr && pattern_size <= match_size) {
       continue;
     }
-    best_rule = &rule;
-    best_pattern_size = pattern_size;
+    match = &rule;
+    match_size = pattern_size;
   }
-  if (best_rule == nullptr) {
+  if (match == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", normalized_topic)
       .field("reason", "no_matching_ros_topic_rule")
@@ -112,7 +112,7 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
       .warn();
     throw std::runtime_error("no matching video rule for topic '" + std::string(normalized_topic) + "'");
   }
-  return *best_rule;
+  return *match;
 }
 
 }  // namespace
@@ -153,10 +153,10 @@ VideoStreamSpec resolveRosVideoTopicSpec(
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 
-  const auto & matched_rule = selectBestMatchingRosVideoTopicRule(config.ros_topic_rules, normalized_topic);
-  const std::string track_suffix = makeTopicTrackSuffix(normalized_topic);
-  const std::string_view effective_track_suffix =
-    track_suffix.empty() ? std::string_view{kUnnamedTrackSuffix} : std::string_view{track_suffix};
+  const auto & rule = selectBestMatchingRosVideoTopicRule(config.ros_topic_rules, normalized_topic);
+  const std::string suffix = makeTopicTrackSuffix(normalized_topic);
+  const std::string_view track_suffix =
+    suffix.empty() ? std::string_view{kUnnamedTrackSuffix} : std::string_view{suffix};
 
   VideoStreamSpec spec;
   spec.stream_key.reserve(std::string_view{kTopicKeyPrefix}.size() + 1U + normalized_topic.size());
@@ -164,17 +164,17 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   spec.stream_key.push_back(':');
   spec.stream_key.append(normalized_topic);
 
-  spec.track_name.reserve(std::string_view{kTopicTrackPrefix}.size() + effective_track_suffix.size());
+  spec.track_name.reserve(std::string_view{kTopicTrackPrefix}.size() + track_suffix.size());
   spec.track_name.append(kTopicTrackPrefix);
-  spec.track_name.append(effective_track_suffix);
+  spec.track_name.append(track_suffix);
   spec.input_kind = VideoInputKind::RosTopic;
   spec.ros_topic = normalized_topic;
   spec.interface_type = interface_type;
   spec.ingest_mode = std::string(*ingest_mode);
 
-  spec.config_id = matched_rule.rule_id;
-  spec.transform_fragment = matched_rule.transform_fragment;
-  spec.publish_config = matched_rule.publish_config;
+  spec.config_id = rule.rule_id;
+  spec.transform_fragment = rule.transform_fragment;
+  spec.publish_config = rule.publish_config;
   return spec;
 }
 
@@ -190,8 +190,8 @@ VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & confi
     throw std::invalid_argument("Unknown configured video source '" + name + "'.");
   }
 
-  const auto & source = it->second;
-  const std::string track_suffix = encodeSourceTrackSuffix(name);
+  const auto & source_config = it->second;
+  const std::string suffix = encodeConfiguredSourceTrackSuffix(name);
 
   VideoStreamSpec spec;
   spec.stream_key.reserve(std::string_view{kConfiguredSourceKeyPrefix}.size() + 1U + name.size());
@@ -199,17 +199,17 @@ VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & confi
   spec.stream_key.push_back(':');
   spec.stream_key.append(name);
 
-  spec.track_name.reserve(std::string_view{kConfiguredSourceTrackPrefix}.size() + track_suffix.size());
+  spec.track_name.reserve(std::string_view{kConfiguredSourceTrackPrefix}.size() + suffix.size());
   spec.track_name.append(kConfiguredSourceTrackPrefix);
-  spec.track_name.append(track_suffix);
+  spec.track_name.append(suffix);
   spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.source_name = name;
   spec.config_id = name;
 
-  spec.ingress_fragment = source.ingress_fragment;
-  spec.transform_fragment = source.transform_fragment;
+  spec.ingress_fragment = source_config.ingress_fragment;
+  spec.transform_fragment = source_config.transform_fragment;
   spec.ingest_mode = kConfiguredSourceIngestMode;
-  spec.publish_config = source.publish_config;
+  spec.publish_config = source_config.publish_config;
 
   return spec;
 }

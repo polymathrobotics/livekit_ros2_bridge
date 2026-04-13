@@ -24,13 +24,13 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
-  const std::vector<PublisherQosProfile> & publisher_profiles)
+  const std::vector<PublisherQos> & publishers)
 {
   ResolvedSubscriptionQos resolved;
   resolved.qos = base_qos;
-  resolved.publisher_count = publisher_profiles.size();
+  resolved.publisher_count = publishers.size();
 
-  const TopicSubscriptionQosOverride * override_match = nullptr;
+  const TopicSubscriptionQosOverride * match = nullptr;
   if (config != nullptr) {
     // Prefer the most specific matching pattern. Equal-length matches keep the
     // first configured override so configuration order remains the tiebreaker.
@@ -38,15 +38,15 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
       if (!rosResourceMatchesPattern(topic, candidate.pattern)) {
         continue;
       }
-      if (override_match == nullptr || candidate.pattern.size() > override_match->pattern.size()) {
-        override_match = &candidate;
+      if (match == nullptr || candidate.pattern.size() > match->pattern.size()) {
+        match = &candidate;
       }
     }
   }
 
-  if (override_match != nullptr) {
-    resolved.override_id = override_match->id;
-    resolved.override_pattern = override_match->pattern;
+  if (match != nullptr) {
+    resolved.override_id = match->id;
+    resolved.override_pattern = match->pattern;
   }
 
   // Only explicit publisher policies participate in resolution. Unknown and
@@ -55,8 +55,8 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   bool has_best_effort = false;
   bool has_volatile = false;
   bool has_transient_local = false;
-  for (const auto & profile : publisher_profiles) {
-    switch (profile.reliability) {
+  for (const auto & publisher : publishers) {
+    switch (publisher.reliability) {
       case rclcpp::ReliabilityPolicy::Reliable:
         has_reliable = true;
         break;
@@ -67,7 +67,7 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
         break;
     }
 
-    switch (profile.durability) {
+    switch (publisher.durability) {
       case rclcpp::DurabilityPolicy::Volatile:
         has_volatile = true;
         break;
@@ -81,8 +81,8 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   resolved.mixed_reliability = has_reliable && has_best_effort;
   resolved.mixed_durability = has_volatile && has_transient_local;
 
-  const bool has_concrete_publisher_qos = has_best_effort || has_reliable || has_volatile || has_transient_local;
-  if (override_match == nullptr && !has_concrete_publisher_qos) {
+  const bool has_publisher_qos = has_best_effort || has_reliable || has_volatile || has_transient_local;
+  if (match == nullptr && !has_publisher_qos) {
     // No override matched and publishers exposed no concrete policy, so the
     // caller's base QoS is already the final answer.
     return resolved;
@@ -92,28 +92,27 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   // axis; otherwise we consume publisher QoS only when it exposes a concrete
   // policy for that same axis. When publishers disagree, prefer the weaker
   // compatible policy so one subscription can attach to every known publisher.
-  if (override_match != nullptr && override_match->reliability != SubscriptionQosReliabilityMode::kAuto) {
+  if (match != nullptr && match->reliability != SubscriptionQosReliabilityMode::kAuto) {
     resolved.qos.reliability(
-      override_match->reliability == SubscriptionQosReliabilityMode::kBestEffort ? rclcpp::ReliabilityPolicy::BestEffort
-                                                                                 : rclcpp::ReliabilityPolicy::Reliable);
+      match->reliability == SubscriptionQosReliabilityMode::kBestEffort ? rclcpp::ReliabilityPolicy::BestEffort
+                                                                        : rclcpp::ReliabilityPolicy::Reliable);
   } else if (has_best_effort || has_reliable) {
     resolved.qos.reliability(
       has_best_effort ? rclcpp::ReliabilityPolicy::BestEffort : rclcpp::ReliabilityPolicy::Reliable);
     resolved.used_publisher_qos = true;
   }
 
-  if (override_match != nullptr && override_match->durability != SubscriptionQosDurabilityMode::kAuto) {
+  if (match != nullptr && match->durability != SubscriptionQosDurabilityMode::kAuto) {
     resolved.qos.durability(
-      override_match->durability == SubscriptionQosDurabilityMode::kTransientLocal
-        ? rclcpp::DurabilityPolicy::TransientLocal
-        : rclcpp::DurabilityPolicy::Volatile);
+      match->durability == SubscriptionQosDurabilityMode::kTransientLocal ? rclcpp::DurabilityPolicy::TransientLocal
+                                                                          : rclcpp::DurabilityPolicy::Volatile);
   } else if (has_volatile || has_transient_local) {
     resolved.qos.durability(
       has_volatile ? rclcpp::DurabilityPolicy::Volatile : rclcpp::DurabilityPolicy::TransientLocal);
     resolved.used_publisher_qos = true;
   }
 
-  if (override_match != nullptr) {
+  if (match != nullptr) {
     resolved.source = SubscriptionQosResolutionSource::kOverride;
   } else if (resolved.used_publisher_qos) {
     resolved.source = SubscriptionQosResolutionSource::kPublisherQos;
@@ -125,16 +124,16 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::Node & node, std::string_view topic, const rclcpp::QoS & base_qos, const SubscriptionQosConfig * config)
 {
-  std::vector<PublisherQosProfile> publisher_profiles;
+  std::vector<PublisherQos> publishers;
   // Resolve against a single graph snapshot. The publisher set may change
   // immediately after this query, but we keep one consistent view per call.
-  const auto publishers = node.get_publishers_info_by_topic(std::string(topic));
-  publisher_profiles.reserve(publishers.size());
-  for (const auto & publisher : publishers) {
-    const auto & publisher_qos = publisher.qos_profile();
-    publisher_profiles.push_back({publisher_qos.reliability(), publisher_qos.durability()});
+  const auto publisher_infos = node.get_publishers_info_by_topic(std::string(topic));
+  publishers.reserve(publisher_infos.size());
+  for (const auto & info : publisher_infos) {
+    const auto & qos = info.qos_profile();
+    publishers.push_back({qos.reliability(), qos.durability()});
   }
-  return resolveSubscriptionQos(topic, base_qos, config, publisher_profiles);
+  return resolveSubscriptionQos(topic, base_qos, config, publishers);
 }
 
 const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)

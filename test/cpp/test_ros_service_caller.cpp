@@ -535,26 +535,26 @@ TEST_F(RosServiceCallerTest, CancelCallsForRequesterOnlySettlesMatchingRequester
   caller.shutdown();
 }
 
-TEST_F(RosServiceCallerTest, SessionResetCompletesPendingCallsAndReleasesRequesterIdentityInflightQuota)
+TEST_F(RosServiceCallerTest, SessionResetCompletesInflightCallsAndReleasesRequesterIdentityInflightQuota)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reset_release_node");
 
   RosServiceCaller caller(*caller_node);
 
   const auto request = makeSetBoolRequest("/session_reset_release", kStandardRequestTimeoutMs);
-  std::vector<std::future<RosServiceCaller::ServiceCallResponse>> pending_futures;
+  std::vector<std::future<RosServiceCaller::ServiceCallResponse>> inflight_futures;
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
-    pending_futures.push_back(caller.call("requester-1", request));
+    inflight_futures.push_back(caller.call("requester-1", request));
   }
 
-  for (auto & pending_future : pending_futures) {
-    expectFuturePending(pending_future);
+  for (auto & inflight_future : inflight_futures) {
+    expectFuturePending(inflight_future);
   }
 
   caller.resetSessionState();
 
-  for (auto & pending_future : pending_futures) {
-    EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "LiveKit session reset.");
+  for (auto & inflight_future : inflight_futures) {
+    EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "LiveKit session reset.");
   }
 
   saturateInflightQuota(caller, "requester-1", request);
@@ -742,7 +742,7 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
     release_poll->set_value();
   };
 
-  auto pending_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", kStandardRequestTimeoutMs));
+  auto inflight_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", kStandardRequestTimeoutMs));
 
   ASSERT_EQ(poll_entered_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
 
@@ -755,13 +755,13 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
 
   ASSERT_EQ(shutdown_started_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(shutdown_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
-  EXPECT_EQ(pending_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
+  EXPECT_EQ(inflight_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
 
   release_poll_callback();
 
   EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(shutdown_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Service caller shut down.");
+  EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
 
   executor.cancel();
   spin_thread.join();
@@ -790,13 +790,13 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
 
   std::thread spin_thread([&executor]() { executor.spin(); });
 
-  auto pending_future =
+  auto inflight_future =
     caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", kStandardRequestTimeoutMs));
 
   EXPECT_EQ(shutdown_completed_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(pending_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "Service caller shut down.");
+  EXPECT_EQ(inflight_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
 
   executor.cancel();
   spin_thread.join();

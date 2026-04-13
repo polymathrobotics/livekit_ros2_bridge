@@ -102,7 +102,7 @@ struct DurationSamples
   }
 };
 
-std::uint64_t currentThreadId()
+std::uint64_t threadId()
 {
   return static_cast<std::uint64_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
 }
@@ -121,7 +121,7 @@ std::string toUtcIso8601(std::chrono::system_clock::time_point time_point)
   return output.str();
 }
 
-nlohmann::json traceArgToJson(const TraceValue & value)
+nlohmann::json traceValueToJson(const TraceValue & value)
 {
   return std::visit([](const auto & typed_value) -> nlohmann::json { return typed_value; }, value);
 }
@@ -141,17 +141,17 @@ void addTraceArg(std::vector<TraceArg> & args, const char * key, bool value)
   args.push_back({key, value});
 }
 
-void addMetricFields(LogEvent & event, const char * field_prefix, const VideoProfileDurationSummary & metric)
+void addDurationFields(LogEvent & event, const char * name, const VideoProfileDurationSummary & summary)
 {
-  if (!metric.hasSamples()) {
+  if (!summary.hasSamples()) {
     return;
   }
 
-  const std::string base(field_prefix);
-  event.field(base + "_samples", metric.sample_count)
-    .field(base + "_avg", metric.avg_ms)
-    .field(base + "_p95", metric.p95_ms)
-    .field(base + "_max", metric.max_ms);
+  const std::string base(name);
+  event.field(base + "_samples", summary.sample_count)
+    .field(base + "_avg", summary.avg_ms)
+    .field(base + "_p95", summary.p95_ms)
+    .field(base + "_max", summary.max_ms);
 }
 
 void addCountFieldIfNonZero(LogEvent & event, const char * field_name, std::size_t count)
@@ -164,7 +164,7 @@ void addCountFieldIfNonZero(LogEvent & event, const char * field_name, std::size
 }
 
 template <typename EventT>
-EventT && addProfilerIdentityFields(EventT && event, const VideoStreamSpec & spec)
+EventT && addIdentityFields(EventT && event, const VideoStreamSpec & spec)
 {
   event.field("stream_key", spec.stream_key)
     .field("track_name", spec.track_name)
@@ -174,7 +174,7 @@ EventT && addProfilerIdentityFields(EventT && event, const VideoStreamSpec & spe
 }
 
 template <typename EventT>
-EventT && addProfilerIdentityFields(EventT && event, const VideoStreamProfileSummary & summary)
+EventT && addIdentityFields(EventT && event, const VideoStreamProfileSummary & summary)
 {
   event.field("stream_key", summary.stream_key)
     .field("track_name", summary.track_name)
@@ -183,14 +183,14 @@ EventT && addProfilerIdentityFields(EventT && event, const VideoStreamProfileSum
   return std::forward<EventT>(event);
 }
 
-bool hasProfilerIdentityMismatch(const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
+bool hasIdentityMismatch(const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
 {
   return active_spec.track_name != requested_spec.track_name || active_spec.input_kind != requested_spec.input_kind ||
          active_spec.ingest_mode != requested_spec.ingest_mode;
 }
 
 template <typename EventT>
-EventT && addProfilerIdentityMismatchFields(
+EventT && addIdentityMismatchFields(
   EventT && event, const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
 {
   if (active_spec.track_name != requested_spec.track_name) {
@@ -287,7 +287,7 @@ public:
     event.name = std::move(name);
     event.timestamp_us = toTraceTimestampUs(start_time);
     event.duration_us = duration.count();
-    event.thread_id = currentThreadId();
+    event.thread_id = threadId();
     event.args = std::move(args);
     appendEvent(std::move(event));
   }
@@ -300,7 +300,7 @@ public:
     event.category = std::move(category);
     event.name = std::move(name);
     event.timestamp_us = toTraceTimestampUs(event_time);
-    event.thread_id = currentThreadId();
+    event.thread_id = threadId();
     event.args = std::move(args);
     appendEvent(std::move(event));
   }
@@ -343,7 +343,7 @@ public:
     for (const auto & event : events) {
       nlohmann::json args = nlohmann::json::object();
       for (const auto & arg : event.args) {
-        args[arg.key] = traceArgToJson(arg.value);
+        args[arg.key] = traceValueToJson(arg.value);
       }
 
       nlohmann::json json_event{
@@ -609,7 +609,7 @@ const StageMetric & stageMetric(VideoProfileStage stage)
   return *metric;
 }
 
-std::vector<TraceArg> makeFrameTimestampArgs(std::optional<std::int64_t> frame_timestamp_us)
+std::vector<TraceArg> frameTimestampArgs(std::optional<std::int64_t> frame_timestamp_us)
 {
   std::vector<TraceArg> args;
   if (frame_timestamp_us) {
@@ -618,7 +618,7 @@ std::vector<TraceArg> makeFrameTimestampArgs(std::optional<std::int64_t> frame_t
   return args;
 }
 
-void recordInstantIfTracingEnabled(
+void recordTraceInstant(
   const VideoStreamProfiler::Impl & impl, const char * trace_event_name, std::vector<TraceArg> args = {})
 {
   if (impl.recorder == nullptr) {
@@ -628,7 +628,7 @@ void recordInstantIfTracingEnabled(
   impl.recorder->recordInstant(impl.spec.stream_key, trace_event_name, SteadyClock::now(), std::move(args));
 }
 
-void recordCompleteIfTracingEnabled(
+void recordTraceSpan(
   const VideoStreamProfiler::Impl & impl,
   const char * trace_event_name,
   SteadyClock::time_point start_time,
@@ -718,7 +718,7 @@ void VideoStreamProfiler::noteIngress(
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_in++;
-  recordInstantIfTracingEnabled(*impl_, kIngressTraceEventName, makeFrameTimestampArgs(source_timestamp_us));
+  recordTraceInstant(*impl_, kIngressTraceEventName, frameTimestampArgs(source_timestamp_us));
 
   if (impl_->last_ingress_arrival) {
     const auto gap_us =
@@ -748,7 +748,7 @@ void VideoStreamProfiler::noteSample(std::optional<std::int64_t> frame_timestamp
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_sampled++;
-  recordInstantIfTracingEnabled(*impl_, kSampledTraceEventName, makeFrameTimestampArgs(frame_timestamp_us));
+  recordTraceInstant(*impl_, kSampledTraceEventName, frameTimestampArgs(frame_timestamp_us));
 
   if (!frame_timestamp_us || *frame_timestamp_us < 0) {
     return;
@@ -762,8 +762,8 @@ void VideoStreamProfiler::noteSample(std::optional<std::int64_t> frame_timestamp
   const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(sample_ready_time - *ingress_time);
   impl_->appsrc_to_sample_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
 
-  recordCompleteIfTracingEnabled(
-    *impl_, kSourceToSampleReadyFieldName, *ingress_time, latency_us, makeFrameTimestampArgs(frame_timestamp_us));
+  recordTraceSpan(
+    *impl_, kSourceToSampleReadyFieldName, *ingress_time, latency_us, frameTimestampArgs(frame_timestamp_us));
 }
 
 void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestamp_us)
@@ -772,7 +772,7 @@ void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestam
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_captured++;
-  recordInstantIfTracingEnabled(*impl_, kCapturedTraceEventName, makeFrameTimestampArgs(frame_timestamp_us));
+  recordTraceInstant(*impl_, kCapturedTraceEventName, frameTimestampArgs(frame_timestamp_us));
 
   if (impl_->last_output_arrival) {
     const auto gap_us =
@@ -793,8 +793,8 @@ void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestam
   const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(capture_complete_time - *ingress_time);
   impl_->source_to_output_submit_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
 
-  recordCompleteIfTracingEnabled(
-    *impl_, kSourceToLiveKitSubmitFieldName, *ingress_time, latency_us, makeFrameTimestampArgs(frame_timestamp_us));
+  recordTraceSpan(
+    *impl_, kSourceToLiveKitSubmitFieldName, *ingress_time, latency_us, frameTimestampArgs(frame_timestamp_us));
 }
 
 void VideoStreamProfiler::notePipelineStart()
@@ -802,7 +802,7 @@ void VideoStreamProfiler::notePipelineStart()
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->pipeline_start_count++;
-  recordInstantIfTracingEnabled(*impl_, kPipelineStartTraceEventName);
+  recordTraceInstant(*impl_, kPipelineStartTraceEventName);
 }
 
 void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
@@ -813,7 +813,7 @@ void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->pipeline_failure_count++;
-  recordInstantIfTracingEnabled(*impl_, kPipelineFailureTraceEventName, std::move(args));
+  recordTraceInstant(*impl_, kPipelineFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteRestartFailed(const std::string & error)
@@ -824,7 +824,7 @@ void VideoStreamProfiler::noteRestartFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->restart_failed_count++;
-  recordInstantIfTracingEnabled(*impl_, kRestartFailureTraceEventName, std::move(args));
+  recordTraceInstant(*impl_, kRestartFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::notePushFailed(const std::string & error)
@@ -835,7 +835,7 @@ void VideoStreamProfiler::notePushFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->push_failed_count++;
-  recordInstantIfTracingEnabled(*impl_, kPushFailureTraceEventName, std::move(args));
+  recordTraceInstant(*impl_, kPushFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
@@ -846,7 +846,7 @@ void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->sample_unpack_failed_count++;
-  recordInstantIfTracingEnabled(*impl_, kSampleUnpackFailureTraceEventName, std::move(args));
+  recordTraceInstant(*impl_, kSampleUnpackFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
@@ -857,7 +857,7 @@ void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->capture_failed_count++;
-  recordInstantIfTracingEnabled(*impl_, kCaptureFailureTraceEventName, std::move(args));
+  recordTraceInstant(*impl_, kCaptureFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republished)
@@ -869,14 +869,14 @@ void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republi
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
-  std::size_t * publish_count = &impl_->track_publish_count;
-  const char * trace_event_name = kTrackPublishedTraceEventName;
+  std::size_t * count = &impl_->track_publish_count;
+  const char * event_name = kTrackPublishedTraceEventName;
   if (republished) {
-    publish_count = &impl_->track_republish_count;
-    trace_event_name = kTrackRepublishedTraceEventName;
+    count = &impl_->track_republish_count;
+    event_name = kTrackRepublishedTraceEventName;
   }
-  ++(*publish_count);
-  recordInstantIfTracingEnabled(*impl_, trace_event_name, std::move(args));
+  ++(*count);
+  recordTraceInstant(*impl_, event_name, std::move(args));
 }
 
 void VideoStreamProfiler::noteTrackUnpublish()
@@ -884,7 +884,7 @@ void VideoStreamProfiler::noteTrackUnpublish()
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->track_unpublish_count++;
-  recordInstantIfTracingEnabled(*impl_, kTrackUnpublishingTraceEventName);
+  recordTraceInstant(*impl_, kTrackUnpublishingTraceEventName);
 }
 
 void VideoStreamProfiler::recordStage(
@@ -894,17 +894,17 @@ void VideoStreamProfiler::recordStage(
   std::optional<SteadyClock::time_point> start_time)
 {
   const double duration_ms = static_cast<double>(duration.count()) / 1000.0;
-  const auto & metric = stageMetric(stage);
+  const auto & stage_metric = stageMetric(stage);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
-  (impl_.get()->*(metric.samples)).addDurationMs(duration_ms);
-  recordCompleteIfTracingEnabled(
+  (impl_.get()->*(stage_metric.samples)).addDurationMs(duration_ms);
+  recordTraceSpan(
     *impl_,
-    metric.metric_name,
+    stage_metric.metric_name,
     start_time.value_or(SteadyClock::now() - duration),
     duration,
-    makeFrameTimestampArgs(frame_timestamp_us));
+    frameTimestampArgs(frame_timestamp_us));
 }
 
 std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
@@ -986,7 +986,7 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
   if (inserted || profiler == nullptr) {
     profiler = std::make_shared<VideoStreamProfiler>(spec);
     profiler->impl_->recorder = impl_->recorder;
-    addProfilerIdentityFields(LogEvent(impl_->logger, "video_profile_stream_registered"), spec).info();
+    addIdentityFields(LogEvent(impl_->logger, "video_profile_stream_registered"), spec).info();
     if (impl_->recorder != nullptr) {
       std::vector<TraceArg> args;
       addTraceArg(args, "track_name", spec.track_name);
@@ -998,11 +998,11 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
     return profiler;
   }
 
-  if (!hasProfilerIdentityMismatch(profiler->impl_->spec, spec)) {
+  if (!hasIdentityMismatch(profiler->impl_->spec, spec)) {
     return profiler;
   }
 
-  addProfilerIdentityMismatchFields(
+  addIdentityMismatchFields(
     LogEvent(impl_->logger, "video_profile_profiler_spec_mismatch").field("stream_key", spec.stream_key),
     profiler->impl_->spec,
     spec)
@@ -1065,7 +1065,7 @@ void VideoProfilingRegistry::logSummaries()
   const auto summaries = takeSummaries();
   for (const auto & summary : summaries) {
     LogEvent event(impl_->logger, "video_profile_summary");
-    addProfilerIdentityFields(event, summary);
+    addIdentityFields(event, summary);
     event.field(kFramesInCountFieldName, summary.frames_in)
       .field(kFramesSampledCountFieldName, summary.frames_sampled)
       .field(kFramesCapturedCountFieldName, summary.frames_captured);
@@ -1079,13 +1079,13 @@ void VideoProfilingRegistry::logSummaries()
     addCountFieldIfNonZero(event, kTrackRepublishCountFieldName, summary.track_republish_count);
     addCountFieldIfNonZero(event, kTrackUnpublishCountFieldName, summary.track_unpublish_count);
     addCountFieldIfNonZero(event, kSourceTimestampRegressionCountFieldName, summary.source_timestamp_regression_count);
-    addMetricFields(event, kIngressArrivalGapFieldName, summary.ingress_arrival_gap_ms);
-    addMetricFields(event, kOutputArrivalGapFieldName, summary.output_arrival_gap_ms);
-    addMetricFields(event, kSourceTimestampGapFieldName, summary.source_timestamp_gap_ms);
-    addMetricFields(event, kSourceToSampleReadyFieldName, summary.appsrc_to_sample_ms);
-    addMetricFields(event, kSourceToLiveKitSubmitFieldName, summary.source_to_output_submit_ms);
+    addDurationFields(event, kIngressArrivalGapFieldName, summary.ingress_arrival_gap_ms);
+    addDurationFields(event, kOutputArrivalGapFieldName, summary.output_arrival_gap_ms);
+    addDurationFields(event, kSourceTimestampGapFieldName, summary.source_timestamp_gap_ms);
+    addDurationFields(event, kSourceToSampleReadyFieldName, summary.appsrc_to_sample_ms);
+    addDurationFields(event, kSourceToLiveKitSubmitFieldName, summary.source_to_output_submit_ms);
     for (const auto & metric : kStageMetrics) {
-      addMetricFields(event, metric.metric_name, summary.*(metric.summary));
+      addDurationFields(event, metric.metric_name, summary.*(metric.summary));
     }
     event.info();
   }

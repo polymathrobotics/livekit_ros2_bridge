@@ -31,16 +31,16 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 
 ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
   VideoStreamSpec spec,
-  VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer,
+  VideoFrameSink & sink,
+  VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : VideoPipelineFrameSource(
     spec,
-    frame_sink,
-    lifecycle_observer,
+    sink,
+    observer,
     std::move(profiler),
     VideoPipelineFrameSource::RestartConfig{
-      buildFrameSourcePipelineDescription(spec.ingress_fragment, spec.transform_fragment),
+      buildVideoPipelineDescription(spec.ingress_fragment, spec.transform_fragment),
       false,
       kRestartDelay,
     })

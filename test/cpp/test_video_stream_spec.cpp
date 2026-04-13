@@ -222,12 +222,12 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecTrimsConfiguredSourceN
   const auto expected_publish_config =
     makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
 
-  ConfiguredVideoStreamSource source;
-  source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  source.transform_fragment = "videobalance saturation=0.0";
-  source.publish_config = expected_publish_config;
+  ConfiguredVideoStreamSource source_config;
+  source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  source_config.transform_fragment = "videobalance saturation=0.0";
+  source_config.publish_config = expected_publish_config;
 
-  config.configured_sources.emplace("front_camera", std::move(source));
+  config.configured_sources.emplace("front_camera", std::move(source_config));
 
   const auto spec = resolveConfiguredVideoSourceSpec(config, "  front_camera  ");
 
@@ -246,10 +246,10 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecPercentEncodesTrackNam
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
 
-  ConfiguredVideoStreamSource source;
-  source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  ConfiguredVideoStreamSource source_config;
+  source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
 
-  config.configured_sources.emplace("/sources/front:rgb%", std::move(source));
+  config.configured_sources.emplace("/sources/front:rgb%", std::move(source_config));
 
   const auto spec = resolveConfiguredVideoSourceSpec(config, "/sources/front:rgb%");
 

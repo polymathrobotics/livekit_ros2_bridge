@@ -47,7 +47,7 @@ public:
   // treated as a stale completion rather than a failure signal.
   using FailHandler = std::function<void()>;
 
-  DataTrackPublisher(RoomConnection & connection, std::string track_name, rclcpp::Clock::SharedPtr clock);
+  DataTrackPublisher(RoomConnection & connection, std::string name, rclcpp::Clock::SharedPtr clock);
 
   // Best-effort write to an already-published data track carrying ROS CDR payloads. Missing
   // tracks, backpressure, and transient LiveKit push failures are swallowed so ROS message
@@ -66,11 +66,11 @@ public:
 private:
   // Non-owning room connection facade. The connection must outlive this publisher.
   RoomConnection & room_connection_;
-  std::string track_name_;
+  std::string name_;
   rclcpp::Clock::SharedPtr log_clock_;
   // Only the currently accepted publication lives here. Rejected or failed replacement attempts
   // are reclaimed before this handle changes, and unpublish() clears it before touching LiveKit.
-  std::shared_ptr<livekit::LocalDataTrack> published_track_;
+  std::shared_ptr<livekit::LocalDataTrack> track_;
 };
 
 }  // namespace livekit_ros2_bridge

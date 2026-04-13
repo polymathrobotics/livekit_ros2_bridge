@@ -464,7 +464,7 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 
 // Keep the generated parameter-library field layout at the edge so startup
 // config assembly reads in terms of runtime-owned concepts.
-RoomConnectionConfig loadRequiredRoomConnectionConfig(const Params & params)
+RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
 {
   if (params.livekit.url.empty()) {
     throw std::runtime_error("livekit.url is required");
@@ -539,24 +539,24 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     url = params.livekit.url;
 
     stage = "room_connection_config";
-    config.room_connection_config = loadRequiredRoomConnectionConfig(params);
+    config.room_connection = loadRoomConnectionConfig(params);
     config.access_token = params.livekit.token;
     stage = "health_config";
-    config.health_config = loadHealthConfig(params);
+    config.health = loadHealthConfig(params);
     stage = "access_policy";
     config.access_policy = loadAccessPolicy(params);
     stage = "subscription_qos_config";
-    config.subscription_qos_config = loadSubscriptionQosConfig(params);
+    config.subscription_qos = loadSubscriptionQosConfig(params);
     stage = "video_stream_config";
-    config.video_stream_config = loadVideoStreamConfig(params);
+    config.video_stream = loadVideoStreamConfig(params);
     stage = "video_profiling_config";
-    config.video_profiling_config = loadVideoProfilingConfig(params);
+    config.video_profiling = loadVideoProfilingConfig(params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
-      .fieldOr("room", config.room_connection_config.room, kUnsetLogValue)
-      .fieldOr("url", config.room_connection_config.url, kUnsetLogValue)
+      .fieldOr("room", config.room_connection.room, kUnsetLogValue)
+      .fieldOr("url", config.room_connection.url, kUnsetLogValue)
       .field("custom_video_rule_count", params.video_topic_rule_ids.size())
-      .field("configured_source_count", config.video_stream_config.configured_sources.size())
+      .field("configured_source_count", config.video_stream.configured_sources.size())
       .info();
 
     return config;

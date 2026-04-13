@@ -43,23 +43,23 @@ namespace
 constexpr auto kNormalizationLogThrottlePeriod = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("stream_control_payloads");
 
-enum class IntegerClampBoundary
+enum class ClampBoundary
 {
   kNone,
   kIntMin,
   kIntMax,
 };
 
-struct ClampedJsonInteger
+struct ClampedInt
 {
   int value;
-  IntegerClampBoundary boundary = IntegerClampBoundary::kNone;
+  ClampBoundary boundary = ClampBoundary::kNone;
 };
 
-struct PreferredIntervalParseResult
+struct ParsedInterval
 {
   std::optional<int> interval_ms;
-  IntegerClampBoundary clamp_boundary = IntegerClampBoundary::kNone;
+  ClampBoundary boundary = ClampBoundary::kNone;
 };
 
 rclcpp::Clock & logClock()
@@ -68,21 +68,21 @@ rclcpp::Clock & logClock()
   return clock;
 }
 
-const char * integerClampBoundaryString(IntegerClampBoundary boundary)
+const char * clampBoundaryString(ClampBoundary boundary)
 {
   switch (boundary) {
-    case IntegerClampBoundary::kNone:
+    case ClampBoundary::kNone:
       return "none";
-    case IntegerClampBoundary::kIntMin:
+    case ClampBoundary::kIntMin:
       return "int_min";
-    case IntegerClampBoundary::kIntMax:
+    case ClampBoundary::kIntMax:
       return "int_max";
   }
 
   return "unknown";
 }
 
-ClampedJsonInteger clampJsonIntegerToInt(const nlohmann::json & value, const char * error_message)
+ClampedInt clampJsonInt(const nlohmann::json & value, const char * error_message)
 {
   if (!value.is_number_integer()) {
     throw std::invalid_argument(error_message);
@@ -94,41 +94,41 @@ ClampedJsonInteger clampJsonIntegerToInt(const nlohmann::json & value, const cha
     const auto raw_interval = value.get<std::uint64_t>();
     const auto max_interval = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
     if (raw_interval > max_interval) {
-      return {std::numeric_limits<int>::max(), IntegerClampBoundary::kIntMax};
+      return {std::numeric_limits<int>::max(), ClampBoundary::kIntMax};
     }
-    return {static_cast<int>(raw_interval), IntegerClampBoundary::kNone};
+    return {static_cast<int>(raw_interval), ClampBoundary::kNone};
   }
 
   const auto raw_interval = value.get<std::int64_t>();
   const auto min_interval = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max_interval = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw_interval < min_interval) {
-    return {std::numeric_limits<int>::min(), IntegerClampBoundary::kIntMin};
+    return {std::numeric_limits<int>::min(), ClampBoundary::kIntMin};
   }
   if (raw_interval > max_interval) {
-    return {std::numeric_limits<int>::max(), IntegerClampBoundary::kIntMax};
+    return {std::numeric_limits<int>::max(), ClampBoundary::kIntMax};
   }
 
-  return {static_cast<int>(raw_interval), IntegerClampBoundary::kNone};
+  return {static_cast<int>(raw_interval), ClampBoundary::kNone};
 }
 
-PreferredIntervalParseResult parsePreferredIntervalMs(const nlohmann::json & entry)
+ParsedInterval parseIntervalMs(const nlohmann::json & entry)
 {
-  const auto delivery_preferences = entry.find("delivery_preferences");
-  if (delivery_preferences == entry.end()) {
+  const auto delivery_it = entry.find("delivery_preferences");
+  if (delivery_it == entry.end()) {
     return {};
   }
 
-  if (!delivery_preferences->is_object()) {
+  if (!delivery_it->is_object()) {
     throw std::invalid_argument("delivery_preferences must be an object");
   }
 
-  const auto interval_field = delivery_preferences->find("interval_ms");
-  if (interval_field == delivery_preferences->end()) {
+  const auto interval_it = delivery_it->find("interval_ms");
+  if (interval_it == delivery_it->end()) {
     return {};
   }
 
-  const auto interval = clampJsonIntegerToInt(*interval_field, "delivery_preferences.interval_ms must be an integer");
+  const auto interval = clampJsonInt(*interval_it, "delivery_preferences.interval_ms must be an integer");
   if (interval.value == 0) {
     return {};
   }
@@ -136,25 +136,25 @@ PreferredIntervalParseResult parsePreferredIntervalMs(const nlohmann::json & ent
   return {interval.value, interval.boundary};
 }
 
-SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
+SubscriptionTarget parseTarget(const nlohmann::json & entry)
 {
-  const auto kind_field = entry.find("kind");
-  if (kind_field == entry.end() || !kind_field->is_string()) {
+  const auto kind_it = entry.find("kind");
+  if (kind_it == entry.end() || !kind_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
-  const auto parsed_kind = subscriptionTargetKindFromString(trim(kind_field->get_ref<const std::string &>()));
+  const auto parsed_kind = subscriptionTargetKindFromString(trim(kind_it->get_ref<const std::string &>()));
   if (!parsed_kind.has_value()) {
     throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
   }
 
   const SubscriptionTargetKind kind = *parsed_kind;
-  const auto name_field = entry.find("name");
-  if (name_field == entry.end() || !name_field->is_string()) {
+  const auto name_it = entry.find("name");
+  if (name_it == entry.end() || !name_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
-  const auto & raw_name = name_field->get_ref<const std::string &>();
+  const auto & raw_name = name_it->get_ref<const std::string &>();
   if (kind == SubscriptionTargetKind::Topic) {
     std::string name = normalizeRosResourceName(raw_name);
     if (name.empty()) {
@@ -177,40 +177,40 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
-  std::unordered_map<std::string, std::size_t> demand_index_by_target;
+  std::unordered_map<std::string, std::size_t> index_by_target;
   heartbeat.session_id =
     parseOptionalNonEmptyTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
 
-  const auto subscriptions = body.find("subscriptions");
-  if (subscriptions == body.end()) {
+  const auto subscriptions_it = body.find("subscriptions");
+  if (subscriptions_it == body.end()) {
     throw std::invalid_argument("heartbeat subscriptions are required");
   }
 
-  if (!subscriptions->is_array()) {
+  if (!subscriptions_it->is_array()) {
     throw std::invalid_argument("heartbeat subscriptions must be an array");
   }
 
-  for (const auto & entry : *subscriptions) {
+  for (const auto & entry : *subscriptions_it) {
     if (!entry.is_object()) {
       throw std::invalid_argument("heartbeat subscriptions must be objects");
     }
 
     SubscriptionDemand demand;
-    demand.target = parseSubscriptionTarget(entry);
-    const auto preferred_interval = parsePreferredIntervalMs(entry);
-    demand.preferred_interval_ms = preferred_interval.interval_ms;
-    if (preferred_interval.clamp_boundary != IntegerClampBoundary::kNone) {
+    demand.target = parseTarget(entry);
+    const auto interval = parseIntervalMs(entry);
+    demand.preferred_interval_ms = interval.interval_ms;
+    if (interval.boundary != ClampBoundary::kNone) {
       LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
         .field("kind", subscriptionTargetKindString(demand.target.kind))
         .field("name", demand.target.name)
-        .field("boundary", integerClampBoundaryString(preferred_interval.clamp_boundary))
+        .field("boundary", clampBoundaryString(interval.boundary))
         .warnThrottle(logClock(), kNormalizationLogThrottlePeriod);
     }
 
     // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and
     // configured_source identifiers may share the same text, so name alone would alias
     // distinct protocol targets.
-    const auto [it, inserted] = demand_index_by_target.emplace(
+    const auto [it, inserted] = index_by_target.emplace(
       std::string(subscriptionTargetKindString(demand.target.kind)) + ":" + demand.target.name,
       heartbeat.subscriptions.size());
     if (inserted) {
@@ -222,13 +222,13 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
       continue;
     }
 
-    const int requested_interval = *demand.preferred_interval_ms;
-    auto & current_interval = heartbeat.subscriptions[it->second].preferred_interval_ms;
-    if (current_interval.has_value() && requested_interval >= *current_interval) {
+    const int requested_ms = *demand.preferred_interval_ms;
+    auto & current_ms = heartbeat.subscriptions[it->second].preferred_interval_ms;
+    if (current_ms.has_value() && requested_ms >= *current_ms) {
       continue;
     }
 
-    current_interval = requested_interval;
+    current_ms = requested_ms;
   }
 
   return heartbeat;

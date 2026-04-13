@@ -54,7 +54,7 @@ public:
   void onTrackPublished(int, int, bool) override
   {}
 
-  void onTrackUnpublishing() override
+  void onTrackUnpublish() override
   {}
 
   void onSampleUnpackFailed(const std::string & error) override
@@ -92,8 +92,8 @@ public:
 class TestableVideoPipelineFrameSource final : public VideoPipelineFrameSource
 {
 public:
-  TestableVideoPipelineFrameSource(VideoFrameSink & frame_sink, VideoStreamLifecycleObserver & lifecycle_observer)
-  : VideoPipelineFrameSource(makeTestSpec(), frame_sink, lifecycle_observer)
+  TestableVideoPipelineFrameSource(VideoFrameSink & sink, VideoStreamLifecycleObserver & observer)
+  : VideoPipelineFrameSource(makeTestSpec(), sink, observer)
   {}
 
   ~TestableVideoPipelineFrameSource() override
@@ -101,10 +101,10 @@ public:
     shutdown();
   }
 
-  void startWithDescription(const std::string & pipeline_description, bool require_appsrc)
+  void startPipeline(const std::string & description, bool require_appsrc)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    startPipelineLocked(pipeline_description, require_appsrc);
+    startPipelineLocked(description, require_appsrc);
   }
 
   bool hasAppSrc()
@@ -131,7 +131,7 @@ TEST_F(VideoPipelineFrameSourceTest, StartRejectsNamedNonAppSink)
   auto source = std::make_shared<TestableVideoPipelineFrameSource>(sink_, observer_);
 
   try {
-    source->startWithDescription("videotestsrc is-live=true ! fakesink name=bridge_video_sink", false);
+    source->startPipeline("videotestsrc is-live=true ! fakesink name=bridge_video_sink", false);
     FAIL() << "expected start to reject a non-appsink element";
   } catch (const std::runtime_error & error) {
     EXPECT_NE(std::string(error.what()).find("must be a GstAppSink"), std::string::npos);
@@ -143,7 +143,7 @@ TEST_F(VideoPipelineFrameSourceTest, StartRejectsNamedNonAppSrcWhenRequired)
   auto source = std::make_shared<TestableVideoPipelineFrameSource>(sink_, observer_);
 
   try {
-    source->startWithDescription(
+    source->startPipeline(
       "videotestsrc is-live=true ! identity name=bridge_video_src ! appsink name=bridge_video_sink", true);
     FAIL() << "expected start to reject a non-appsrc element";
   } catch (const std::runtime_error & error) {
@@ -155,7 +155,7 @@ TEST_F(VideoPipelineFrameSourceTest, StartCapturesRequiredAppSrcHandle)
 {
   auto source = std::make_shared<TestableVideoPipelineFrameSource>(sink_, observer_);
 
-  source->startWithDescription("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
+  source->startPipeline("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 
   EXPECT_TRUE(source->hasAppSrc());
   source->shutdown();

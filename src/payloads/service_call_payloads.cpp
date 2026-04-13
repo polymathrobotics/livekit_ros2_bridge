@@ -26,39 +26,41 @@
 namespace livekit_ros2_bridge
 {
 
+using Json = nlohmann::json;
+
 namespace service_call_payloads
 {
 
 namespace
 {
 
-class ServiceCallInvalidArgument final : public std::invalid_argument
+class InvalidFieldArgument final : public std::invalid_argument
 {
 public:
-  ServiceCallInvalidArgument(std::string_view field_name, const char * message)
+  InvalidFieldArgument(std::string_view field, const char * message)
   : std::invalid_argument(message)
-  , field_name_(field_name)
+  , field_(field)
   {}
 
-  std::string_view fieldName() const noexcept
+  std::string_view field() const noexcept
   {
-    return field_name_;
+    return field_;
   }
 
 private:
-  std::string_view field_name_;
+  std::string_view field_;
 };
 
 }  // namespace
 
 ServiceCallRequest parse(const std::string & payload)
 {
-  nlohmann::json body;
+  Json body;
   try {
     body =
       parseJsonObject(payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
-    throw ServiceCallInvalidArgument("payload", exc.what());
+    throw InvalidFieldArgument("payload", exc.what());
   }
 
   ServiceCallRequest request;
@@ -68,7 +70,7 @@ ServiceCallRequest parse(const std::string & payload)
     request.service =
       normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(body, "service", "service is required"));
   } catch (const std::invalid_argument & exc) {
-    throw ServiceCallInvalidArgument("service", exc.what());
+    throw InvalidFieldArgument("service", exc.what());
   }
 
   try {
@@ -77,7 +79,7 @@ ServiceCallRequest parse(const std::string & payload)
     request.interface_type =
       parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string").value_or("");
   } catch (const std::invalid_argument & exc) {
-    throw ServiceCallInvalidArgument("interface_type", exc.what());
+    throw InvalidFieldArgument("interface_type", exc.what());
   }
 
   // Service calls always forward a concrete serialized request message; an empty payload is
@@ -85,32 +87,29 @@ ServiceCallRequest parse(const std::string & payload)
   try {
     request.request_payload = cdr_payload::parse(body, "request");
   } catch (const std::invalid_argument & exc) {
-    throw ServiceCallInvalidArgument("request", exc.what());
+    throw InvalidFieldArgument("request", exc.what());
   }
   if (request.request_payload.empty()) {
-    throw ServiceCallInvalidArgument("request", "request.payload_base64 must not be empty");
+    throw InvalidFieldArgument("request", "request.payload_base64 must not be empty");
   }
 
-  const auto timeout_field = body.find("timeout_ms");
-  if (timeout_field != body.end()) {
-    if (!timeout_field->is_number_integer()) {
-      throw ServiceCallInvalidArgument("timeout_ms", "timeout_ms must be an integer");
+  const auto timeout_it = body.find("timeout_ms");
+  if (timeout_it != body.end()) {
+    if (!timeout_it->is_number_integer()) {
+      throw InvalidFieldArgument("timeout_ms", "timeout_ms must be an integer");
     }
     // Preserve the wire value as-is when present; the caller layer decides whether non-positive
     // timeouts fall back to its default deadline.
-    request.timeout_ms = timeout_field->get<int>();
+    request.timeout_ms = timeout_it->get<int>();
   }
 
   return request;
 }
 
-std::optional<std::string_view> invalidRequestField(const std::exception & exc)
+std::optional<std::string_view> invalidRequestField(const std::exception & error)
 {
-  if (
-    const auto * service_call_error = dynamic_cast<const ServiceCallInvalidArgument *>(&exc);
-    service_call_error != nullptr)
-  {
-    return service_call_error->fieldName();
+  if (const auto * field_error = dynamic_cast<const InvalidFieldArgument *>(&error); field_error != nullptr) {
+    return field_error->field();
   }
 
   return std::nullopt;
@@ -122,9 +121,9 @@ std::string serialize(
   const std::vector<std::uint8_t> & response,
   int elapsed_ms)
 {
-  return nlohmann::json{
+  return Json{
     {"ok", true},
-    {"service", nlohmann::json{{"name", service}, {"interface_type", interface_type}}},
+    {"service", Json{{"name", service}, {"interface_type", interface_type}}},
     {"response", cdr_payload::serialize(response)},
     {"elapsed_ms", elapsed_ms},
   }

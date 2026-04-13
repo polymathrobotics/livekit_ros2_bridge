@@ -54,7 +54,7 @@ struct SubscriptionQosConfig
   std::vector<TopicSubscriptionQosOverride> topic_overrides;
 };
 
-struct PublisherQosProfile
+struct PublisherQos
 {
   // Pure resolver input distilled from the ROS graph. `Unknown` and
   // `SystemDefault` mean "no concrete policy observed" for that axis.
@@ -94,13 +94,13 @@ struct ResolvedSubscriptionQos
 
 // Resolve per-topic subscription QoS with per-axis precedence:
 // matching override -> discovered publisher QoS -> base_qos. `config` may be
-// null. `publisher_profiles` should describe one logical snapshot of the topic's
+// null. `publishers` should describe one logical snapshot of the topic's
 // publishers so the result is internally consistent.
 ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
-  const std::vector<PublisherQosProfile> & publisher_profiles);
+  const std::vector<PublisherQos> & publishers);
 
 // Convenience overload that snapshots publisher QoS from the ROS graph before
 // applying the same precedence rules as the vector-based overload.

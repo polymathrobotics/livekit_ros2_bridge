@@ -44,12 +44,12 @@ const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance"
 // externally visible LiveKit identity for this ROS topic.
 std::string makeDataTrackName(const std::string & topic)
 {
-  std::string track_name = "ros.data";
-  track_name.reserve(track_name.size() + topic.size());
+  std::string name = "ros.data";
+  name.reserve(name.size() + topic.size());
   for (char ch : topic) {
-    track_name.push_back(ch == '/' ? '.' : ch);
+    name.push_back(ch == '/' ? '.' : ch);
   }
-  return track_name;
+  return name;
 }
 
 }  // namespace
@@ -67,7 +67,7 @@ DataStreamInstance::DataStreamInstance(
 , interface_type_(std::move(interface_type))
 , track_name_(makeDataTrackName(topic_))
 , publisher_(room_connection, track_name_, node_.get_clock())
-, callback_generation_(callback_gate.currentGeneration())
+, gate_generation_(callback_gate.currentGeneration())
 , registry_(registry)
 , callback_gate_(callback_gate)
 , qos_config_(qos_config)
@@ -83,7 +83,7 @@ const std::string & DataStreamInstance::trackName() const
   return track_name_;
 }
 
-int DataStreamInstance::suppressionIntervalMs() const
+int DataStreamInstance::intervalMs() const
 {
   return suppression_window_.intervalMs();
 }
@@ -93,14 +93,14 @@ DataStreamInstance::State DataStreamInstance::state() const
   return publication_.current();
 }
 
-void DataStreamInstance::setSuppressionIntervalMs(int interval_ms)
+void DataStreamInstance::setIntervalMs(int interval_ms)
 {
   suppression_window_.setIntervalMs(interval_ms);
 }
 
 void DataStreamInstance::start(std::size_t generation)
 {
-  const State previous_state = publication_.current();
+  const State prev_state = publication_.current();
   if (!publication_.canStart()) {
     return;
   }
@@ -109,7 +109,7 @@ void DataStreamInstance::start(std::size_t generation)
   // while the track handshake is in flight, and forwardMessage() must drop them until the
   // matching completePublish() confirms this exact generation.
   publication_.beginPublish(generation);
-  if (previous_state == State::kFailed) {
+  if (prev_state == State::kFailed) {
     LogEvent(kDataStreamInstanceLogger, "data_track_pending")
       .field("resource", topic_)
       .field("track_name", track_name_)
@@ -190,23 +190,23 @@ void DataStreamInstance::subscribe()
   // ROS may already have queued a callback when SubscriptionRegistry starts reset/shutdown.
   // The gate rejects old-session callbacks before they touch shared state, and the weak pointer
   // keeps a late callback from extending the instance lifetime past teardown.
-  const std::weak_ptr<DataStreamInstance> weak_self = weak_from_this();
+  const std::weak_ptr<DataStreamInstance> weak = weak_from_this();
   subscription_ = node_.create_generic_subscription(
     topic_,
     interface_type_,
     qos.qos,
-    [weak_self, callback_generation = callback_generation_, &callback_gate = callback_gate_](
+    [weak, generation = gate_generation_, &callback_gate = callback_gate_](
       std::shared_ptr<rclcpp::SerializedMessage> message) {
       if (message == nullptr) {
         return;
       }
 
-      if (!callback_gate.tryEnter(callback_generation)) {
+      if (!callback_gate.tryEnter(generation)) {
         return;
       }
 
       ScopeExit leave_gate([&callback_gate]() { callback_gate.leave(); });
-      const auto self = weak_self.lock();
+      const auto self = weak.lock();
       if (!self) {
         return;
       }

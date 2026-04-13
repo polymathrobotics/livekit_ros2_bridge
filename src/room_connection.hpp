@@ -45,15 +45,15 @@ struct RpcInvocation
 {
   RpcInvocation() = default;
 
-  RpcInvocation(std::string caller_identity_in, std::string payload_in)
-  : caller_identity(std::move(caller_identity_in))
-  , payload(std::move(payload_in))
+  RpcInvocation(std::string caller_identity, std::string payload)
+  : caller_identity(std::move(caller_identity))
+  , payload(std::move(payload))
   {}
 
-  RpcInvocation(std::string caller_identity_in, std::string request_id_in, std::string payload_in)
-  : caller_identity(std::move(caller_identity_in))
-  , request_id(std::move(request_id_in))
-  , payload(std::move(payload_in))
+  RpcInvocation(std::string caller_identity, std::string request_id, std::string payload)
+  : caller_identity(std::move(caller_identity))
+  , request_id(std::move(request_id))
+  , payload(std::move(payload))
   {}
 
   std::string caller_identity;
@@ -180,8 +180,8 @@ public:
 
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
   // participant is available.
-  virtual bool registerRpc(const std::string & method_name, RpcHandler handler) = 0;
-  virtual bool unregisterRpc(const std::string & method_name) = 0;
+  virtual bool registerRpc(const std::string & method, RpcHandler handler) = 0;
+  virtual bool unregisterRpc(const std::string & method) = 0;
 
   // These publication calls require an active local participant. Implementations may throw if
   // used while disconnected, except tryPushDataTrack(), which reports expected push failures

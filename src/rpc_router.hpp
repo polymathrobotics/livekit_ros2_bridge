@@ -43,10 +43,10 @@ public:
   // successful handlers remain installed until unregisterRpcs() is called.
   // Registered callbacks borrow this router and its dependencies, so
   // unregisterRpcs() must run before any of them are destroyed.
-  bool registerRpcs(RoomConnection & room_connection);
+  bool registerRpcs(RoomConnection & connection);
   // Best-effort teardown counterpart to registerRpcs(); call before
   // destroying this router or any borrowed dependency captured by handlers.
-  void unregisterRpcs(RoomConnection & room_connection);
+  void unregisterRpcs(RoomConnection & connection);
 
 private:
   std::optional<std::string> callService(const RpcInvocation & invocation);

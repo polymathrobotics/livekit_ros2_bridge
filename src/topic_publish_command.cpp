@@ -38,11 +38,11 @@ const auto kLogger = rclcpp::get_logger("topic_publish_command");
 
 }  // namespace
 
-TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & bytes)
+TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & payload)
 {
   nlohmann::json body;
   try {
-    body = nlohmann::json::parse(bytes.begin(), bytes.end());
+    body = nlohmann::json::parse(payload.begin(), payload.end());
   } catch (const nlohmann::json::exception & exc) {
     LogEvent(kLogger, "topic_publish_command_rejected").field("reason", "invalid_json").debug();
     throw std::invalid_argument(std::string("Invalid publish command JSON: ") + exc.what());

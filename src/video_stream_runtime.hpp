@@ -48,7 +48,7 @@ public:
 
   virtual void onTrackPublished(int width, int height, bool republished) = 0;
   // Called immediately before the current published track is unpublished.
-  virtual void onTrackUnpublishing() = 0;
+  virtual void onTrackUnpublish() = 0;
   virtual void onSampleUnpackFailed(const std::string & error) = 0;
   virtual void onCaptureFailed(const std::string & error) = 0;
   virtual void onPipelineFailed(const std::string & reason) = 0;

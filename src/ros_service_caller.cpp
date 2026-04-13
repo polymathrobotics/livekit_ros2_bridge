@@ -258,22 +258,22 @@ struct CachedServiceClient
   rcl_node_t * node_handle_ = nullptr;
 };
 
-struct PendingKey
+struct InflightKey
 {
   // Sequence numbers come from the underlying rcl client, so the client
-  // instance is part of the key when matching responses back to pending calls.
+  // instance is part of the key when matching responses back to inflight calls.
   const CachedServiceClient * client = nullptr;
   std::int64_t sequence_number = 0;
 
-  bool operator==(const PendingKey & other) const
+  bool operator==(const InflightKey & other) const
   {
     return client == other.client && sequence_number == other.sequence_number;
   }
 };
 
-struct PendingKeyHash
+struct InflightKeyHash
 {
-  std::size_t operator()(const PendingKey & key) const
+  std::size_t operator()(const InflightKey & key) const
   {
     return std::hash<const CachedServiceClient *>{}(key.client) ^
            (std::hash<std::int64_t>{}(key.sequence_number) << 1U);
@@ -288,7 +288,7 @@ struct RosServiceCaller::Impl
   : node(node)
   {}
 
-  struct PendingCall
+  struct InflightCall
   {
     std::string service;
     std::string interface_type;
@@ -317,7 +317,7 @@ struct RosServiceCaller::Impl
     InflightReservation(const InflightReservation &) = delete;
     InflightReservation & operator=(const InflightReservation &) = delete;
 
-    void transferToPendingCall()
+    void transferToInflightCall()
     {
       active_ = false;
     }
@@ -328,8 +328,8 @@ struct RosServiceCaller::Impl
     bool active_ = true;
   };
 
-  using PendingMap = std::unordered_map<PendingKey, PendingCall, PendingKeyHash>;
-  using PendingIter = PendingMap::iterator;
+  using InflightMap = std::unordered_map<InflightKey, InflightCall, InflightKeyHash>;
+  using InflightIter = InflightMap::iterator;
 
   CachedServiceClient::TypeSupport & getServiceTypeSupport(const std::string & interface_type);
   CachedServiceClient & getClient(const std::string & service, const std::string & interface_type);
@@ -348,13 +348,13 @@ struct RosServiceCaller::Impl
     const char * requester = kAnyServiceLogValue)
   {
     std::size_t count = 0U;
-    for (auto it = pending_calls.begin(); it != pending_calls.end();) {
+    for (auto it = inflight_calls.begin(); it != inflight_calls.end();) {
       if (!should_fail(it->second)) {
         ++it;
         continue;
       }
 
-      it = settle(it, [exception_message](PendingCall & call) {
+      it = settle(it, [exception_message](InflightCall & call) {
         call.promise.set_exception(std::make_exception_ptr(std::runtime_error(exception_message)));
       });
       ++count;
@@ -376,14 +376,14 @@ struct RosServiceCaller::Impl
   }
 
   template <typename SettlePromiseFn>
-  PendingIter settle(PendingIter it, SettlePromiseFn && settle_promise)
+  InflightIter settle(InflightIter it, SettlePromiseFn && settle_promise)
   {
     // Keep promise completion and quota release coupled so every terminal path
     // returns the requester's inflight slot exactly once.
     auto & call = it->second;
     std::forward<SettlePromiseFn>(settle_promise)(call);
     releaseInflightSlot(call.requester);
-    return pending_calls.erase(it);
+    return inflight_calls.erase(it);
   }
 
   rclcpp::Node & node;
@@ -391,7 +391,7 @@ struct RosServiceCaller::Impl
   // must be destroyed before the backing type-support cache is cleared.
   std::unordered_map<std::string, std::unique_ptr<CachedServiceClient>> cached_clients;
   std::unordered_map<std::string, std::unique_ptr<CachedServiceClient::TypeSupport>> type_supports;
-  PendingMap pending_calls;
+  InflightMap inflight_calls;
   std::unordered_map<std::string, int> inflight_counts;
   // Remember bad interface types so repeated invalid requests fail without
   // reloading type-support libraries every time.
@@ -519,9 +519,9 @@ void RosServiceCaller::Impl::poll()
   drainResponses();
   const auto now = std::chrono::steady_clock::now();
   failMatchingCalls(
-    [now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.", "timeout", true);
+    [now](const InflightCall & call) { return now >= call.deadline; }, "Service call timed out.", "timeout", true);
 
-  if (!pending_calls.empty()) {
+  if (!inflight_calls.empty()) {
     return;
   }
 
@@ -543,12 +543,12 @@ void RosServiceCaller::Impl::drainResponses()
 
       // rcl sequence numbers are scoped to a client instance, so settle by
       // both the client pointer and sequence number.
-      const PendingKey key{entry.get(), header.sequence_number};
-      auto it = pending_calls.find(key);
-      if (it == pending_calls.end()) {
+      const InflightKey key{entry.get(), header.sequence_number};
+      auto it = inflight_calls.find(key);
+      if (it == inflight_calls.end()) {
         // The original call already timed out, was cancelled, or belonged to a
         // reset session. Never match a late response by service name alone,
-        // because a newer call on the same service may now be pending.
+        // because a newer call on the same service may now be inflight.
         if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
           LogEvent(kRosServiceCallerLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
@@ -560,7 +560,7 @@ void RosServiceCaller::Impl::drainResponses()
         continue;
       }
 
-      settle(it, [&](PendingCall & call) {
+      settle(it, [&](InflightCall & call) {
         try {
           rclcpp::SerializedMessage serialized;
           entry->type_support->response_type_support.serializer.serialize_message(response.data(), &serialized);
@@ -631,7 +631,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
       throw;
     }
     // Reserve quota before client lookup, request deserialization, or send.
-    // pending_calls takes ownership only after the entry is inserted.
+    // inflight_calls takes ownership only after the entry is inserted.
     Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
       try {
         return Impl::InflightReservation(*impl_, requester);
@@ -640,7 +640,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
         throw;
       }
     }();
-    PendingKey key;
+    InflightKey key;
     try {
       CachedServiceClient * client = nullptr;
       try {
@@ -665,7 +665,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
         throw std::runtime_error("Failed to send service request.");
       }
 
-      key = PendingKey{client, sequence_number};
+      key = InflightKey{client, sequence_number};
     } catch (const std::exception & exc) {
       LogEvent(kRosServiceCallerLogger, "service_call_failed")
         .field("reason", "start_failed")
@@ -677,7 +677,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
       throw;
     }
 
-    if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
+    if (impl_->inflight_calls.find(key) != impl_->inflight_calls.end()) {
       LogEvent(kRosServiceCallerLogger, "service_call_failed")
         .field("reason", "duplicate_pending_key")
         .fieldOr("service", request.service)
@@ -689,18 +689,18 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
     const int timeout_ms =
       request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
-    impl_->pending_calls.emplace(
+    impl_->inflight_calls.emplace(
       key,
-      Impl::PendingCall{
+      Impl::InflightCall{
         request.service,
         interface_type,
         requester,
         std::move(promise),
         std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
       });
-    // From here on every settle path goes through pending_calls, so that entry
+    // From here on every settle path goes through inflight_calls, so that entry
     // owns releasing the requester's inflight quota.
-    inflight_reservation.transferToPendingCall();
+    inflight_reservation.transferToInflightCall();
   } catch (const std::exception &) {
     promise.set_exception(std::current_exception());
     return future;
@@ -719,7 +719,7 @@ void RosServiceCaller::cancelCallsForRequester(const std::string & requester)
     return;
   }
   impl_->failMatchingCalls(
-    [&requester](const Impl::PendingCall & call) { return call.requester == requester; },
+    [&requester](const Impl::InflightCall & call) { return call.requester == requester; },
     "Requester identity disconnected.",
     "requester_disconnected",
     false,
@@ -728,7 +728,7 @@ void RosServiceCaller::cancelCallsForRequester(const std::string & requester)
 
 void RosServiceCaller::resetSessionState()
 {
-  impl_->failMatchingCalls([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.", "session_reset");
+  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "LiveKit session reset.", "session_reset");
 
   impl_->clearCachedServiceState();
 }
@@ -741,7 +741,7 @@ void RosServiceCaller::shutdown()
 
   impl_->poll_timer.reset();
 
-  impl_->failMatchingCalls([](const Impl::PendingCall &) { return true; }, "Service caller shut down.", "shutdown");
+  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "Service caller shut down.", "shutdown");
 
   impl_->clearCachedServiceState();
 }

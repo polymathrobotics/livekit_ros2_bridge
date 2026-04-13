@@ -60,82 +60,82 @@ std::string encodeBase64(const std::uint8_t * bytes, std::size_t size)
     return "";
   }
 
-  std::string base64(((size + 2U) / 3U) * 4U, '\0');
-  const int encoded_size = EVP_EncodeBlock(
-    reinterpret_cast<unsigned char *>(base64.data()),
+  std::string text(((size + 2U) / 3U) * 4U, '\0');
+  const int encoded = EVP_EncodeBlock(
+    reinterpret_cast<unsigned char *>(text.data()),
     reinterpret_cast<const unsigned char *>(bytes),
     static_cast<int>(size));
-  if (encoded_size < 0) {
+  if (encoded < 0) {
     LogEvent(kLogger, "base64_encode_failed").field("byte_count", size).error();
     throw std::runtime_error("Failed base64 encoding.");
   }
 
-  base64.resize(static_cast<std::size_t>(encoded_size));
-  return base64;
+  text.resize(static_cast<std::size_t>(encoded));
+  return text;
 }
 
-Base64DecodeResult decodeBase64(std::string_view base64)
+Base64DecodeResult decodeBase64(std::string_view text)
 {
-  if (base64.empty()) {
+  if (text.empty()) {
     return {};
   }
 
-  const std::size_t base64_size = base64.size();
-  std::size_t pad_count = 0U;
-  std::size_t pad_start = base64_size;
+  const std::size_t size = text.size();
+  std::size_t pads = 0U;
+  std::size_t pad_index = size;
   // Validate the alphabet and require any '=' padding to form a single suffix before
   // handing the input to OpenSSL so we can distinguish missing padding from other
   // malformed encodings.
-  for (std::size_t index = 0; index < base64_size; ++index) {
-    const char c = base64[index];
+  for (std::size_t i = 0; i < size; ++i) {
+    const char c = text[i];
     if (c == '=') {
-      if (pad_start == base64_size) {
-        pad_start = index;
+      if (pad_index == size) {
+        pad_index = i;
       }
       continue;
     }
 
-    if (pad_start != base64_size || base64Value(c) < 0) {
+    if (pad_index != size || base64Value(c) < 0) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
-  if (pad_start != base64_size) {
-    pad_count = base64_size - pad_start;
-    if (pad_count > 2U || base64_size == 1U) {
+  if (pad_index != size) {
+    pads = size - pad_index;
+    if (pads > 2U || size == 1U) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
   // A structurally valid alphabet/padding sequence that is not quartet-aligned is the
   // specific "missing padding" case callers surface separately at the JSON boundary.
-  if ((base64_size % 4U) != 0U) {
+  if ((size % 4U) != 0U) {
     return {{}, Base64Status::kMissingPadding};
   }
 
   // RFC 4648 requires unused bits in the final sextet(s) to be zero. `EVP_DecodeBlock`
   // decodes successfully either way, so reject non-canonical encodings here.
-  if (pad_count != 0U) {
-    const int trailing_sextet = base64Value(base64[base64_size - (pad_count + 1U)]);
-    const int pad_bits_mask = (pad_count == 2U) ? 0x0F : 0x03;
-    if (trailing_sextet < 0 || (trailing_sextet & pad_bits_mask) != 0) {
+  if (pads != 0U) {
+    const int tail = base64Value(text[size - (pads + 1U)]);
+    const int pad_mask = (pads == 2U) ? 0x0F : 0x03;
+    if (tail < 0 || (tail & pad_mask) != 0) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
-  std::vector<std::uint8_t> bytes((base64_size / 4U) * 3U, 0U);
-  const int decoded_size = EVP_DecodeBlock(
+  std::vector<std::uint8_t> bytes((size / 4U) * 3U, 0U);
+  const int decoded = EVP_DecodeBlock(
     reinterpret_cast<unsigned char *>(bytes.data()),
-    reinterpret_cast<const unsigned char *>(base64.data()),
-    static_cast<int>(base64_size));
-  if (decoded_size < 0) {
-    LogEvent(kLogger, "base64_decode_failed").field("input_chars", base64_size).error();
+    reinterpret_cast<const unsigned char *>(text.data()),
+    static_cast<int>(size));
+  if (decoded < 0) {
+    LogEvent(kLogger, "base64_decode_failed").field("input_chars", size).error();
     return {{}, Base64Status::kInvalidEncoding};
   }
 
   // `EVP_DecodeBlock` materializes three bytes per quartet; trim the synthetic tail
   // bytes that correspond to validated '=' padding.
-  bytes.resize(static_cast<std::size_t>(decoded_size) - pad_count);
+  bytes.resize(static_cast<std::size_t>(decoded) - pads);
   return {std::move(bytes), Base64Status::kOk};
 }
 

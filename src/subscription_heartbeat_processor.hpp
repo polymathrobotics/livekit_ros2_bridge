@@ -62,23 +62,22 @@ private:
 
   // Accepted-heartbeat processing keeps one resolved requester identity and one shared lease
   // expiry across both subscription renewal and the echoed status envelope.
-  struct ResolvedHeartbeatLease
+  struct ResolvedLease
   {
     std::string requester_identity;
     std::optional<std::string> session_id;
     std::chrono::steady_clock::time_point expiry;
   };
 
-  std::optional<ResolvedHeartbeatLease> resolveHeartbeatLease(
+  std::optional<ResolvedLease> resolveLease(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
   // Recovers the requester identity for an anonymous heartbeat from an existing leased
   // `session_id`, and extends that lease when the fallback succeeds.
   std::optional<std::string> resolveAnonymousIdentity(
-    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point lease_expiry);
-  nlohmann::json renewSubscriptionStatuses(
-    const ResolvedHeartbeatLease & lease, const std::vector<SubscriptionDemand> & subscriptions);
+    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry);
+  nlohmann::json renewStatuses(const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands);
 
-  void publishStatuses(const ResolvedHeartbeatLease & lease, const nlohmann::json & statuses);
+  void publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses);
 
   SubscriptionRegistry & subscription_registry_;
   RoomConnection & room_connection_;
@@ -86,8 +85,8 @@ private:
   // Used only for throttled ROS logging. Lease ownership uses `steady_clock` so ROS/system time
   // jumps do not change anonymous-heartbeat acceptance.
   rclcpp::Clock::SharedPtr clock_;
-  std::unordered_map<std::string, SessionLease> session_leases_;
-  EventThrottle session_conflict_throttle_{std::chrono::seconds(5)};
+  std::unordered_map<std::string, SessionLease> leases_;
+  EventThrottle conflict_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge

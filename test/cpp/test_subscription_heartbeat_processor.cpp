@@ -59,11 +59,11 @@ SubscriptionDemand makeConfiguredSourceDemand(const std::string & name, std::opt
 }
 
 SubscriptionHeartbeat makeHeartbeat(
-  std::vector<SubscriptionDemand> subscriptions, std::optional<std::string> session_id = std::nullopt)
+  std::vector<SubscriptionDemand> demands, std::optional<std::string> session_id = std::nullopt)
 {
   SubscriptionHeartbeat heartbeat;
   heartbeat.session_id = std::move(session_id);
-  heartbeat.subscriptions = std::move(subscriptions);
+  heartbeat.subscriptions = std::move(demands);
   return heartbeat;
 }
 
@@ -335,12 +335,12 @@ TEST_F(
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const auto lease_heartbeat = makeHeartbeat({}, std::string("session-1"));
-  processor.process("requester-1", lease_heartbeat);
+  const auto bind_heartbeat = makeHeartbeat({}, std::string("session-1"));
+  processor.process("requester-1", bind_heartbeat);
 
   EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 
-  processor.process("requester-2", lease_heartbeat);
+  processor.process("requester-2", bind_heartbeat);
 
   EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 

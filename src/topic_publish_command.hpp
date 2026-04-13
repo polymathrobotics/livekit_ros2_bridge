@@ -34,6 +34,6 @@ struct TopicPublishCommand
 /// Parse a JSON topic-publish command. Normalizes `topic`, trims `interface_type` without
 /// rewriting its package/msg spelling, and requires a non-empty CDR `message` payload. Throws
 /// `std::invalid_argument` on malformed JSON or protocol-contract violations.
-TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & bytes);
+TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & payload);
 
 }  // namespace livekit_ros2_bridge

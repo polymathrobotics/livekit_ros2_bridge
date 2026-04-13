@@ -31,19 +31,19 @@ rclcpp::QoS makeBaseQos()
 TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos("/camera/front", base_qos, nullptr, {});
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos("/camera/front", base_qos, nullptr, {});
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kFallback);
-  EXPECT_EQ(resolved.publisher_count, 0U);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kFallback);
+  EXPECT_EQ(qos.publisher_count, 0U);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
 TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos(
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
     base_qos,
     nullptr,
@@ -52,18 +52,18 @@ TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
       {rclcpp::ReliabilityPolicy::SystemDefault, rclcpp::DurabilityPolicy::SystemDefault},
     });
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kFallback);
-  EXPECT_EQ(resolved.publisher_count, 2U);
-  EXPECT_FALSE(resolved.used_publisher_qos);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kFallback);
+  EXPECT_EQ(qos.publisher_count, 2U);
+  EXPECT_FALSE(qos.used_publisher_qos);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
 TEST(SubscriptionQosTest, MixedPublisherReliabilityChoosesBestEffort)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos(
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
     base_qos,
     nullptr,
@@ -72,18 +72,18 @@ TEST(SubscriptionQosTest, MixedPublisherReliabilityChoosesBestEffort)
       {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
     });
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kPublisherQos);
-  EXPECT_EQ(resolved.publisher_count, 2U);
-  EXPECT_TRUE(resolved.used_publisher_qos);
-  EXPECT_TRUE(resolved.mixed_reliability);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_EQ(qos.publisher_count, 2U);
+  EXPECT_TRUE(qos.used_publisher_qos);
+  EXPECT_TRUE(qos.mixed_reliability);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
 }
 
 TEST(SubscriptionQosTest, MixedPublisherDurabilityChoosesVolatile)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos(
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
     base_qos,
     nullptr,
@@ -92,16 +92,16 @@ TEST(SubscriptionQosTest, MixedPublisherDurabilityChoosesVolatile)
       {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::Volatile},
     });
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kPublisherQos);
-  EXPECT_TRUE(resolved.mixed_durability);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_TRUE(qos.mixed_durability);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
 TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos(
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
     base_qos,
     nullptr,
@@ -109,18 +109,18 @@ TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
       {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
     });
 
-  EXPECT_TRUE(resolved.used_publisher_qos);
-  EXPECT_FALSE(resolved.mixed_reliability);
-  EXPECT_FALSE(resolved.mixed_durability);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
+  EXPECT_TRUE(qos.used_publisher_qos);
+  EXPECT_FALSE(qos.mixed_reliability);
+  EXPECT_FALSE(qos.mixed_durability);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
 }
 
 TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOtherAxis)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos(
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
     base_qos,
     nullptr,
@@ -129,12 +129,12 @@ TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOther
       {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::SystemDefault},
     });
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kPublisherQos);
-  EXPECT_TRUE(resolved.used_publisher_qos);
-  EXPECT_FALSE(resolved.mixed_reliability);
-  EXPECT_FALSE(resolved.mixed_durability);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_TRUE(qos.used_publisher_qos);
+  EXPECT_FALSE(qos.mixed_reliability);
+  EXPECT_FALSE(qos.mixed_durability);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
 TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvailableOtherwiseBaseDurability)
@@ -183,18 +183,18 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUses
     {"camera", "/camera/*", SubscriptionQosReliabilityMode::kAuto, SubscriptionQosDurabilityMode::kTransientLocal},
   };
 
-  const std::vector<PublisherQosProfile> profiles{
+  const std::vector<PublisherQos> publishers{
     {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
   };
 
-  const ResolvedSubscriptionQos resolved = resolveSubscriptionQos("/camera/front", base_qos, &config, profiles);
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos("/camera/front", base_qos, &config, publishers);
 
-  EXPECT_EQ(resolved.source, SubscriptionQosResolutionSource::kOverride);
-  EXPECT_EQ(resolved.override_id, "camera");
-  EXPECT_EQ(resolved.override_pattern, "/camera/*");
-  EXPECT_TRUE(resolved.used_publisher_qos);
-  EXPECT_EQ(resolved.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
-  EXPECT_EQ(resolved.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kOverride);
+  EXPECT_EQ(qos.override_id, "camera");
+  EXPECT_EQ(qos.override_pattern, "/camera/*");
+  EXPECT_TRUE(qos.used_publisher_qos);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
+  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
 }
 
 }  // namespace

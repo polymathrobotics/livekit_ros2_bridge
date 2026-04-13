@@ -36,31 +36,31 @@ namespace
 constexpr char kContentTypeField[] = "content_type";
 constexpr char kPayloadBase64Field[] = "payload_base64";
 
-const nlohmann::json & requireObjectField(const nlohmann::json & body, const char * field)
+const nlohmann::json & requireObject(const nlohmann::json & body, const char * field)
 {
-  const auto field_it = body.find(field);
-  if (field_it == body.end() || !field_it->is_object()) {
+  const auto it = body.find(field);
+  if (it == body.end() || !it->is_object()) {
     throw std::invalid_argument(std::string(field) + " must be an object.");
   }
 
-  return *field_it;
+  return *it;
 }
 
-const std::string & requireStringField(const nlohmann::json & object, const char * field)
+const std::string & requireString(const nlohmann::json & object, const char * field)
 {
-  const auto field_it = object.find(field);
-  if (field_it == object.end() || !field_it->is_string()) {
+  const auto it = object.find(field);
+  if (it == object.end() || !it->is_string()) {
     throw std::invalid_argument(std::string(field) + " must be a string.");
   }
 
-  return field_it->get_ref<const std::string &>();
+  return it->get_ref<const std::string &>();
 }
 
-std::vector<std::uint8_t> decodePayloadBase64(const std::string & payload_base64)
+std::vector<std::uint8_t> decodePayload(const std::string & base64)
 {
   // The bridge treats padded standard base64 as part of the wire contract so malformed payloads
   // fail here instead of reaching downstream ROS deserialization with ambiguous byte contents.
-  auto decoded = decodeBase64(payload_base64);
+  auto decoded = decodeBase64(base64);
   if (decoded.status == Base64Status::kOk) {
     return std::move(decoded.bytes);
   }
@@ -76,12 +76,12 @@ std::vector<std::uint8_t> decodePayloadBase64(const std::string & payload_base64
 
 std::vector<std::uint8_t> parse(const nlohmann::json & body, const char * field)
 {
-  const auto & envelope = requireObjectField(body, field);
-  if (requireStringField(envelope, kContentTypeField) != protocol::kDataContentTypeCdr) {
+  const auto & envelope = requireObject(body, field);
+  if (requireString(envelope, kContentTypeField) != protocol::kDataContentTypeCdr) {
     throw std::invalid_argument(std::string(field) + "." + kContentTypeField + " must be application/x-ros-cdr.");
   }
 
-  return decodePayloadBase64(requireStringField(envelope, kPayloadBase64Field));
+  return decodePayload(requireString(envelope, kPayloadBase64Field));
 }
 
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)

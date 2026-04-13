@@ -57,7 +57,7 @@ public:
   void shutdown();
 
 private:
-  void ensureTrackForFrame(int width, int height, const std::optional<std::int64_t> & timestamp_us_opt);
+  void ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us);
 
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
@@ -70,16 +70,16 @@ private:
   // publish/replace and captureFrame() so shutdown() cannot tear down the
   // current LiveKit source while a frame handoff is in flight.
   std::mutex mutex_;
-  bool is_shutdown_ = false;
+  bool is_closed_ = false;
   // Sticky across replacement-publish failures so a later successful
   // replacement still reports republished=true.
   bool has_published_ = false;
   // One active LiveKit publication; width/height are meaningful only while
   // both source and track are set.
-  std::shared_ptr<livekit::VideoSource> active_source_;
-  std::shared_ptr<VideoTrackHandle> active_track_;
-  int active_width_ = 0;
-  int active_height_ = 0;
+  std::shared_ptr<livekit::VideoSource> source_;
+  std::shared_ptr<VideoTrackHandle> track_;
+  int width_ = 0;
+  int height_ = 0;
 };
 
 }  // namespace livekit_ros2_bridge

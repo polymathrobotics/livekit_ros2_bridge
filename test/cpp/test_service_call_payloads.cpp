@@ -91,14 +91,14 @@ TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPres
   body = makeRequestBody();
   body["interface_type"] = "   ";
   body["timeout_ms"] = 0;
-  const auto explicit_zero_timeout_request = service_call_payloads::parse(body.dump());
+  const auto zero_timeout_request = service_call_payloads::parse(body.dump());
 
-  EXPECT_TRUE(explicit_zero_timeout_request.interface_type.empty());
-  EXPECT_EQ(explicit_zero_timeout_request.timeout_ms, std::optional<int>(0));
+  EXPECT_TRUE(zero_timeout_request.interface_type.empty());
+  EXPECT_EQ(zero_timeout_request.timeout_ms, std::optional<int>(0));
 
   body["timeout_ms"] = -1;
-  const auto explicit_negative_timeout_request = service_call_payloads::parse(body.dump());
-  EXPECT_EQ(explicit_negative_timeout_request.timeout_ms, std::optional<int>(-1));
+  const auto negative_timeout_request = service_call_payloads::parse(body.dump());
+  EXPECT_EQ(negative_timeout_request.timeout_ms, std::optional<int>(-1));
 }
 
 TEST(ServiceCallPayloadsTest, RejectsInvalidJson)

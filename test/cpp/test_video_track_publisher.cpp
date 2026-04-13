@@ -37,7 +37,7 @@ public:
     published_events.emplace_back(width, height, republished);
   }
 
-  void onTrackUnpublishing() override
+  void onTrackUnpublish() override
   {
     unpublish_call_count++;
   }
@@ -286,7 +286,7 @@ private:
   std::shared_future<void> release_publish_future_;
 };
 
-VideoStreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
+VideoStreamSpec makeVideoStreamSpec(const std::string & stream_key, const std::string & track_name)
 {
   VideoStreamSpec spec;
   spec.stream_key = stream_key;
@@ -308,7 +308,7 @@ TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAf
   FakeRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeSpec("stream:lifecycle_observer", "ros.video.camera.lifecycle_observer"), observer);
+    connection, makeVideoStreamSpec("stream:lifecycle_observer", "ros.video.camera.lifecycle_observer"), observer);
 
   publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   publisher.write(2, 2, makeI420Frame(2, 2), 2000);
@@ -340,7 +340,7 @@ TEST(VideoTrackPublisherTest, ShutdownSwallowsVideoUnpublishFailureAndStaysClose
   ThrowingUnpublishRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeSpec("stream:unpublish_failure", "ros.video.camera.unpublish_failure"), observer);
+    connection, makeVideoStreamSpec("stream:unpublish_failure", "ros.video.camera.unpublish_failure"), observer);
 
   publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   EXPECT_NO_THROW(publisher.shutdown());
@@ -357,7 +357,7 @@ TEST(VideoTrackPublisherTest, PublishFailureOnFirstFrameCanRetryAndStillShutdown
   FailNthPublishRoomConnection connection(1);
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeSpec("stream:publish_retry", "ros.video.camera.publish_retry"), observer);
+    connection, makeVideoStreamSpec("stream:publish_retry", "ros.video.camera.publish_retry"), observer);
 
   EXPECT_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000), std::runtime_error);
   EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 2000));
@@ -383,7 +383,7 @@ TEST(VideoTrackPublisherTest, RepublishFailureLeavesPublisherReadyForRetryWithou
   FailNthPublishRoomConnection connection(2);
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeSpec("stream:republish_retry", "ros.video.camera.republish_retry"), observer);
+    connection, makeVideoStreamSpec("stream:republish_retry", "ros.video.camera.republish_retry"), observer);
 
   EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000));
   EXPECT_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 2000), std::runtime_error);
@@ -417,9 +417,9 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
   BlockingPublishRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeSpec("stream:concurrent_shutdown", "ros.video.camera.concurrent_shutdown"), observer);
+    connection, makeVideoStreamSpec("stream:concurrent_shutdown", "ros.video.camera.concurrent_shutdown"), observer);
 
-  auto handle_frame_future =
+  auto write_future =
     std::async(std::launch::async, [&publisher]() { publisher.write(2, 2, makeI420Frame(2, 2), 1000); });
   EXPECT_EQ(connection.publishStartedFuture().wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
@@ -428,8 +428,8 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
 
   connection.releasePublish();
 
-  EXPECT_EQ(handle_frame_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_NO_THROW(handle_frame_future.get());
+  EXPECT_EQ(write_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+  EXPECT_NO_THROW(write_future.get());
   EXPECT_EQ(shutdown_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   EXPECT_NO_THROW(shutdown_future.get());
 

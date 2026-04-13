@@ -53,44 +53,43 @@ SubscriptionHeartbeatProcessor::SubscriptionHeartbeatProcessor(
 , clock_(std::move(clock))
 {}
 
-std::optional<SubscriptionHeartbeatProcessor::ResolvedHeartbeatLease>
-SubscriptionHeartbeatProcessor::resolveHeartbeatLease(
+std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbeatProcessor::resolveLease(
   const std::string & requester_identity, const std::optional<std::string> & session_id)
 {
-  const auto lease_expiry = std::chrono::steady_clock::now() + kHeartbeatLeaseDuration;
+  const auto expiry = std::chrono::steady_clock::now() + kHeartbeatLeaseDuration;
   if (requester_identity.empty()) {
-    auto resolved_identity = resolveAnonymousIdentity(session_id, lease_expiry);
-    if (!resolved_identity.has_value()) {
+    auto identity = resolveAnonymousIdentity(session_id, expiry);
+    if (!identity.has_value()) {
       return std::nullopt;
     }
 
-    return ResolvedHeartbeatLease{std::move(*resolved_identity), session_id, lease_expiry};
+    return ResolvedLease{std::move(*identity), session_id, expiry};
   }
 
   if (!session_id.has_value()) {
-    return ResolvedHeartbeatLease{requester_identity, session_id, lease_expiry};
+    return ResolvedLease{requester_identity, session_id, expiry};
   }
 
-  auto [it, inserted] = session_leases_.try_emplace(*session_id, SessionLease{requester_identity, lease_expiry});
-  auto & session_lease = it->second;
-  if (!inserted && session_lease.requester_identity != requester_identity) {
-    if (const std::size_t count = session_conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
+  auto [it, inserted] = leases_.try_emplace(*session_id, SessionLease{requester_identity, expiry});
+  auto & lease = it->second;
+  if (!inserted && lease.requester_identity != requester_identity) {
+    if (const std::size_t count = conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
       LogEvent(kLogger, "heartbeat_client_session_conflict")
         .field("requester_identity", requester_identity)
         .fieldOr("session_id", session_id.value_or(""), "<absent>")
-        .field("existing_requester_identity", session_lease.requester_identity)
+        .field("existing_requester_identity", lease.requester_identity)
         .field("count", count)
         .warn();
     }
     return std::nullopt;
   }
 
-  session_lease.expiry = lease_expiry;
-  return ResolvedHeartbeatLease{requester_identity, session_id, lease_expiry};
+  lease.expiry = expiry;
+  return ResolvedLease{requester_identity, session_id, expiry};
 }
 
 std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdentity(
-  const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point lease_expiry)
+  const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry)
 {
   if (!session_id.has_value()) {
     LogEvent(kLogger, "heartbeat_dropped")
@@ -99,8 +98,8 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
     return std::nullopt;
   }
 
-  const auto it = session_leases_.find(*session_id);
-  if (it == session_leases_.end()) {
+  const auto it = leases_.find(*session_id);
+  if (it == leases_.end()) {
     LogEvent(kLogger, "heartbeat_dropped")
       .field("reason", "unknown_session_id")
       .field("session_id", *session_id)
@@ -111,7 +110,7 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   // LiveKit should normally attach the requester identity to user-data packets. If it does not, a
   // known wire session_id is enough to treat the heartbeat as belonging to the same authenticated
   // browser tab and renew that client-session lease instead of dropping it.
-  it->second.expiry = lease_expiry;
+  it->second.expiry = expiry;
 
   LogEvent(kLogger, "heartbeat_client_session_fallback")
     .field("requester_identity", it->second.requester_identity)
@@ -120,12 +119,12 @@ std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdent
   return it->second.requester_identity;
 }
 
-nlohmann::json SubscriptionHeartbeatProcessor::renewSubscriptionStatuses(
-  const ResolvedHeartbeatLease & lease, const std::vector<SubscriptionDemand> & subscriptions)
+nlohmann::json SubscriptionHeartbeatProcessor::renewStatuses(
+  const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands)
 {
   nlohmann::json statuses = nlohmann::json::array();
 
-  for (const auto & demand : subscriptions) {
+  for (const auto & demand : demands) {
     const auto & target = demand.target;
 
     // `configured_source` targets name bridge-owned config entries rather than ROS graph
@@ -167,25 +166,25 @@ nlohmann::json SubscriptionHeartbeatProcessor::renewSubscriptionStatuses(
 void SubscriptionHeartbeatProcessor::pruneExpiredLeases()
 {
   const auto now = std::chrono::steady_clock::now();
-  for (auto it = session_leases_.begin(); it != session_leases_.end();) {
+  for (auto it = leases_.begin(); it != leases_.end();) {
     if (now < it->second.expiry) {
       ++it;
       continue;
     }
 
-    it = session_leases_.erase(it);
+    it = leases_.erase(it);
   }
 }
 
 void SubscriptionHeartbeatProcessor::process(
   const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
 {
-  const auto lease = resolveHeartbeatLease(requester_identity, heartbeat.session_id);
+  const auto lease = resolveLease(requester_identity, heartbeat.session_id);
   if (!lease.has_value()) {
     return;
   }
 
-  const auto statuses = renewSubscriptionStatuses(*lease, heartbeat.subscriptions);
+  const auto statuses = renewStatuses(*lease, heartbeat.subscriptions);
 
   // A page refresh can reuse the requester identity before the old lease expires, but the
   // rejoined participant still needs a fresh data-track publication because the previous one
@@ -194,8 +193,7 @@ void SubscriptionHeartbeatProcessor::process(
   publishStatuses(*lease, statuses);
 }
 
-void SubscriptionHeartbeatProcessor::publishStatuses(
-  const ResolvedHeartbeatLease & lease, const nlohmann::json & statuses)
+void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses)
 {
   // A heartbeat may exist only to bind or renew the client-session lease. In that case the wire
   // contract does not send an empty status envelope back.

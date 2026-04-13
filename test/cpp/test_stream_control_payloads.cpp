@@ -27,7 +27,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-void expectParsedDemand(
+void expectDemand(
   const nlohmann::json & body,
   SubscriptionTargetKind expected_kind,
   const std::string & expected_name,
@@ -62,28 +62,28 @@ SubscriptionStatus makeStatus(
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 {
-  expectParsedDemand(
+  expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":" topic ","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
     "/battery",
     125);
 
-  expectParsedDemand(
+  expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"topic","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
     "/battery",
     125);
 
-  expectParsedDemand(
+  expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
     125);
 
-  expectParsedDemand(
+  expectDemand(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/camera"}]})"),
     SubscriptionTargetKind::Topic,
     "/camera",
@@ -157,7 +157,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
       {"subscriptions",
        {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", raw_interval_ms}}}}}}};
 
-    expectParsedDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_interval_ms);
+    expectDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_interval_ms);
   };
 
   expectClampedInterval(std::numeric_limits<std::int64_t>::max(), std::numeric_limits<int>::max());
@@ -168,7 +168,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
      {{{"kind", "topic"},
        {"name", "/lidar"},
        {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::uint64_t>::max()}}}}}}};
-  expectParsedDemand(unsigned_body, SubscriptionTargetKind::Topic, "/lidar", std::numeric_limits<int>::max());
+  expectDemand(unsigned_body, SubscriptionTargetKind::Topic, "/lidar", std::numeric_limits<int>::max());
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)

@@ -87,10 +87,10 @@ TEST(ResourceListPayloadsTest, ReportsRejectedRequestFieldForValidationFailures)
   EXPECT_EQ(resource_list_payloads::invalidRequestField(unrelated_error), std::nullopt);
 }
 
-TEST(ResourceListPayloadsTest, SerializesServiceList)
+TEST(ResourceListPayloadsTest, SerializesServices)
 {
   const auto body = nlohmann::json::parse(
-    resource_list_payloads::serializeServiceList({
+    resource_list_payloads::serializeServices({
       {"/set_bool", "std_srvs/srv/SetBool"},
       {"/trigger", "std_srvs/srv/Trigger"},
     }));
@@ -106,15 +106,15 @@ TEST(ResourceListPayloadsTest, SerializesServiceList)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(resource_list_payloads::serializeServiceList({})),
+    nlohmann::json::parse(resource_list_payloads::serializeServices({})),
     nlohmann::json({{"services", nlohmann::json::array()}}));
 }
 
-TEST(ResourceListPayloadsTest, SerializesTopicList)
+TEST(ResourceListPayloadsTest, SerializesTopics)
 {
   EXPECT_EQ(
     nlohmann::json::parse(
-      resource_list_payloads::serializeTopicList({
+      resource_list_payloads::serializeTopics({
         {"/camera/image_raw", "sensor_msgs/msg/Image"},
       })),
     nlohmann::json({
@@ -125,7 +125,7 @@ TEST(ResourceListPayloadsTest, SerializesTopicList)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(resource_list_payloads::serializeTopicList({})),
+    nlohmann::json::parse(resource_list_payloads::serializeTopics({})),
     nlohmann::json({{"topics", nlohmann::json::array()}}));
 }
 

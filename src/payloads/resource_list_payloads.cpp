@@ -31,39 +31,39 @@ namespace
 
 constexpr char kInvalidLimitMessage[] = "limit must be a positive integer";
 
-class ResourceListInvalidArgument final : public std::invalid_argument
+class InvalidRequest final : public std::invalid_argument
 {
 public:
-  ResourceListInvalidArgument(std::string_view field_name, const char * message)
+  InvalidRequest(std::string_view field, const char * message)
   : std::invalid_argument(message)
-  , field_name_(field_name)
+  , field_(field)
   {}
 
-  std::string_view fieldName() const noexcept
+  std::string_view field() const noexcept
   {
-    return field_name_;
+    return field_;
   }
 
 private:
-  std::string_view field_name_;
+  std::string_view field_;
 };
 
-std::optional<std::size_t> parseOptionalLimit(const Json & request_body)
+std::optional<std::size_t> parseLimit(const Json & body)
 {
-  const auto limit_it = request_body.find("limit");
-  if (limit_it == request_body.end() || limit_it->is_null()) {
+  const auto field = body.find("limit");
+  if (field == body.end() || field->is_null()) {
     return std::nullopt;
   }
 
-  if (!limit_it->is_number_integer()) {
-    throw ResourceListInvalidArgument("limit", kInvalidLimitMessage);
+  if (!field->is_number_integer()) {
+    throw InvalidRequest("limit", kInvalidLimitMessage);
   }
 
   // Parse into a signed type first so negative JSON integers are rejected before converting to
   // the unsigned storage used by `ResourceListRequest::limit`.
-  const auto limit = limit_it->get<std::int64_t>();
+  const auto limit = field->get<std::int64_t>();
   if (limit <= 0) {
-    throw ResourceListInvalidArgument("limit", kInvalidLimitMessage);
+    throw InvalidRequest("limit", kInvalidLimitMessage);
   }
 
   return static_cast<std::size_t>(limit);
@@ -74,37 +74,36 @@ std::optional<std::size_t> parseOptionalLimit(const Json & request_body)
 namespace resource_list_payloads
 {
 
-ResourceListRequest parse(const std::string & request_payload)
+ResourceListRequest parse(const std::string & payload)
 {
-  Json request_body;
+  Json body;
   try {
-    request_body =
-      parseJsonObject(request_payload, "Invalid JSON in list request", "List request must be a JSON object");
+    body = parseJsonObject(payload, "Invalid JSON in list request", "List request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
-    throw ResourceListInvalidArgument("payload", exc.what());
+    throw InvalidRequest("payload", exc.what());
   }
 
   std::optional<std::string> query;
   // Normalize blank and null queries to "no filter".
   try {
-    query = parseOptionalNonEmptyTrimmedStringField(request_body, "query", "query must be a string", true);
+    query = parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
   } catch (const std::invalid_argument & exc) {
-    throw ResourceListInvalidArgument("query", exc.what());
+    throw InvalidRequest("query", exc.what());
   }
 
-  return {query, parseOptionalLimit(request_body)};
+  return {query, parseLimit(body)};
 }
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 {
-  if (const auto * resource_list_error = dynamic_cast<const ResourceListInvalidArgument *>(&exc)) {
-    return resource_list_error->fieldName();
+  if (const auto * error = dynamic_cast<const InvalidRequest *>(&exc)) {
+    return error->field();
   }
 
   return std::nullopt;
 }
 
-std::string serializeServiceList(const std::vector<ResourceListEntry> & entries)
+std::string serializeServices(const std::vector<ResourceEntry> & entries)
 {
   Json services = Json::array();
   for (const auto & entry : entries) {
@@ -114,7 +113,7 @@ std::string serializeServiceList(const std::vector<ResourceListEntry> & entries)
   return Json{{"services", std::move(services)}}.dump();
 }
 
-std::string serializeTopicList(const std::vector<ResourceListEntry> & entries)
+std::string serializeTopics(const std::vector<ResourceEntry> & entries)
 {
   Json topics = Json::array();
   for (const auto & entry : entries) {

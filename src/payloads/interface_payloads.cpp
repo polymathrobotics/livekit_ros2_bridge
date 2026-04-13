@@ -28,30 +28,30 @@ namespace livekit_ros2_bridge
 
 using Json = nlohmann::json;
 
+namespace interface_payloads
+{
+
 namespace
 {
 
-class InterfacePayloadInvalidArgument final : public std::invalid_argument
+class InvalidFieldArgument final : public std::invalid_argument
 {
 public:
-  InterfacePayloadInvalidArgument(std::string_view field_name, const char * message)
+  InvalidFieldArgument(std::string_view field, const char * message)
   : std::invalid_argument(message)
-  , field_name_(field_name)
+  , field_(field)
   {}
 
-  std::string_view fieldName() const noexcept
+  std::string_view field() const noexcept
   {
-    return field_name_;
+    return field_;
   }
 
 private:
-  std::string_view field_name_;
+  std::string_view field_;
 };
 
 }  // namespace
-
-namespace interface_payloads
-{
 
 std::vector<std::string> parse(const std::string & payload)
 {
@@ -60,7 +60,7 @@ std::vector<std::string> parse(const std::string & payload)
     body = parseJsonObject(
       payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
-    throw InterfacePayloadInvalidArgument("payload", exc.what());
+    throw InvalidFieldArgument("payload", exc.what());
   }
 
   try {
@@ -72,26 +72,26 @@ std::vector<std::string> parse(const std::string & payload)
       "interface_types entries must not be empty",
       "interface_types must not be empty");
   } catch (const std::invalid_argument & exc) {
-    throw InterfacePayloadInvalidArgument("interface_types", exc.what());
+    throw InvalidFieldArgument("interface_types", exc.what());
   }
 }
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 {
-  const auto * interface_error = dynamic_cast<const InterfacePayloadInvalidArgument *>(&exc);
-  if (interface_error == nullptr) {
+  const auto * error = dynamic_cast<const InvalidFieldArgument *>(&exc);
+  if (error == nullptr) {
     return std::nullopt;
   }
 
-  return interface_error->fieldName();
+  return error->field();
 }
 
 std::string serialize(const std::vector<InterfaceDefinition> & definitions)
 {
-  Json::array_t entries;
-  entries.reserve(definitions.size());
+  Json::array_t interfaces;
+  interfaces.reserve(definitions.size());
   for (const auto & definition : definitions) {
-    entries.push_back(
+    interfaces.push_back(
       Json{
         {"interface_type", definition.interface_type},
         {"format", definition.format},
@@ -99,7 +99,7 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
       });
   }
 
-  return Json{{"interfaces", std::move(entries)}}.dump();
+  return Json{{"interfaces", std::move(interfaces)}}.dump();
 }
 
 }  // namespace interface_payloads

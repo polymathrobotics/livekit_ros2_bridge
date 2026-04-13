@@ -26,8 +26,8 @@ namespace livekit_ros2_bridge
 
 struct AccessRuleConfig
 {
-  /// Raw policy entries for one operation. `AccessPolicy` trims surrounding whitespace, normalizes
-  /// ROS resource names, and treats a literal `"*"` as an operation-wide allow/deny override.
+  /// Raw allow/deny rules for one operation. `AccessPolicy` trims surrounding whitespace,
+  /// normalizes ROS resource names, and treats a literal `"*"` as an operation-wide override.
   std::vector<std::string> allow;
   std::vector<std::string> deny;
 };
@@ -49,8 +49,8 @@ enum class AccessOperation
 };
 
 /// Operation-specific allow/deny rules over normalized ROS resource names.
-/// The policy is default-deny, a literal `"*"` allow entry means allow all for that operation,
-/// and deny entries always win over allows. Entries are trimmed and normalized before matching;
+/// The policy is default-deny, a literal `"*"` allow rule means allow all for that operation,
+/// and deny rules always win over allows. Rules are trimmed and normalized before matching;
 /// exact patterns match one resource and `.../*` patterns match descendants.
 /// Instances are immutable after construction and can be shared across threads without
 /// external synchronization.
@@ -60,32 +60,32 @@ public:
   AccessPolicy() = default;
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
-  /// Return whether `resource_name` is allowed after normalization. Empty or whitespace-only names
+  /// Return whether `raw_resource` is allowed after normalization. Empty or whitespace-only names
   /// are denied and logged.
-  bool allows(AccessOperation operation, std::string_view resource_name) const;
+  bool allows(AccessOperation operation, std::string_view raw_resource) const;
 
 private:
-  struct RuleEntries
+  struct Rules
   {
-    /// Parse configured entries into normalized lookup state. `"*"` is tracked separately from
+    /// Parse configured rules into normalized lookup state. `"*"` is tracked separately from
     /// `patterns` so it keeps its policy-wide meaning instead of becoming the root-subtree
     /// pattern `/*` during normalization.
-    static RuleEntries parse(const std::vector<std::string> & entries);
+    static Rules parse(const std::vector<std::string> & raw_rules);
 
     /// Requires a normalized resource name.
-    bool matches(std::string_view name) const;
+    bool matches(std::string_view resource) const;
 
     bool matches_all = false;
     // Normalized exact or subtree patterns. `"*"` is represented only by `matches_all`.
     std::set<std::string> patterns;
   };
 
-  RuleEntries publish_allow_;
-  RuleEntries publish_deny_;
-  RuleEntries subscribe_allow_;
-  RuleEntries subscribe_deny_;
-  RuleEntries service_allow_;
-  RuleEntries service_deny_;
+  Rules publish_allow_;
+  Rules publish_deny_;
+  Rules subscribe_allow_;
+  Rules subscribe_deny_;
+  Rules service_allow_;
+  Rules service_deny_;
 };
 
 }  // namespace livekit_ros2_bridge

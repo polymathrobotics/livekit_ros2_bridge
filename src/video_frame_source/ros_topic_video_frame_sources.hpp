@@ -53,8 +53,8 @@ public:
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
-    VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer,
+    VideoFrameSink & sink,
+    VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void start() override;
@@ -70,7 +70,7 @@ private:
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
-  std::optional<FrameLayout> frame_layout_;
+  std::optional<FrameLayout> layout_;
 };
 
 class CompressedRosVideoFrameSource final : public VideoPipelineFrameSource
@@ -80,8 +80,8 @@ public:
     rclcpp::Node & node,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
-    VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer,
+    VideoFrameSink & sink,
+    VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
   void start() override;

@@ -25,17 +25,17 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-class ScopedInterfaceLookupReset
+class ScopedLookupReset
 {
 public:
   // lookupInterfaceDefinitions keeps process-wide negative-cache and hook state, so each test
   // helper brackets its assertions with a full reset.
-  ScopedInterfaceLookupReset()
+  ScopedLookupReset()
   {
     resetInterfaceLookupForTest();
   }
 
-  ~ScopedInterfaceLookupReset()
+  ~ScopedLookupReset()
   {
     resetInterfaceLookupForTest();
   }
@@ -61,7 +61,7 @@ void expectFailureCachedUntilReset(
   // into the cache implementation itself.
   SCOPED_TRACE(interface_type);
 
-  ScopedInterfaceLookupReset reset;
+  ScopedLookupReset reset;
 
   int attempts = 0;
   const auto count_attempts = [&attempts](const std::string &) { ++attempts; };
@@ -114,15 +114,15 @@ TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicat
 
   ASSERT_EQ(definitions.size(), 3u);
   EXPECT_EQ(definitions.front().interface_type, "sensor_msgs/msg/BatteryState");
-  std::set<std::string> dependency_types;
+  std::set<std::string> types;
   for (auto it = definitions.begin() + 1; it != definitions.end(); ++it) {
-    dependency_types.insert(it->interface_type);
+    types.insert(it->interface_type);
   }
-  const std::set<std::string> expected_dependencies = {
+  const std::set<std::string> expected = {
     "builtin_interfaces/msg/Time",
     "std_msgs/msg/Header",
   };
-  EXPECT_EQ(dependency_types, expected_dependencies);
+  EXPECT_EQ(types, expected);
 }
 
 TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependencies)

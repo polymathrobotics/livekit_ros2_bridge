@@ -35,7 +35,7 @@ struct ResourceListRequest
 
 /// The wire format carries one `interface_type`, so callers must resolve or drop multi-type ROS
 /// graph entries before serializing.
-struct ResourceListEntry
+struct ResourceEntry
 {
   std::string name;
   std::string interface_type;
@@ -47,7 +47,7 @@ namespace resource_list_payloads
 /// Parse a resource-list request object.
 /// Throws `std::invalid_argument` when the payload is not a JSON object or `query` / `limit`
 /// violate the RPC contract. Missing, null, and blank queries normalize to "no filter".
-ResourceListRequest parse(const std::string & request_payload);
+ResourceListRequest parse(const std::string & payload);
 
 /// Return the request boundary associated with a resource-list validation error when available.
 /// This lets higher layers add a precise `request_field` log field without parsing free-form
@@ -57,12 +57,12 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 /// Serialize services as `{ "services": [{ "name", "interface_type" }, ...] }` in caller order.
 /// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
 /// the single `interface_type` wire shape before calling this helper.
-std::string serializeServiceList(const std::vector<ResourceListEntry> & entries);
+std::string serializeServices(const std::vector<ResourceEntry> & entries);
 
 /// Serialize topics as `{ "topics": [{ "name", "interface_type" }, ...] }` in caller order.
 /// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
 /// the single `interface_type` wire shape before calling this helper.
-std::string serializeTopicList(const std::vector<ResourceListEntry> & entries);
+std::string serializeTopics(const std::vector<ResourceEntry> & entries);
 
 }  // namespace resource_list_payloads
 

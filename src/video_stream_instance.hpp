@@ -58,7 +58,7 @@ public:
   // after shutdown() has started. They only touch local bookkeeping here and never
   // reach back into source_ or publisher_ while teardown is in flight.
   void onTrackPublished(int width, int height, bool republished) override;
-  void onTrackUnpublishing() override;
+  void onTrackUnpublish() override;
   void onSampleUnpackFailed(const std::string & error) override;
   void onCaptureFailed(const std::string & error) override;
   void onPipelineFailed(const std::string & reason) override;
@@ -83,7 +83,7 @@ private:
   bool is_shutdown_ = false;
   // Tracks whether this instance currently has a published track so duplicate
   // unpublish callbacks stay quiet during teardown.
-  bool has_published_track_ = false;
+  bool track_published_ = false;
   // Created on first start() so unused streams do not allocate subscriptions or pipelines.
   std::shared_ptr<VideoFrameSource> source_;
   // Constructed eagerly because every frame source needs a stable sink/publisher reference.

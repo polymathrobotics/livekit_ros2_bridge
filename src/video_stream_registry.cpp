@@ -35,11 +35,11 @@ const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_regist
 VideoStreamRegistry::VideoStreamRegistry(
   rclcpp::Node & node,
   RoomConnection & room_connection,
-  const SubscriptionQosConfig * subscription_qos_config,
+  const SubscriptionQosConfig * qos_config,
   VideoProfilingRegistry * profiling_registry)
 : node_(node)
 , room_connection_(room_connection)
-, subscription_qos_config_(subscription_qos_config)
+, qos_config_(qos_config)
 , profiling_registry_(profiling_registry)
 {}
 
@@ -66,8 +66,7 @@ std::string VideoStreamRegistry::start(const VideoStreamSpec & spec)
       instance = it->second;
     } else {
       const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
-      instance =
-        std::make_shared<VideoStreamInstance>(node_, room_connection_, spec, subscription_qos_config_, profiler);
+      instance = std::make_shared<VideoStreamInstance>(node_, room_connection_, spec, qos_config_, profiler);
       instances_.emplace(spec.stream_key, instance);
     }
   }

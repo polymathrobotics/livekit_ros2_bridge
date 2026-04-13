@@ -86,7 +86,7 @@ public:
   // Removes one requester's lease from every shared subscription. Targets still owned by other
   // requesters stay alive; any queued data-track republish hint for this requester is cleared.
   void revokeRequesterLeases(const std::string & requester_identity);
-  // Sweeps leases whose expiry has passed. Shared entries survive while at least one requester
+  // Sweeps leases whose expiry has passed. Shared subscriptions survive while at least one requester
   // remains, and data targets recompute their merged delivery interval from the survivors.
   void pruneExpiredLeases();
   bool hasSubscription(
@@ -100,7 +100,7 @@ public:
 
   // DataTrackPublisher completion path. The publish generation identifies the attempt that
   // reserved the deterministic track name, so late callbacks from an older lifetime can be
-  // rejected instead of reviving a replacement subscription entry.
+  // rejected instead of reviving a replacement subscription.
   bool onDataTrackPublished(const std::string & track_name, std::size_t generation);
   // Snapshot token for callers that need to tie later disconnect handling to the currently
   // observed subscription set.
@@ -120,7 +120,7 @@ private:
     VideoStreamSpec stream_spec;
   };
 
-  struct Entry
+  struct SharedSubscription
   {
     SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
     std::string name;
@@ -132,20 +132,20 @@ private:
     std::variant<std::shared_ptr<DataStreamInstance>, VideoRuntime> runtime = std::shared_ptr<DataStreamInstance>{};
   };
 
-  using EntryMap = std::unordered_map<std::string, Entry>;
+  using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
   using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
-  static SubscriptionStatus statusFor(const Entry & entry);
+  static SubscriptionStatus statusFor(const SharedSubscription & subscription);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
   static std::string keyFor(SubscriptionTargetKind target_kind, const std::string & resource);
 
   VideoStreamRegistry & videoRegistry() const;
-  static DataStreamInstance * dataStream(Entry & entry);
-  static const DataStreamInstance * dataStream(const Entry & entry);
+  static DataStreamInstance * dataInstance(SharedSubscription & subscription);
+  static const DataStreamInstance * dataInstance(const SharedSubscription & subscription);
   void removeLeasesIf(
     const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
-  EntryMap::iterator findDataByTrackName(const std::string & track_name);
-  void destroyRuntime(Entry & entry, bool log_destroy = true);
+  SubscriptionMap::iterator findDataByTrackName(const std::string & track_name);
+  void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
   void clearSubscriptions();
 
   rclcpp::Node & node_;
@@ -167,7 +167,7 @@ private:
   // subscription or after a full registry reset. External lifecycle callbacks must match this
   // snapshot before acting on remembered requester state.
   std::atomic<std::size_t> registry_generation_{0};
-  EntryMap subscriptions_;
+  SubscriptionMap subscriptions_;
 
   // Requesters whose next confirmed heartbeat should force currently published data tracks
   // through an unpublish/publish cycle so the rejoined participant session sees them again.

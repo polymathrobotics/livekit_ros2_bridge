@@ -27,9 +27,9 @@ namespace
 {
 
 const auto kAccessPolicyLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
-constexpr char kMatchAllEntry[] = "*";
+constexpr char kMatchAllRule[] = "*";
 
-const char * accessOperationLogName(AccessOperation operation)
+const char * accessOperationName(AccessOperation operation)
 {
   switch (operation) {
     case AccessOperation::Publish:
@@ -45,29 +45,29 @@ const char * accessOperationLogName(AccessOperation operation)
 
 }  // namespace
 
-bool AccessPolicy::RuleEntries::matches(std::string_view name) const
+bool AccessPolicy::Rules::matches(std::string_view resource) const
 {
-  return matches_all || std::any_of(patterns.begin(), patterns.end(), [name](const std::string & pattern) {
-           return rosResourceMatchesPattern(name, pattern);
+  return matches_all || std::any_of(patterns.begin(), patterns.end(), [resource](const std::string & pattern) {
+           return rosResourceMatchesPattern(resource, pattern);
          });
 }
 
-AccessPolicy::RuleEntries AccessPolicy::RuleEntries::parse(const std::vector<std::string> & entries)
+AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules)
 {
-  RuleEntries rules;
-  for (const auto & raw_entry : entries) {
-    const std::string entry = trim(raw_entry);
-    if (entry.empty()) {
+  Rules rules;
+  for (const auto & raw_rule : raw_rules) {
+    const std::string rule = trim(raw_rule);
+    if (rule.empty()) {
       continue;
     }
-    if (entry == kMatchAllEntry) {
+    if (rule == kMatchAllRule) {
       // `"*"` means allow or deny the entire operation. Normalizing it into `/*` would narrow
       // it to descendant matching instead of preserving the policy-wide override.
       rules.matches_all = true;
       continue;
     }
 
-    const std::string pattern = normalizeRosResourceName(entry);
+    const std::string pattern = normalizeRosResourceName(rule);
     if (pattern.empty()) {
       continue;
     }
@@ -79,12 +79,12 @@ AccessPolicy::RuleEntries AccessPolicy::RuleEntries::parse(const std::vector<std
 }
 
 AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
-: publish_allow_(RuleEntries::parse(config.publish.allow))
-, publish_deny_(RuleEntries::parse(config.publish.deny))
-, subscribe_allow_(RuleEntries::parse(config.subscribe.allow))
-, subscribe_deny_(RuleEntries::parse(config.subscribe.deny))
-, service_allow_(RuleEntries::parse(config.service.allow))
-, service_deny_(RuleEntries::parse(config.service.deny))
+: publish_allow_(Rules::parse(config.publish.allow))
+, publish_deny_(Rules::parse(config.publish.deny))
+, subscribe_allow_(Rules::parse(config.subscribe.allow))
+, subscribe_deny_(Rules::parse(config.subscribe.deny))
+, service_allow_(Rules::parse(config.service.allow))
+, service_deny_(Rules::parse(config.service.deny))
 {
   // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
   // trimming, normalization, wildcard handling, and duplicate collapse.
@@ -104,12 +104,12 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
     .info();
 }
 
-bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_name) const
+bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resource) const
 {
-  const std::string name = normalizeRosResourceName(resource_name);
-  if (name.empty()) {
+  const std::string resource = normalizeRosResourceName(raw_resource);
+  if (resource.empty()) {
     LogEvent(kAccessPolicyLogger, "access_check_rejected")
-      .field("operation", accessOperationLogName(operation))
+      .field("operation", accessOperationName(operation))
       .field("reason", "empty_resource_name")
       .warn();
     return false;
@@ -117,11 +117,11 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_n
 
   switch (operation) {
     case AccessOperation::Publish:
-      return !publish_deny_.matches(name) && publish_allow_.matches(name);
+      return !publish_deny_.matches(resource) && publish_allow_.matches(resource);
     case AccessOperation::Subscribe:
-      return !subscribe_deny_.matches(name) && subscribe_allow_.matches(name);
+      return !subscribe_deny_.matches(resource) && subscribe_allow_.matches(resource);
     case AccessOperation::CallService:
-      return !service_deny_.matches(name) && service_allow_.matches(name);
+      return !service_deny_.matches(resource) && service_allow_.matches(resource);
   }
 
   return false;

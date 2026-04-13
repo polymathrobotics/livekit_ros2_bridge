@@ -31,7 +31,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const char * activeExceptionMessage() noexcept
+// todo: inline this or use it everywhere if it's common practice.
+const char * currentExceptionMessage() noexcept
 {
   try {
     throw;
@@ -55,11 +56,11 @@ Node::Node(const rclcpp::NodeOptions & options)
     config = loadRuntimeConfig(get_node_parameters_interface());
     // Copy the room before Runtime takes ownership of config so later startup failures can
     // still attribute the error to the intended room.
-    room = config.room_connection_config.room;
+    room = config.room_connection.room;
   } catch (...) {
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_config_load_failed")
-      .field("error", activeExceptionMessage())
+      .field("error", currentExceptionMessage())
       .error();
     throw;
   }
@@ -72,7 +73,7 @@ Node::Node(const rclcpp::NodeOptions & options)
     LogEvent(logger, "node_startup_failed")
       .field("reason", "runtime_initialization_failed")
       .fieldOr("room", room, "<unset>")
-      .field("error", activeExceptionMessage())
+      .field("error", currentExceptionMessage())
       .error();
     throw;
   }

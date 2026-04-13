@@ -43,14 +43,14 @@ struct RuntimeConfig
   };
 
   Params params;
-  RoomConnectionConfig room_connection_config;
+  RoomConnectionConfig room_connection;
   // Startup token captured once and reused by reconnect attempts until restart.
   std::string access_token;
-  HealthConfig health_config;
+  HealthConfig health;
   AccessPolicy access_policy;
-  SubscriptionQosConfig subscription_qos_config;
-  VideoStreamConfig video_stream_config;
-  VideoProfilingConfig video_profiling_config;
+  SubscriptionQosConfig subscription_qos;
+  VideoStreamConfig video_stream;
+  VideoProfilingConfig video_profiling;
 };
 
 // Loads the bridge's startup-only configuration from parameters once. Later ROS parameter

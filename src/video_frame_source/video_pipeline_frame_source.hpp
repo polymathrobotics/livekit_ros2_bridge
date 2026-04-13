@@ -37,14 +37,14 @@ inline constexpr char kVideoAppSrcName[] = "bridge_video_src";
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
-std::string buildFrameSourcePipelineDescription(
-  const std::string & ingress_fragment, const std::string & transform_fragment);
+std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment);
 
 class VideoPipelineFrameSource : public VideoFrameSource, public std::enable_shared_from_this<VideoPipelineFrameSource>
 {
 public:
   // Configures optional self-recovery for sources whose pipeline can be
   // recreated from a stable launch description after EOS or ERROR.
+  // TODO: don't love this struct
   struct RestartConfig
   {
     // Must resolve to a GstBin containing `kAppSinkName`; when
@@ -59,8 +59,8 @@ public:
 
   VideoPipelineFrameSource(
     VideoStreamSpec spec,
-    VideoFrameSink & frame_sink,
-    VideoStreamLifecycleObserver & lifecycle_observer,
+    VideoFrameSink & sink,
+    VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr,
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
@@ -91,13 +91,13 @@ protected:
   [[nodiscard]] PipelineHandles takePipelineLocked();
   // Caller must hold mutex_. Parses `pipeline_description`, validates the named
   // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
-  void startPipelineLocked(const std::string & pipeline_description, bool require_appsrc = false);
+  void startPipelineLocked(const std::string & description, bool require_appsrc = false);
 
   virtual void resetLocked();
 
   VideoStreamSpec spec_;
-  VideoFrameSink & frame_sink_;
-  VideoStreamLifecycleObserver & lifecycle_observer_;
+  VideoFrameSink & sink_;
+  VideoStreamLifecycleObserver & observer_;
   std::shared_ptr<VideoStreamProfiler> profiler_;
   const std::optional<RestartConfig> restart_config_;
   // Guards lifecycle flags and GStreamer handle ownership across start(),
@@ -116,8 +116,8 @@ protected:
 private:
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
-  void handlePipelineFailure(const std::string & reason);
-  void recoverPipelineAfterFailure();
+  void handleFailure(const std::string & reason);
+  void recoverAfterFailure();
 };
 
 }  // namespace livekit_ros2_bridge
