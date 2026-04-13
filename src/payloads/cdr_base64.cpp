@@ -80,59 +80,56 @@ Base64DecodeResult decodeBase64(std::string_view base64)
     return {};
   }
 
+  const std::size_t base64_size = base64.size();
   std::size_t pad_count = 0U;
-  std::size_t pad_start = base64.size();
+  std::size_t pad_start = base64_size;
   // Validate the alphabet and require any '=' padding to form a single suffix before
   // handing the input to OpenSSL so we can distinguish missing padding from other
   // malformed encodings.
-  for (std::size_t index = 0; index < base64.size(); ++index) {
+  for (std::size_t index = 0; index < base64_size; ++index) {
     const char c = base64[index];
     if (c == '=') {
-      if (pad_start == base64.size()) {
+      if (pad_start == base64_size) {
         pad_start = index;
       }
       continue;
     }
 
-    if (pad_start != base64.size() || base64Value(c) < 0) {
+    if (pad_start != base64_size || base64Value(c) < 0) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
-  if (pad_start != base64.size()) {
-    pad_count = base64.size() - pad_start;
-    if (pad_count > 2U || base64.size() == 1U) {
+  if (pad_start != base64_size) {
+    pad_count = base64_size - pad_start;
+    if (pad_count > 2U || base64_size == 1U) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
   // A structurally valid alphabet/padding sequence that is not quartet-aligned is the
   // specific "missing padding" case callers surface separately at the JSON boundary.
-  if ((base64.size() % 4U) != 0U) {
+  if ((base64_size % 4U) != 0U) {
     return {{}, Base64Status::kMissingPadding};
   }
 
   // RFC 4648 requires unused bits in the final sextet(s) to be zero. `EVP_DecodeBlock`
   // decodes successfully either way, so reject non-canonical encodings here.
-  if (pad_count == 2U) {
-    const int second_sextet = base64Value(base64[base64.size() - 3U]);
-    if (second_sextet < 0 || (second_sextet & 0x0F) != 0) {
-      return {{}, Base64Status::kInvalidEncoding};
-    }
-  } else if (pad_count == 1U) {
-    const int third_sextet = base64Value(base64[base64.size() - 2U]);
-    if (third_sextet < 0 || (third_sextet & 0x03) != 0) {
+  if (pad_count != 0U) {
+    const int trailing_sextet = base64Value(base64[base64_size - (pad_count + 1U)]);
+    const int pad_bits_mask = (pad_count == 2U) ? 0x0F : 0x03;
+    if (trailing_sextet < 0 || (trailing_sextet & pad_bits_mask) != 0) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
-  std::vector<std::uint8_t> bytes((base64.size() / 4U) * 3U, 0U);
+  std::vector<std::uint8_t> bytes((base64_size / 4U) * 3U, 0U);
   const int decoded_size = EVP_DecodeBlock(
     reinterpret_cast<unsigned char *>(bytes.data()),
     reinterpret_cast<const unsigned char *>(base64.data()),
-    static_cast<int>(base64.size()));
+    static_cast<int>(base64_size));
   if (decoded_size < 0) {
-    LogEvent(kLogger, "base64_decode_failed").field("input_chars", base64.size()).error();
+    LogEvent(kLogger, "base64_decode_failed").field("input_chars", base64_size).error();
     return {{}, Base64Status::kInvalidEncoding};
   }
 

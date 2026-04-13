@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -82,25 +83,22 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   std::string interface_type;
   std::shared_ptr<rclcpp::GenericPublisher> ros_publisher;
-  bool cache_hit = false;
+  std::optional<CachedPublisher> cached_publisher;
   try {
+    cached_publisher = cache_.peek(topic);
     // Cache hits deliberately skip the ROS graph. Once a publish succeeds, the
     // cached publisher pins the interface type for that topic until eviction or
     // shutdown clears the entry.
-    if (const auto cached = cache_.peek(topic); cached.has_value()) {
-      if (cached->interface_type != command.interface_type) {
-        throw std::invalid_argument(
-          "type mismatch expected=" + cached->interface_type + " got=" + command.interface_type);
-      }
-      interface_type = cached->interface_type;
-      ros_publisher = cached->ros_publisher;
-      cache_hit = true;
+    if (cached_publisher.has_value()) {
+      interface_type = cached_publisher->interface_type;
+      ros_publisher = cached_publisher->ros_publisher;
     } else {
       const auto graph_topics = topic_graph_provider_ ? topic_graph_provider_() : node_.get_topic_names_and_types();
       interface_type = requireSingleInterfaceType(graph_topics, topic, "topic");
-      if (interface_type != command.interface_type) {
-        throw std::invalid_argument("type mismatch expected=" + interface_type + " got=" + command.interface_type);
-      }
+    }
+
+    if (interface_type != command.interface_type) {
+      throw std::invalid_argument("type mismatch expected=" + interface_type + " got=" + command.interface_type);
     }
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "publish_request_rejected");
@@ -120,7 +118,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   rcl_message.buffer_length = command.cdr.size();
 
   try {
-    if (ros_publisher == nullptr) {
+    if (!ros_publisher) {
       const rclcpp::QoS qos(kPublisherDepth);
       ros_publisher = node_.create_generic_publisher(topic, interface_type, qos);
     }
@@ -147,28 +145,32 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     // Refresh recency only after a successful publish. If an in-flight cached
     // publisher was evicted meanwhile, reinsert the handle that actually
     // published so later commands can still reuse it.
-    if (cache_hit && cache_.touch(topic)) {
+    if (cached_publisher.has_value() && cache_.touch(topic)) {
       return;
     }
 
     // Enforce the cap only after the current publish succeeds.
     const auto evicted = cache_.insertOrAssign(topic, CachedPublisher{interface_type, std::move(ros_publisher)});
-    if (evicted.has_value()) {
-      if (const std::size_t count = eviction_warning_throttle_.recordAndTakePendingCount(); count > 0U) {
-        LogEvent(kLogger, "publisher_cache_evicted")
-          .field("reason", "max_topics_exceeded")
-          .field("topic", topic)
-          .field("evicted_topic", evicted->key)
-          .field("count", count)
-          .field("max_topics", static_cast<int>(cache_limit_))
-          .warn();
-      }
+    if (!evicted.has_value()) {
+      return;
     }
+
+    const std::size_t count = eviction_warning_throttle_.recordAndTakePendingCount();
+    if (count == 0U) {
+      return;
+    }
+
+    LogEvent(kLogger, "publisher_cache_evicted")
+      .field("reason", "max_topics_exceeded")
+      .field("topic", topic)
+      .field("evicted_topic", evicted->key)
+      .field("count", count)
+      .field("max_topics", static_cast<int>(cache_limit_))
+      .warn();
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "publish_request_failed");
     addPublishRequestFields(event.field("reason", "internal"), topic, requester_identity, &interface_type);
     event.field("error", exc.what()).error();
-    return;
   }
 }
 

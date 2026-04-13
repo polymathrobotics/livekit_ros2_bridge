@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "room_connection.hpp"
@@ -56,6 +57,8 @@ public:
   void shutdown();
 
 private:
+  void ensureTrackForFrame(int width, int height, const std::optional<std::int64_t> & timestamp_us_opt);
+
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
   // Callbacks run inline on whichever thread calls write()/shutdown(). write()

@@ -47,6 +47,55 @@ VideoTrackPublisher::VideoTrackPublisher(
 , profiler_(std::move(profiler))
 {}
 
+void VideoTrackPublisher::ensureTrackForFrame(
+  int width, int height, const std::optional<std::int64_t> & timestamp_us_opt)
+{
+  VideoStreamProfiler::StageTimer ensure_track_timer(
+    profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us_opt);
+  if (active_source_ != nullptr && active_track_ != nullptr && active_width_ == width && active_height_ == height) {
+    return;
+  }
+
+  const bool republished = has_published_;
+  const char * failure_stage = active_track_ != nullptr ? "republish_unpublish" : nullptr;
+  const auto log_publish_failure = [&](const char * error = nullptr) {
+    auto event =
+      videoTrackLog("video_track_publish_failed", spec_.track_name).field("width", width).field("height", height);
+    if (failure_stage != nullptr) {
+      event.field("stage", failure_stage);
+    }
+    event.fieldOr("error", error).warn();
+  };
+  try {
+    if (failure_stage != nullptr) {
+      room_connection_.unpublishVideoTrack(active_track_);
+      failure_stage = "republish_publish";
+    }
+    // Reset local publication state before publishing so a
+    // publishVideoTrack() failure forces the next frame to retry instead of
+    // reusing stale state.
+    active_source_.reset();
+    active_track_.reset();
+    active_width_ = 0;
+    active_height_ = 0;
+
+    auto track_source = std::make_shared<livekit::VideoSource>(width, height);
+    auto track = room_connection_.publishVideoTrack(spec_.track_name, track_source, spec_.publish_config);
+    active_source_ = std::move(track_source);
+    active_track_ = std::move(track);
+    active_width_ = width;
+    active_height_ = height;
+    has_published_ = true;
+    observer_.onTrackPublished(width, height, republished);
+  } catch (const std::exception & exc) {
+    log_publish_failure(exc.what());
+    throw;
+  } catch (...) {
+    log_publish_failure();
+    throw;
+  }
+}
+
 void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -58,56 +107,7 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
     timestamp_us > 0 ? std::optional<std::int64_t>(timestamp_us) : std::nullopt;
   VideoStreamProfiler::StageTimer handle_timer(
     profiler_.get(), VideoProfileStage::kPublisherHandleFrame, timestamp_us_opt);
-  {
-    VideoStreamProfiler::StageTimer ensure_track_timer(
-      profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us_opt);
-    const bool can_reuse =
-      active_source_ != nullptr && active_track_ != nullptr && active_width_ == width && active_height_ == height;
-    if (!can_reuse) {
-      const bool republished = has_published_;
-      const bool replacing_track = active_track_ != nullptr;
-      const char * failure_stage = nullptr;
-      if (replacing_track) {
-        failure_stage = "republish_unpublish";
-      }
-      const auto log_publish_failure = [&](const char * error = nullptr) {
-        auto event =
-          videoTrackLog("video_track_publish_failed", spec_.track_name).field("width", width).field("height", height);
-        if (replacing_track) {
-          event.field("stage", failure_stage);
-        }
-        event.fieldOr("error", error).warn();
-      };
-      try {
-        if (active_track_ != nullptr) {
-          room_connection_.unpublishVideoTrack(active_track_);
-          failure_stage = "republish_publish";
-        }
-        // Reset local publication state before publishing so a
-        // publishVideoTrack() failure forces the next frame to retry instead of
-        // reusing stale state.
-        active_source_.reset();
-        active_track_.reset();
-        active_width_ = 0;
-        active_height_ = 0;
-
-        auto track_source = std::make_shared<livekit::VideoSource>(width, height);
-        auto track = room_connection_.publishVideoTrack(spec_.track_name, track_source, spec_.publish_config);
-        active_source_ = std::move(track_source);
-        active_track_ = std::move(track);
-        active_width_ = width;
-        active_height_ = height;
-        has_published_ = true;
-        observer_.onTrackPublished(width, height, republished);
-      } catch (const std::exception & exc) {
-        log_publish_failure(exc.what());
-        throw;
-      } catch (...) {
-        log_publish_failure();
-        throw;
-      }
-    }
-  }
+  ensureTrackForFrame(width, height, timestamp_us_opt);
   // LiveKit takes ownership of the VideoFrame buffer here, so this stays
   // low-copy rather than true zero-copy. Keeping I420 avoids per-frame color conversion.
   livekit::VideoFrame frame(width, height, livekit::VideoBufferType::I420, std::move(i420));
@@ -115,7 +115,7 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
     VideoStreamProfiler::StageTimer capture_timer(profiler_.get(), VideoProfileStage::kCaptureFrame, timestamp_us_opt);
     active_source_->captureFrame(frame, timestamp_us);
   }
-  if (profiler_ != nullptr) {
+  if (profiler_) {
     profiler_->noteCapture(timestamp_us_opt);
   }
 }
@@ -136,21 +136,23 @@ void VideoTrackPublisher::shutdown()
     active_height_ = 0;
   }
 
-  if (track) {
-    // Run observer and RoomConnection callbacks after releasing mutex_. The
-    // closed state is already visible, so concurrent or reentrant write() calls
-    // will drop frames instead of racing a new publish against shutdown().
-    observer_.onTrackUnpublishing();
-    const auto log_unpublish_failure = [&](const char * error = nullptr) {
-      videoTrackLog("video_track_unpublish_failed", spec_.track_name).fieldOr("error", error).warn();
-    };
-    try {
-      room_connection_.unpublishVideoTrack(track);
-    } catch (const std::exception & exc) {
-      log_unpublish_failure(exc.what());
-    } catch (...) {
-      log_unpublish_failure();
-    }
+  if (!track) {
+    return;
+  }
+
+  // Run observer and RoomConnection callbacks after releasing mutex_. The
+  // closed state is already visible, so concurrent or reentrant write() calls
+  // will drop frames instead of racing a new publish against shutdown().
+  observer_.onTrackUnpublishing();
+  const auto log_unpublish_failure = [&](const char * error = nullptr) {
+    videoTrackLog("video_track_unpublish_failed", spec_.track_name).fieldOr("error", error).warn();
+  };
+  try {
+    room_connection_.unpublishVideoTrack(track);
+  } catch (const std::exception & exc) {
+    log_unpublish_failure(exc.what());
+  } catch (...) {
+    log_unpublish_failure();
   }
 }
 

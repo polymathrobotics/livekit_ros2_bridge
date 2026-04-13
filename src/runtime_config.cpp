@@ -57,8 +57,7 @@ std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char
   if (trimmed == "*") {
     return "/*";
   }
-  const bool is_subtree_rule = trimmed.size() >= 2 && trimmed.substr(trimmed.size() - 2) == "/*";
-  if (is_subtree_rule) {
+  if (trimmed.size() >= 2 && trimmed.substr(trimmed.size() - 2) == "/*") {
     const std::string normalized = normalizeRosResourceName(trimmed.substr(0, trimmed.size() - 2));
     if (normalized.empty()) {
       throw std::runtime_error(std::string(context) + " pattern must normalize to a valid ROS resource");
@@ -231,14 +230,8 @@ struct EndpointLayout
       return true;
     }
 
-    if (counts.appsrc_count != 0U && counts.bridge_appsrc_count == 0U) {
-      return true;
-    }
-    if (counts.appsink_count != 0U && counts.bridge_appsink_count == 0U) {
-      return true;
-    }
-
-    return false;
+    return (counts.appsrc_count != 0U && counts.bridge_appsrc_count == 0U) ||
+           (counts.appsink_count != 0U && counts.bridge_appsink_count == 0U);
   }
 };
 
@@ -314,9 +307,11 @@ void validateVideoPipelineDescription(
       throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
     }
   }
-  if (error != nullptr || pipeline == nullptr) {
-    const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
-    throw std::runtime_error(context + " has invalid GStreamer syntax: " + message);
+  if (error != nullptr) {
+    throw std::runtime_error(context + " has invalid GStreamer syntax: " + error->message);
+  }
+  if (pipeline == nullptr) {
+    throw std::runtime_error(context + " has invalid GStreamer syntax: gst_parse_launch returned null");
   }
 
   if (!GST_IS_BIN(pipeline.get())) {
@@ -526,6 +521,12 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   std::string room;
   std::string url;
   const char * stage = "parameters_interface_validation";
+  const auto logLoadFailure = [&](const char * error) {
+    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
+    event.field("stage", stage);
+    addRuntimeConfigIdentityFields(event, room, url);
+    event.field("error", error).error();
+  };
 
   try {
     if (parameters == nullptr) {
@@ -562,16 +563,10 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     return config;
   } catch (const std::exception & exc) {
-    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
-    event.field("stage", stage);
-    addRuntimeConfigIdentityFields(event, room, url);
-    event.field("error", exc.what()).error();
+    logLoadFailure(exc.what());
     throw;
   } catch (...) {
-    LogEvent event(kRuntimeConfigLogger, "runtime_config_load_failed");
-    event.field("stage", stage);
-    addRuntimeConfigIdentityFields(event, room, url);
-    event.field("error", "unknown_exception").error();
+    logLoadFailure("unknown_exception");
     throw;
   }
 }

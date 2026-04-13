@@ -199,6 +199,30 @@ LogEvent & addPipelineStreamFields(LogEvent & event, const VideoStreamSpec & spe
   return event.field("stream_key", spec.stream_key).field("track_name", spec.track_name);
 }
 
+GstAppSinkPtr requireNamedAppSink(GstElement * pipeline)
+{
+  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(pipeline), kAppSinkName));
+  if (appsink == nullptr) {
+    throw std::runtime_error("Video pipeline did not create the expected appsink.");
+  }
+  if (!GST_IS_APP_SINK(appsink.get())) {
+    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
+  }
+  return GstAppSinkPtr(GST_APP_SINK(appsink.release()));
+}
+
+GstAppSrcPtr requireNamedAppSrc(GstElement * pipeline)
+{
+  GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(pipeline), kVideoAppSrcName));
+  if (appsrc == nullptr) {
+    throw std::runtime_error("Video pipeline did not create the expected appsrc.");
+  }
+  if (!GST_IS_APP_SRC(appsrc.get())) {
+    throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
+  }
+  return GstAppSrcPtr(GST_APP_SRC(appsrc.release()));
+}
+
 VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & frame_sink,
@@ -274,25 +298,10 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_
 
   PipelineHandles handles;
   handles.pipeline = std::move(pipeline);
-
-  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kAppSinkName));
-  if (appsink == nullptr) {
-    throw std::runtime_error("Video pipeline did not create the expected appsink.");
-  }
-  if (!GST_IS_APP_SINK(appsink.get())) {
-    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
-  }
-  handles.appsink.reset(GST_APP_SINK(appsink.release()));
+  handles.appsink = requireNamedAppSink(handles.pipeline.get());
 
   if (require_appsrc) {
-    GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kVideoAppSrcName));
-    if (appsrc == nullptr) {
-      throw std::runtime_error("Video pipeline did not create the expected appsrc.");
-    }
-    if (!GST_IS_APP_SRC(appsrc.get())) {
-      throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
-    }
-    handles.appsrc.reset(GST_APP_SRC(appsrc.release()));
+    handles.appsrc = requireNamedAppSrc(handles.pipeline.get());
   }
 
   // Register callbacks before moving to PLAYING so startup-time samples or bus
@@ -361,9 +370,6 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     return GST_FLOW_ERROR;
   }
 
-  if (buffer == nullptr) {
-    return GST_FLOW_ERROR;
-  }
   const std::int64_t timestamp_us = pts_us.value_or(0);
 
   {
@@ -390,21 +396,21 @@ void VideoPipelineFrameSource::onBusMessage(GstMessage * message)
   switch (GST_MESSAGE_TYPE(message)) {
     case GST_MESSAGE_EOS:
       handlePipelineFailure("eos");
+      return;
+    case GST_MESSAGE_ERROR:
       break;
-    case GST_MESSAGE_ERROR: {
-      GError * raw_error = nullptr;
-      gchar * raw_debug = nullptr;
-      gst_message_parse_error(message, &raw_error, &raw_debug);
-      GErrorPtr error(raw_error);
-      GCharPtr debug(raw_debug);
-      (void)debug;
-      const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-      handlePipelineFailure(reason);
-      break;
-    }
     default:
-      break;
+      return;
   }
+
+  GError * raw_error = nullptr;
+  gchar * raw_debug = nullptr;
+  gst_message_parse_error(message, &raw_error, &raw_debug);
+  GErrorPtr error(raw_error);
+  GCharPtr debug(raw_debug);
+  (void)debug;
+  const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
+  handlePipelineFailure(reason);
 }
 
 void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
@@ -421,14 +427,14 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
   }
   recovery_pending_ = true;
 
+  const RestartConfig * restart_config = restart_config_ ? &*restart_config_ : nullptr;
   const auto restart_delay =
-    restart_config_.has_value() ? restart_config_->restart_delay : std::chrono::milliseconds(0);
+    restart_config != nullptr ? restart_config->restart_delay : std::chrono::milliseconds::zero();
   auto recovery_log = LogEvent(
     kLogger,
-    restart_config_.has_value() ? "video_stream_pipeline_recovery_scheduled"
-                                : "video_stream_pipeline_recovery_disabled");
+    restart_config != nullptr ? "video_stream_pipeline_recovery_scheduled" : "video_stream_pipeline_recovery_disabled");
   addPipelineStreamFields(recovery_log, spec_).field("reason", reason);
-  if (restart_config_.has_value() && restart_delay.count() > 0) {
+  if (restart_delay > std::chrono::milliseconds::zero()) {
     recovery_log.field("restart_delay_ms", restart_delay.count());
   }
   recovery_log.warn();
@@ -437,9 +443,12 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
   // Bus sync handlers run on GStreamer-owned threads. Defer teardown/restart so
   // pipeline destruction never re-enters the bus callback stack.
   std::thread([self, restart_delay]() {
-    if (restart_delay.count() > 0) {
-      std::this_thread::sleep_for(restart_delay);
+    if (restart_delay <= std::chrono::milliseconds::zero()) {
+      self->recoverPipelineAfterFailure();
+      return;
     }
+
+    std::this_thread::sleep_for(restart_delay);
     self->recoverPipelineAfterFailure();
   }).detach();
 }
@@ -460,12 +469,13 @@ void VideoPipelineFrameSource::recoverPipelineAfterFailure()
   // immediately fails during startup or before the next steady-state frame.
   recovery_pending_ = false;
 
-  if (!restart_config_.has_value()) {
+  const RestartConfig * restart_config = restart_config_ ? &*restart_config_ : nullptr;
+  if (restart_config == nullptr) {
     return;
   }
 
   try {
-    startPipelineLocked(restart_config_->pipeline_description, restart_config_->require_appsrc);
+    startPipelineLocked(restart_config->pipeline_description, restart_config->require_appsrc);
   } catch (const std::exception & exc) {
     lifecycle_observer_.onRestartFailed(exc.what());
   }

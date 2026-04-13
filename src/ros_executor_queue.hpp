@@ -80,17 +80,16 @@ public:
       }
     };
 
-    bool rejected = false;
+    bool submitted = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (shutdown_) {
-        rejected = true;
-      } else {
+      if (!shutdown_) {
         tasks_.push(std::move(task));
+        submitted = true;
       }
     }
 
-    if (rejected) {
+    if (!submitted) {
       LogEvent(logger_, "executor_task_rejected")
         .field("reason", "shutdown")
         .warnThrottle(*log_clock_, kRejectedSubmitWarningThrottlePeriod);

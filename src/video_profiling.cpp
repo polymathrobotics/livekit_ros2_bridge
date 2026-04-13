@@ -442,7 +442,7 @@ public:
 
   RecordResult record(std::int64_t timestamp_us, SteadyClock::time_point arrival_time, DurationSamples & gap_ms)
   {
-    if (last_timestamp_us_.has_value()) {
+    if (last_timestamp_us_) {
       if (timestamp_us < *last_timestamp_us_) {
         pending_frames_.clear();
         last_timestamp_us_ = timestamp_us;
@@ -606,10 +606,34 @@ const StageMetric & stageMetric(VideoProfileStage stage)
 std::vector<TraceArg> makeFrameTimestampArgs(std::optional<std::int64_t> frame_timestamp_us)
 {
   std::vector<TraceArg> args;
-  if (frame_timestamp_us.has_value()) {
+  if (frame_timestamp_us) {
     addTraceArg(args, "frame_timestamp_us", *frame_timestamp_us);
   }
   return args;
+}
+
+void recordInstantIfTracingEnabled(
+  const VideoStreamProfiler::Impl & impl, const char * trace_event_name, std::vector<TraceArg> args = {})
+{
+  if (impl.recorder == nullptr) {
+    return;
+  }
+
+  impl.recorder->recordInstant(impl.spec.stream_key, trace_event_name, SteadyClock::now(), std::move(args));
+}
+
+void recordCompleteIfTracingEnabled(
+  const VideoStreamProfiler::Impl & impl,
+  const char * trace_event_name,
+  SteadyClock::time_point start_time,
+  std::chrono::microseconds duration,
+  std::vector<TraceArg> args = {})
+{
+  if (impl.recorder == nullptr) {
+    return;
+  }
+
+  impl.recorder->recordComplete(impl.spec.stream_key, trace_event_name, start_time, duration, std::move(args));
 }
 
 }  // namespace
@@ -621,23 +645,16 @@ const char * videoProfileStageToString(VideoProfileStage stage)
 
 bool VideoStreamProfileSummary::hasActivity() const
 {
-  if (
-    frames_in > 0 || frames_sampled > 0 || frames_captured > 0 || pipeline_start_count > 0 ||
-    pipeline_failure_count > 0 || restart_failed_count > 0 || push_failed_count > 0 || sample_unpack_failed_count > 0 ||
-    capture_failed_count > 0 || track_publish_count > 0 || track_republish_count > 0 || track_unpublish_count > 0 ||
-    source_timestamp_regression_count > 0 || ingress_arrival_gap_ms.hasSamples() ||
-    output_arrival_gap_ms.hasSamples() || source_timestamp_gap_ms.hasSamples() || appsrc_to_sample_ms.hasSamples() ||
-    source_to_output_submit_ms.hasSamples())
-  {
-    return true;
-  }
-
-  for (const auto & metric : kStageMetrics) {
-    if ((this->*(metric.summary)).hasSamples()) {
-      return true;
-    }
-  }
-  return false;
+  return frames_in > 0 || frames_sampled > 0 || frames_captured > 0 || pipeline_start_count > 0 ||
+         pipeline_failure_count > 0 || restart_failed_count > 0 || push_failed_count > 0 ||
+         sample_unpack_failed_count > 0 || capture_failed_count > 0 || track_publish_count > 0 ||
+         track_republish_count > 0 || track_unpublish_count > 0 || source_timestamp_regression_count > 0 ||
+         ingress_arrival_gap_ms.hasSamples() || output_arrival_gap_ms.hasSamples() ||
+         source_timestamp_gap_ms.hasSamples() || appsrc_to_sample_ms.hasSamples() ||
+         source_to_output_submit_ms.hasSamples() ||
+         std::any_of(kStageMetrics.begin(), kStageMetrics.end(), [this](const auto & metric) {
+           return (this->*(metric.summary)).hasSamples();
+         });
 }
 
 VideoStreamProfiler::StageTimer::StageTimer(
@@ -695,19 +712,16 @@ void VideoStreamProfiler::noteIngress(
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_in++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kIngressTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(source_timestamp_us));
-  }
+  recordInstantIfTracingEnabled(*impl_, kIngressTraceEventName, makeFrameTimestampArgs(source_timestamp_us));
 
-  if (impl_->last_ingress_arrival.has_value()) {
+  if (impl_->last_ingress_arrival) {
     const auto gap_us =
       std::chrono::duration_cast<std::chrono::microseconds>(arrival_time - *impl_->last_ingress_arrival);
     impl_->ingress_arrival_gap_ms.addDurationMs(static_cast<double>(gap_us.count()) / 1000.0);
   }
   impl_->last_ingress_arrival = arrival_time;
 
-  if (!source_timestamp_us.has_value() || *source_timestamp_us < 0) {
+  if (!source_timestamp_us || *source_timestamp_us < 0) {
     // Drop pending matches once source timestamps stop being usable.
     impl_->source_timestamp_regression_count++;
     impl_->ingress_matcher.reset();
@@ -728,31 +742,22 @@ void VideoStreamProfiler::noteSample(std::optional<std::int64_t> frame_timestamp
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_sampled++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kSampledTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(frame_timestamp_us));
-  }
+  recordInstantIfTracingEnabled(*impl_, kSampledTraceEventName, makeFrameTimestampArgs(frame_timestamp_us));
 
-  if (!frame_timestamp_us.has_value() || *frame_timestamp_us < 0) {
+  if (!frame_timestamp_us || *frame_timestamp_us < 0) {
     return;
   }
 
   const auto ingress_time = impl_->ingress_matcher.match(*frame_timestamp_us, IngressMatcher::MatchMode::kKeep);
-  if (!ingress_time.has_value()) {
+  if (!ingress_time) {
     return;
   }
 
   const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(sample_ready_time - *ingress_time);
   impl_->appsrc_to_sample_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
 
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordComplete(
-      impl_->spec.stream_key,
-      kSourceToSampleReadyFieldName,
-      *ingress_time,
-      latency_us,
-      makeFrameTimestampArgs(frame_timestamp_us));
-  }
+  recordCompleteIfTracingEnabled(
+    *impl_, kSourceToSampleReadyFieldName, *ingress_time, latency_us, makeFrameTimestampArgs(frame_timestamp_us));
 }
 
 void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestamp_us)
@@ -761,38 +766,29 @@ void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestam
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->frames_captured++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kCapturedTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(frame_timestamp_us));
-  }
+  recordInstantIfTracingEnabled(*impl_, kCapturedTraceEventName, makeFrameTimestampArgs(frame_timestamp_us));
 
-  if (impl_->last_output_arrival.has_value()) {
+  if (impl_->last_output_arrival) {
     const auto gap_us =
       std::chrono::duration_cast<std::chrono::microseconds>(capture_complete_time - *impl_->last_output_arrival);
     impl_->output_arrival_gap_ms.addDurationMs(static_cast<double>(gap_us.count()) / 1000.0);
   }
   impl_->last_output_arrival = capture_complete_time;
 
-  if (!frame_timestamp_us.has_value() || *frame_timestamp_us < 0) {
+  if (!frame_timestamp_us || *frame_timestamp_us < 0) {
     return;
   }
 
   const auto ingress_time = impl_->ingress_matcher.match(*frame_timestamp_us, IngressMatcher::MatchMode::kConsume);
-  if (!ingress_time.has_value()) {
+  if (!ingress_time) {
     return;
   }
 
   const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(capture_complete_time - *ingress_time);
   impl_->source_to_output_submit_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
 
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordComplete(
-      impl_->spec.stream_key,
-      kSourceToLiveKitSubmitFieldName,
-      *ingress_time,
-      latency_us,
-      makeFrameTimestampArgs(frame_timestamp_us));
-  }
+  recordCompleteIfTracingEnabled(
+    *impl_, kSourceToLiveKitSubmitFieldName, *ingress_time, latency_us, makeFrameTimestampArgs(frame_timestamp_us));
 }
 
 void VideoStreamProfiler::notePipelineStart()
@@ -800,9 +796,7 @@ void VideoStreamProfiler::notePipelineStart()
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->pipeline_start_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(impl_->spec.stream_key, kPipelineStartTraceEventName, SteadyClock::now());
-  }
+  recordInstantIfTracingEnabled(*impl_, kPipelineStartTraceEventName);
 }
 
 void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
@@ -813,10 +807,7 @@ void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->pipeline_failure_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kPipelineFailureTraceEventName, SteadyClock::now(), std::move(args));
-  }
+  recordInstantIfTracingEnabled(*impl_, kPipelineFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteRestartFailed(const std::string & error)
@@ -827,10 +818,7 @@ void VideoStreamProfiler::noteRestartFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->restart_failed_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kRestartFailureTraceEventName, SteadyClock::now(), std::move(args));
-  }
+  recordInstantIfTracingEnabled(*impl_, kRestartFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::notePushFailed(const std::string & error)
@@ -841,10 +829,7 @@ void VideoStreamProfiler::notePushFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->push_failed_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kPushFailureTraceEventName, SteadyClock::now(), std::move(args));
-  }
+  recordInstantIfTracingEnabled(*impl_, kPushFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
@@ -855,10 +840,7 @@ void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->sample_unpack_failed_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kSampleUnpackFailureTraceEventName, SteadyClock::now(), std::move(args));
-  }
+  recordInstantIfTracingEnabled(*impl_, kSampleUnpackFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
@@ -869,10 +851,7 @@ void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->capture_failed_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key, kCaptureFailureTraceEventName, SteadyClock::now(), std::move(args));
-  }
+  recordInstantIfTracingEnabled(*impl_, kCaptureFailureTraceEventName, std::move(args));
 }
 
 void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republished)
@@ -884,18 +863,14 @@ void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republi
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
+  std::size_t * publish_count = &impl_->track_publish_count;
+  const char * trace_event_name = kTrackPublishedTraceEventName;
   if (republished) {
-    impl_->track_republish_count++;
-  } else {
-    impl_->track_publish_count++;
+    publish_count = &impl_->track_republish_count;
+    trace_event_name = kTrackRepublishedTraceEventName;
   }
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(
-      impl_->spec.stream_key,
-      republished ? kTrackRepublishedTraceEventName : kTrackPublishedTraceEventName,
-      SteadyClock::now(),
-      std::move(args));
-  }
+  ++(*publish_count);
+  recordInstantIfTracingEnabled(*impl_, trace_event_name, std::move(args));
 }
 
 void VideoStreamProfiler::noteTrackUnpublish()
@@ -903,9 +878,7 @@ void VideoStreamProfiler::noteTrackUnpublish()
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   impl_->track_unpublish_count++;
-  if (impl_->recorder != nullptr) {
-    impl_->recorder->recordInstant(impl_->spec.stream_key, kTrackUnpublishingTraceEventName, SteadyClock::now());
-  }
+  recordInstantIfTracingEnabled(*impl_, kTrackUnpublishingTraceEventName);
 }
 
 void VideoStreamProfiler::recordStage(
@@ -920,18 +893,12 @@ void VideoStreamProfiler::recordStage(
   std::lock_guard<std::mutex> lock(impl_->mutex);
   impl_->has_activity = true;
   (impl_.get()->*(metric.samples)).addDurationMs(duration_ms);
-
-  if (impl_->recorder == nullptr) {
-    return;
-  }
-
-  auto args = makeFrameTimestampArgs(frame_timestamp_us);
-  impl_->recorder->recordComplete(
-    impl_->spec.stream_key,
+  recordCompleteIfTracingEnabled(
+    *impl_,
     metric.metric_name,
     start_time.value_or(SteadyClock::now() - duration),
     duration,
-    std::move(args));
+    makeFrameTimestampArgs(frame_timestamp_us));
 }
 
 std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
@@ -1009,8 +976,9 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
   auto [it, inserted] = impl_->profilers.try_emplace(spec.stream_key);
-  if (inserted || it->second == nullptr) {
-    auto profiler = std::make_shared<VideoStreamProfiler>(spec);
+  auto & profiler = it->second;
+  if (inserted || profiler == nullptr) {
+    profiler = std::make_shared<VideoStreamProfiler>(spec);
     profiler->impl_->recorder = impl_->recorder;
     LogEvent event(impl_->logger, "video_profile_stream_registered");
     addProfilerIdentityFields(event, spec);
@@ -1023,14 +991,18 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
       impl_->recorder->recordInstant(
         spec.stream_key, kStreamRegisteredTraceEventName, SteadyClock::now(), std::move(args));
     }
-    it->second = std::move(profiler);
-  } else if (hasProfilerIdentityMismatch(it->second->impl_->spec, spec)) {
-    LogEvent event(impl_->logger, "video_profile_profiler_spec_mismatch");
-    event.field("stream_key", spec.stream_key);
-    addProfilerIdentityMismatchFields(event, it->second->impl_->spec, spec);
-    event.warn();
+    return profiler;
   }
-  return it->second;
+
+  if (!hasProfilerIdentityMismatch(profiler->impl_->spec, spec)) {
+    return profiler;
+  }
+
+  LogEvent event(impl_->logger, "video_profile_profiler_spec_mismatch");
+  event.field("stream_key", spec.stream_key);
+  addProfilerIdentityMismatchFields(event, profiler->impl_->spec, spec);
+  event.warn();
+  return profiler;
 }
 
 std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::takeSummaries()
@@ -1042,18 +1014,21 @@ std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::takeSummaries()
     // taking each profiler's own mutex inside VideoStreamProfiler::takeSummary().
     profilers.reserve(impl_->profilers.size());
     for (const auto & entry : impl_->profilers) {
-      if (entry.second != nullptr) {
-        profilers.push_back(entry.second);
+      if (entry.second == nullptr) {
+        continue;
       }
+      profilers.push_back(entry.second);
     }
   }
 
   std::vector<VideoStreamProfileSummary> summaries;
   summaries.reserve(profilers.size());
   for (const auto & profiler : profilers) {
-    if (const auto summary = profiler->takeSummary(); summary.has_value()) {
-      summaries.push_back(*summary);
+    const auto summary = profiler->takeSummary();
+    if (!summary) {
+      continue;
     }
+    summaries.push_back(*summary);
   }
   return summaries;
 }

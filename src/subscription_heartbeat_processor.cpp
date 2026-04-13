@@ -90,22 +90,19 @@ SubscriptionHeartbeatProcessor::resolveHeartbeatLease(
   }
 
   auto [it, inserted] = session_leases_.try_emplace(*session_id, SessionLease{requester_identity, lease_expiry});
-  if (inserted) {
-    return ResolvedHeartbeatLease{requester_identity, session_id, lease_expiry};
-  }
-
-  if (it->second.requester_identity != requester_identity) {
+  auto & session_lease = it->second;
+  if (!inserted && session_lease.requester_identity != requester_identity) {
     if (const std::size_t count = session_conflict_throttle_.recordAndTakePendingCount(); count > 0U) {
       auto event = LogEvent(kLogger, "heartbeat_client_session_conflict");
       appendRequesterSessionFields(event, requester_identity, session_id)
-        .field("existing_requester_identity", it->second.requester_identity)
+        .field("existing_requester_identity", session_lease.requester_identity)
         .field("count", count)
         .warn();
     }
     return std::nullopt;
   }
 
-  it->second.expiry = lease_expiry;
+  session_lease.expiry = lease_expiry;
   return ResolvedHeartbeatLease{requester_identity, session_id, lease_expiry};
 }
 

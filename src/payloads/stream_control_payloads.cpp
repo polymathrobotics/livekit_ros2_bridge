@@ -129,12 +129,11 @@ PreferredIntervalParseResult parsePreferredIntervalMs(const nlohmann::json & ent
   }
 
   const auto interval = clampJsonIntegerToInt(*interval_field, "delivery_preferences.interval_ms must be an integer");
-  const int interval_ms = interval.value;
-  if (interval_ms == 0) {
+  if (interval.value == 0) {
     return {};
   }
 
-  return {interval_ms, interval.boundary};
+  return {interval.value, interval.boundary};
 }
 
 SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
@@ -155,14 +154,19 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
     throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
-  std::string name = kind == SubscriptionTargetKind::Topic
-                       ? normalizeRosResourceName(name_field->get_ref<const std::string &>())
-                       : trim(name_field->get_ref<const std::string &>());
+  const auto & raw_name = name_field->get_ref<const std::string &>();
+  if (kind == SubscriptionTargetKind::Topic) {
+    std::string name = normalizeRosResourceName(raw_name);
+    if (name.empty()) {
+      throw std::invalid_argument("heartbeat subscription topic name must normalize to a non-empty name");
+    }
+
+    return {kind, std::move(name)};
+  }
+
+  std::string name = trim(raw_name);
   if (name.empty()) {
-    throw std::invalid_argument(
-      kind == SubscriptionTargetKind::Topic
-        ? "heartbeat subscription topic name must normalize to a non-empty name"
-        : "heartbeat subscription configured_source name must trim to a non-empty name");
+    throw std::invalid_argument("heartbeat subscription configured_source name must trim to a non-empty name");
   }
 
   return {kind, std::move(name)};
@@ -218,10 +222,13 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
       continue;
     }
 
-    auto & current = heartbeat.subscriptions[it->second];
-    if (!current.preferred_interval_ms.has_value() || *demand.preferred_interval_ms < *current.preferred_interval_ms) {
-      current.preferred_interval_ms = *demand.preferred_interval_ms;
+    const int requested_interval = *demand.preferred_interval_ms;
+    auto & current_interval = heartbeat.subscriptions[it->second].preferred_interval_ms;
+    if (current_interval.has_value() && requested_interval >= *current_interval) {
+      continue;
     }
+
+    current_interval = requested_interval;
   }
 
   return heartbeat;
@@ -229,6 +236,17 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 
 nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status)
 {
+  if (
+    status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
+  {
+    LogEvent(kLogger, "subscription_status_serialize_failed")
+      .field("kind", subscriptionTargetKindString(status.target.kind))
+      .field("name", status.target.name)
+      .field("delivery_kind", static_cast<int>(status.delivery_kind))
+      .error();
+    throw std::invalid_argument("subscription status delivery kind is invalid");
+  }
+
   nlohmann::json body = {
     {"kind", subscriptionTargetKindString(status.target.kind)},
     {"name", status.target.name},
@@ -242,28 +260,19 @@ nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status)
     body["interface_type"] = status.interface_type;
   }
 
-  switch (status.delivery_kind) {
-    case SubscriptionDeliveryKind::kVideo:
-      body["delivery"] = {
-        {"kind", subscriptionDeliveryKindString(status.delivery_kind)}, {"track_name", status.track_name}};
-      return body;
-    case SubscriptionDeliveryKind::kData:
-      // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
-      // LiveKit data track, so the content type is fixed by protocol rather than caller input.
-      body["delivery"] = {
-        {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
-        {"track_name", status.track_name},
-        {"content_type", protocol::kDataContentTypeCdr},
-        {"interval_ms", status.applied_interval_ms}};
-      return body;
+  nlohmann::json delivery = {
+    {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
+    {"track_name", status.track_name},
+  };
+  if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
+    // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
+    // LiveKit data track, so the content type is fixed by protocol rather than caller input.
+    delivery["content_type"] = protocol::kDataContentTypeCdr;
+    delivery["interval_ms"] = status.applied_interval_ms;
   }
 
-  LogEvent(kLogger, "subscription_status_serialize_failed")
-    .field("kind", subscriptionTargetKindString(status.target.kind))
-    .field("name", status.target.name)
-    .field("delivery_kind", static_cast<int>(status.delivery_kind))
-    .error();
-  throw std::invalid_argument("subscription status delivery kind is invalid");
+  body["delivery"] = std::move(delivery);
+  return body;
 }
 }  // namespace stream_control_payloads
 

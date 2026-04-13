@@ -33,6 +33,37 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("video_stream_instance");
 
+std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
+  rclcpp::Node & node,
+  const VideoStreamSpec & spec,
+  const SubscriptionQosConfig * qos_config,
+  VideoTrackPublisher & publisher,
+  VideoStreamLifecycleObserver & observer,
+  const std::shared_ptr<VideoStreamProfiler> & profiler)
+{
+  if (spec.input_kind == VideoInputKind::ConfiguredSource) {
+    return std::make_shared<ConfiguredSourceVideoFrameSource>(spec, publisher, observer, profiler);
+  }
+  if (spec.input_kind == VideoInputKind::RosTopic) {
+    if (spec.ingest_mode == kRawImageIngestMode) {
+      return std::make_shared<RawRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
+    }
+    if (spec.ingest_mode == kCompressedImageIngestMode) {
+      return std::make_shared<CompressedRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
+    }
+  }
+
+  LogEvent(kLogger, "video_stream_start_failed")
+    .field("stream_key", spec.stream_key)
+    .field("input_kind", videoInputKindToString(spec.input_kind))
+    .field("ingest_mode", spec.ingest_mode)
+    .field("reason", "unsupported_input")
+    .warn();
+  throw std::runtime_error(
+    "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec.input_kind) + "/" +
+    spec.ingest_mode + "'.");
+}
+
 }  // namespace
 
 VideoStreamInstance::VideoStreamInstance(
@@ -165,24 +196,7 @@ std::string VideoStreamInstance::start()
     }
 
     if (!source_) {
-      if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
-        source_ = std::make_shared<ConfiguredSourceVideoFrameSource>(spec_, *publisher_, *this, profiler_);
-      } else if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
-        source_ = std::make_shared<RawRosVideoFrameSource>(node_, spec_, qos_config_, *publisher_, *this, profiler_);
-      } else if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
-        source_ =
-          std::make_shared<CompressedRosVideoFrameSource>(node_, spec_, qos_config_, *publisher_, *this, profiler_);
-      } else {
-        LogEvent(kLogger, "video_stream_start_failed")
-          .field("stream_key", spec_.stream_key)
-          .field("input_kind", videoInputKindToString(spec_.input_kind))
-          .field("ingest_mode", spec_.ingest_mode)
-          .field("reason", "unsupported_input")
-          .warn();
-        throw std::runtime_error(
-          "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec_.input_kind) + "/" +
-          spec_.ingest_mode + "'.");
-      }
+      source_ = makeVideoFrameSource(node_, spec_, qos_config_, *publisher_, *this, profiler_);
     }
     // Hold a shared ref across the unlocked start() call so concurrent shutdown can
     // detach source_ without destroying the source underneath this invocation.

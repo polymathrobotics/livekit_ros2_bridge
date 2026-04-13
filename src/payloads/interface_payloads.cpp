@@ -55,39 +55,35 @@ namespace interface_payloads
 
 std::vector<std::string> parse(const std::string & payload)
 {
-  const auto body = [&payload]() {
-    try {
-      return parseJsonObject(
-        payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
-    } catch (const std::invalid_argument & exc) {
-      throw InterfacePayloadInvalidArgument("payload", exc.what());
-    }
-  }();
+  Json body;
+  try {
+    body = parseJsonObject(
+      payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
+  } catch (const std::invalid_argument & exc) {
+    throw InterfacePayloadInvalidArgument("payload", exc.what());
+  }
 
-  auto interface_types = [&body]() {
-    try {
-      return parseRequiredNonEmptyTrimmedStringArrayField(
-        body,
-        "interface_types",
-        "interface_types must be an array",
-        "interface_types entries must be strings",
-        "interface_types entries must not be empty",
-        "interface_types must not be empty");
-    } catch (const std::invalid_argument & exc) {
-      throw InterfacePayloadInvalidArgument("interface_types", exc.what());
-    }
-  }();
-
-  return interface_types;
+  try {
+    return parseRequiredNonEmptyTrimmedStringArrayField(
+      body,
+      "interface_types",
+      "interface_types must be an array",
+      "interface_types entries must be strings",
+      "interface_types entries must not be empty",
+      "interface_types must not be empty");
+  } catch (const std::invalid_argument & exc) {
+    throw InterfacePayloadInvalidArgument("interface_types", exc.what());
+  }
 }
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 {
-  if (const auto * interface_error = dynamic_cast<const InterfacePayloadInvalidArgument *>(&exc)) {
-    return interface_error->fieldName();
+  const auto * interface_error = dynamic_cast<const InterfacePayloadInvalidArgument *>(&exc);
+  if (interface_error == nullptr) {
+    return std::nullopt;
   }
 
-  return std::nullopt;
+  return interface_error->fieldName();
 }
 
 std::string serialize(const std::vector<InterfaceDefinition> & definitions)

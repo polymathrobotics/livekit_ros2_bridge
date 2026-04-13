@@ -32,8 +32,7 @@ void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
 {
   try {
     fn();
-    ADD_FAILURE() << "Expected std::invalid_argument";
-    return;
+    FAIL() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     EXPECT_EQ(error.what(), std::string(expected_message));
   }
@@ -49,8 +48,7 @@ void expectInvalidRequestField(Fn && fn, const char * expected_field)
 {
   try {
     fn();
-    ADD_FAILURE() << "Expected std::invalid_argument";
-    return;
+    FAIL() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     ASSERT_EQ(service_call_payloads::invalidRequestField(error), std::string_view(expected_field));
   }

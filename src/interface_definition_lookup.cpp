@@ -94,6 +94,7 @@ struct InterfaceTypeParts
     if (first_slash == std::string::npos) {
       throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
     }
+
     const auto second_slash = interface_type.find('/', first_slash + 1);
     if (second_slash == std::string::npos) {
       throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
@@ -147,16 +148,18 @@ void notifyLookupAttempt(const std::string & interface_type)
     std::lock_guard<std::mutex> lock(attempt_hook_mutex);
     hook = attempt_hook;
   }
-  if (hook) {
-    hook(interface_type);
+  if (!hook) {
+    return;
   }
+
+  hook(interface_type);
 }
 
 ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interface_type)
 {
   // Keep the uncached lookup path together so traversal only has to reason about ordering and
   // de-duplication.
-  if (const auto failure = lookupFailureCache().get(interface_type); failure.has_value()) {
+  if (const auto failure = lookupFailureCache().get(interface_type)) {
     std::rethrow_exception(*failure);
   }
 
@@ -217,11 +220,10 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
   while (std::getline(stream, line)) {
     line = line.substr(0, line.find('#'));
     const auto first_non_space = line.find_first_not_of(" \t");
-    if (first_non_space == std::string::npos) {
-      continue;
-    }
-
-    if (line.compare(first_non_space, sizeof(kServiceDefinitionSeparator) - 1U, kServiceDefinitionSeparator) == 0) {
+    if (
+      first_non_space == std::string::npos ||
+      line.compare(first_non_space, sizeof(kServiceDefinitionSeparator) - 1U, kServiceDefinitionSeparator) == 0)
+    {
       continue;
     }
 
@@ -243,19 +245,15 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
       continue;
     }
 
+    std::string dependency_type = base_type;
     const auto first_slash = base_type.find('/');
     if (first_slash == std::string::npos) {
-      dependencies.push_back(package + "/msg/" + base_type);
-      continue;
+      dependency_type = package + "/msg/" + base_type;
+    } else if (base_type.find('/', first_slash + 1) == std::string::npos) {
+      dependency_type = base_type.substr(0, first_slash) + "/msg/" + base_type.substr(first_slash + 1);
     }
 
-    const auto second_slash = base_type.find('/', first_slash + 1);
-    if (second_slash != std::string::npos) {
-      dependencies.push_back(base_type);
-      continue;
-    }
-
-    dependencies.push_back(base_type.substr(0, first_slash) + "/msg/" + base_type.substr(first_slash + 1));
+    dependencies.push_back(dependency_type);
   }
 
   return dependencies;
@@ -267,10 +265,9 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
 void collectInterfaceDefinitions(
   const std::string & interface_type, std::set<std::string> & visited, std::vector<InterfaceDefinition> & definitions)
 {
-  if (visited.count(interface_type) > 0) {
+  if (!visited.insert(interface_type).second) {
     return;
   }
-  visited.insert(interface_type);
 
   const ResolvedInterfaceDefinition resolved = loadInterfaceDefinition(interface_type);
   definitions.push_back({interface_type, kDefinitionFormatRos2Msg, resolved.definition});

@@ -38,6 +38,11 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
+bool frameLayoutsMatch(const FrameLayout & lhs, const FrameLayout & rhs)
+{
+  return lhs.width == rhs.width && lhs.height == rhs.height && lhs.format == rhs.format && lhs.stride == rhs.stride;
+}
+
 GstVideoFormat gstFormatForRosEncoding(const std::string & encoding)
 {
   // Keep this intentionally limited to known raw formats instead of
@@ -83,10 +88,7 @@ std::optional<CompressedImageCodec> parseCompressedImageCodec(const std::string 
 
 std::optional<std::int64_t> timestampUsFromRosStamp(const builtin_interfaces::msg::Time & stamp)
 {
-  if (stamp.sec < 0) {
-    return std::nullopt;
-  }
-  if (stamp.sec == 0 && stamp.nanosec == 0U) {
+  if (stamp.sec < 0 || (stamp.sec == 0 && stamp.nanosec == 0U)) {
     return std::nullopt;
   }
   return static_cast<std::int64_t>(stamp.sec) * 1000000LL + static_cast<std::int64_t>(stamp.nanosec / 1000U);
@@ -219,22 +221,24 @@ void RawRosVideoFrameSource::start()
     throw std::runtime_error("Video stream is shut down.");
   }
 
-  if (!subscription_) {
-    const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
-    ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, spec_.ros_topic, base_qos, qos_config_);
-    logResolvedSubscriptionQos(spec_, qos);
-
-    // The ROS subscription may still have queued callbacks during shutdown; the
-    // weak ref prevents that queue from extending this source's lifetime.
-    auto weak_self =
-      std::weak_ptr<RawRosVideoFrameSource>(std::static_pointer_cast<RawRosVideoFrameSource>(shared_from_this()));
-    subscription_ = node_.create_subscription<sensor_msgs::msg::Image>(
-      spec_.ros_topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
-        if (const auto self = weak_self.lock()) {
-          self->onImage(image);
-        }
-      });
+  if (subscription_) {
+    return;
   }
+
+  const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
+  ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, spec_.ros_topic, base_qos, qos_config_);
+  logResolvedSubscriptionQos(spec_, qos);
+
+  // The ROS subscription may still have queued callbacks during shutdown; the
+  // weak ref prevents that queue from extending this source's lifetime.
+  auto weak_self =
+    std::weak_ptr<RawRosVideoFrameSource>(std::static_pointer_cast<RawRosVideoFrameSource>(shared_from_this()));
+  subscription_ = node_.create_subscription<sensor_msgs::msg::Image>(
+    spec_.ros_topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
+      if (const auto self = weak_self.lock(); self) {
+        self->onImage(image);
+      }
+    });
 }
 
 void RawRosVideoFrameSource::shutdown()
@@ -284,18 +288,18 @@ void RawRosVideoFrameSource::onImage(const sensor_msgs::msg::Image::ConstSharedP
     layout.stride = image->step;
     // Raw appsrc caps are fixed when the pipeline starts. A frame-shape or
     // stride change is treated as a stream reconfiguration and forces rebuild.
-    const bool layout_changed =
-      frame_layout_.has_value() && (frame_layout_->width != layout.width || frame_layout_->height != layout.height ||
-                                    frame_layout_->format != layout.format || frame_layout_->stride != layout.stride);
-    if (layout_changed) {
+    const bool layout_matches_existing = frame_layout_.has_value() && frameLayoutsMatch(*frame_layout_, layout);
+    if (layout_matches_existing && pipeline_ != nullptr) {
+      pushLocked(*image, layout);
+      return;
+    }
+    if (frame_layout_.has_value() && !layout_matches_existing) {
       logRawInputLayoutChanged(spec_, *frame_layout_, layout);
     }
-    if (!frame_layout_.has_value() || layout_changed || pipeline_ == nullptr) {
-      auto handles = takePipelineLocked();
-      teardown(handles.pipeline, handles.appsrc, handles.appsink);
-      startLocked(layout);
-    }
 
+    auto handles = takePipelineLocked();
+    teardown(handles.pipeline, handles.appsrc, handles.appsink);
+    startLocked(layout);
     pushLocked(*image, layout);
   } catch (const std::exception & exc) {
     // Keep the ROS subscription alive after a frame-handling failure so the
@@ -380,22 +384,24 @@ void CompressedRosVideoFrameSource::start()
     throw std::runtime_error("Video stream is shut down.");
   }
 
-  if (!subscription_) {
-    const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
-    ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, spec_.ros_topic, base_qos, qos_config_);
-    logResolvedSubscriptionQos(spec_, qos);
-
-    // The ROS subscription may still have queued callbacks during shutdown; the
-    // weak ref prevents that queue from extending this source's lifetime.
-    auto weak_self = std::weak_ptr<CompressedRosVideoFrameSource>(
-      std::static_pointer_cast<CompressedRosVideoFrameSource>(shared_from_this()));
-    subscription_ = node_.create_subscription<sensor_msgs::msg::CompressedImage>(
-      spec_.ros_topic, qos.qos, [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
-        if (const auto self = weak_self.lock()) {
-          self->onImage(image);
-        }
-      });
+  if (subscription_) {
+    return;
   }
+
+  const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
+  ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, spec_.ros_topic, base_qos, qos_config_);
+  logResolvedSubscriptionQos(spec_, qos);
+
+  // The ROS subscription may still have queued callbacks during shutdown; the
+  // weak ref prevents that queue from extending this source's lifetime.
+  auto weak_self = std::weak_ptr<CompressedRosVideoFrameSource>(
+    std::static_pointer_cast<CompressedRosVideoFrameSource>(shared_from_this()));
+  subscription_ = node_.create_subscription<sensor_msgs::msg::CompressedImage>(
+    spec_.ros_topic, qos.qos, [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
+      if (const auto self = weak_self.lock(); self) {
+        self->onImage(image);
+      }
+    });
 }
 
 void CompressedRosVideoFrameSource::shutdown()
@@ -440,16 +446,17 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
 
     // The decoder chain differs per codec (`jpegdec` vs `pngdec`), so the
     // pipeline is recreated whenever the advertised codec changes.
-    const bool codec_changed = codec_.has_value() && codec_ != codec;
-    if (codec_changed) {
+    if (codec_ == codec && pipeline_ != nullptr) {
+      pushLocked(*image);
+      return;
+    }
+    if (codec_.has_value() && codec_ != codec) {
       logCompressedInputCodecChanged(spec_, *codec_, *codec);
     }
-    if (codec_ != codec || pipeline_ == nullptr) {
-      auto handles = takePipelineLocked();
-      teardown(handles.pipeline, handles.appsrc, handles.appsink);
-      startLocked(*codec);
-    }
 
+    auto handles = takePipelineLocked();
+    teardown(handles.pipeline, handles.appsrc, handles.appsink);
+    startLocked(*codec);
     pushLocked(*image);
   } catch (const std::exception & exc) {
     // Keep the ROS subscription alive after a frame-handling failure so the

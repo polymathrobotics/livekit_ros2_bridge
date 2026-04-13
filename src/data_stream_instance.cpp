@@ -106,7 +106,7 @@ void DataStreamInstance::setSuppressionIntervalMs(int interval_ms)
 void DataStreamInstance::start(std::size_t generation)
 {
   const State previous_state = publication_.current();
-  if (previous_state != State::kNone && previous_state != State::kFailed) {
+  if (!publication_.canStart()) {
     return;
   }
 
@@ -215,6 +215,7 @@ void DataStreamInstance::subscribe()
       if (message == nullptr) {
         return;
       }
+
       if (!callback_gate.tryEnter(callback_generation)) {
         return;
       }

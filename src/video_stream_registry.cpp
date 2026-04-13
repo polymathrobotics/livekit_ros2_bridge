@@ -83,13 +83,11 @@ void VideoStreamRegistry::stop(const std::string & stream_key)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = instances_.find(stream_key);
-    if (it != instances_.end()) {
-      instance = std::move(it->second);
-      instances_.erase(it);
+    if (it == instances_.end()) {
+      return;
     }
-  }
-  if (instance == nullptr) {
-    return;
+    instance = std::move(it->second);
+    instances_.erase(it);
   }
 
   // Erase first so a concurrent restart gets a fresh registry entry. The detached shared_ptr keeps
@@ -100,25 +98,26 @@ void VideoStreamRegistry::stop(const std::string & stream_key)
 void VideoStreamRegistry::shutdown()
 {
   std::vector<std::shared_ptr<VideoStreamInstance>> instances;
-  std::size_t stream_count = 0;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
-    // Mark shutdown before detaching entries so concurrent `start()` calls fail during teardown.
+    // Mark shutdown before detaching entries so concurrent `start()` calls fail during teardown,
+    // even if there is nothing left to stop.
     is_shutdown_ = true;
-    stream_count = instances_.size();
-    instances.reserve(stream_count);
+    instances.reserve(instances_.size());
     for (auto & entry : instances_) {
       instances.push_back(std::move(entry.second));
     }
     instances_.clear();
   }
 
-  if (stream_count > 0) {
-    LogEvent(kLogger, "video_stream_registry_shutdown_begin").field("stream_count", stream_count).info();
+  if (instances.empty()) {
+    return;
   }
+
+  LogEvent(kLogger, "video_stream_registry_shutdown_begin").field("stream_count", instances.size()).info();
 
   // Preserve ownership after clearing the map because shutdown touches external ROS and LiveKit
   // state.

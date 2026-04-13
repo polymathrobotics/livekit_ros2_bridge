@@ -132,7 +132,7 @@ const char * errorReason(std::uint32_t code)
     event.field("request_field", *request_field);
   }
 
-  if (service.has_value()) {
+  if (service) {
     event.field("service", *service);
   }
   event.field("error", exc.what());
@@ -167,16 +167,17 @@ std::vector<ResourceListEntry> filterResourceEntries(
       continue;
     }
     const auto & type = types.front();
-    const bool matches_query = !request.query.has_value() || name.find(*request.query) != std::string::npos ||
-                               type.find(*request.query) != std::string::npos;
-    if (!matches_query) {
-      continue;
+    if (request.query) {
+      const auto & query = *request.query;
+      if (name.find(query) == std::string::npos && type.find(query) == std::string::npos) {
+        continue;
+      }
     }
 
     entries.push_back({name, type});
     // Apply the page limit after policy/query filtering so denied resources do
     // not consume caller-visible capacity.
-    if (request.limit.has_value() && entries.size() >= *request.limit) {
+    if (request.limit && entries.size() >= *request.limit) {
       break;
     }
   }
@@ -225,11 +226,9 @@ bool RpcRouter::registerRpcs(RoomConnection & room_connection)
 {
   bool all_registered = true;
   const auto register_method = [&](const char * method_name, RpcHandler handler) {
-    if (!room_connection.registerRpc(method_name, std::move(handler))) {
-      // Registration is best-effort rather than transactional so one failure
-      // does not hide other methods that can still be served on this connection.
-      all_registered = false;
-    }
+    // Registration is best-effort rather than transactional so one failure
+    // does not hide other methods that can still be served on this connection.
+    all_registered = room_connection.registerRpc(method_name, std::move(handler)) && all_registered;
   };
 
   register_method(
@@ -306,9 +305,10 @@ std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invoca
 
       for (const auto & interface_type : interface_types) {
         for (auto & definition : lookupInterfaceDefinitions(interface_type)) {
-          if (seen.insert(definition.interface_type).second) {
-            definitions.push_back(std::move(definition));
+          if (!seen.insert(definition.interface_type).second) {
+            continue;
           }
+          definitions.push_back(std::move(definition));
         }
       }
       return interface_payloads::serialize(definitions);

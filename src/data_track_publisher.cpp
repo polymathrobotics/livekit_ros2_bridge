@@ -90,23 +90,25 @@ void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
   // Copy into an owning buffer before handing the payload to LiveKit; callers usually pass ROS
   // serialization storage whose lifetime ends with the current subscription callback.
   auto result = room_connection_.tryPushDataTrack(published_track_, std::vector<std::uint8_t>(cdr, cdr + size));
-  if (!result) {
-    const auto & error = result.error();
-    if (error.code == DataTrackPushErrorCode::kQueueFull) {
-      // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
-      // subscription callback non-blocking even when the participant is not draining the LiveKit
-      // queue.
-      dataTrackLog("data_track_delivery_dropped", track_name_)
-        .field("reason", "queue_full")
-        .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
-      return;
-    }
-
-    dataTrackLog("data_track_push_failed", track_name_)
-      .field("reason", dataTrackPushFailureReason(error.code))
-      .fieldOr("error", error.message)
-      .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
+  if (result) {
+    return;
   }
+
+  const auto & error = result.error();
+  if (error.code == DataTrackPushErrorCode::kQueueFull) {
+    // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
+    // subscription callback non-blocking even when the participant is not draining the LiveKit
+    // queue.
+    dataTrackLog("data_track_delivery_dropped", track_name_)
+      .field("reason", "queue_full")
+      .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
+    return;
+  }
+
+  dataTrackLog("data_track_push_failed", track_name_)
+    .field("reason", dataTrackPushFailureReason(error.code))
+    .fieldOr("error", error.message)
+    .warnThrottle(*log_clock_, kWriteLogThrottlePeriod);
 }
 
 void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
@@ -120,12 +122,8 @@ void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & o
     // accepts only the current generation for this track name, so stale completions are reclaimed
     // immediately instead of leaving an orphaned LiveKit track behind.
     try {
-      if (!on_accept(generation)) {
-        dataTrackLog("data_track_publish_reclaimed", track_name_)
-          .field("generation", generation)
-          .field("reason", "stale_registry_state")
-          .info();
-        tryUnpublishDataTrack(room_connection_, track_name_, track);
+      if (on_accept(generation)) {
+        published_track_ = std::move(track);
         return;
       }
     } catch (...) {
@@ -133,7 +131,11 @@ void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & o
       throw;
     }
 
-    published_track_ = std::move(track);
+    dataTrackLog("data_track_publish_reclaimed", track_name_)
+      .field("generation", generation)
+      .field("reason", "stale_registry_state")
+      .info();
+    tryUnpublishDataTrack(room_connection_, track_name_, track);
   } catch (const std::exception & exc) {
     on_fail();
     dataTrackLog("data_track_publish_error", track_name_)

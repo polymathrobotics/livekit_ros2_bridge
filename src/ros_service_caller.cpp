@@ -384,20 +384,14 @@ struct RosServiceCaller::Impl
       return;
     }
 
-    if (warn) {
-      LogEvent event(kRosServiceCallerLogger, "service_calls_settled");
-      event.field("reason", reason).field("count", count);
-      if (requester != kAnyServiceLogValue) {
-        event.field("requester_identity", requester);
-      }
-      event.warn();
-      return;
-    }
-
     LogEvent event(kRosServiceCallerLogger, "service_calls_settled");
     event.field("reason", reason).field("count", count);
     if (requester != kAnyServiceLogValue) {
       event.field("requester_identity", requester);
+    }
+    if (warn) {
+      event.warn();
+      return;
     }
     event.info();
   }
@@ -462,11 +456,13 @@ CachedServiceClient::TypeSupport & RosServiceCaller::Impl::getServiceTypeSupport
     auto & ref = *type_support;
     type_supports.emplace(interface_type, std::move(type_support));
     return ref;
-  } catch (const std::invalid_argument &) {
-    type_support_failures.insertOrAssign(interface_type, std::current_exception());
-    throw;
-  } catch (const std::runtime_error &) {
-    type_support_failures.insertOrAssign(interface_type, std::current_exception());
+  } catch (const std::exception & exc) {
+    if (
+      dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
+      dynamic_cast<const std::runtime_error *>(&exc) != nullptr)
+    {
+      type_support_failures.insertOrAssign(interface_type, std::current_exception());
+    }
     throw;
   }
 }
@@ -544,9 +540,11 @@ void RosServiceCaller::Impl::poll()
   drainResponses();
   failExpiredCalls();
 
-  if (pending_calls.empty() && poll_timer != nullptr) {
-    poll_timer.reset();
+  if (!pending_calls.empty()) {
+    return;
   }
+
+  poll_timer.reset();
 }
 
 void RosServiceCaller::Impl::drainResponses()
@@ -618,9 +616,7 @@ RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
 
 RosServiceCaller::~RosServiceCaller()
 {
-  if (impl_ != nullptr) {
-    shutdown();
-  }
+  shutdown();
 }
 
 std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
@@ -630,19 +626,24 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
   auto future = promise.get_future();
 
   std::string interface_type;
+  auto reject_call = [&](const auto & exc, const char * reason, bool include_error) {
+    logServiceCallRejected(request, requester, interface_type, reason, exc, include_error);
+    promise.set_exception(std::make_exception_ptr(exc));
+  };
+
+  if (impl_->shutdown_flag) {
+    const std::runtime_error exc("Service caller is shut down.");
+    reject_call(exc, "shutdown", false);
+    return future;
+  }
+
+  if (requester.empty()) {
+    const std::invalid_argument exc("requester_identity is required");
+    reject_call(exc, "missing_requester_identity", false);
+    return future;
+  }
 
   try {
-    if (impl_->shutdown_flag) {
-      const std::runtime_error exc("Service caller is shut down.");
-      logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
-      throw exc;
-    }
-    if (requester.empty()) {
-      const std::invalid_argument exc("requester_identity is required");
-      logServiceCallRejected(request, requester, interface_type, "missing_requester_identity", exc, false);
-      throw exc;
-    }
-
     try {
       interface_type =
         request.interface_type.empty()
@@ -756,9 +757,7 @@ void RosServiceCaller::shutdown()
   impl_->poll_gate.close();
   impl_->poll_gate.awaitIdle();
 
-  if (impl_->poll_timer != nullptr) {
-    impl_->poll_timer.reset();
-  }
+  impl_->poll_timer.reset();
 
   impl_->failMatchingCalls([](const Impl::PendingCall &) { return true; }, "Service caller shut down.", "shutdown");
 

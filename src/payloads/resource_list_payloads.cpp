@@ -15,6 +15,7 @@
 #include "payloads/resource_list_payloads.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 
 #include "nlohmann/json.hpp"
@@ -52,6 +53,27 @@ private:
   throw ResourceListInvalidArgument(field_name, message);
 }
 
+std::optional<std::size_t> parseOptionalLimit(const Json & request_body)
+{
+  const auto limit_it = request_body.find("limit");
+  if (limit_it == request_body.end() || limit_it->is_null()) {
+    return std::nullopt;
+  }
+
+  if (!limit_it->is_number_integer()) {
+    throwInvalidRequestField("limit", kInvalidLimitMessage);
+  }
+
+  // Parse into a signed type first so negative JSON integers are rejected before converting to
+  // the unsigned storage used by `ResourceListRequest::limit`.
+  const auto limit = limit_it->get<std::int64_t>();
+  if (limit <= 0) {
+    throwInvalidRequestField("limit", kInvalidLimitMessage);
+  }
+
+  return static_cast<std::size_t>(limit);
+}
+
 }  // namespace
 
 namespace resource_list_payloads
@@ -67,31 +89,15 @@ ResourceListRequest parse(const std::string & request_payload)
     throw ResourceListInvalidArgument("payload", exc.what());
   }
 
-  ResourceListRequest request;
+  std::optional<std::string> query;
   // Normalize blank and null queries to "no filter".
   try {
-    request.query = parseOptionalNonEmptyTrimmedStringField(request_body, "query", "query must be a string", true);
+    query = parseOptionalNonEmptyTrimmedStringField(request_body, "query", "query must be a string", true);
   } catch (const std::invalid_argument & exc) {
     throw ResourceListInvalidArgument("query", exc.what());
   }
 
-  const auto limit_it = request_body.find("limit");
-  if (limit_it != request_body.end() && !limit_it->is_null()) {
-    if (!limit_it->is_number_integer()) {
-      throwInvalidRequestField("limit", kInvalidLimitMessage);
-    }
-
-    // Parse into a signed type first so negative JSON integers are rejected before converting to
-    // the unsigned storage used by `ResourceListRequest::limit`.
-    const auto limit = limit_it->get<std::int64_t>();
-    if (limit <= 0) {
-      throwInvalidRequestField("limit", kInvalidLimitMessage);
-    }
-
-    request.limit = static_cast<std::size_t>(limit);
-  }
-
-  return request;
+  return {query, parseOptionalLimit(request_body)};
 }
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)

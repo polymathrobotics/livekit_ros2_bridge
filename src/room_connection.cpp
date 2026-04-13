@@ -277,9 +277,13 @@ public:
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
+    if (track == nullptr) {
+      return;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     auto * participant = room_ == nullptr ? nullptr : room_->localParticipant();
-    if (participant == nullptr || track == nullptr) {
+    if (participant == nullptr) {
       return;
     }
     participant->unpublishDataTrack(track);
@@ -345,7 +349,8 @@ public:
         break;
     }
     participant->publishTrack(track, options);
-    if (track == nullptr || track->publication() == nullptr) {
+    const auto publication = track == nullptr ? nullptr : track->publication();
+    if (publication == nullptr) {
       throw std::runtime_error("Failed to publish video track '" + name + "'.");
     }
 
@@ -355,7 +360,7 @@ public:
       // a handle that is already stale and safely degrades to a later no-op.
       LogEvent(kRoomConnectionLogger, "video_track_publish_stale")
         .field("track_name", name)
-        .field("track_sid", track->publication()->sid())
+        .field("track_sid", publication->sid())
         .field("reason", "room_reset")
         .warn();
       return handle;
@@ -366,13 +371,13 @@ public:
 
   void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
   {
+    if (handle == nullptr) {
+      return;
+    }
+
     PublishedVideoTrack published_track;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (handle == nullptr) {
-        return;
-      }
-
       const auto it = video_tracks_by_handle_.find(handle.get());
       if (it == video_tracks_by_handle_.end()) {
         return;
@@ -381,11 +386,7 @@ public:
       video_tracks_by_handle_.erase(it);
     }
 
-    if (published_track.track == nullptr) {
-      return;
-    }
-
-    const auto publication = published_track.track->publication();
+    const auto publication = published_track.track == nullptr ? nullptr : published_track.track->publication();
     if (publication == nullptr) {
       return;
     }
@@ -399,40 +400,48 @@ public:
 
   void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
   {
+    const auto * participant = event.participant;
+    if (participant == nullptr) {
+      return;
+    }
+
     std::function<void(const std::string &)> on_participant_disconnected;
-    std::string identity;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (!participant_disconnects_enabled_) {
         return;
       }
       on_participant_disconnected = callbacks_.on_participant_disconnected;
-      if (event.participant != nullptr) {
-        identity = event.participant->identity();
-      }
     }
 
-    if (!identity.empty() && on_participant_disconnected) {
-      on_participant_disconnected(identity);
+    if (!on_participant_disconnected) {
+      return;
     }
+
+    const std::string identity = participant->identity();
+    if (identity.empty()) {
+      return;
+    }
+
+    on_participant_disconnected(identity);
   }
 
   void onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event) override
   {
     std::function<void(const IncomingControlPacket &)> on_packet_received;
-    IncomingControlPacket packet;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       on_packet_received = callbacks_.on_incoming_control_packet_received;
-      if (!on_packet_received) {
-        return;
-      }
+    }
+    if (!on_packet_received) {
+      return;
+    }
 
-      packet.payload = event.data;
-      packet.control_topic = event.topic;
-      if (event.participant != nullptr) {
-        packet.requester_identity = event.participant->identity();
-      }
+    IncomingControlPacket packet;
+    packet.payload = event.data;
+    packet.control_topic = event.topic;
+    if (const auto * participant = event.participant; participant != nullptr) {
+      packet.requester_identity = participant->identity();
     }
 
     on_packet_received(packet);
@@ -447,9 +456,11 @@ public:
       participant_disconnects_enabled_ = event.state == livekit::ConnectionState::Connected;
     }
 
-    if (event.state == livekit::ConnectionState::Disconnected) {
-      requestReconnect("connection_state_disconnected");
+    if (event.state != livekit::ConnectionState::Disconnected) {
+      return;
     }
+
+    requestReconnect("connection_state_disconnected");
   }
 
   void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent &) override
@@ -659,49 +670,58 @@ private:
       room.reset();
     }
 
-    if (notify_reset) {
-      LogEvent event(kRoomConnectionLogger, "room_connection_reset");
-      event.field("reason", reason.empty() ? "connection_reset" : reason.c_str())
-        .fieldOr("room", room_name, kUnsetLogValue);
-      if (dropped_video_track_count > 0) {
-        event.field("dropped_video_tracks", dropped_video_track_count);
-      }
-      event.info();
+    if (!notify_reset) {
+      return;
     }
 
-    if (notify_reset && on_reset) {
-      on_reset();
+    LogEvent event(kRoomConnectionLogger, "room_connection_reset");
+    event.field("reason", reason.empty() ? "connection_reset" : reason.c_str())
+      .fieldOr("room", room_name, kUnsetLogValue);
+    if (dropped_video_track_count > 0) {
+      event.field("dropped_video_tracks", dropped_video_track_count);
     }
+    event.info();
+
+    if (!on_reset) {
+      return;
+    }
+
+    on_reset();
   }
 
   void requestReconnect(const char * reason)
   {
     std::string room_name;
     std::string reconnect_reason = reason;
+    bool reconnect_already_requested = false;
     std::function<void(const std::string &)> on_reconnect_requested;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       // Keep the first reconnect cause for this episode; later transport noise should not
       // overwrite the reason reported during reset/backoff logging.
-      if (reconnect_requested_) {
-        condition_.notify_all();
-        return;
+      reconnect_already_requested = reconnect_requested_;
+      if (!reconnect_already_requested) {
+        reconnect_requested_ = true;
+        reconnect_reason_ = reason;
+        room_name = config_.room;
+        on_reconnect_requested = callbacks_.on_reconnect_requested;
       }
-
-      reconnect_requested_ = true;
-      reconnect_reason_ = reason;
-      room_name = config_.room;
-      on_reconnect_requested = callbacks_.on_reconnect_requested;
       condition_.notify_all();
+    }
+
+    if (reconnect_already_requested) {
+      return;
     }
 
     LogEvent(kRoomConnectionLogger, "room_reconnect_requested")
       .field("reason", reason)
       .fieldOr("room", room_name, kUnsetLogValue)
       .warn();
-    if (on_reconnect_requested) {
-      on_reconnect_requested(reconnect_reason);
+    if (!on_reconnect_requested) {
+      return;
     }
+
+    on_reconnect_requested(reconnect_reason);
   }
 
   bool registerRpcLocked(const std::string & method_name)

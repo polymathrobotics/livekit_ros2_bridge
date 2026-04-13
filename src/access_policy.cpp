@@ -68,9 +68,11 @@ AccessPolicy::RuleEntries AccessPolicy::RuleEntries::parse(const std::vector<std
     }
 
     const std::string pattern = normalizeRosResourceName(entry);
-    if (!pattern.empty()) {
-      rules.patterns.insert(pattern);
+    if (pattern.empty()) {
+      continue;
     }
+
+    rules.patterns.insert(pattern);
   }
 
   return rules;
@@ -113,13 +115,20 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_n
     return false;
   }
 
+  const auto matches_policy = [&name](const RuleEntries & allow, const RuleEntries & deny) {
+    if (deny.matches(name)) {
+      return false;
+    }
+    return allow.matches(name);
+  };
+
   switch (operation) {
     case AccessOperation::Publish:
-      return !publish_deny_.matches(name) && publish_allow_.matches(name);
+      return matches_policy(publish_allow_, publish_deny_);
     case AccessOperation::Subscribe:
-      return !subscribe_deny_.matches(name) && subscribe_allow_.matches(name);
+      return matches_policy(subscribe_allow_, subscribe_deny_);
     case AccessOperation::CallService:
-      return !service_deny_.matches(name) && service_allow_.matches(name);
+      return matches_policy(service_allow_, service_deny_);
   }
 
   return false;

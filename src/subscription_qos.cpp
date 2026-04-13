@@ -81,6 +81,13 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   resolved.mixed_reliability = has_reliable && has_best_effort;
   resolved.mixed_durability = has_volatile && has_transient_local;
 
+  const bool has_concrete_publisher_qos = has_best_effort || has_reliable || has_volatile || has_transient_local;
+  if (override_match == nullptr && !has_concrete_publisher_qos) {
+    // No override matched and publishers exposed no concrete policy, so the
+    // caller's base QoS is already the final answer.
+    return resolved;
+  }
+
   // Each QoS axis resolves independently. A non-auto override wins for that
   // axis; otherwise we consume publisher QoS only when it exposes a concrete
   // policy for that same axis. When publishers disagree, prefer the weaker
@@ -110,8 +117,6 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     resolved.source = SubscriptionQosResolutionSource::kOverride;
   } else if (resolved.used_publisher_qos) {
     resolved.source = SubscriptionQosResolutionSource::kPublisherQos;
-  } else {
-    resolved.source = SubscriptionQosResolutionSource::kFallback;
   }
 
   return resolved;

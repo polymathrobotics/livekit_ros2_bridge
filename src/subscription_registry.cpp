@@ -260,10 +260,13 @@ void SubscriptionRegistry::queueDataTrackRepublish(const std::string & requester
   for (const auto & [subscription_key, entry] : subscriptions_) {
     (void)subscription_key;
     const auto * data = dataStream(entry);
-    if (
-      data == nullptr || data->state() != DataStreamInstance::State::kPublished ||
-      entry.leases.find(requester_identity) == entry.leases.end())
-    {
+    if (data == nullptr) {
+      continue;
+    }
+    if (data->state() != DataStreamInstance::State::kPublished) {
+      continue;
+    }
+    if (entry.leases.find(requester_identity) == entry.leases.end()) {
       continue;
     }
 
@@ -290,10 +293,13 @@ void SubscriptionRegistry::republishDataTracks(const std::string & requester_ide
   for (auto & [subscription_key, entry] : subscriptions_) {
     (void)subscription_key;
     auto * data = dataStream(entry);
-    if (
-      data == nullptr || data->state() != DataStreamInstance::State::kPublished ||
-      entry.leases.find(requester_identity) == entry.leases.end())
-    {
+    if (data == nullptr) {
+      continue;
+    }
+    if (data->state() != DataStreamInstance::State::kPublished) {
+      continue;
+    }
+    if (entry.leases.find(requester_identity) == entry.leases.end()) {
       continue;
     }
 
@@ -402,11 +408,10 @@ bool SubscriptionRegistry::onDataTrackPublished(const std::string & track_name, 
   if (it == subscriptions_.end()) {
     return false;
   }
-  auto * data = dataStream(it->second);
-  if (data == nullptr) {
-    return false;
+  if (auto * data = dataStream(it->second)) {
+    return data->completePublish(generation);
   }
-  return data->completePublish(generation);
+  return false;
 }
 
 void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
@@ -418,11 +423,9 @@ void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
   if (it == subscriptions_.end()) {
     return;
   }
-  auto * data = dataStream(it->second);
-  if (data == nullptr) {
-    return;
+  if (auto * data = dataStream(it->second)) {
+    data->failPublish();
   }
-  data->failPublish();
 }
 
 SubscriptionStatus SubscriptionRegistry::statusFor(const Entry & entry)
@@ -437,13 +440,13 @@ SubscriptionStatus SubscriptionRegistry::statusFor(const Entry & entry)
       status.track_name = data->trackName();
     }
     status.applied_interval_ms = data->suppressionIntervalMs();
-  } else {
-    const auto & video = std::get<VideoRuntime>(entry.runtime);
-    status.delivery_kind = SubscriptionDeliveryKind::kVideo;
-    status.track_name = video.track_name;
-    status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
+    return status;
   }
 
+  const auto & video = std::get<VideoRuntime>(entry.runtime);
+  status.delivery_kind = SubscriptionDeliveryKind::kVideo;
+  status.track_name = video.track_name;
+  status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
   return status;
 }
 
@@ -469,6 +472,7 @@ std::string SubscriptionRegistry::keyFor(SubscriptionTargetKind target_kind, con
 void SubscriptionRegistry::removeLeasesIf(
   const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time)
 {
+  const char * removal_reason = leaseRemovalReasonString(reason);
   for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
     auto & entry = it->second;
     bool removed_any = false;
@@ -485,16 +489,17 @@ void SubscriptionRegistry::removeLeasesIf(
       const auto delta_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(lease.expiry - reference_time).count();
       if (remaining_requesters > 0U) {
-        const char * time_label = reason == LeaseRemovalReason::kLeaseExpired ? "expired_by_ms" : "expires_in_ms";
-        const long time_value =
-          reason == LeaseRemovalReason::kLeaseExpired ? static_cast<long>(-delta_ms) : static_cast<long>(delta_ms);
         LogEvent event(kSubscriptionRegistryLogger, "requester_lease_removed");
         addTargetFields(event, entry.name, entry.target_kind)
           .field("requester_identity", requester_identity)
-          .field("reason", leaseRemovalReasonString(reason))
-          .field("remaining_requesters", remaining_requesters)
-          .field(time_label, time_value)
-          .info();
+          .field("reason", removal_reason)
+          .field("remaining_requesters", remaining_requesters);
+        if (reason == LeaseRemovalReason::kLeaseExpired) {
+          event.field("expired_by_ms", static_cast<long>(-delta_ms));
+        } else {
+          event.field("expires_in_ms", static_cast<long>(delta_ms));
+        }
+        event.info();
       }
 
       removed_any = true;
@@ -511,14 +516,14 @@ void SubscriptionRegistry::removeLeasesIf(
       if (const auto * data = dataStream(entry)) {
         LogEvent event(kSubscriptionRegistryLogger, "subscription_pruned");
         addTargetFields(event, entry.name, entry.target_kind)
-          .field("reason", leaseRemovalReasonString(reason))
+          .field("reason", removal_reason)
           .field("track_name", data->trackName());
         event.info();
       } else {
         const auto & video = std::get<VideoRuntime>(entry.runtime);
         LogEvent event(kSubscriptionRegistryLogger, "subscription_pruned");
         addTargetFields(event, entry.name, entry.target_kind)
-          .field("reason", leaseRemovalReasonString(reason))
+          .field("reason", removal_reason)
           .field("stream_key", video.stream_spec.stream_key)
           .field("track_name", video.track_name);
         event.info();
@@ -543,9 +548,13 @@ SubscriptionRegistry::EntryMap::iterator SubscriptionRegistry::findDataByTrackNa
   for (auto it = subscriptions_.begin(); it != subscriptions_.end(); ++it) {
     auto & entry = it->second;
     auto * data = dataStream(entry);
-    if (data != nullptr && data->trackName() == track_name) {
-      return it;
+    if (data == nullptr) {
+      continue;
     }
+    if (data->trackName() != track_name) {
+      continue;
+    }
+    return it;
   }
   return subscriptions_.end();
 }
@@ -568,17 +577,18 @@ void SubscriptionRegistry::destroyRuntime(Entry & entry, bool log_destroy)
     // Track names are deterministic per topic, so destroying a data subscription must advance the
     // generation before any delayed publish/disconnect callback can target the replacement entry.
     registry_generation_.fetch_add(1);
-  } else {
-    const auto & video = std::get<VideoRuntime>(entry.runtime);
-    if (log_destroy) {
-      LogEvent event(kSubscriptionRegistryLogger, "subscription_destroyed");
-      addTargetFields(event, entry.name, entry.target_kind)
-        .field("stream_key", video.stream_spec.stream_key)
-        .field("track_name", video.track_name);
-      event.info();
-    }
-    videoRegistry().stop(video.stream_spec.stream_key);
+    return;
   }
+
+  const auto & video = std::get<VideoRuntime>(entry.runtime);
+  if (log_destroy) {
+    LogEvent event(kSubscriptionRegistryLogger, "subscription_destroyed");
+    addTargetFields(event, entry.name, entry.target_kind)
+      .field("stream_key", video.stream_spec.stream_key)
+      .field("track_name", video.track_name);
+    event.info();
+  }
+  videoRegistry().stop(video.stream_spec.stream_key);
 }
 
 void SubscriptionRegistry::clearSubscriptions()

@@ -96,6 +96,7 @@ Runtime::State::DisconnectTransition Runtime::State::markDisconnected(
   } else {
     grace_deadline.reset();
   }
+
   return transition;
 }
 
@@ -110,11 +111,16 @@ std::optional<Runtime::State::FailFastTrigger> Runtime::State::takeFailFastTrigg
   }
 
   fail_fast_fired = true;
-  const std::string reason = ready_once ? (this->reason.empty() ? std::string{"reconnect_timeout"} : this->reason)
-                                        : std::string{"initial_connect_timeout"};
+  if (!ready_once) {
+    return FailFastTrigger{
+      false,
+      "initial_connect_timeout",
+    };
+  }
+
   return FailFastTrigger{
-    ready_once,
-    std::move(reason),
+    true,
+    this->reason.empty() ? std::string{"reconnect_timeout"} : this->reason,
   };
 }
 
@@ -125,11 +131,12 @@ void Runtime::State::armGraceDeadlineLocked(std::chrono::milliseconds grace)
 
 bool Runtime::State::markReadyLocked()
 {
-  if (!ready_once && room_connected && rpc_registered) {
-    ready_once = true;
-    return true;
+  if (ready_once || !room_connected || !rpc_registered) {
+    return false;
   }
-  return false;
+
+  ready_once = true;
+  return true;
 }
 
 Runtime::Runtime(
@@ -234,6 +241,7 @@ Runtime::Runtime(
         logReady();
         return;
       }
+
       if (transition.recovered) {
         runtimeLog(node_.get_logger(), "runtime_reconnected", config_.room)
           .fieldOr("disconnect_reason", transition.disconnect_reason, "connection_lost")
@@ -250,12 +258,14 @@ Runtime::Runtime(
       LogEvent disconnect_log = runtimeLog(node_.get_logger(), "runtime_disconnect_observed", config_.room);
       disconnect_log.field("phase", transition.ready_once ? "reconnect" : "startup")
         .fieldOr("disconnect_reason", reason, "connection_lost");
-      if (config_.fail_fast_enabled) {
-        disconnect_log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
-        disconnect_log.warn();
-      } else {
+
+      if (!config_.fail_fast_enabled) {
         disconnect_log.info();
+        return;
       }
+
+      disconnect_log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
+      disconnect_log.warn();
     },
     [this]() { handleConnectionReset(); },
     [this](const std::string & requester_identity) { handleParticipantDisconnected(requester_identity); },
@@ -395,25 +405,31 @@ void Runtime::handleIncomingControlPacket(const IncomingControlPacket & packet)
 void Runtime::logControlPacketDrop(
   const IncomingControlPacket & packet, const char * reason, EventThrottle & throttle) const
 {
-  if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
-    LogEvent(node_.get_logger(), "control_packet_dropped")
-      .field("reason", reason)
-      .field("control_topic", packet.control_topic)
-      .fieldOr("requester_identity", packet.requester_identity)
-      .field("count", count)
-      .warn();
+  const std::size_t count = throttle.recordAndTakePendingCount();
+  if (count == 0U) {
+    return;
   }
+
+  LogEvent(node_.get_logger(), "control_packet_dropped")
+    .field("reason", reason)
+    .field("control_topic", packet.control_topic)
+    .fieldOr("requester_identity", packet.requester_identity)
+    .field("count", count)
+    .warn();
 }
 
 void Runtime::logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle)
 {
-  if (const std::size_t count = throttle.recordAndTakePendingCount(); count > 0U) {
-    LogEvent(node_.get_logger(), "executor_work_dropped")
-      .field("reason", reason)
-      .field("stage", stage)
-      .field("count", count)
-      .warn();
+  const std::size_t count = throttle.recordAndTakePendingCount();
+  if (count == 0U) {
+    return;
   }
+
+  LogEvent(node_.get_logger(), "executor_work_dropped")
+    .field("reason", reason)
+    .field("stage", stage)
+    .field("count", count)
+    .warn();
 }
 
 void Runtime::submitToExecutor(std::function<void()> work)

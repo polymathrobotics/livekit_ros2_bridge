@@ -86,15 +86,17 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & b
 
   std::vector<std::uint8_t> cdr;
   try {
-    // Reject an empty decoded CDR blob instead of treating it as an implicit default-constructed
-    // message instance.
     cdr = cdr_payload::parse(body, "message");
-    if (cdr.empty()) {
-      throw std::invalid_argument(kMessagePayloadError);
-    }
   } catch (const std::invalid_argument &) {
     logRejectedCommand("invalid_message", topic);
     throw;
+  }
+
+  // Reject an empty decoded CDR blob instead of treating it as an implicit
+  // default-constructed message instance.
+  if (cdr.empty()) {
+    logRejectedCommand("invalid_message", topic);
+    throw std::invalid_argument(kMessagePayloadError);
   }
 
   // Normalize topic names here so policy checks, publisher lookup, and logs see one resource

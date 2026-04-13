@@ -58,14 +58,13 @@ private:
 
 ServiceCallRequest parse(const std::string & payload)
 {
-  const nlohmann::json body = [&payload]() {
-    try {
-      return parseJsonObject(
-        payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
-    } catch (const std::invalid_argument & exc) {
-      throw ServiceCallInvalidArgument("payload", exc.what());
-    }
-  }();
+  nlohmann::json body;
+  try {
+    body =
+      parseJsonObject(payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
+  } catch (const std::invalid_argument & exc) {
+    throw ServiceCallInvalidArgument("payload", exc.what());
+  }
 
   ServiceCallRequest request;
   // Canonicalize at the protocol boundary so policy checks and downstream caches do not have to
@@ -78,14 +77,10 @@ ServiceCallRequest parse(const std::string & payload)
   }
 
   try {
-    if (
-      const auto interface_type =
-        parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string"))
-    {
-      // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
-      // than "use an empty interface type".
-      request.interface_type = *interface_type;
-    }
+    // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
+    // than "use an empty interface type".
+    request.interface_type =
+      parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string").value_or("");
   } catch (const std::invalid_argument & exc) {
     throw ServiceCallInvalidArgument("interface_type", exc.what());
   }
@@ -101,7 +96,8 @@ ServiceCallRequest parse(const std::string & payload)
     throwInvalidRequestField("request", "request.payload_base64 must not be empty");
   }
 
-  if (const auto timeout_field = body.find("timeout_ms"); timeout_field != body.end()) {
+  const auto timeout_field = body.find("timeout_ms");
+  if (timeout_field != body.end()) {
     if (!timeout_field->is_number_integer()) {
       throwInvalidRequestField("timeout_ms", "timeout_ms must be an integer");
     }
@@ -115,7 +111,10 @@ ServiceCallRequest parse(const std::string & payload)
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 {
-  if (const auto * service_call_error = dynamic_cast<const ServiceCallInvalidArgument *>(&exc)) {
+  if (
+    const auto * service_call_error = dynamic_cast<const ServiceCallInvalidArgument *>(&exc);
+    service_call_error != nullptr)
+  {
     return service_call_error->fieldName();
   }
 

@@ -123,19 +123,21 @@ public:
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);
       on_ready_ = std::move(on_ready);
-      if (on_ready_ == nullptr) {
+      ready_handler = on_ready_;
+      if (ready_handler == nullptr) {
         return;
       }
 
-      ready_handler = on_ready_;
       pending_wakes = std::exchange(pending_wakes_, 0U);
     }
 
     // Some executors install the ready callback after wake() observes queued
     // work. Replay remembered wakes so the first pending task is not stranded.
-    if (pending_wakes > 0U) {
-      ready_handler(pending_wakes, kReadyEntityId);
+    if (pending_wakes == 0U) {
+      return;
     }
+
+    ready_handler(pending_wakes, kReadyEntityId);
   }
 
   void clear_on_ready_callback() override
@@ -158,12 +160,11 @@ public:
 
     {
       std::lock_guard<std::mutex> lock(callback_mutex_);
-      if (on_ready_ == nullptr) {
+      ready_handler = on_ready_;
+      if (ready_handler == nullptr) {
         ++pending_wakes_;
         return;
       }
-
-      ready_handler = on_ready_;
     }
 
     ready_handler(1U, kReadyEntityId);
@@ -205,20 +206,17 @@ void RosExecutorQueue::wake()
     return;
   }
 
+  const auto shutdown_after_wake_failure = [this](const char * error) {
+    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed").field("action", "shutdown").field("error", error).error();
+    shutdown();
+  };
+
   try {
     waitable->wake();
   } catch (const std::exception & exc) {
-    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .field("action", "shutdown")
-      .field("error", exc.what())
-      .error();
-    shutdown();
+    shutdown_after_wake_failure(exc.what());
   } catch (...) {
-    LogEvent(kRosExecutorQueueLogger, "executor_wake_failed")
-      .field("action", "shutdown")
-      .field("error", "unknown_exception")
-      .error();
-    shutdown();
+    shutdown_after_wake_failure("unknown_exception");
   }
 }
 
@@ -230,22 +228,23 @@ void RosExecutorQueue::shutdown()
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
   rclcpp::CallbackGroup::SharedPtr default_callback_group;
-  bool already_shutdown = false;
+  bool owns_shutdown = false;
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (shutdown_) {
-      already_shutdown = true;
-    } else {
+    if (!shutdown_) {
       shutdown_ = true;
       pending_tasks = std::move(tasks_);
       waitable = std::move(waitable_);
       waitables = std::move(waitables_);
       default_callback_group = std::move(default_callback_group_);
+      owns_shutdown = true;
     }
   }
 
-  if (already_shutdown) {
+  if (!owns_shutdown) {
+    // A concurrent shutdown() already took ownership of teardown; only wait
+    // for any in-progress drain to finish before returning.
     drain_gate_.awaitIdle();
     return;
   }
@@ -281,6 +280,9 @@ void RosExecutorQueue::drain()
     return;
   }
   ScopeExit finish_drain([this]() { drain_gate_.leave(); });
+  const auto log_task_failure = [](const char * error) {
+    LogEvent(kRosExecutorQueueLogger, "executor_task_failed").field("action", "continue").field("error", error).error();
+  };
 
   // Keep draining until the queue is empty so tasks submitted from active
   // queue work are consumed by the same executor wakeup.
@@ -301,15 +303,9 @@ void RosExecutorQueue::drain()
       // so queued work observes the same callback-group affinity as ROS callbacks.
       task.run();
     } catch (const std::exception & exc) {
-      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .field("action", "continue")
-        .field("error", exc.what())
-        .error();
+      log_task_failure(exc.what());
     } catch (...) {
-      LogEvent(kRosExecutorQueueLogger, "executor_task_failed")
-        .field("action", "continue")
-        .field("error", "unknown_exception")
-        .error();
+      log_task_failure("unknown_exception");
     }
   }
 }

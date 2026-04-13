@@ -54,26 +54,22 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
 
 void ConfiguredSourceVideoFrameSource::start()
 {
-  bool is_shutdown = false;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
-      is_shutdown = true;
-    } else if (pipeline_ == nullptr) {
-      const auto & restart_config = restart_config_.value();
-      startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
-    }
-  }
-
-  if (is_shutdown) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
     throw std::runtime_error("Video stream is shut down.");
   }
+
+  if (pipeline_ != nullptr) {
+    return;
+  }
+
+  const auto & restart_config = restart_config_.value();
+  startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
 }
 
 void ConfiguredSourceVideoFrameSource::shutdown()
 {
   PipelineHandles handles;
-  bool had_pipeline = false;
   bool restart_pending = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -81,7 +77,6 @@ void ConfiguredSourceVideoFrameSource::shutdown()
       return;
     }
 
-    had_pipeline = pipeline_ != nullptr;
     restart_pending = recovery_pending_;
     is_shutdown_ = true;
     // Drop the internal handles while holding mutex_ so any in-flight
@@ -90,7 +85,11 @@ void ConfiguredSourceVideoFrameSource::shutdown()
     handles = takePipelineLocked();
   }
 
-  if (had_pipeline || restart_pending) {
+  if (!restart_pending && handles.pipeline == nullptr && handles.appsrc == nullptr && handles.appsink == nullptr) {
+    return;
+  }
+
+  if (handles.pipeline != nullptr || restart_pending) {
     LogEvent event(kLogger, "video_stream_source_shutdown");
     event.field("stream_key", spec_.stream_key);
     if (restart_pending) {

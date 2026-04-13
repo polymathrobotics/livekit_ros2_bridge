@@ -61,13 +61,12 @@ std::vector<std::uint8_t> decodePayloadBase64(const std::string & payload_base64
   // The bridge treats padded standard base64 as part of the wire contract so malformed payloads
   // fail here instead of reaching downstream ROS deserialization with ambiguous byte contents.
   auto decoded = decodeBase64(payload_base64);
-  switch (decoded.status) {
-    case Base64Status::kOk:
-      return std::move(decoded.bytes);
-    case Base64Status::kMissingPadding:
-      throw std::invalid_argument("payload_base64 must be padded standard base64.");
-    case Base64Status::kInvalidEncoding:
-      throw std::invalid_argument("payload_base64 is not valid base64.");
+  if (decoded.status == Base64Status::kOk) {
+    return std::move(decoded.bytes);
+  }
+
+  if (decoded.status == Base64Status::kMissingPadding) {
+    throw std::invalid_argument("payload_base64 must be padded standard base64.");
   }
 
   throw std::invalid_argument("payload_base64 is not valid base64.");
@@ -78,8 +77,7 @@ std::vector<std::uint8_t> decodePayloadBase64(const std::string & payload_base64
 std::vector<std::uint8_t> parse(const nlohmann::json & body, const char * field)
 {
   const auto & envelope = requireObjectField(body, field);
-  const auto & type = requireStringField(envelope, kContentTypeField);
-  if (type != protocol::kDataContentTypeCdr) {
+  if (requireStringField(envelope, kContentTypeField) != protocol::kDataContentTypeCdr) {
     throw std::invalid_argument(std::string(field) + "." + kContentTypeField + " must be application/x-ros-cdr.");
   }
 

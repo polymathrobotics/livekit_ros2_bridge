@@ -55,25 +55,6 @@ ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::S
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
-  if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
-    // Keep transport-level JSON decoding separate from semantic heartbeat validation so the
-    // rejection reason distinguishes broken wire payloads from protocol-shape violations.
-    nlohmann::json body;
-    try {
-      body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-    } catch (const std::exception & exc) {
-      logRejection(packet, "malformed_heartbeat", exc.what());
-      return;
-    }
-
-    try {
-      heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
-    } catch (const std::exception & exc) {
-      logRejection(packet, "invalid_heartbeat", exc.what());
-    }
-    return;
-  }
-
   if (packet.control_topic == protocol::kControlTopicPublish) {
     // Unlike heartbeats, publish commands have no session-based requester recovery path
     // downstream, so anonymous packets are rejected at the protocol boundary.
@@ -90,11 +71,30 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     return;
   }
 
-  LogEvent(logger_, "control_packet_dropped")
-    .field("reason", "unsupported_control_topic")
-    .field("control_topic", packet.control_topic)
-    .fieldOr("requester_identity", packet.requester_identity)
-    .warnThrottle(*clock_, kLogThrottle);
+  if (packet.control_topic != protocol::kControlSubscriptionsHeartbeat) {
+    LogEvent(logger_, "control_packet_dropped")
+      .field("reason", "unsupported_control_topic")
+      .field("control_topic", packet.control_topic)
+      .fieldOr("requester_identity", packet.requester_identity)
+      .warnThrottle(*clock_, kLogThrottle);
+    return;
+  }
+
+  // Keep transport-level JSON decoding separate from semantic heartbeat validation so the
+  // rejection reason distinguishes broken wire payloads from protocol-shape violations.
+  nlohmann::json body;
+  try {
+    body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+  } catch (const std::exception & exc) {
+    logRejection(packet, "malformed_heartbeat", exc.what());
+    return;
+  }
+
+  try {
+    heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
+  } catch (const std::exception & exc) {
+    logRejection(packet, "invalid_heartbeat", exc.what());
+  }
 }
 
 void ControlPacketRouter::logRejection(

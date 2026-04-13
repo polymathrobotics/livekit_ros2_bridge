@@ -116,7 +116,11 @@ private:
 
     bool completePublish(std::size_t generation)
     {
-      if (state != State::kPending || reserved_generation != generation) {
+      if (state != State::kPending) {
+        return false;
+      }
+
+      if (reserved_generation != generation) {
         return false;
       }
 
@@ -164,8 +168,13 @@ private:
         return true;
       }
 
+      if (!last_delivery_at) {
+        last_delivery_at = now;
+        return true;
+      }
+
       const auto window = std::chrono::milliseconds(interval_ms);
-      if (last_delivery_at && now - *last_delivery_at < window) {
+      if (now - *last_delivery_at < window) {
         return false;
       }
 

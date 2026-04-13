@@ -31,6 +31,17 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+const char * activeExceptionMessage() noexcept
+{
+  try {
+    throw;
+  } catch (const std::exception & exc) {
+    return exc.what();
+  } catch (...) {
+    return "unknown_exception";
+  }
+}
+
 void logNodeStartupFailure(
   const rclcpp::Logger & logger, const char * reason, const char * error, const std::string * room = nullptr)
 {
@@ -56,11 +67,8 @@ Node::Node(const rclcpp::NodeOptions & options)
     // Copy the room before Runtime takes ownership of config so later startup failures can
     // still attribute the error to the intended room.
     room = config.room_connection_config.room;
-  } catch (const std::exception & exc) {
-    logNodeStartupFailure(logger, "runtime_config_load_failed", exc.what());
-    throw;
   } catch (...) {
-    logNodeStartupFailure(logger, "runtime_config_load_failed", "unknown_exception");
+    logNodeStartupFailure(logger, "runtime_config_load_failed", activeExceptionMessage());
     throw;
   }
 
@@ -68,11 +76,8 @@ Node::Node(const rclcpp::NodeOptions & options)
   // invalid parameters from room-connection or runtime initialization failures.
   try {
     runtime_ = std::make_unique<Runtime>(*this, createRoomConnection(), std::move(config));
-  } catch (const std::exception & exc) {
-    logNodeStartupFailure(logger, "runtime_initialization_failed", exc.what(), &room);
-    throw;
   } catch (...) {
-    logNodeStartupFailure(logger, "runtime_initialization_failed", "unknown_exception", &room);
+    logNodeStartupFailure(logger, "runtime_initialization_failed", activeExceptionMessage(), &room);
     throw;
   }
 }

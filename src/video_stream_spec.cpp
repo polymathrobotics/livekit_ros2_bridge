@@ -44,21 +44,21 @@ std::string makeTopicTrackSuffix(std::string_view topic)
   std::string suffix;
   suffix.reserve(topic.size());
   for (char ch : topic) {
-    if (ch == '/' || ch == ':') {
-      if (!suffix.empty() && suffix.back() != '.') {
-        suffix.push_back('.');
-      }
+    if (ch != '/' && ch != ':') {
+      suffix.push_back(ch);
       continue;
     }
-    suffix.push_back(ch);
+    if (!suffix.empty() && suffix.back() != '.') {
+      suffix.push_back('.');
+    }
   }
 
-  while (!suffix.empty() && suffix.front() == '.') {
-    suffix.erase(suffix.begin());
+  const auto first_non_dot = suffix.find_first_not_of('.');
+  if (first_non_dot == std::string::npos) {
+    return {};
   }
-  while (!suffix.empty() && suffix.back() == '.') {
-    suffix.pop_back();
-  }
+  suffix.erase(0, first_non_dot);
+  suffix.erase(suffix.find_last_not_of('.') + 1U);
   return suffix;
 }
 
@@ -97,11 +97,12 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
       continue;
     }
     // Prefer the longest matching pattern; same-length matches keep declaration order.
-    if (best_rule != nullptr && rule.pattern.size() <= best_pattern_size) {
+    const auto pattern_size = rule.pattern.size();
+    if (best_rule != nullptr && pattern_size <= best_pattern_size) {
       continue;
     }
     best_rule = &rule;
-    best_pattern_size = rule.pattern.size();
+    best_pattern_size = pattern_size;
   }
   if (best_rule == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
