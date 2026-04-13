@@ -71,13 +71,20 @@ protocol. For external payloads and field names, see [protocol.md](./protocol.md
 - `queue`: Handoff across threads so work runs on the correct ROS executor thread, such as `RosExecutorQueue`.
 - `drain`: Run or empty queued work on the owning thread.
 - `quiesce`: Stop new work from entering a callback or scope while in-flight work finishes.
-- `ensureRunning`: Start or initialize a runtime object if it is not already running.
+- `start`: Start a runtime object if it is not already running.
 
 ## Boundaries & Practical Rules
 
 - `data` vs `video`: Describe the media type on the LiveKit side.
+- `callbacks` / `handlers`: Use `on*` or `*Handler` for callback methods and callback-valued fields. Avoid bare nouns or bare verbs for callback slots.
 - `config` vs `spec`: Use `config` for declared parameters and `spec` for resolved runtime data.
+- `namespace-scope names`: Keep the domain word in free functions and other namespace-scope APIs. Prefer `loadRuntimeConfig`, `createRoomConnection`, and `lookupInterfaceDefinitions` over `load`, `createConnection`, and `lookupDefinitions`.
 - `cdr` vs `track` vs `stream`: `cdr` is encoding, `track` is LiveKit transport, and `stream` is the bridge's end-to-end runtime.
+- `local variable names`: In a short method or function, prefer short role-based names when the surrounding code and type already make the domain obvious. Prefer `body`, `request`, `response`, `policy`, or `rules` over names like `heartbeat_json` or `response_map` unless extra words are needed to disambiguate nearby locals.
+- `short names`: Bare verbs like `start`, `stop`, `parse`, `serialize`, `write`, `take`, and `reset` are acceptable only when the enclosing class or namespace already makes the object obvious.
+- `remove redundancy, not role`: Drop repeated type words first. Keep the word that explains the symbol's role. Prefer `registerRpc` over `registerRpcMethod`, but avoid `registerMethods` when the lost word is the important one.
+- `preserve the role noun`: When shortening a type or field name, remove redundant qualifiers before removing the semantic role word. Prefer `Rules` over `OperationRules`, but keep `RuleEntries` instead of shortening it to `Entries`.
+- `produced concept`: At namespace scope, include the returned or target concept when the boundary does not already supply it. Names like `*Config`, `*Spec`, `*Connection`, `*Command`, and `*Definitions` are often worth keeping.
 - `source`: Use `source` only when there is a real input-side runtime behind the name.
 - `request` vs control messages: Use `request` and `response` for RPC-style calls. Use `command`, `heartbeat`, `demand`, `status`, and `update` for control-path concepts.
 - `resource` vs `target`: `resource` is a real ROS graph entity. `target` may also be a configured source.

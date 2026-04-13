@@ -74,6 +74,11 @@ struct VideoStreamConfig
   VideoPublishConfig default_publish_config;
 };
 
-VideoStreamConfig makeDefaultVideoStreamConfig();
+inline VideoStreamConfig makeDefaultVideoStreamConfig()
+{
+  VideoStreamConfig stream_config;
+  stream_config.ros_topic_rules.push_back({"/*", "default_ros", "", stream_config.default_publish_config});
+  return stream_config;
+}
 
 }  // namespace livekit_ros2_bridge

@@ -26,21 +26,21 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-void expectCanonicalEncoding(std::initializer_list<std::uint8_t> payload, std::string_view expected_encoded)
+void expectCanonicalEncoding(std::initializer_list<std::uint8_t> payload, std::string_view expected)
 {
   const std::vector<std::uint8_t> bytes(payload);
-  EXPECT_EQ(base64Encode(bytes.data(), bytes.size()), expected_encoded);
+  EXPECT_EQ(encodeBase64(bytes.data(), bytes.size()), expected);
 
-  const Base64DecodeResult decoded = base64Decode(expected_encoded);
-  ASSERT_EQ(decoded.status, Base64DecodeStatus::kOk);
-  EXPECT_EQ(decoded.bytes, bytes);
+  const Base64DecodeResult result = decodeBase64(expected);
+  ASSERT_EQ(result.status, Base64Status::kOk);
+  EXPECT_EQ(result.bytes, bytes);
 }
 
-void expectDecodeRejected(std::string_view encoded, Base64DecodeStatus expected_status)
+void expectDecodeRejected(std::string_view base64, Base64Status expected_status)
 {
-  const Base64DecodeResult decoded = base64Decode(encoded);
-  EXPECT_EQ(decoded.status, expected_status);
-  EXPECT_TRUE(decoded.bytes.empty());
+  const Base64DecodeResult result = decodeBase64(base64);
+  EXPECT_EQ(result.status, expected_status);
+  EXPECT_TRUE(result.bytes.empty());
 }
 
 TEST(Base64Test, StandardEncodingMatchesKnownVectorsAcrossPaddingBoundaries)
@@ -53,37 +53,38 @@ TEST(Base64Test, StandardEncodingMatchesKnownVectorsAcrossPaddingBoundaries)
 
 TEST(Base64Test, EmptyInputEncodesAndDecodesAsEmpty)
 {
-  EXPECT_EQ(base64Encode(nullptr, 0), "");
+  EXPECT_EQ(encodeBase64(nullptr, 0), "");
 
-  const Base64DecodeResult decoded = base64Decode("");
-  EXPECT_EQ(decoded.status, Base64DecodeStatus::kOk);
-  EXPECT_TRUE(decoded.bytes.empty());
+  const Base64DecodeResult result = decodeBase64("");
+  EXPECT_EQ(result.status, Base64Status::kOk);
+  EXPECT_TRUE(result.bytes.empty());
 }
 
 TEST(Base64Test, StandardDecodeRejectsMissingPadding)
 {
-  expectDecodeRejected("AAECAw", Base64DecodeStatus::kMissingPadding);
+  expectDecodeRejected("AAECAw", Base64Status::kMissingPadding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsInvalidEncodingSamples)
 {
-  expectDecodeRejected("AAECAw?=", Base64DecodeStatus::kInvalidEncoding);
-  expectDecodeRejected("AAECAw==\n", Base64DecodeStatus::kInvalidEncoding);
+  expectDecodeRejected("=", Base64Status::kInvalidEncoding);
+  expectDecodeRejected("AAECAw?=", Base64Status::kInvalidEncoding);
+  expectDecodeRejected("AAECAw==\n", Base64Status::kInvalidEncoding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsNonCanonicalPaddingPlacements)
 {
-  expectDecodeRejected("A=AA", Base64DecodeStatus::kInvalidEncoding);
-  expectDecodeRejected("AA=A", Base64DecodeStatus::kInvalidEncoding);
-  expectDecodeRejected("A===", Base64DecodeStatus::kInvalidEncoding);
+  expectDecodeRejected("A=AA", Base64Status::kInvalidEncoding);
+  expectDecodeRejected("AA=A", Base64Status::kInvalidEncoding);
+  expectDecodeRejected("A===", Base64Status::kInvalidEncoding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsNonZeroTrailingPadBits)
 {
   // These decode to the same bytes as AQ== and AQI= unless the decoder validates
   // the unused pad bits in the final quantum.
-  expectDecodeRejected("AR==", Base64DecodeStatus::kInvalidEncoding);
-  expectDecodeRejected("AQJ=", Base64DecodeStatus::kInvalidEncoding);
+  expectDecodeRejected("AR==", Base64Status::kInvalidEncoding);
+  expectDecodeRejected("AQJ=", Base64Status::kInvalidEncoding);
 }
 
 }  // namespace

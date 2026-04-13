@@ -35,47 +35,48 @@ TEST(DataTrackPublisherTest, PublishFailureInvokesFailureCallbackWithoutRetainin
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_publish_failure_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.publish_failure";
-  session.state->publish_data_track_handler = [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+  room_connection.state->publish_data_track_handler =
+    [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     throw std::runtime_error("simulated publish failure");
   };
 
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   EXPECT_NO_THROW(
     publisher.publish(7, [](std::size_t) { return true; }, [&publish_failed]() { publish_failed = true; }));
   EXPECT_TRUE(publish_failed);
 
-  publisher.shutdown();
-  EXPECT_TRUE(session.state->unpublish_attempted_data_track_names.empty());
+  publisher.unpublish();
+  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
 }
 
 TEST(DataTrackPublisherTest, RejectedPublishIsImmediatelyReclaimedAndNotRetained)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_stale_reclaim_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.stale_reclaim";
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   publisher.publish(11, [](std::size_t) { return false; }, [&publish_failed]() { publish_failed = true; });
   EXPECT_FALSE(publish_failed);
-  EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 
-  publisher.shutdown();
-  EXPECT_EQ(session.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  publisher.unpublish();
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
 }
 
 TEST(DataTrackPublisherTest, RejectedRepublishDoesNotDisplaceExistingActiveTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_rejected_republish_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.rejected_republish";
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   publisher.publish(13, [](std::size_t) { return true; }, [&publish_failed]() { publish_failed = true; });
@@ -83,30 +84,30 @@ TEST(DataTrackPublisherTest, RejectedRepublishDoesNotDisplaceExistingActiveTrack
 
   const std::array<std::uint8_t, 2> payload_before_reject{0x01U, 0x02U};
   const std::array<std::uint8_t, 3> payload_after_reject{0x03U, 0x04U, 0x05U};
-  publisher.tryPush(payload_before_reject.data(), payload_before_reject.size());
+  publisher.write(payload_before_reject.data(), payload_before_reject.size());
 
   publisher.publish(17, [](std::size_t) { return false; }, [&publish_failed]() { publish_failed = true; });
-  publisher.tryPush(payload_after_reject.data(), payload_after_reject.size());
-  publisher.shutdown();
+  publisher.write(payload_after_reject.data(), payload_after_reject.size());
+  publisher.unpublish();
 
   EXPECT_FALSE(publish_failed);
-  ASSERT_EQ(session.state->pushed_data_track_frames.size(), 2U);
+  ASSERT_EQ(room_connection.state->pushed_data_track_frames.size(), 2U);
   EXPECT_EQ(
-    session.state->pushed_data_track_frames[0].payload,
+    room_connection.state->pushed_data_track_frames[0].payload,
     std::vector<std::uint8_t>(payload_before_reject.begin(), payload_before_reject.end()));
   EXPECT_EQ(
-    session.state->pushed_data_track_frames[1].payload,
+    room_connection.state->pushed_data_track_frames[1].payload,
     std::vector<std::uint8_t>(payload_after_reject.begin(), payload_after_reject.end()));
-  EXPECT_EQ(session.state->unpublished_data_track_names, (std::vector<std::string>{track_name, track_name}));
+  EXPECT_EQ(room_connection.state->unpublished_data_track_names, (std::vector<std::string>{track_name, track_name}));
 }
 
 TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndReclaimsTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_publish_callback_failure_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.publish_callback_failure";
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   EXPECT_NO_THROW(publisher.publish(
@@ -115,44 +116,69 @@ TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndRe
     [&publish_failed]() { publish_failed = true; }));
 
   EXPECT_TRUE(publish_failed);
-  EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{track_name});
-  EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_EQ(room_connection.state->published_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 
-  publisher.shutdown();
-  EXPECT_EQ(session.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  publisher.unpublish();
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
 }
 
-TEST(DataTrackPublisherTest, QueueFullPushDropsFrameAndKeepsTrackPublishedUntilShutdown)
+TEST(DataTrackPublisherTest, QueueFullWriteDropsFrameAndKeepsTrackPublishedUntilUnpublish)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_queue_full_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.queue_full";
-  session.state->try_push_data_track_handler = [](const std::string &, const std::vector<std::uint8_t> &) {
+  room_connection.state->try_push_data_track_handler = [](const std::string &, const std::vector<std::uint8_t> &) {
     return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
   };
 
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   publisher.publish(5, [](std::size_t) { return true; }, []() {});
 
   const std::array<std::uint8_t, 3> payload{0x01U, 0x02U, 0x03U};
-  publisher.tryPush(payload.data(), payload.size());
+  publisher.write(payload.data(), payload.size());
 
-  EXPECT_TRUE(session.state->pushed_data_track_frames.empty());
-  EXPECT_TRUE(session.state->unpublish_attempted_data_track_names.empty());
+  EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
+  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
 
-  publisher.shutdown();
+  publisher.unpublish();
 
-  EXPECT_EQ(session.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
 }
 
-TEST(DataTrackPublisherTest, UnpublishClearsActiveTrackAndMakesShutdownIdempotent)
+TEST(DataTrackPublisherTest, WriteFailureStaysBestEffortAndKeepsTrackPublishedUntilUnpublish)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("data_track_publisher_push_failure_test");
+  FakeRoomConnection room_connection;
+  const std::string track_name = "ros.data.battery.push_failure";
+  room_connection.state->try_push_data_track_handler = [](const std::string &, const std::vector<std::uint8_t> &) {
+    return DataTrackPushResult::failure(
+      DataTrackPushError{DataTrackPushErrorCode::kTrackUnpublished, "track unpublished"});
+  };
+
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
+  publisher.publish(31, [](std::size_t) { return true; }, []() {});
+
+  const std::array<std::uint8_t, 3> payload{0x0BU, 0x0CU, 0x0DU};
+  publisher.write(payload.data(), payload.size());
+
+  EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
+  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
+
+  publisher.unpublish();
+
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+}
+
+TEST(DataTrackPublisherTest, UnpublishClearsActiveTrackAndIsIdempotent)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_unpublish_lifecycle_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.unpublish_lifecycle";
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   publisher.publish(19, [](std::size_t) { return true; }, [&publish_failed]() { publish_failed = true; });
@@ -160,45 +186,45 @@ TEST(DataTrackPublisherTest, UnpublishClearsActiveTrackAndMakesShutdownIdempoten
 
   const std::array<std::uint8_t, 3> payload_before_unpublish{0x01U, 0x02U, 0x03U};
   const std::array<std::uint8_t, 2> payload_after_unpublish{0x09U, 0x0AU};
-  publisher.tryPush(payload_before_unpublish.data(), payload_before_unpublish.size());
+  publisher.write(payload_before_unpublish.data(), payload_before_unpublish.size());
   publisher.unpublish();
-  publisher.tryPush(payload_after_unpublish.data(), payload_after_unpublish.size());
-  publisher.shutdown();
-  publisher.shutdown();
+  publisher.write(payload_after_unpublish.data(), payload_after_unpublish.size());
+  publisher.unpublish();
+  publisher.unpublish();
 
-  ASSERT_EQ(session.state->pushed_data_track_frames.size(), 1U);
+  ASSERT_EQ(room_connection.state->pushed_data_track_frames.size(), 1U);
   EXPECT_EQ(
-    session.state->pushed_data_track_frames.front().payload,
+    room_connection.state->pushed_data_track_frames.front().payload,
     std::vector<std::uint8_t>(payload_before_unpublish.begin(), payload_before_unpublish.end()));
-  EXPECT_EQ(session.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
 }
 
-TEST(DataTrackPublisherTest, ShutdownAfterUnpublishFailureDoesNotRetryOrRetainTrack)
+TEST(DataTrackPublisherTest, RepeatedUnpublishAfterFailureDoesNotRetryOrRetainTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_unpublish_failure_test");
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.unpublish_failure";
-  session.state->unpublish_rejected_data_track_names.push_back(track_name);
+  room_connection.state->unpublish_rejected_data_track_names.push_back(track_name);
 
-  DataTrackPublisher publisher(session, track_name, node->get_clock());
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
   publisher.publish(23, [](std::size_t) { return true; }, [&publish_failed]() { publish_failed = true; });
   ASSERT_FALSE(publish_failed);
 
-  const std::array<std::uint8_t, 2> payload_before_shutdown{0x05U, 0x06U};
-  const std::array<std::uint8_t, 3> payload_after_failed_shutdown{0x07U, 0x08U, 0x09U};
-  publisher.tryPush(payload_before_shutdown.data(), payload_before_shutdown.size());
-  publisher.shutdown();
-  publisher.tryPush(payload_after_failed_shutdown.data(), payload_after_failed_shutdown.size());
-  publisher.shutdown();
+  const std::array<std::uint8_t, 2> payload_before_unpublish{0x05U, 0x06U};
+  const std::array<std::uint8_t, 3> payload_after_failed_unpublish{0x07U, 0x08U, 0x09U};
+  publisher.write(payload_before_unpublish.data(), payload_before_unpublish.size());
+  publisher.unpublish();
+  publisher.write(payload_after_failed_unpublish.data(), payload_after_failed_unpublish.size());
+  publisher.unpublish();
 
-  ASSERT_EQ(session.state->pushed_data_track_frames.size(), 1U);
+  ASSERT_EQ(room_connection.state->pushed_data_track_frames.size(), 1U);
   EXPECT_EQ(
-    session.state->pushed_data_track_frames.front().payload,
-    std::vector<std::uint8_t>(payload_before_shutdown.begin(), payload_before_shutdown.end()));
-  EXPECT_EQ(session.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+    room_connection.state->pushed_data_track_frames.front().payload,
+    std::vector<std::uint8_t>(payload_before_unpublish.begin(), payload_before_unpublish.end()));
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
 }
 
 }  // namespace

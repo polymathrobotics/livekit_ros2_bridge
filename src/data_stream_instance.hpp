@@ -38,24 +38,6 @@ class QuiesceGate;
 class RoomConnection;
 class SubscriptionRegistry;
 
-struct DataStreamSpec
-{
-  std::string topic;
-  std::string interface_type;
-  std::string track_name;
-};
-
-DataStreamSpec makeDataStreamSpec(std::string topic, std::string interface_type);
-
-class DataTrackPublicationObserver
-{
-public:
-  virtual ~DataTrackPublicationObserver() = default;
-
-  virtual bool onDataTrackPublished(const std::string & track_name, std::size_t generation) = 0;
-  virtual void onDataTrackFailed(const std::string & track_name) = 0;
-};
-
 // SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
 // when that topic needs a data delivery runtime. Each DataStreamInstance owns the ROS
 // subscription plus one DataTrackPublisher for the matching LiveKit data track.
@@ -79,44 +61,151 @@ public:
   ~DataStreamInstance();
 
   const std::string & trackName() const;
-  int appliedIntervalMs() const;
+  int suppressionIntervalMs() const;
   State state() const;
 
-  void updateAppliedIntervalMs(int applied_interval_ms);
-  void start(const std::string & requester_identity, std::size_t publish_generation);
-  void republish(const std::string & requester_identity, std::size_t publish_generation);
-  bool onPublishComplete(std::size_t generation);
-  void onPublishFailed();
+  void setSuppressionIntervalMs(int interval_ms);
+  // Starts one LiveKit publish attempt when this instance is idle or recovering from a failed
+  // publish. The registry-supplied generation is echoed back through completion callbacks so
+  // stale async results from an older lifetime can be ignored.
+  void start(const std::string & requester_identity, std::size_t generation);
+  // Re-publishes the same deterministic track name without recreating the ROS subscription so a
+  // rejoined participant session can observe the track again.
+  void republish(const std::string & requester_identity, std::size_t generation);
+  // Accepts publish completion only for the currently pending generation. Delayed completions
+  // from a prior publish, reset, or replacement instance are rejected as stale.
+  bool completePublish(std::size_t generation);
+  // Records a failed publish attempt while keeping the ROS subscription alive so a later lease
+  // refresh can retry on the same topic runtime.
+  void failPublish();
   void shutdown();
 
 private:
   friend class SubscriptionRegistry;
 
+  // Owns the state-machine contract for one deterministic LiveKit data track name. The reserved
+  // generation advances only when a new publish attempt starts, and completion can succeed only
+  // while that exact generation is still pending.
+  struct PublicationState
+  {
+    State current() const
+    {
+      return state;
+    }
+
+    bool canStart() const
+    {
+      return state == State::kNone || state == State::kFailed;
+    }
+
+    bool canRepublish() const
+    {
+      return state == State::kPublished;
+    }
+
+    bool isPublished() const
+    {
+      return state == State::kPublished;
+    }
+
+    void beginPublish(std::size_t generation)
+    {
+      reserved_generation = generation;
+      state = State::kPending;
+    }
+
+    bool completePublish(std::size_t generation)
+    {
+      if (state != State::kPending || reserved_generation != generation) {
+        return false;
+      }
+
+      state = State::kPublished;
+      return true;
+    }
+
+    void failPublish()
+    {
+      state = State::kFailed;
+    }
+
+    void reset()
+    {
+      state = State::kNone;
+    }
+
+    State state = State::kNone;
+    std::size_t reserved_generation = 0U;
+  };
+
+  // Tracks the per-track interval suppression window. The window advances only when a
+  // published track forwards a message, and it resets whenever the publication state is torn
+  // down so the next successful publish can deliver immediately.
+  struct SuppressionWindow
+  {
+    int intervalMs() const
+    {
+      return interval_ms;
+    }
+
+    void setIntervalMs(int interval_ms)
+    {
+      this->interval_ms = interval_ms;
+    }
+
+    void reset()
+    {
+      last_delivery_at.reset();
+    }
+
+    bool allow(Clock::time_point now)
+    {
+      if (interval_ms == 0) {
+        return true;
+      }
+
+      const auto window = std::chrono::milliseconds(interval_ms);
+      if (last_delivery_at && now - *last_delivery_at < window) {
+        return false;
+      }
+
+      last_delivery_at = now;
+      return true;
+    }
+
+    int interval_ms = 0;
+    std::optional<Clock::time_point> last_delivery_at;
+  };
+
   DataStreamInstance(
-    DataStreamSpec spec,
+    std::string topic,
+    std::string interface_type,
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    DataTrackPublicationObserver & publication_observer,
-    QuiesceGate & message_callback_gate,
-    const SubscriptionQosConfig * subscription_qos_config);
+    SubscriptionRegistry & registry,
+    QuiesceGate & callback_gate,
+    const SubscriptionQosConfig * qos_config);
 
-  void initializeSubscription();
-  void handleSerializedMessage(const rclcpp::SerializedMessage & message);
-  bool shouldSkipDueToInterval();
-  void publishPendingDataTrack(const std::string & requester_identity);
+  void subscribe();
+  // Drops only the current LiveKit publication state. The ROS subscription stays active so
+  // republish can reuse the same callback and suppression window bookkeeping.
+  void resetPublication();
+  void forwardMessage(const rclcpp::SerializedMessage & message);
 
   rclcpp::Node & node_;
-  DataStreamSpec spec_;
-  std::shared_ptr<rclcpp::GenericSubscription> subscription_handle_;
-  std::optional<Clock::time_point> last_sent_time_;
-  DataTrackPublisher data_track_publisher_;
-  int applied_interval_ms_ = 0;
-  State state_ = State::kNone;
-  std::size_t generation_ = 0U;
+  std::string topic_;
+  std::string interface_type_;
+  std::string track_name_;
+  std::shared_ptr<rclcpp::GenericSubscription> subscription_;
+  DataTrackPublisher publisher_;
+  SuppressionWindow suppression_window_;
+  PublicationState publication_;
+  // Captured from SubscriptionRegistry's QuiesceGate when this instance is created. Every queued
+  // ROS callback must present the same generation before touching this instance.
   std::size_t callback_generation_ = 0U;
-  DataTrackPublicationObserver & publication_observer_;
-  QuiesceGate & message_callback_gate_;
-  const SubscriptionQosConfig * subscription_qos_config_;
+  SubscriptionRegistry & registry_;
+  QuiesceGate & callback_gate_;
+  const SubscriptionQosConfig * qos_config_;
 };
 
 }  // namespace livekit_ros2_bridge

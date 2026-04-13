@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 #include "utils/trim.hpp"
@@ -78,14 +79,22 @@ inline nlohmann::json parseJsonObject(
 /// Read a required string field, trim surrounding whitespace, and require the trimmed result
 /// to stay non-empty.
 inline std::string parseRequiredNonEmptyTrimmedStringField(
-  const nlohmann::json & json, const char * field_name, const char * required_message)
+  const nlohmann::json & json, const char * field_name, const char * invalid_message, const char * empty_message)
 {
   const auto field_it = json.find(field_name);
   if (field_it == json.end()) {
-    throw std::invalid_argument(required_message);
+    throw std::invalid_argument(invalid_message);
   }
 
-  return parseRequiredNonEmptyTrimmedString(*field_it, required_message);
+  return parseRequiredNonEmptyTrimmedString(*field_it, invalid_message, empty_message);
+}
+
+/// Read a required string field, trim surrounding whitespace, and require the trimmed result
+/// to stay non-empty.
+inline std::string parseRequiredNonEmptyTrimmedStringField(
+  const nlohmann::json & json, const char * field_name, const char * required_message)
+{
+  return parseRequiredNonEmptyTrimmedStringField(json, field_name, required_message, required_message);
 }
 
 /// Read an optional string field and return the trimmed value when non-empty.
@@ -100,6 +109,34 @@ inline std::optional<std::string> parseOptionalNonEmptyTrimmedStringField(
   }
 
   return parseOptionalNonEmptyTrimmedString(*field_it, invalid_message, null_is_absent);
+}
+
+/// Read a required array field whose entries must be strings, trim surrounding whitespace from
+/// each entry, and require both entries and the array itself to stay non-empty after trimming.
+inline std::vector<std::string> parseRequiredNonEmptyTrimmedStringArrayField(
+  const nlohmann::json & json,
+  const char * field_name,
+  const char * invalid_array_message,
+  const char * invalid_entry_message,
+  const char * empty_entry_message,
+  const char * empty_array_message)
+{
+  const auto field_it = json.find(field_name);
+  if (field_it == json.end() || !field_it->is_array()) {
+    throw std::invalid_argument(invalid_array_message);
+  }
+
+  std::vector<std::string> values;
+  values.reserve(field_it->size());
+  for (const auto & entry : *field_it) {
+    values.push_back(parseRequiredNonEmptyTrimmedString(entry, invalid_entry_message, empty_entry_message));
+  }
+
+  if (values.empty()) {
+    throw std::invalid_argument(empty_array_message);
+  }
+
+  return values;
 }
 
 }  // namespace livekit_ros2_bridge

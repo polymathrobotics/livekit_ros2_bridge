@@ -115,7 +115,7 @@ std::string makeServiceCallRequestPayload(
   auto body = nlohmann::json{
     {"service", service},
     {"interface_type", interface_type},
-    {"request", serializeCdrPayload(request_payload)},
+    {"request", cdr_payload::serialize(request_payload)},
   };
   if (timeout_ms.has_value()) {
     body["timeout_ms"] = *timeout_ms;
@@ -156,29 +156,29 @@ public:
   , ros_service_caller(*node)
   , rpc_router(*node, access_policy, ros_executor_queue, ros_service_caller)
   {
-    rpc_router.registerRpcMethods(session);
+    rpc_router.registerRpcs(room_connection);
   }
 
   ~RpcRouterHarness()
   {
-    rpc_router.unregisterRpcMethods(session);
+    rpc_router.unregisterRpcs(room_connection);
     ros_service_caller.shutdown();
     ros_executor_queue.shutdown();
   }
 
   std::optional<std::string> invokeRpc(const std::string & method_name, const RpcInvocation & invocation)
   {
-    const auto handler_it = session.state->rpc_handlers.find(method_name);
-    if (handler_it == session.state->rpc_handlers.end()) {
+    const auto rpc_handler_it = room_connection.state->rpc_handlers.find(method_name);
+    if (rpc_handler_it == room_connection.state->rpc_handlers.end()) {
       throw std::runtime_error("RPC method not registered in harness: " + method_name);
     }
-    return handler_it->second(invocation);
+    return rpc_handler_it->second(invocation);
   }
 
   std::shared_ptr<rclcpp::Node> node;
   RosExecutorQueue ros_executor_queue;
   RosServiceCaller ros_service_caller;
-  FakeRoomConnection session;
+  FakeRoomConnection room_connection;
   RpcRouter rpc_router;
 };
 
@@ -320,19 +320,19 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
   expectInvalidLimit(protocol::kRpcTopicsList);
 }
 
-TEST(RpcRouterTest, RegisterRpcMethodsIsBestEffortAndUnregistersAllEntrypoints)
+TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 {
   test_support::ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
   RosExecutorQueue ros_executor_queue(*node);
   RosServiceCaller ros_service_caller(*node);
-  FakeRoomConnection session;
-  session.state->rejected_rpc_methods = {protocol::kRpcServicesList};
+  FakeRoomConnection room_connection;
+  room_connection.state->rejected_rpc_methods = {protocol::kRpcServicesList};
 
   {
     RpcRouter rpc_router(*node, AccessPolicy(), ros_executor_queue, ros_service_caller);
 
-    EXPECT_FALSE(rpc_router.registerRpcMethods(session));
+    EXPECT_FALSE(rpc_router.registerRpcs(room_connection));
 
     const std::vector<std::string> expected_methods = {
       protocol::kRpcServiceCall,
@@ -340,16 +340,16 @@ TEST(RpcRouterTest, RegisterRpcMethodsIsBestEffortAndUnregistersAllEntrypoints)
       protocol::kRpcServicesList,
       protocol::kRpcTopicsList,
     };
-    EXPECT_EQ(session.state->registered_rpc_methods, expected_methods);
-    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcServiceCall), 1U);
-    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcInterfacesGet), 1U);
-    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcServicesList), 0U);
-    EXPECT_EQ(session.state->rpc_handlers.count(protocol::kRpcTopicsList), 1U);
+    EXPECT_EQ(room_connection.state->registered_rpc_methods, expected_methods);
+    EXPECT_EQ(room_connection.state->rpc_handlers.count(protocol::kRpcServiceCall), 1U);
+    EXPECT_EQ(room_connection.state->rpc_handlers.count(protocol::kRpcInterfacesGet), 1U);
+    EXPECT_EQ(room_connection.state->rpc_handlers.count(protocol::kRpcServicesList), 0U);
+    EXPECT_EQ(room_connection.state->rpc_handlers.count(protocol::kRpcTopicsList), 1U);
 
-    rpc_router.unregisterRpcMethods(session);
+    rpc_router.unregisterRpcs(room_connection);
 
-    EXPECT_TRUE(session.state->rpc_handlers.empty());
-    EXPECT_EQ(session.state->unregistered_rpc_methods, expected_methods);
+    EXPECT_TRUE(room_connection.state->rpc_handlers.empty());
+    EXPECT_EQ(room_connection.state->unregistered_rpc_methods, expected_methods);
   }
 
   ros_service_caller.shutdown();
@@ -395,7 +395,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_EQ(body["service"]["name"].get<std::string>(), "/rpc_router/set_bool");
   EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
 
-  const auto response_payload = parseCdrPayload(body, "response");
+  const auto response_payload = cdr_payload::parse(body, "response");
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(response_payload);
   EXPECT_TRUE(response_message.success);
   EXPECT_EQ(response_message.message, "enabled");

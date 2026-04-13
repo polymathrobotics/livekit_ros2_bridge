@@ -21,7 +21,8 @@
 #include "rclcpp/logging.hpp"
 #include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
-#include "video_frame_source.hpp"
+#include "video_frame_source/configured_source_video_frame_source.hpp"
+#include "video_frame_source/ros_topic_video_frame_sources.hpp"
 #include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
@@ -30,7 +31,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kVideoStreamInstanceLogger = rclcpp::get_logger("video_stream_instance");
+const auto kLogger = rclcpp::get_logger("video_stream_instance");
 
 }  // namespace
 
@@ -38,13 +39,13 @@ VideoStreamInstance::VideoStreamInstance(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
-  const SubscriptionQosConfig * subscription_qos_config,
+  const SubscriptionQosConfig * qos_config,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : node_(node)
 , spec_(std::move(spec))
-, subscription_qos_config_(subscription_qos_config)
+, qos_config_(qos_config)
 , profiler_(std::move(profiler))
-, video_track_publisher_(std::make_unique<VideoTrackPublisher>(room_connection, spec_, *this, profiler_))
+, publisher_(std::make_unique<VideoTrackPublisher>(room_connection, spec_, *this, profiler_))
 {}
 
 VideoStreamInstance::~VideoStreamInstance()
@@ -52,21 +53,18 @@ VideoStreamInstance::~VideoStreamInstance()
   shutdown();
 }
 
-void VideoStreamInstance::onVideoTrackPublished(int width, int height, bool republished)
+void VideoStreamInstance::onTrackPublished(int width, int height, bool republished)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
-  has_published_track_ = true;
-  published_width_ = width;
-  published_height_ = height;
-  last_runtime_error_.clear();
+  published_dimensions_ = TrackDimensions{width, height};
   if (profiler_ != nullptr) {
     profiler_->noteTrackPublished(width, height, republished);
   }
-  LogEvent(kVideoStreamInstanceLogger, republished ? "video_stream_track_republished" : "video_stream_track_published")
+  LogEvent(kLogger, republished ? "video_stream_track_republished" : "video_stream_track_published")
     .field("stream_key", spec_.stream_key)
     .field("track_name", spec_.track_name)
     .field("width", width)
@@ -74,90 +72,151 @@ void VideoStreamInstance::onVideoTrackPublished(int width, int height, bool repu
     .info();
 }
 
-void VideoStreamInstance::onVideoTrackUnpublishing()
+void VideoStreamInstance::onTrackUnpublishing()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (!has_published_track_) {
+  if (!published_dimensions_) {
     return;
   }
 
-  LogEvent(kVideoStreamInstanceLogger, "video_stream_track_unpublishing")
+  LogEvent(kLogger, "video_stream_track_unpublishing")
     .field("stream_key", spec_.stream_key)
     .field("track_name", spec_.track_name)
-    .field("width", published_width_)
-    .field("height", published_height_)
+    .field("width", published_dimensions_->width)
+    .field("height", published_dimensions_->height)
     .info();
   if (profiler_ != nullptr) {
-    profiler_->noteTrackUnpublishing();
+    profiler_->noteTrackUnpublish();
   }
-  has_published_track_ = false;
-  published_width_ = 0;
-  published_height_ = 0;
+  published_dimensions_.reset();
 }
 
-void VideoStreamInstance::onVideoStreamSampleUnpackFailed(const std::string & error)
+void VideoStreamInstance::onSampleUnpackFailed(const std::string & error)
 {
   if (profiler_ != nullptr) {
     profiler_->noteSampleUnpackFailed(error);
   }
-  logRuntimeError("video_stream_sample_unpack_failed", error);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_sample_unpack_failed")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("error", error)
+    .warn();
 }
 
-void VideoStreamInstance::onVideoStreamCaptureFailed(const std::string & error)
+void VideoStreamInstance::onCaptureFailed(const std::string & error)
 {
   if (profiler_ != nullptr) {
     profiler_->noteCaptureFailed(error);
   }
-  logRuntimeError("video_stream_capture_failed", error);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_capture_failed")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("error", error)
+    .warn();
 }
 
-void VideoStreamInstance::onVideoStreamPipelineFailed(const std::string & reason)
+void VideoStreamInstance::onPipelineFailed(const std::string & reason)
 {
   if (profiler_ != nullptr) {
     profiler_->notePipelineFailure(reason);
   }
-  logRuntimeError("video_stream_pipeline_failed", reason);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_pipeline_failed")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("error", reason)
+    .warn();
 }
 
-void VideoStreamInstance::onVideoStreamRestartFailed(const std::string & error)
+void VideoStreamInstance::onRestartFailed(const std::string & error)
 {
   if (profiler_ != nullptr) {
     profiler_->noteRestartFailed(error);
   }
-  logRuntimeError("video_stream_restart_failed", error);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_restart_failed")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("error", error)
+    .warn();
 }
 
-void VideoStreamInstance::onVideoStreamPushFailed(const std::string & error)
+void VideoStreamInstance::onPushFailed(const std::string & error)
 {
   if (profiler_ != nullptr) {
     profiler_->notePushFailed(error);
   }
-  logRuntimeError("video_stream_push_failed", error);
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_push_failed")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("error", error)
+    .warn();
 }
 
-std::string VideoStreamInstance::ensureRunning()
+std::string VideoStreamInstance::start()
 {
-  std::shared_ptr<VideoFrameSource> frame_source;
+  std::shared_ptr<VideoFrameSource> source;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       throw std::runtime_error("Video stream is shut down.");
     }
 
-    if (!frame_source_) {
-      frame_source_ = createFrameSourceLocked();
+    if (!source_) {
+      if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
+        source_ = std::make_shared<ConfiguredSourceVideoFrameSource>(spec_, *publisher_, *this, profiler_);
+      } else if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
+        source_ = std::make_shared<RawRosVideoFrameSource>(node_, spec_, qos_config_, *publisher_, *this, profiler_);
+      } else if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
+        source_ =
+          std::make_shared<CompressedRosVideoFrameSource>(node_, spec_, qos_config_, *publisher_, *this, profiler_);
+      } else {
+        throw std::runtime_error(
+          "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec_.input_kind) + "/" +
+          spec_.ingest_mode + "'.");
+      }
     }
-    frame_source = frame_source_;
+    // Hold a shared ref across the unlocked start() call so concurrent shutdown can
+    // detach source_ without destroying the source underneath this invocation.
+    source = source_;
   }
 
-  frame_source->ensureRunning();
+  source->start();
   return spec_.track_name;
 }
 
 void VideoStreamInstance::shutdown()
 {
-  std::shared_ptr<VideoFrameSource> frame_source;
-  std::unique_ptr<VideoTrackPublisher> video_track_publisher;
+  std::shared_ptr<VideoFrameSource> source;
+  std::unique_ptr<VideoTrackPublisher> publisher;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -165,51 +224,19 @@ void VideoStreamInstance::shutdown()
     }
 
     is_shutdown_ = true;
-    frame_source = std::move(frame_source_);
-    video_track_publisher = std::move(video_track_publisher_);
+    // Mark shutdown and drop owned runtime handles under mutex_ so their teardown runs
+    // after the lock is released.
+    source = std::move(source_);
+    publisher = std::move(publisher_);
   }
 
-  if (frame_source) {
-    frame_source->shutdown();
+  // Stop ingress first so no new frames race into publisher teardown/unpublish.
+  if (source) {
+    source->shutdown();
   }
-  if (video_track_publisher) {
-    video_track_publisher->shutdown();
+  if (publisher) {
+    publisher->shutdown();
   }
-}
-
-std::shared_ptr<VideoFrameSource> VideoStreamInstance::createFrameSourceLocked()
-{
-  if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
-    return makeConfiguredSourceVideoFrameSource(spec_, *video_track_publisher_, *this, profiler_);
-  }
-
-  if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kRawImageIngestMode) {
-    return makeRawRosVideoFrameSource(
-      node_, spec_, subscription_qos_config_, *video_track_publisher_, *this, profiler_);
-  }
-  if (spec_.input_kind == VideoInputKind::RosTopic && spec_.ingest_mode == kCompressedImageIngestMode) {
-    return makeCompressedRosVideoFrameSource(
-      node_, spec_, subscription_qos_config_, *video_track_publisher_, *this, profiler_);
-  }
-
-  throw std::runtime_error(
-    "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec_.input_kind) + "/" +
-    spec_.ingest_mode + "'.");
-}
-
-void VideoStreamInstance::logRuntimeError(const char * event_name, const std::string & error)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
-    return;
-  }
-
-  last_runtime_error_ = error;
-  LogEvent(kVideoStreamInstanceLogger, event_name)
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("error", error)
-    .warn();
 }
 
 }  // namespace livekit_ros2_bridge

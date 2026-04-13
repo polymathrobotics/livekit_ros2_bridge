@@ -15,13 +15,15 @@
 #include "ros_topic_publisher.hpp"
 
 #include <chrono>
+#include <cstring>
+#include <stdexcept>
 #include <utility>
 
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
+#include "rclcpp/serialized_message.hpp"
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
-#include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -30,182 +32,162 @@ namespace
 {
 
 constexpr std::size_t kPublisherDepth = 10U;
-constexpr std::size_t kMaxCachedPublishers = 50U;
-constexpr auto kPublishLogThrottleMs = 5000;
-const auto kTopicPublisherLogger = rclcpp::get_logger("topic_publisher");
+constexpr std::size_t kDefaultPublisherCacheLimit = 50U;
+constexpr auto kRejectedPublishWarningThrottlePeriod = std::chrono::seconds(5);
+const auto kLogger = rclcpp::get_logger("topic_publisher");
 
 }  // namespace
 
 RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
-: RosTopicPublisher(node, std::move(access_policy), kMaxCachedPublishers)
+: RosTopicPublisher(node, std::move(access_policy), kDefaultPublisherCacheLimit)
 {}
 
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_cached_publishers)
+RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t cache_limit)
 : node_(node)
 , access_policy_(std::move(access_policy))
-, max_cached_publishers_(max_cached_publishers)
-, cached_publishers_(max_cached_publishers)
+, cache_limit_(cache_limit)
+, cache_(cache_limit)
 {}
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
 {
   const std::string & topic = command.topic;
 
-  // Publish commands come from a streaming control path, so this LiveKit -> ROS
-  // ingress publisher is intentionally best-effort: invalid or late commands are
-  // dropped after logging.
   if (is_shutdown_.load()) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .field("reason", "shutdown")
+    LogEvent event(kLogger, "publish_request_rejected");
+    event.field("reason", "shutdown")
       .field("resource", "topics")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type)
-      .warnThrottle(*node_.get_clock(), std::chrono::milliseconds(kPublishLogThrottleMs));
+      .field("interface_type", command.interface_type);
+    event.warnThrottle(*node_.get_clock(), kRejectedPublishWarningThrottlePeriod);
     return;
   }
 
   if (!access_policy_.allows(AccessOperation::Publish, topic)) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .field("reason", "forbidden")
+    LogEvent event(kLogger, "publish_request_rejected");
+    event.field("reason", "forbidden")
       .field("resource", "topics")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type)
-      .warn();
+      .field("interface_type", command.interface_type);
+    event.warn();
     return;
   }
 
   std::string interface_type;
+  std::shared_ptr<rclcpp::GenericPublisher> ros_publisher;
+  bool cache_hit = false;
   try {
-    interface_type = resolveTopicTypeOrThrow(topic, command.interface_type);
+    // Cache hits deliberately skip the ROS graph. Once a publish succeeds, the
+    // cached publisher pins the interface type for that topic until eviction or
+    // shutdown clears the entry.
+    if (const auto cached = cache_.peek(topic); cached.has_value()) {
+      if (cached->interface_type != command.interface_type) {
+        throw std::invalid_argument(
+          "type mismatch expected=" + cached->interface_type + " got=" + command.interface_type);
+      }
+      interface_type = cached->interface_type;
+      ros_publisher = cached->ros_publisher;
+      cache_hit = true;
+    } else {
+      const auto graph_topics = topic_graph_provider_ ? topic_graph_provider_() : node_.get_topic_names_and_types();
+      interface_type = requireSingleInterfaceType(graph_topics, topic, "topic");
+      if (interface_type != command.interface_type) {
+        throw std::invalid_argument("type mismatch expected=" + interface_type + " got=" + command.interface_type);
+      }
+    }
   } catch (const std::exception & exc) {
-    LogEvent(kTopicPublisherLogger, "publish_request_rejected")
-      .field("reason", "invalid_request")
+    LogEvent event(kLogger, "publish_request_rejected");
+    event.field("reason", "invalid_request")
       .field("resource", "topics")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type)
-      .field("error", exc.what())
-      .warn();
+      .field("interface_type", command.interface_type);
+    event.field("error", exc.what()).warn();
     return;
   }
 
-  rclcpp::SerializedMessage serialized = wrapSerializedPayload(command.cdr_payload);
+  // Control packets already carry a CDR payload, so copy the bytes directly
+  // into SerializedMessage without a deserialize/serialize round trip.
+  rclcpp::SerializedMessage serialized(command.cdr.size());
+  auto & rcl_message = serialized.get_rcl_serialized_message();
+  if (!command.cdr.empty()) {
+    std::memcpy(rcl_message.buffer, command.cdr.data(), command.cdr.size());
+  }
+  rcl_message.buffer_length = command.cdr.size();
 
   try {
-    publishWithResolvedPublisher(topic, interface_type, serialized);
+    if (ros_publisher == nullptr) {
+      const rclcpp::QoS qos(kPublisherDepth);
+      ros_publisher = node_.create_generic_publisher(topic, interface_type, qos);
+    }
+
+    if (before_publish_handler_) {
+      before_publish_handler_();
+    }
+    // before_publish_handler_ can trigger shutdown after publisher creation, so
+    // recheck before sending bytes.
+    if (is_shutdown_.load()) {
+      return;
+    }
+
+    ros_publisher->publish(serialized);
+    // If shutdown is already visible here, bail out before touching cache state
+    // that teardown is intentionally trying to drop.
+    if (is_shutdown_.load()) {
+      return;
+    }
+
+    // Refresh recency only after a successful publish. If an in-flight cached
+    // publisher was evicted meanwhile, reinsert the handle that actually
+    // published so later commands can still reuse it.
+    if (cache_hit && cache_.touch(topic)) {
+      return;
+    }
+
+    // Enforce the cap only after the current publish succeeds.
+    const auto evicted = cache_.insertOrAssign(topic, CachedPublisher{interface_type, std::move(ros_publisher)});
+    if (evicted.has_value()) {
+      if (const std::size_t count = eviction_warning_throttle_.recordAndTakePendingCount(); count > 0U) {
+        LogEvent(kLogger, "publisher_cache_evicted")
+          .field("reason", "max_topics_exceeded")
+          .field("topic", topic)
+          .field("evicted_topic", evicted->key)
+          .field("count", count)
+          .field("policy", "lru")
+          .field("max_topics", static_cast<int>(cache_limit_))
+          .warn();
+      }
+    }
   } catch (const std::exception & exc) {
-    LogEvent(kTopicPublisherLogger, "publish_request_failed")
-      .field("reason", "internal")
+    LogEvent event(kLogger, "publish_request_failed");
+    event.field("reason", "internal")
       .field("resource", "topics")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", interface_type)
-      .field("error", exc.what())
-      .error();
+      .field("interface_type", interface_type);
+    event.field("error", exc.what()).error();
     return;
   }
 }
 
 void RosTopicPublisher::shutdown()
 {
+  // Flip the terminal bit before clearing cached handles so racing publish()
+  // calls observe shutdown before they can repopulate bridge-owned cache state.
   if (is_shutdown_.exchange(true)) {
     return;
   }
 
-  const std::size_t cached_publishers = cached_publishers_.size();
-  LogEvent(kTopicPublisherLogger, "topic_publisher_state_changed")
+  const std::size_t cached_count = cache_.size();
+  LogEvent(kLogger, "topic_publisher_state_changed")
     .field("reason", "shutdown")
     .field("action", "clear_cached_publishers")
-    .field("cached_publishers", cached_publishers)
+    .field("cached_publishers", cached_count)
     .info();
 
-  cached_publishers_.clear();
-}
-
-std::string RosTopicPublisher::resolveTopicTypeOrThrow(
-  const std::string & topic, const std::string & requested_interface_type) const
-{
-  std::string expected_type;
-
-  if (const auto cached_publisher = cached_publishers_.peek(topic); cached_publisher.has_value()) {
-    // Reuse the cache's interface type once a publisher exists so later
-    // commands stay consistent even if graph introspection lags that creation.
-    expected_type = cached_publisher->interface_type;
-  } else {
-    const auto names_and_types = topic_names_and_types_provider_for_test_ ? topic_names_and_types_provider_for_test_()
-                                                                          : node_.get_topic_names_and_types();
-    expected_type = requireSingleInterfaceType(names_and_types, topic, "topic");
-  }
-
-  if (expected_type != requested_interface_type) {
-    throw std::invalid_argument("type mismatch expected=" + expected_type + " got=" + requested_interface_type);
-  }
-  return expected_type;
-}
-
-void RosTopicPublisher::publishWithResolvedPublisher(
-  const std::string & topic, const std::string & interface_type, const rclcpp::SerializedMessage & serialized)
-{
-  const auto cached_publisher = cached_publishers_.peek(topic);
-  const bool was_cached = cached_publisher.has_value();
-  std::shared_ptr<rclcpp::GenericPublisher> resolved_publisher;
-
-  if (!was_cached) {
-    const rclcpp::QoS qos(kPublisherDepth);
-    resolved_publisher = node_.create_generic_publisher(topic, interface_type, qos);
-  } else {
-    resolved_publisher = cached_publisher->publisher;
-  }
-
-  if (before_publish_hook_for_test_) {
-    before_publish_hook_for_test_();
-  }
-  if (is_shutdown_.load()) {
-    return;
-  }
-  resolved_publisher->publish(serialized);
-  if (is_shutdown_.load()) {
-    return;
-  }
-
-  // Refresh recency only after a successful publish so failed attempts do not
-  // change bounded-cache residency.
-  if (was_cached) {
-    (void)cached_publishers_.touch(topic);
-    return;
-  }
-
-  // Enforce the cap after serving the current command: the publish succeeds and
-  // an older cached publisher is discarded to make room for future use.
-  const auto evicted_publisher =
-    cached_publishers_.insertOrAssign(topic, CachedPublisher{interface_type, std::move(resolved_publisher)});
-  if (!evicted_publisher.has_value()) {
-    return;
-  }
-
-  if (const std::size_t count = evicted_publisher_warning_throttle_.recordAndTakePendingCount(); count > 0U) {
-    LogEvent(kTopicPublisherLogger, "publisher_cache_evicted")
-      .field("reason", "max_topics_exceeded")
-      .field("topic", topic)
-      .field("evicted_topic", evicted_publisher->key)
-      .field("count", count)
-      .field("policy", "lru")
-      .field("max_topics", static_cast<int>(max_cached_publishers_))
-      .warn();
-  }
-}
-
-void RosTopicPublisher::setBeforePublishHookForTest(std::function<void()> hook)
-{
-  before_publish_hook_for_test_ = std::move(hook);
-}
-
-void RosTopicPublisher::setTopicNamesAndTypesProviderForTest(
-  std::function<std::map<std::string, std::vector<std::string>>()> provider)
-{
-  topic_names_and_types_provider_for_test_ = std::move(provider);
+  cache_.clear();
 }
 
 }  // namespace livekit_ros2_bridge

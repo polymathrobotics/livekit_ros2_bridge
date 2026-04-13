@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,27 +25,69 @@ namespace livekit_ros2_bridge
 /// Parsed form of a `ros.services.call` request body.
 struct ServiceCallRequest
 {
-  /// Normalized absolute ROS service name from the required `service` field.
+  /// Normalized absolute ROS service name.
   std::string service;
-  /// Optional trimmed `interface_type` hint. Blank or omitted values become empty.
+  /// Optional `pkg/srv/Type` hint. Blank or omitted values stay empty so the caller can resolve
+  /// the type from the ROS graph.
   std::string interface_type;
-  /// Raw request CDR bytes from the required non-empty `request` payload object.
+  /// Serialized request bytes. Empty payloads are invalid.
   std::vector<std::uint8_t> request_payload;
-  /// Optional integer timeout from `timeout_ms`. Zero means the caller did not request a timeout.
-  int timeout_ms = 0;
+  /// Parsed `timeout_ms` wire value when present. Callers decide how omitted or non-positive
+  /// values map to execution deadlines.
+  std::optional<int> timeout_ms;
 };
 
-/// Parse a JSON object request with required `service` and `request` fields, plus optional
+namespace service_call_payloads
+{
+
+/// Parse a JSON object request body with required `service` and `request` fields, plus optional
 /// `interface_type` and `timeout_ms`. The nested `request` object uses the stable CDR payload
 /// object format and must not decode to an empty byte vector.
-ServiceCallRequest parseServiceCallRequest(const std::string & payload);
+/// Unknown top-level fields are ignored so the request envelope can grow without revving this
+/// parser. Throws `std::invalid_argument` with caller-fixable validation text that the RPC layer
+/// surfaces as an invalid-request error.
+ServiceCallRequest parse(const std::string & payload);
 
 /// Serialize a successful service-call response as
 /// `{ "ok": true, "service": { "name", "interface_type" }, "response": <cdr>, "elapsed_ms": ... }`.
-std::string serializeServiceCallResponse(
+/// Callers should pass the service metadata that was actually used to execute the request so the
+/// response reflects any name normalization or late interface-type resolution performed downstream.
+std::string serialize(
   const std::string & service,
   const std::string & interface_type,
   const std::vector<std::uint8_t> & response,
   int elapsed_ms);
+
+inline ServiceCallRequest parseRequest(const std::string & payload)
+{
+  return parse(payload);
+}
+
+inline std::string serializeResponse(
+  const std::string & service,
+  const std::string & interface_type,
+  const std::vector<std::uint8_t> & response,
+  int elapsed_ms)
+{
+  return serialize(service, interface_type, response, elapsed_ms);
+}
+
+}  // namespace service_call_payloads
+
+// TODO: Remove these compatibility wrappers once remaining external call sites migrate to
+// `service_call_payloads::parse` / `service_call_payloads::serialize`.
+inline ServiceCallRequest parseServiceCallRequest(const std::string & payload)
+{
+  return service_call_payloads::parse(payload);
+}
+
+inline std::string serializeServiceCallResponse(
+  const std::string & service,
+  const std::string & interface_type,
+  const std::vector<std::uint8_t> & response,
+  int elapsed_ms)
+{
+  return service_call_payloads::serialize(service, interface_type, response, elapsed_ms);
+}
 
 }  // namespace livekit_ros2_bridge

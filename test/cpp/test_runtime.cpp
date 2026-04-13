@@ -147,9 +147,9 @@ RuntimeHarness makeRuntimeHarness(
   harness.state = room_connection->state;
   configure_room_connection(*room_connection);
 
-  RuntimeConfig startup_config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
+  RuntimeConfig config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
   harness.runtime = std::make_unique<Runtime>(
-    *harness.node, std::move(room_connection), std::move(startup_config), std::move(fail_fast_callbacks));
+    *harness.node, std::move(room_connection), std::move(config), std::move(fail_fast_callbacks));
   return harness;
 }
 
@@ -302,10 +302,10 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   auto room_connection = std::make_unique<FakeRoomConnection>();
   auto state = room_connection->state;
   state->rejected_rpc_methods = {protocol::kRpcInterfacesGet};
-  RuntimeConfig startup_config = loadRuntimeConfig(node->get_node_parameters_interface());
+  RuntimeConfig config = loadRuntimeConfig(node->get_node_parameters_interface());
 
   try {
-    Runtime runtime(*node, std::move(room_connection), std::move(startup_config));
+    Runtime runtime(*node, std::move(room_connection), std::move(config));
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Failed to register required RPC methods");
@@ -376,7 +376,7 @@ TEST_F(RuntimeTest, IncomingControlPacketPublishesAfterExecutorDispatch)
     nlohmann::json{
       {"topic", "/battery/cmd"},
       {"interface_type", "sensor_msgs/msg/BatteryState"},
-      {"message", serializeCdrPayload(serializeMessage(expected_message))},
+      {"message", cdr_payload::serialize(serializeMessage(expected_message))},
     }
       .dump();
   harness.fake_room_connection->emitIncomingControlPacket(

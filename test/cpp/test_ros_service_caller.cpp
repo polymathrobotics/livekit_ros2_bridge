@@ -122,13 +122,13 @@ bool waitForFutureReady(
     executor, [&]() { return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; }, timeout);
 }
 
-void expectRequesterCanUseExactlyOneReleasedInflightSlot(
-  RosServiceCaller & caller, const std::string & requester_identity, const ServiceCallRequest & request)
+void expectReleasedInflightSlot(
+  RosServiceCaller & caller, const std::string & requester, const ServiceCallRequest & request)
 {
-  auto recovered_future = caller.call(requester_identity, request);
+  auto recovered_future = caller.call(requester, request);
   expectFuturePending(recovered_future);
 
-  auto overflow_future = caller.call(requester_identity, request);
+  auto overflow_future = caller.call(requester, request);
   EXPECT_EQ(expectRuntimeErrorMessage(overflow_future), "Requester identity service call limit reached.");
 }
 
@@ -165,14 +165,14 @@ ServiceCallRequest makeSetBoolRequest(const std::string & service, int timeout_m
   return makeSetBoolRequest(service, timeout_ms, std::optional<std::string>{"std_srvs/srv/SetBool"}, data);
 }
 
-void saturateRequesterInflightQuota(
+void saturateInflightQuota(
   RosServiceCaller & caller,
-  const std::string & requester_identity,
+  const std::string & requester,
   const ServiceCallRequest & request,
   int count = kMaxInflightPerRequester)
 {
   for (int i = 0; i < count; ++i) {
-    (void)caller.call(requester_identity, request);
+    (void)caller.call(requester, request);
   }
 }
 
@@ -207,9 +207,9 @@ TEST_F(RosServiceCallerTest, CallsServiceAndReturnsResponse)
 
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
-  const RosServiceCaller::ServiceCallResponse service_call_response = future.get();
-  EXPECT_EQ(service_call_response.service, "/test_set_bool");
-  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(service_call_response.response);
+  const RosServiceCaller::ServiceCallResponse result = future.get();
+  EXPECT_EQ(result.service, "/test_set_bool");
+  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
   EXPECT_TRUE(response.success);
   EXPECT_EQ(response.message, "enabled");
 
@@ -307,8 +307,7 @@ TEST_F(RosServiceCallerTest, EnforcesRequesterIdentityInflightLimit)
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_inflight_node");
 
   RosServiceCaller caller(*caller_node);
-  saturateRequesterInflightQuota(
-    caller, "requester-1", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
+  saturateInflightQuota(caller, "requester-1", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
 
   auto overflow_future = caller.call("requester-1", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
 
@@ -324,7 +323,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
   RosServiceCaller caller(*caller_node);
 
   const auto request = makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs);
-  saturateRequesterInflightQuota(caller, "requester-1", request, kMaxInflightPerRequester - 1);
+  saturateInflightQuota(caller, "requester-1", request, kMaxInflightPerRequester - 1);
 
   ServiceCallRequest malformed_request = request;
   malformed_request.request_payload.clear();
@@ -332,7 +331,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
   const std::string malformed_error = expectRuntimeErrorMessage(malformed_future);
   EXPECT_NE(malformed_error.find("Failed to build service request:"), std::string::npos);
 
-  expectRequesterCanUseExactlyOneReleasedInflightSlot(caller, "requester-1", request);
+  expectReleasedInflightSlot(caller, "requester-1", request);
 
   caller.shutdown();
 }
@@ -358,18 +357,18 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallSettl
   RosServiceCaller caller(*caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_response_release", kStandardRequestTimeoutMs);
-  saturateRequesterInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
+  saturateInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
 
   auto settled_future = caller.call("requester-1", makeSetBoolRequest("/release_response", kResponseSettleTimeoutMs));
 
   ASSERT_TRUE(waitForFutureReady(executor, settled_future));
 
-  const RosServiceCaller::ServiceCallResponse settled_response_payload = settled_future.get();
-  const auto settled_response = deserializeMessage<std_srvs::srv::SetBool::Response>(settled_response_payload.response);
+  const RosServiceCaller::ServiceCallResponse result = settled_future.get();
+  const auto settled_response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
   EXPECT_TRUE(settled_response.success);
   EXPECT_EQ(settled_response.message, "released");
 
-  expectRequesterCanUseExactlyOneReleasedInflightSlot(caller, "requester-1", holding_request);
+  expectReleasedInflightSlot(caller, "requester-1", holding_request);
 
   caller.shutdown();
 }
@@ -384,7 +383,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallTimes
   RosServiceCaller caller(*caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_timeout_release", kStandardRequestTimeoutMs);
-  saturateRequesterInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
+  saturateInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
 
   auto settled_future = caller.call("requester-1", makeSetBoolRequest("/timed_out_release", 200));
 
@@ -392,7 +391,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallTimes
 
   EXPECT_EQ(expectRuntimeErrorMessage(settled_future), "Service call timed out.");
 
-  expectRequesterCanUseExactlyOneReleasedInflightSlot(caller, "requester-1", holding_request);
+  expectReleasedInflightSlot(caller, "requester-1", holding_request);
 
   caller.shutdown();
 }
@@ -525,11 +524,11 @@ TEST_F(RosServiceCallerTest, CancelCallsForRequesterOnlySettlesMatchingRequester
   }
   expectFuturePending(requester_two_future);
 
-  saturateRequesterInflightQuota(caller, "requester-1", request);
+  saturateInflightQuota(caller, "requester-1", request);
   auto requester_one_overflow_future = caller.call("requester-1", request);
   EXPECT_EQ(expectRuntimeErrorMessage(requester_one_overflow_future), "Requester identity service call limit reached.");
 
-  saturateRequesterInflightQuota(caller, "requester-2", request, kMaxInflightPerRequester - 1);
+  saturateInflightQuota(caller, "requester-2", request, kMaxInflightPerRequester - 1);
   auto requester_two_overflow_future = caller.call("requester-2", request);
   EXPECT_EQ(expectRuntimeErrorMessage(requester_two_overflow_future), "Requester identity service call limit reached.");
 
@@ -558,7 +557,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesPendingCallsAndReleasesRequest
     EXPECT_EQ(expectRuntimeErrorMessage(pending_future), "LiveKit session reset.");
   }
 
-  saturateRequesterInflightQuota(caller, "requester-1", request);
+  saturateInflightQuota(caller, "requester-1", request);
   auto overflow_future = caller.call("requester-1", request);
   EXPECT_EQ(expectRuntimeErrorMessage(overflow_future), "Requester identity service call limit reached.");
 
@@ -603,9 +602,9 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
 
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
-  const RosServiceCaller::ServiceCallResponse service_call_response = future.get();
-  EXPECT_EQ(service_call_response.interface_type, "std_srvs/srv/SetBool");
-  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(service_call_response.response);
+  const RosServiceCaller::ServiceCallResponse result = future.get();
+  EXPECT_EQ(result.interface_type, "std_srvs/srv/SetBool");
+  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
   EXPECT_TRUE(response.success);
 
   caller.shutdown();
@@ -632,10 +631,10 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
 
   RosServiceCaller caller(*caller_node);
 
-  int resolution_attempts = 0;
-  caller.setTypeSupportResolveHookForTest([&resolution_attempts](const std::string & service_type) {
-    ++resolution_attempts;
-    EXPECT_EQ(service_type, "nonexistent_pkg/srv/Foo");
+  int type_support_load_attempts = 0;
+  caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
+    ++type_support_load_attempts;
+    EXPECT_EQ(interface_type, "nonexistent_pkg/srv/Foo");
   });
 
   ServiceCallRequest request;
@@ -653,7 +652,7 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
   auto second_future = caller.call("requester-1", request);
   const std::string second_error = expectRuntimeErrorMessage(second_future);
 
-  EXPECT_EQ(resolution_attempts, 1);
+  EXPECT_EQ(type_support_load_attempts, 1);
   EXPECT_EQ(second_error, first_error);
 
   caller.shutdown();
@@ -680,23 +679,23 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
 
   RosServiceCaller caller(*caller_node);
 
-  int resolution_attempts = 0;
-  caller.setTypeSupportResolveHookForTest([&resolution_attempts](const std::string & service_type) {
-    ++resolution_attempts;
-    EXPECT_EQ(service_type, "std_srvs/srv/SetBool");
+  int type_support_load_attempts = 0;
+  caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
+    ++type_support_load_attempts;
+    EXPECT_EQ(interface_type, "std_srvs/srv/SetBool");
   });
 
   auto first_future =
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
   ASSERT_TRUE(waitForFutureReady(executor, first_future));
   EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(first_future.get().response).success);
-  EXPECT_EQ(resolution_attempts, 1);
+  EXPECT_EQ(type_support_load_attempts, 1);
 
   auto second_future =
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs, false));
   ASSERT_TRUE(waitForFutureReady(executor, second_future));
   EXPECT_FALSE(deserializeMessage<std_srvs::srv::SetBool::Response>(second_future.get().response).success);
-  EXPECT_EQ(resolution_attempts, 1);
+  EXPECT_EQ(type_support_load_attempts, 1);
 
   caller.resetSessionState();
 
@@ -704,7 +703,7 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
   ASSERT_TRUE(waitForFutureReady(executor, third_future));
   EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(third_future.get().response).success);
-  EXPECT_EQ(resolution_attempts, 2);
+  EXPECT_EQ(type_support_load_attempts, 2);
 
   caller.shutdown();
 }
@@ -725,7 +724,7 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   auto poll_exited = std::make_shared<std::promise<void>>();
   auto poll_exited_future = poll_exited->get_future();
 
-  caller.setPollCallbackHooksForTest(
+  caller.setPollCallbacksForTest(
     [poll_entered, release_poll_future]() {
       poll_entered->set_value();
       release_poll_future.wait();
@@ -782,7 +781,7 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
   auto poll_exited = std::make_shared<std::promise<void>>();
   auto poll_exited_future = poll_exited->get_future();
 
-  caller.setPollCallbackHooksForTest(
+  caller.setPollCallbacksForTest(
     [&caller, shutdown_completed]() {
       caller.shutdown();
       shutdown_completed->set_value();
@@ -805,8 +804,6 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
 
 TEST_F(RosServiceCallerTest, RejectsCallAfterShutdown)
 {
-  // Cover the early-return path in RosServiceCaller::call when shutdown_flag
-  // is already true: the returned future must already carry the shutdown failure.
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_post_shutdown_node");
 
   RosServiceCaller caller(*caller_node);

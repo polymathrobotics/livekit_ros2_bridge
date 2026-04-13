@@ -38,110 +38,122 @@ void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
   }
 }
 
-void expectRequestError(const nlohmann::json & body, const char * expected_message)
+void expectParseError(const nlohmann::json & body, const char * expected_message)
 {
-  expectInvalidArgumentMessage([&body]() { (void)parseServiceCallRequest(body.dump()); }, expected_message);
+  expectInvalidArgumentMessage([&body]() { (void)service_call_payloads::parse(body.dump()); }, expected_message);
 }
 
-nlohmann::json makeValidRequestBody()
+nlohmann::json makeRequestBody()
 {
   return nlohmann::json{
     {"service", "/set_bool"},
     {"interface_type", "std_srvs/srv/SetBool"},
-    {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
+    {"request", cdr_payload::serialize(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
     {"timeout_ms", 500},
   };
 }
 
 TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 {
-  auto body = makeValidRequestBody();
+  auto body = makeRequestBody();
   body["service"] = "  set_bool  ";
   body["interface_type"] = "  std_srvs/srv/SetBool  ";
-  const auto request = parseServiceCallRequest(body.dump());
+  const auto request = service_call_payloads::parse(body.dump());
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
   EXPECT_EQ(request.request_payload, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
-  EXPECT_EQ(request.timeout_ms, 500);
+  ASSERT_TRUE(request.timeout_ms.has_value());
+  EXPECT_EQ(*request.timeout_ms, 500);
 }
 
-TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndTimeoutVariants)
+TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPresence)
 {
-  auto body = makeValidRequestBody();
+  auto body = makeRequestBody();
   body.erase("interface_type");
   body.erase("timeout_ms");
-  const auto defaulted_request = parseServiceCallRequest(body.dump());
+  const auto request = service_call_payloads::parse(body.dump());
 
-  EXPECT_TRUE(defaulted_request.interface_type.empty());
-  EXPECT_EQ(defaulted_request.timeout_ms, 0);
+  EXPECT_TRUE(request.interface_type.empty());
+  EXPECT_EQ(request.timeout_ms, std::nullopt);
 
-  body = makeValidRequestBody();
+  body = makeRequestBody();
   body["interface_type"] = "   ";
-  body["timeout_ms"] = -1;
-  const auto explicit_request = parseServiceCallRequest(body.dump());
+  body["timeout_ms"] = 0;
+  const auto explicit_zero_timeout_request = service_call_payloads::parse(body.dump());
 
-  EXPECT_TRUE(explicit_request.interface_type.empty());
-  EXPECT_EQ(explicit_request.timeout_ms, -1);
+  EXPECT_TRUE(explicit_zero_timeout_request.interface_type.empty());
+  EXPECT_EQ(explicit_zero_timeout_request.timeout_ms, std::optional<int>(0));
+
+  body["timeout_ms"] = -1;
+  const auto explicit_negative_timeout_request = service_call_payloads::parse(body.dump());
+  EXPECT_EQ(explicit_negative_timeout_request.timeout_ms, std::optional<int>(-1));
 }
 
 TEST(ServiceCallPayloadsTest, RejectsInvalidJson)
 {
-  expectInvalidArgumentMessage([]() { (void)parseServiceCallRequest("{"); }, "Invalid JSON in service call request");
+  expectInvalidArgumentMessage(
+    []() { (void)service_call_payloads::parse("{"); }, "Invalid JSON in service call request");
 }
 
 TEST(ServiceCallPayloadsTest, RejectsNonObjectRoot)
 {
   expectInvalidArgumentMessage(
-    []() { (void)parseServiceCallRequest(R"([1,2,3])"); }, "Service call request must be a JSON object");
+    []() { (void)service_call_payloads::parse(R"([1,2,3])"); }, "Service call request must be a JSON object");
 }
 
 TEST(ServiceCallPayloadsTest, RejectsMissingServiceAndEmptyRequestPayload)
 {
-  auto body = makeValidRequestBody();
+  auto body = makeRequestBody();
   body.erase("service");
-  expectRequestError(body, "service is required");
+  expectParseError(body, "service is required");
 
-  body = makeValidRequestBody();
+  body = makeRequestBody();
   body["service"] = "   ";
-  expectRequestError(body, "service is required");
+  expectParseError(body, "service is required");
 
-  // TODO: Keep request-envelope structure/content-type/base64 cases in test_payload_helpers.cpp;
-  // this file should only cover the service-call-specific non-empty request rule.
-  body = makeValidRequestBody();
-  body["request"] = serializeCdrPayload(std::vector<std::uint8_t>{});
-  expectRequestError(body, "request.payload_base64 must not be empty");
+  body = makeRequestBody();
+  body["request"] = cdr_payload::serialize(std::vector<std::uint8_t>{});
+  expectParseError(body, "request.payload_base64 must not be empty");
 }
 
 TEST(ServiceCallPayloadsTest, RejectsMistypedOptionalFields)
 {
-  expectRequestError(
+  expectParseError(
     nlohmann::json{
       {"service", "/foo"},
       {"timeout_ms", "500"},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
+      {"request", cdr_payload::serialize(std::vector<std::uint8_t>{0x01})},
     },
     "timeout_ms must be an integer");
 
-  expectRequestError(
+  expectParseError(
     nlohmann::json{
       {"service", "/foo"},
       {"interface_type", 123},
-      {"request", serializeCdrPayload(std::vector<std::uint8_t>{0x01})},
+      {"request", cdr_payload::serialize(std::vector<std::uint8_t>{0x01})},
     },
     "interface_type must be a string");
+
+  expectParseError(
+    nlohmann::json{
+      {"service", "/foo"},
+      {"timeout_ms", nullptr},
+      {"request", cdr_payload::serialize(std::vector<std::uint8_t>{0x01})},
+    },
+    "timeout_ms must be an integer");
 }
 
 TEST(ServiceCallPayloadsTest, SerializesResponse)
 {
-  const auto serialized =
-    serializeServiceCallResponse("/set_bool", "std_srvs/srv/SetBool", std::vector<std::uint8_t>{0x01, 0x02}, 42);
-  const auto body = nlohmann::json::parse(serialized);
+  const auto payload =
+    service_call_payloads::serialize("/set_bool", "std_srvs/srv/SetBool", std::vector<std::uint8_t>{0x01, 0x02}, 42);
+  const auto body = nlohmann::json::parse(payload);
 
   EXPECT_TRUE(body["ok"].get<bool>());
   EXPECT_EQ(body["service"]["name"].get<std::string>(), "/set_bool");
   EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
-  EXPECT_EQ(parseCdrPayload(body, "response"), (std::vector<std::uint8_t>{0x01, 0x02}));
+  EXPECT_EQ(cdr_payload::parse(body, "response"), (std::vector<std::uint8_t>{0x01, 0x02}));
   EXPECT_EQ(body["elapsed_ms"].get<int>(), 42);
 }
 

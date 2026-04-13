@@ -37,11 +37,14 @@ struct RuntimeConfig
   struct HealthConfig
   {
     bool fail_fast_enabled = true;
+    // Maximum time startup or any later reconnect may remain disconnected
+    // before Runtime requests process shutdown.
     std::chrono::milliseconds fail_fast_disconnect_grace{std::chrono::minutes(10)};
   };
 
-  Params loaded_params;
+  Params params;
   RoomConnectionConfig room_connection_config;
+  // Startup token captured once and reused by reconnect attempts until restart.
   std::string access_token;
   HealthConfig health_config;
   AccessPolicy access_policy;
@@ -50,10 +53,9 @@ struct RuntimeConfig
   VideoProfilingConfig video_profiling_config;
 };
 
-// Loads and validates the bridge's startup-only configuration from parameters, deriving the
-// connection settings, startup access token, access policy, and declared video stream config in
-// one pass before Runtime starts.
-RuntimeConfig loadRuntimeConfig(
-  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface);
+// Loads the bridge's startup-only configuration from parameters once. Later ROS parameter
+// mutations are not observed.
+// Throws std::invalid_argument for a null interface and std::runtime_error for invalid config.
+RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters);
 
 }  // namespace livekit_ros2_bridge

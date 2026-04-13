@@ -14,10 +14,8 @@
 
 #pragma once
 
-#include <array>
 #include <optional>
 #include <string>
-#include <utility>
 
 #include "access_policy.hpp"
 #include "rclcpp/node.hpp"
@@ -41,21 +39,27 @@ public:
     RosExecutorQueue & ros_executor_queue,
     RosServiceCaller & ros_service_caller);
 
-  // Attempts to register every supported RPC method on the room connection. Returns
-  // false if any individual registration fails; successful handlers remain
-  // installed until unregisterRpcMethods() is called.
-  bool registerRpcMethods(RoomConnection & room_connection);
-  void unregisterRpcMethods(RoomConnection & room_connection);
+  // Registers every supported RPC. Returns false if any registration fails, but
+  // successful handlers remain installed until unregisterRpcs() is called.
+  // Registered callbacks borrow this router and its dependencies, so
+  // unregisterRpcs() must run before any of them are destroyed.
+  bool registerRpcs(RoomConnection & room_connection);
+  // Best-effort teardown counterpart to registerRpcs(); call before
+  // destroying this router or any borrowed dependency captured by handlers.
+  void unregisterRpcs(RoomConnection & room_connection);
 
 private:
-  std::array<std::pair<const char *, RpcHandler>, 4> rpcEntrypoints();
-  std::optional<std::string> handleServiceCall(const RpcInvocation & invocation);
-  std::optional<std::string> handleInterfacesGet(const RpcInvocation & invocation);
-  std::optional<std::string> handleServiceList(const RpcInvocation & invocation);
-  std::optional<std::string> handleTopicList(const RpcInvocation & invocation);
+  std::optional<std::string> callService(const RpcInvocation & invocation);
+  std::optional<std::string> getInterfaces(const RpcInvocation & invocation);
+  std::optional<std::string> listServices(const RpcInvocation & invocation);
+  std::optional<std::string> listTopics(const RpcInvocation & invocation);
 
   rclcpp::Node & node_;
+  // Copy the policy so registered callbacks do not depend on the caller
+  // retaining the original config object for the life of the room connection.
   AccessPolicy access_policy_;
+  // Borrowed ROS helpers captured by registered callbacks; unregisterRpcs()
+  // must run before either helper or node_ is destroyed.
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
 };

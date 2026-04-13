@@ -282,8 +282,8 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
   SubscriptionRegistry registry(*node, session, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
-  registry.markRequesterForDataTrackRepublish("alice", registry.registryGeneration());
-  registry.republishDataTracksForRequester("alice");
+  registry.queueDataTrackRepublish("alice", registry.generation());
+  registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.hasSubscription(topic));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
@@ -309,7 +309,7 @@ TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
   const auto second = registry.renewSubscription("bob", topic, 250, kFarFuture);
   EXPECT_EQ(second.track_name, first.track_name);
 
-  registry.republishDataTracksForRequester("bob");
+  registry.republishDataTracks("bob");
 
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{first.track_name});
   EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{first.track_name, first.track_name}));
@@ -330,15 +330,15 @@ TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscri
 
   SubscriptionRegistry registry(*node, session, nullptr);
   const auto first = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  const auto stale_generation = registry.registryGeneration();
+  const auto stale_generation = registry.generation();
 
   registry.revokeRequesterLeases("alice");
   ASSERT_FALSE(registry.hasSubscription(topic));
 
   const auto replacement = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
-  registry.markRequesterForDataTrackRepublish("alice", stale_generation);
-  registry.republishDataTracksForRequester("alice");
+  registry.queueDataTrackRepublish("alice", stale_generation);
+  registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.hasSubscription(topic));
   EXPECT_EQ(
@@ -400,9 +400,9 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequ
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   registry.renewSubscription("bob", topic, 1000, kFarFuture);
 
-  registry.markRequesterForDataTrackRepublish("alice", registry.registryGeneration());
+  registry.queueDataTrackRepublish("alice", registry.generation());
   registry.revokeRequesterLeases("alice");
-  registry.republishDataTracksForRequester("alice");
+  registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.hasSubscription(topic));
   EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
@@ -460,7 +460,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 
   EXPECT_FALSE(registry.hasSubscription(data_topic));
   EXPECT_FALSE(registry.hasSubscription(video_topic));
-  EXPECT_FALSE(registry.onDataTrackPublished(response.track_name, registry.registryGeneration()));
+  EXPECT_FALSE(registry.onDataTrackPublished(response.track_name, registry.generation()));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
   EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
 }
@@ -552,9 +552,8 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)
     [&registry]() { (void)registry.renewSubscription("", "/some/topic", 0, kFarFuture); },
     "requester_identity is required");
   expectInvalidArgumentMessage(
-    [&registry]() { registry.markRequesterForDataTrackRepublish("", 0); }, "requester_identity is required");
-  expectInvalidArgumentMessage(
-    [&registry]() { registry.republishDataTracksForRequester(""); }, "requester_identity is required");
+    [&registry]() { registry.queueDataTrackRepublish("", 0); }, "requester_identity is required");
+  expectInvalidArgumentMessage([&registry]() { registry.republishDataTracks(""); }, "requester_identity is required");
   expectInvalidArgumentMessage([&registry]() { registry.revokeRequesterLeases(""); }, "requester_identity is required");
 }
 

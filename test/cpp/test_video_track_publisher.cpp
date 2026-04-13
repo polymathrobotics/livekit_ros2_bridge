@@ -29,39 +29,39 @@ namespace livekit_ros2_bridge
 {
 namespace
 {
-class RecordingVideoStreamLifecycleObserver final : public VideoStreamLifecycleObserver
+class RecordingObserver final : public VideoStreamLifecycleObserver
 {
 public:
-  void onVideoTrackPublished(int width, int height, bool republished) override
+  void onTrackPublished(int width, int height, bool republished) override
   {
     published_events.emplace_back(width, height, republished);
   }
 
-  void onVideoTrackUnpublishing() override
+  void onTrackUnpublishing() override
   {
     unpublish_call_count++;
   }
 
-  void onVideoStreamSampleUnpackFailed(const std::string &) override
+  void onSampleUnpackFailed(const std::string &) override
   {}
 
-  void onVideoStreamCaptureFailed(const std::string &) override
+  void onCaptureFailed(const std::string &) override
   {}
 
-  void onVideoStreamPipelineFailed(const std::string &) override
+  void onPipelineFailed(const std::string &) override
   {}
 
-  void onVideoStreamRestartFailed(const std::string &) override
+  void onRestartFailed(const std::string &) override
   {}
 
-  void onVideoStreamPushFailed(const std::string &) override
+  void onPushFailed(const std::string &) override
   {}
 
   std::vector<std::tuple<int, int, bool>> published_events;
   int unpublish_call_count = 0;
 };
 
-class ThrowingVideoUnpublishRoomConnection final : public RoomConnection
+class ThrowingUnpublishRoomConnection final : public RoomConnection
 {
 public:
   void start(
@@ -75,12 +75,12 @@ public:
   void stop() override
   {}
 
-  bool registerRpcMethod(const std::string &, RpcHandler) override
+  bool registerRpc(const std::string &, RpcHandler) override
   {
     return true;
   }
 
-  bool unregisterRpcMethod(const std::string &) override
+  bool unregisterRpc(const std::string &) override
   {
     return true;
   }
@@ -102,19 +102,19 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
+  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+    const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
-    published_video_track_names.push_back(track_name);
-    auto track = std::make_shared<PublishedVideoTrack>();
-    track->track_name = track_name;
-    return track;
+    published_video_track_names.push_back(name);
+    auto handle = std::make_shared<VideoTrackHandle>();
+    handle->name = name;
+    return handle;
   }
 
-  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
   {
-    if (track != nullptr) {
-      unpublished_video_track_names.push_back(track->track_name);
+    if (handle != nullptr) {
+      unpublished_video_track_names.push_back(handle->name);
     }
     throw std::runtime_error("simulated video unpublish failure");
   }
@@ -123,9 +123,13 @@ public:
   std::vector<std::string> unpublished_video_track_names;
 };
 
-class FailOnceVideoPublishRoomConnection final : public RoomConnection
+class FailNthPublishRoomConnection final : public RoomConnection
 {
 public:
+  explicit FailNthPublishRoomConnection(int fail_on_attempt)
+  : fail_on_attempt_(fail_on_attempt)
+  {}
+
   void start(
     RoomConnectionConfig,
     std::string,
@@ -137,12 +141,12 @@ public:
   void stop() override
   {}
 
-  bool registerRpcMethod(const std::string &, RpcHandler) override
+  bool registerRpc(const std::string &, RpcHandler) override
   {
     return true;
   }
 
-  bool unregisterRpcMethod(const std::string &) override
+  bool unregisterRpc(const std::string &) override
   {
     return true;
   }
@@ -164,36 +168,39 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
+  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+    const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
-    published_video_track_names.push_back(track_name);
+    published_video_track_names.push_back(name);
     ++publish_attempt_count;
-    if (publish_attempt_count == 1) {
+    if (publish_attempt_count == fail_on_attempt_) {
       throw std::runtime_error("simulated video publish failure");
     }
 
-    auto track = std::make_shared<PublishedVideoTrack>();
-    track->track_name = track_name;
-    return track;
+    auto handle = std::make_shared<VideoTrackHandle>();
+    handle->name = name;
+    return handle;
   }
 
-  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
   {
-    if (track != nullptr) {
-      unpublished_video_track_names.push_back(track->track_name);
+    if (handle != nullptr) {
+      unpublished_video_track_names.push_back(handle->name);
     }
   }
 
   int publish_attempt_count = 0;
   std::vector<std::string> published_video_track_names;
   std::vector<std::string> unpublished_video_track_names;
+
+private:
+  int fail_on_attempt_;
 };
 
-class BlockingVideoPublishRoomConnection final : public RoomConnection
+class BlockingPublishRoomConnection final : public RoomConnection
 {
 public:
-  BlockingVideoPublishRoomConnection()
+  BlockingPublishRoomConnection()
   : publish_started_future_(publish_started_promise_.get_future())
   , release_publish_future_(release_publish_promise_.get_future().share())
   {}
@@ -209,12 +216,12 @@ public:
   void stop() override
   {}
 
-  bool registerRpcMethod(const std::string &, RpcHandler) override
+  bool registerRpc(const std::string &, RpcHandler) override
   {
     return true;
   }
 
-  bool unregisterRpcMethod(const std::string &) override
+  bool unregisterRpc(const std::string &) override
   {
     return true;
   }
@@ -236,25 +243,25 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
+  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+    const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
-    published_video_track_names.push_back(track_name);
+    published_video_track_names.push_back(name);
     if (!publish_started_) {
       publish_started_ = true;
       publish_started_promise_.set_value();
     }
     release_publish_future_.wait();
 
-    auto track = std::make_shared<PublishedVideoTrack>();
-    track->track_name = track_name;
-    return track;
+    auto handle = std::make_shared<VideoTrackHandle>();
+    handle->name = name;
+    return handle;
   }
 
-  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
   {
-    if (track != nullptr) {
-      unpublished_video_track_names.push_back(track->track_name);
+    if (handle != nullptr) {
+      unpublished_video_track_names.push_back(handle->name);
     }
   }
 
@@ -298,25 +305,25 @@ std::vector<std::uint8_t> makeI420Frame(int width, int height)
 
 TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAfterShutdown)
 {
-  FakeRoomConnection session;
-  RecordingVideoStreamLifecycleObserver lifecycle_observer;
+  FakeRoomConnection connection;
+  RecordingObserver observer;
   VideoTrackPublisher publisher(
-    session, makeSpec("stream:lifecycle_observer", "ros.video.camera.lifecycle_observer"), lifecycle_observer);
+    connection, makeSpec("stream:lifecycle_observer", "ros.video.camera.lifecycle_observer"), observer);
 
-  publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
-  publisher.handleFrame(2, 2, makeI420Frame(2, 2), 2000);
-  publisher.handleFrame(4, 4, makeI420Frame(4, 4), 3000);
+  publisher.write(2, 2, makeI420Frame(2, 2), 1000);
+  publisher.write(2, 2, makeI420Frame(2, 2), 2000);
+  publisher.write(4, 4, makeI420Frame(4, 4), 3000);
   publisher.shutdown();
-  publisher.handleFrame(8, 8, makeI420Frame(8, 8), 4000);
+  publisher.write(8, 8, makeI420Frame(8, 8), 4000);
   publisher.shutdown();
 
   EXPECT_EQ(
-    lifecycle_observer.published_events,
+    observer.published_events,
     (std::vector<std::tuple<int, int, bool>>{
       std::make_tuple(2, 2, false),
       std::make_tuple(4, 4, true),
     }));
-  EXPECT_EQ(lifecycle_observer.unpublish_call_count, 1);
+  EXPECT_EQ(observer.unpublish_call_count, 1);
 
   const auto expected_event_log = std::vector<std::string>{
     "publish_video_track:ros.video.camera.lifecycle_observer",
@@ -325,67 +332,101 @@ TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAf
     "unpublish_video_track:ros.video.camera.lifecycle_observer",
   };
 
-  EXPECT_EQ(session.state->event_log, expected_event_log);
+  EXPECT_EQ(connection.state->event_log, expected_event_log);
 }
 
 TEST(VideoTrackPublisherTest, ShutdownSwallowsVideoUnpublishFailureAndStaysClosed)
 {
-  ThrowingVideoUnpublishRoomConnection session;
-  RecordingVideoStreamLifecycleObserver lifecycle_observer;
+  ThrowingUnpublishRoomConnection connection;
+  RecordingObserver observer;
   VideoTrackPublisher publisher(
-    session, makeSpec("stream:unpublish_failure", "ros.video.camera.unpublish_failure"), lifecycle_observer);
+    connection, makeSpec("stream:unpublish_failure", "ros.video.camera.unpublish_failure"), observer);
 
-  publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000);
+  publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   EXPECT_NO_THROW(publisher.shutdown());
-  publisher.handleFrame(4, 4, makeI420Frame(4, 4), 2000);
+  publisher.write(4, 4, makeI420Frame(4, 4), 2000);
   EXPECT_NO_THROW(publisher.shutdown());
 
-  EXPECT_EQ(session.published_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
-  EXPECT_EQ(session.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
-  EXPECT_EQ(lifecycle_observer.unpublish_call_count, 1);
+  EXPECT_EQ(connection.published_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
+  EXPECT_EQ(connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
+  EXPECT_EQ(observer.unpublish_call_count, 1);
 }
 
 TEST(VideoTrackPublisherTest, PublishFailureOnFirstFrameCanRetryAndStillShutdownCleanly)
 {
-  FailOnceVideoPublishRoomConnection session;
-  RecordingVideoStreamLifecycleObserver lifecycle_observer;
+  FailNthPublishRoomConnection connection(1);
+  RecordingObserver observer;
   VideoTrackPublisher publisher(
-    session, makeSpec("stream:publish_retry", "ros.video.camera.publish_retry"), lifecycle_observer);
+    connection, makeSpec("stream:publish_retry", "ros.video.camera.publish_retry"), observer);
 
-  EXPECT_THROW(publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000), std::runtime_error);
-  EXPECT_NO_THROW(publisher.handleFrame(2, 2, makeI420Frame(2, 2), 2000));
+  EXPECT_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000), std::runtime_error);
+  EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 2000));
   EXPECT_NO_THROW(publisher.shutdown());
 
   EXPECT_EQ(
-    session.published_video_track_names,
+    connection.published_video_track_names,
     (std::vector<std::string>{
       "ros.video.camera.publish_retry",
       "ros.video.camera.publish_retry",
     }));
-  EXPECT_EQ(session.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.publish_retry"}));
+  EXPECT_EQ(connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.publish_retry"}));
   EXPECT_EQ(
-    lifecycle_observer.published_events,
+    observer.published_events,
     (std::vector<std::tuple<int, int, bool>>{
       std::make_tuple(2, 2, false),
     }));
-  EXPECT_EQ(lifecycle_observer.unpublish_call_count, 1);
+  EXPECT_EQ(observer.unpublish_call_count, 1);
+}
+
+TEST(VideoTrackPublisherTest, RepublishFailureLeavesPublisherReadyForRetryWithoutDoubleUnpublish)
+{
+  FailNthPublishRoomConnection connection(2);
+  RecordingObserver observer;
+  VideoTrackPublisher publisher(
+    connection, makeSpec("stream:republish_retry", "ros.video.camera.republish_retry"), observer);
+
+  EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000));
+  EXPECT_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 2000), std::runtime_error);
+  EXPECT_NO_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 3000));
+  EXPECT_NO_THROW(publisher.shutdown());
+
+  EXPECT_EQ(
+    connection.published_video_track_names,
+    (std::vector<std::string>{
+      "ros.video.camera.republish_retry",
+      "ros.video.camera.republish_retry",
+      "ros.video.camera.republish_retry",
+    }));
+  EXPECT_EQ(
+    connection.unpublished_video_track_names,
+    (std::vector<std::string>{
+      "ros.video.camera.republish_retry",
+      "ros.video.camera.republish_retry",
+    }));
+  EXPECT_EQ(
+    observer.published_events,
+    (std::vector<std::tuple<int, int, bool>>{
+      std::make_tuple(2, 2, false),
+      std::make_tuple(4, 4, true),
+    }));
+  EXPECT_EQ(observer.unpublish_call_count, 1);
 }
 
 TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce)
 {
-  BlockingVideoPublishRoomConnection session;
-  RecordingVideoStreamLifecycleObserver lifecycle_observer;
+  BlockingPublishRoomConnection connection;
+  RecordingObserver observer;
   VideoTrackPublisher publisher(
-    session, makeSpec("stream:concurrent_shutdown", "ros.video.camera.concurrent_shutdown"), lifecycle_observer);
+    connection, makeSpec("stream:concurrent_shutdown", "ros.video.camera.concurrent_shutdown"), observer);
 
   auto handle_frame_future =
-    std::async(std::launch::async, [&publisher]() { publisher.handleFrame(2, 2, makeI420Frame(2, 2), 1000); });
-  EXPECT_EQ(session.publishStartedFuture().wait_for(std::chrono::seconds(2)), std::future_status::ready);
+    std::async(std::launch::async, [&publisher]() { publisher.write(2, 2, makeI420Frame(2, 2), 1000); });
+  EXPECT_EQ(connection.publishStartedFuture().wait_for(std::chrono::seconds(2)), std::future_status::ready);
 
   auto shutdown_future = std::async(std::launch::async, [&publisher]() { publisher.shutdown(); });
   EXPECT_EQ(shutdown_future.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
 
-  session.releasePublish();
+  connection.releasePublish();
 
   EXPECT_EQ(handle_frame_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   EXPECT_NO_THROW(handle_frame_future.get());
@@ -393,13 +434,14 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
   EXPECT_NO_THROW(shutdown_future.get());
 
   EXPECT_EQ(
-    lifecycle_observer.published_events,
+    observer.published_events,
     (std::vector<std::tuple<int, int, bool>>{
       std::make_tuple(2, 2, false),
     }));
-  EXPECT_EQ(lifecycle_observer.unpublish_call_count, 1);
-  EXPECT_EQ(session.published_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
-  EXPECT_EQ(session.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
+  EXPECT_EQ(observer.unpublish_call_count, 1);
+  EXPECT_EQ(connection.published_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
+  EXPECT_EQ(
+    connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
 }
 
 }  // namespace

@@ -32,47 +32,68 @@ const auto kVideoTrackPublisherLogger = rclcpp::get_logger("video_track_publishe
 VideoTrackPublisher::VideoTrackPublisher(
   RoomConnection & room_connection,
   VideoStreamSpec spec,
-  VideoStreamLifecycleObserver & lifecycle_observer,
+  VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : room_connection_(room_connection)
 , spec_(std::move(spec))
-, lifecycle_observer_(lifecycle_observer)
+, observer_(observer)
 , profiler_(std::move(profiler))
 {}
 
-void VideoTrackPublisher::handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
+void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
-  const std::optional<std::int64_t> frame_timestamp_us =
+  const std::optional<std::int64_t> timestamp_us_opt =
     timestamp_us > 0 ? std::optional<std::int64_t>(timestamp_us) : std::nullopt;
-  VideoStreamProfiler::ScopedStageTimer publisher_handle_timer(
-    profiler_.get(), VideoProfileStage::kPublisherHandleFrame, frame_timestamp_us);
+  VideoStreamProfiler::StageTimer handle_timer(
+    profiler_.get(), VideoProfileStage::kPublisherHandleFrame, timestamp_us_opt);
   {
-    VideoStreamProfiler::ScopedStageTimer ensure_track_timer(
-      profiler_.get(), VideoProfileStage::kEnsureTrack, frame_timestamp_us);
-    ensurePublishedTrackLocked(width, height);
+    VideoStreamProfiler::StageTimer ensure_track_timer(
+      profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us_opt);
+    const bool can_reuse =
+      active_source_ != nullptr && active_track_ != nullptr && active_width_ == width && active_height_ == height;
+    if (!can_reuse) {
+      const bool republished = has_published_;
+      if (active_track_ != nullptr) {
+        room_connection_.unpublishVideoTrack(active_track_);
+      }
+      // Reset local publication state before publishing so a
+      // publishVideoTrack() failure forces the next frame to retry instead of
+      // reusing stale state.
+      active_source_.reset();
+      active_track_.reset();
+      active_width_ = 0;
+      active_height_ = 0;
+
+      auto track_source = std::make_shared<livekit::VideoSource>(width, height);
+      auto track = room_connection_.publishVideoTrack(spec_.track_name, track_source, spec_.publish_config);
+      active_source_ = std::move(track_source);
+      active_track_ = std::move(track);
+      active_width_ = width;
+      active_height_ = height;
+      has_published_ = true;
+      observer_.onTrackPublished(width, height, republished);
+    }
   }
-  // The public LiveKit C++ SDK takes an owned VideoFrame buffer here, so this
-  // remains a low-copy path rather than true zero-copy. Keeping the data in
-  // I420 still avoids the more expensive per-frame color conversion.
+  // LiveKit takes ownership of the VideoFrame buffer here, so this stays
+  // low-copy rather than true zero-copy. Keeping I420 avoids per-frame color conversion.
   livekit::VideoFrame frame(width, height, livekit::VideoBufferType::I420, std::move(i420));
   {
-    VideoStreamProfiler::ScopedStageTimer capture_frame_timer(
-      profiler_.get(), VideoProfileStage::kCaptureFrame, frame_timestamp_us);
-    video_source_->captureFrame(frame, timestamp_us);
+    VideoStreamProfiler::StageTimer capture_timer(profiler_.get(), VideoProfileStage::kCaptureFrame, timestamp_us_opt);
+    active_source_->captureFrame(frame, timestamp_us);
   }
   if (profiler_ != nullptr) {
-    profiler_->noteFrameCaptured(frame_timestamp_us);
+    profiler_->noteCapture(timestamp_us_opt);
   }
 }
 
 void VideoTrackPublisher::shutdown()
 {
-  std::shared_ptr<PublishedVideoTrack> published_track;
+  std::shared_ptr<VideoTrackHandle> track;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -80,16 +101,19 @@ void VideoTrackPublisher::shutdown()
     }
 
     is_shutdown_ = true;
-    published_track = std::move(published_track_);
-    video_source_.reset();
-    published_width_ = 0;
-    published_height_ = 0;
+    track = std::move(active_track_);
+    active_source_.reset();
+    active_width_ = 0;
+    active_height_ = 0;
   }
 
-  if (published_track) {
-    lifecycle_observer_.onVideoTrackUnpublishing();
+  if (track) {
+    // Run observer and RoomConnection callbacks after releasing mutex_. The
+    // closed state is already visible, so concurrent or reentrant write() calls
+    // will drop frames instead of racing a new publish against shutdown().
+    observer_.onTrackUnpublishing();
     try {
-      room_connection_.unpublishVideoTrack(published_track);
+      room_connection_.unpublishVideoTrack(track);
     } catch (const std::exception & exc) {
       LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed")
         .field("track_name", spec_.track_name)
@@ -99,27 +123,6 @@ void VideoTrackPublisher::shutdown()
       LogEvent(kVideoTrackPublisherLogger, "video_track_unpublish_failed").field("track_name", spec_.track_name).warn();
     }
   }
-}
-
-void VideoTrackPublisher::ensurePublishedTrackLocked(int width, int height)
-{
-  if (
-    video_source_ != nullptr && published_track_ != nullptr && published_width_ == width && published_height_ == height)
-  {
-    return;
-  }
-
-  const bool republishing = published_track_ != nullptr;
-  if (published_track_) {
-    room_connection_.unpublishVideoTrack(published_track_);
-    published_track_.reset();
-  }
-
-  video_source_ = std::make_shared<livekit::VideoSource>(width, height);
-  published_track_ = room_connection_.publishVideoTrack(spec_.track_name, video_source_, spec_.publish_config);
-  published_width_ = width;
-  published_height_ = height;
-  lifecycle_observer_.onVideoTrackPublished(width, height, republishing);
 }
 
 }  // namespace livekit_ros2_bridge

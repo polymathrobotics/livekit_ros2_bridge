@@ -21,39 +21,6 @@
 
 namespace livekit_ros2_bridge
 {
-namespace
-{
-
-rclcpp::NodeOptions makeConnectionOptions(
-  const char * url = "not-a-url", const char * room = "robot-room", const char * token = nullptr)
-{
-  rclcpp::NodeOptions options;
-  if (url != nullptr) {
-    options.append_parameter_override("livekit.url", url);
-  }
-  if (room != nullptr) {
-    options.append_parameter_override("livekit.room", room);
-  }
-  if (token != nullptr) {
-    options.append_parameter_override("livekit.token", token);
-  }
-  return options;
-}
-
-std::string captureNodeConstructionError(const rclcpp::NodeOptions & options)
-{
-  try {
-    (void)std::make_shared<Node>(options);
-    ADD_FAILURE() << "Expected Node construction to fail";
-  } catch (const std::exception & error) {
-    return error.what();
-  }
-
-  return {};
-}
-
-}  // namespace
-
 class NodeTest : public ::testing::Test
 {
 protected:
@@ -63,21 +30,34 @@ protected:
   }
 };
 
-TEST_F(NodeTest, ConstructsAndDestroysWithRequiredConnectionParameters)
+TEST_F(NodeTest, ConstructsWithRequiredConnectionParameters)
 {
-  EXPECT_NO_THROW((void)std::make_shared<Node>(makeConnectionOptions("not-a-url", "robot-room", "test-token")));
+  rclcpp::NodeOptions options;
+  // This test only exercises presence of the required startup parameters. A non-empty placeholder
+  // URL is enough because Node construction does not synchronously reject malformed values here.
+  options.append_parameter_override("livekit.url", "not-a-url");
+  options.append_parameter_override("livekit.room", "robot-room");
+  options.append_parameter_override("livekit.token", "test-token");
+
+  EXPECT_NO_THROW((void)std::make_shared<Node>(options));
 }
 
-// TODO(jon): Keep detailed per-parameter startup validation in test_runtime_config.cpp. Add a
-// RoomConnection injection seam here if Node needs direct coverage for runtime-initialization failures.
-TEST_F(NodeTest, InvalidStartupConfigurationFailsConstruction)
+TEST_F(NodeTest, FailsWhenUrlMissing)
 {
-  const std::string missing_url_error =
-    captureNodeConstructionError(makeConnectionOptions(nullptr, "robot-room", "test-token"));
-  EXPECT_NE(missing_url_error.find("livekit.url"), std::string::npos) << missing_url_error;
-  EXPECT_TRUE(
-    missing_url_error.find("empty") != std::string::npos || missing_url_error.find("required") != std::string::npos)
-    << missing_url_error;
+  rclcpp::NodeOptions options;
+  options.append_parameter_override("livekit.room", "robot-room");
+  options.append_parameter_override("livekit.token", "test-token");
+
+  std::string message;
+  try {
+    (void)std::make_shared<Node>(options);
+    ADD_FAILURE() << "Expected Node construction to fail";
+  } catch (const std::exception & error) {
+    message = error.what();
+  }
+
+  EXPECT_NE(message.find("livekit.url"), std::string::npos) << message;
+  EXPECT_TRUE(message.find("empty") != std::string::npos || message.find("required") != std::string::npos) << message;
 }
 
 }  // namespace livekit_ros2_bridge

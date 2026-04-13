@@ -142,7 +142,7 @@ In the default ROS case with no override and no publish overrides:
 Important behavior:
 
 - the map is keyed by normalized `stream_key`, so equivalent requests share one stream
-- calling `ensureStreamRunning()` again for an existing key reuses the current runtime
+- calling `start()` again for an existing key reuses the current runtime
 - when the last requester lease disappears, the shared runtime is torn down
 
 Failure handling differs slightly by source kind:

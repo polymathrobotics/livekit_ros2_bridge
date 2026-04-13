@@ -73,7 +73,6 @@ add_library(${PROJECT_NAME} SHARED
   src/video_frame_source/configured_source_video_frame_source.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
-  src/video_stream_config.cpp
   src/video_stream_instance.cpp
   src/video_stream_registry.cpp
   src/video_stream_spec.cpp
@@ -216,6 +215,14 @@ if(BUILD_TESTING)
   ament_add_gtest(test_video_profiling test/cpp/test_video_profiling.cpp)
   target_link_libraries(test_video_profiling ${PROJECT_NAME})
 
+  ament_add_gtest(test_video_pipeline_frame_source test/cpp/test_video_pipeline_frame_source.cpp)
+  target_link_libraries(
+    test_video_pipeline_frame_source
+    ${PROJECT_NAME}
+    PkgConfig::gstreamer
+    PkgConfig::gstreamer-app
+    PkgConfig::gstreamer-video)
+
   ament_add_gtest(test_video_track_publisher test/cpp/test_video_track_publisher.cpp)
   target_link_libraries(test_video_track_publisher ${PROJECT_NAME})
 
@@ -252,6 +259,7 @@ if(BUILD_TESTING)
     test_subscription_registry
     test_topic_publish_command
     test_video_stream_registry
+    test_video_pipeline_frame_source
     test_video_profiling
     test_video_stream_spec
     test_video_track_publisher

@@ -19,7 +19,6 @@
 #include <exception>
 #include <future>
 #include <map>
-#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -46,61 +45,56 @@ namespace
 const auto kRpcRouterLogger = rclcpp::get_logger("rpc_router");
 constexpr char kUnknownLogValue[] = "<unknown>";
 
-using GraphResourceMap = std::map<std::string, std::vector<std::string>>;
+using ResourcesByName = std::map<std::string, std::vector<std::string>>;
 
-struct RpcMethodSpec
+struct RpcMethod
 {
   const char * name;
   const char * resource;
-  std::optional<AccessOperation> access_op;
 };
 
-struct RpcRequestContext
-{
-  const RpcMethodSpec & method;
-  const RpcInvocation & invocation;
-};
-
-struct RpcErrorContext
-{
-  std::optional<std::string_view> service;
-};
-
-constexpr RpcMethodSpec kServiceCallMethod{
+constexpr RpcMethod kServiceCallRpcMethod{
   protocol::kRpcServiceCall,
   "services",
-  AccessOperation::CallService,
 };
-constexpr RpcMethodSpec kInterfacesGetMethod{
+constexpr RpcMethod kInterfacesGetRpcMethod{
   protocol::kRpcInterfacesGet,
   "interfaces",
-  std::nullopt,
 };
-constexpr RpcMethodSpec kServicesListMethod{
+constexpr RpcMethod kServicesListRpcMethod{
   protocol::kRpcServicesList,
   "services",
-  AccessOperation::CallService,
 };
-constexpr RpcMethodSpec kTopicsListMethod{
+constexpr RpcMethod kTopicsListRpcMethod{
   protocol::kRpcTopicsList,
   "topics",
-  AccessOperation::Subscribe,
+};
+constexpr std::array<const char *, 4> kRpcMethodNames{
+  kServiceCallRpcMethod.name,
+  kInterfacesGetRpcMethod.name,
+  kServicesListRpcMethod.name,
+  kTopicsListRpcMethod.name,
 };
 
-[[noreturn]] void rethrowAsRpcHandlerError(const std::exception & exc);
-
-const char * requestIdForLog(const RpcRequestContext & ctx)
+LogEvent & addLogFields(LogEvent & event, const RpcMethod & rpc_method, const RpcInvocation & invocation)
 {
-  return ctx.invocation.request_id.empty() ? kUnknownLogValue : ctx.invocation.request_id.c_str();
+  // Keep the request-scoped correlation fields uniform across every router
+  // rejection/failure log so operators can trace one RPC through the bridge.
+  event.field("method", rpc_method.name)
+    .field("request_id", invocation.request_id.empty() ? kUnknownLogValue : invocation.request_id.c_str())
+    .field(
+      "requester_identity", invocation.caller_identity.empty() ? kUnknownLogValue : invocation.caller_identity.c_str());
+  if (rpc_method.resource != nullptr) {
+    event.field("resource", rpc_method.resource);
+  }
+  return event;
 }
 
-const char * requesterIdentityForLog(const RpcRequestContext & ctx)
+std::uint32_t errorCodeFor(const std::exception & exc)
 {
-  return ctx.invocation.caller_identity.empty() ? kUnknownLogValue : ctx.invocation.caller_identity.c_str();
-}
-
-std::uint32_t rpcErrorCodeForException(const std::exception & exc)
-{
+  // Keep the wire-level error taxonomy narrow: explicit RpcHandlerError values
+  // win, payload/range validation faults become invalid_request, and every
+  // other exception is collapsed into the bridge's generic internal error.
   if (const auto * rpc_handler_error = dynamic_cast<const RpcHandlerError *>(&exc)) {
     return rpc_handler_error->code();
   }
@@ -113,7 +107,7 @@ std::uint32_t rpcErrorCodeForException(const std::exception & exc)
   return protocol::kRpcErrorInternal;
 }
 
-const char * rpcReasonForCode(std::uint32_t code)
+const char * errorReason(std::uint32_t code)
 {
   switch (code) {
     case protocol::kRpcErrorInvalidRequest:
@@ -128,26 +122,27 @@ const char * rpcReasonForCode(std::uint32_t code)
   }
 }
 
-[[noreturn]] void logAndRethrowRpcHandlerError(
-  const RpcRequestContext & ctx, const std::exception & exc, RpcErrorContext error_context = {})
+[[noreturn]] void throwLoggedError(
+  const RpcMethod & rpc_method,
+  const RpcInvocation & invocation,
+  const std::exception & exc,
+  std::optional<std::string_view> service = std::nullopt)
 {
-  const auto code = rpcErrorCodeForException(exc);
-  const char * reason = rpcReasonForCode(code);
+  // Log once before translating arbitrary exceptions into the stable RPC error
+  // surface. Pre-built RpcHandlerError instances are rethrown after logging so
+  // method-specific codes and messages survive unchanged.
+  const auto code = errorCodeFor(exc);
+  const char * reason = errorReason(code);
   LogEvent event(kRpcRouterLogger, code == protocol::kRpcErrorInternal ? "rpc_request_failed" : "rpc_request_rejected");
-  event.field("reason", reason)
-    .field("method", ctx.method.name)
-    .field("request_id", requestIdForLog(ctx))
-    .field("requester_identity", requesterIdentityForLog(ctx));
+  addLogFields(event, rpc_method, invocation).field("reason", reason);
 
-  if (error_context.service.has_value()) {
-    event.field("resource", ctx.method.resource == nullptr ? kUnknownLogValue : ctx.method.resource)
-      .field("service", *error_context.service)
-      .field("error", exc.what());
-  } else if (ctx.method.resource != nullptr) {
-    event.field("resource", ctx.method.resource).field("error", exc.what());
-  } else {
-    event.field("error", exc.what());
+  if (service.has_value()) {
+    if (rpc_method.resource == nullptr) {
+      event.field("resource", kUnknownLogValue);
+    }
+    event.field("service", *service);
   }
+  event.field("error", exc.what());
 
   if (code == protocol::kRpcErrorInternal) {
     event.error();
@@ -155,36 +150,39 @@ const char * rpcReasonForCode(std::uint32_t code)
     event.warn();
   }
 
-  rethrowAsRpcHandlerError(exc);
+  if (dynamic_cast<const RpcHandlerError *>(&exc) != nullptr) {
+    throw;
+  }
+  throw RpcHandlerError(code, exc.what());
 }
 
-std::vector<ResourceListEntry> filterResourceListEntries(
-  const GraphResourceMap & all_graph_resources,
+std::vector<ResourceListEntry> filterResourceEntries(
+  const ResourcesByName & resources,
   const AccessPolicy & access_policy,
-  AccessOperation access_op,
+  AccessOperation operation,
   const ResourceListRequest & request)
 {
   std::vector<ResourceListEntry> entries;
 
-  for (const auto & graph_resource_entry : all_graph_resources) {
-    const auto & resource_name = graph_resource_entry.first;
-    const auto & interface_types = graph_resource_entry.second;
-
-    if (interface_types.size() != 1U) {
+  for (const auto & [name, types] : resources) {
+    // The RPC schema exposes a single interface type per entry, so resources
+    // with multiple ROS types are omitted instead of guessed or duplicated.
+    if (types.size() != 1U) {
       continue;
     }
-    if (!access_policy.allows(access_op, resource_name)) {
+    if (!access_policy.allows(operation, name)) {
       continue;
     }
-    const auto & interface_type = interface_types.front();
-    const bool query_matches_resource = !request.query.has_value() ||
-                                        resource_name.find(*request.query) != std::string::npos ||
-                                        interface_type.find(*request.query) != std::string::npos;
-    if (!query_matches_resource) {
+    const auto & type = types.front();
+    const bool matches_query = !request.query.has_value() || name.find(*request.query) != std::string::npos ||
+                               type.find(*request.query) != std::string::npos;
+    if (!matches_query) {
       continue;
     }
 
-    entries.push_back({resource_name, interface_type});
+    entries.push_back({name, type});
+    // Apply the page limit after policy/query filtering so denied resources do
+    // not consume caller-visible capacity.
     if (request.limit.has_value() && entries.size() >= *request.limit) {
       break;
     }
@@ -193,37 +191,18 @@ std::vector<ResourceListEntry> filterResourceListEntries(
   return entries;
 }
 
-[[noreturn]] void rethrowAsRpcHandlerError(const std::exception & exc)
-{
-  if (dynamic_cast<const RpcHandlerError *>(&exc) != nullptr) {
-    throw;
-  }
-  // Payload and bounds errors are caller-fixable invalid requests; everything
-  // else is reported as an internal bridge failure.
-  if (
-    dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
-    dynamic_cast<const std::out_of_range *>(&exc) != nullptr)
-  {
-    throw RpcHandlerError(protocol::kRpcErrorInvalidRequest, exc.what());
-  }
-  throw RpcHandlerError(protocol::kRpcErrorInternal, exc.what());
-}
-
 template <typename HandleRpcT>
-std::optional<std::string> handleRpcWithCallerIdentity(const RpcRequestContext & ctx, HandleRpcT handle_rpc)
+std::optional<std::string> withRequiredCallerIdentity(
+  const RpcMethod & rpc_method, const RpcInvocation & invocation, HandleRpcT handle_rpc)
 {
-  // Caller identity is part of the authorization model, so reject anonymous
-  // invocations before parsing payloads or touching bridge state.
-  if (ctx.invocation.caller_identity.empty()) {
+  // Reject anonymous callers before parsing/dispatch, and centralize shared
+  // exception-to-protocol translation for every RPC handler.
+  if (invocation.caller_identity.empty()) {
     LogEvent event(kRpcRouterLogger, "rpc_request_rejected");
-    event.field("reason", "unauthorized")
-      .field("method", ctx.method.name)
-      .field("request_id", requestIdForLog(ctx))
-      .field("requester_identity", requesterIdentityForLog(ctx));
-    if (ctx.method.resource != nullptr) {
-      event.field("resource", ctx.method.resource);
-    }
-    event.field("error", "caller_identity_required").warn();
+    addLogFields(event, rpc_method, invocation)
+      .field("reason", "unauthorized")
+      .field("error", "caller_identity_required");
+    event.warn();
     throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
   }
 
@@ -232,44 +211,8 @@ std::optional<std::string> handleRpcWithCallerIdentity(const RpcRequestContext &
   } catch (const RpcHandlerError &) {
     throw;
   } catch (const std::exception & exc) {
-    logAndRethrowRpcHandlerError(ctx, exc);
+    throwLoggedError(rpc_method, invocation, exc);
   }
-}
-
-template <typename QueryResourcesT, typename SerializeResponseT>
-std::optional<std::string> handleResourceListRpc(
-  const RpcRequestContext & ctx,
-  RosExecutorQueue & ros_executor_queue,
-  const AccessPolicy & access_policy,
-  QueryResourcesT query_resources,
-  SerializeResponseT serialize_response)
-{
-  if (!ctx.method.access_op.has_value()) {
-    throw std::logic_error("resource list RPC method must declare an access operation");
-  }
-
-  return handleRpcWithCallerIdentity(
-    ctx,
-    [&ctx,
-     &ros_executor_queue,
-     &access_policy,
-     query_resources = std::move(query_resources),
-     serialize_response = std::move(serialize_response)]() mutable {
-      try {
-        auto request = parseResourceListRequest(ctx.invocation.payload);
-        // Query the ROS graph on the executor thread, then apply access-policy
-        // filtering before serializing the response back to the RPC caller.
-        auto future = ros_executor_queue.submit([request,
-                                                 &access_policy,
-                                                 access_op = *ctx.method.access_op,
-                                                 query_resources = std::move(query_resources)]() mutable {
-          return filterResourceListEntries(query_resources(), access_policy, access_op, request);
-        });
-        return serialize_response(future.get());
-      } catch (const std::exception & exc) {
-        logAndRethrowRpcHandlerError(ctx, exc);
-      }
-    });
 }
 
 }  // namespace
@@ -285,60 +228,58 @@ RpcRouter::RpcRouter(
 , ros_service_caller_(ros_service_caller)
 {}
 
-std::array<std::pair<const char *, RpcHandler>, 4> RpcRouter::rpcEntrypoints()
-{
-  return {{
-    {kServiceCallMethod.name, [this](const RpcInvocation & invocation) { return handleServiceCall(invocation); }},
-    {kInterfacesGetMethod.name, [this](const RpcInvocation & invocation) { return handleInterfacesGet(invocation); }},
-    {kServicesListMethod.name, [this](const RpcInvocation & invocation) { return handleServiceList(invocation); }},
-    {kTopicsListMethod.name, [this](const RpcInvocation & invocation) { return handleTopicList(invocation); }},
-  }};
-}
-
-bool RpcRouter::registerRpcMethods(RoomConnection & room_connection)
+bool RpcRouter::registerRpcs(RoomConnection & room_connection)
 {
   bool all_registered = true;
-  for (const auto & method : rpcEntrypoints()) {
-    if (!room_connection.registerRpcMethod(method.first, method.second)) {
-      LogEvent(kRpcRouterLogger, "rpc_method_registration_failed").field("method", method.first).error();
+  const auto register_method = [&](const char * method_name, RpcHandler handler) {
+    if (!room_connection.registerRpc(method_name, std::move(handler))) {
+      LogEvent(kRpcRouterLogger, "rpc_method_registration_failed").field("method", method_name).error();
       // Registration is best-effort rather than transactional so one failure
       // does not hide other methods that can still be served on this connection.
       all_registered = false;
     }
-  }
+  };
+
+  register_method(
+    kServiceCallRpcMethod.name, [this](const RpcInvocation & invocation) { return callService(invocation); });
+  register_method(
+    kInterfacesGetRpcMethod.name, [this](const RpcInvocation & invocation) { return getInterfaces(invocation); });
+  register_method(
+    kServicesListRpcMethod.name, [this](const RpcInvocation & invocation) { return listServices(invocation); });
+  register_method(
+    kTopicsListRpcMethod.name, [this](const RpcInvocation & invocation) { return listTopics(invocation); });
+
   return all_registered;
 }
 
-void RpcRouter::unregisterRpcMethods(RoomConnection & room_connection)
+void RpcRouter::unregisterRpcs(RoomConnection & room_connection)
 {
-  for (const auto & method : rpcEntrypoints()) {
-    if (!room_connection.unregisterRpcMethod(method.first)) {
-      LogEvent(kRpcRouterLogger, "rpc_method_unregistration_failed").field("method", method.first).error();
+  for (const char * method_name : kRpcMethodNames) {
+    if (!room_connection.unregisterRpc(method_name)) {
+      LogEvent(kRpcRouterLogger, "rpc_method_unregistration_failed").field("method", method_name).error();
     }
   }
 }
 
-std::optional<std::string> RpcRouter::handleServiceCall(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocation)
 {
-  const RpcRequestContext ctx{kServiceCallMethod, invocation};
-  return handleRpcWithCallerIdentity(ctx, [this, &ctx]() {
+  return withRequiredCallerIdentity(kServiceCallRpcMethod, invocation, [this, &invocation]() {
     ServiceCallRequest request;
+    // Keep the parsed request alive across the dispatch try/catch so failures
+    // after authorization can still log the target service name.
     try {
-      request = parseServiceCallRequest(ctx.invocation.payload);
+      request = service_call_payloads::parse(invocation.payload);
     } catch (const std::exception & exc) {
-      logAndRethrowRpcHandlerError(ctx, exc);
+      throwLoggedError(kServiceCallRpcMethod, invocation, exc);
     }
 
-    if (!access_policy_.allows(*ctx.method.access_op, request.service)) {
-      LogEvent(kRpcRouterLogger, "rpc_request_rejected")
+    if (!access_policy_.allows(AccessOperation::CallService, request.service)) {
+      LogEvent event(kRpcRouterLogger, "rpc_request_rejected");
+      addLogFields(event, kServiceCallRpcMethod, invocation)
         .field("reason", "forbidden")
-        .field("method", ctx.method.name)
-        .field("request_id", requestIdForLog(ctx))
-        .field("requester_identity", requesterIdentityForLog(ctx))
-        .field("resource", ctx.method.resource)
         .field("service", request.service)
-        .field("error", "service_not_permitted")
-        .warn();
+        .field("error", "service_not_permitted");
+      event.warn();
       throw RpcHandlerError(protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
     }
 
@@ -346,70 +287,77 @@ std::optional<std::string> RpcRouter::handleServiceCall(const RpcInvocation & in
       const auto start = std::chrono::steady_clock::now();
       // First hop onto the ROS executor thread to create the client/request with
       // node-affine APIs, then wait on the returned service-call future here.
-      auto queued_call_future = ros_executor_queue_.submit(
-        [this, requester_identity = ctx.invocation.caller_identity, request = std::move(request)]() mutable {
+      auto submit_future = ros_executor_queue_.submit(
+        [this, requester_identity = invocation.caller_identity, request = std::move(request)]() mutable {
           return ros_service_caller_.call(requester_identity, request);
         });
-      auto result_future = queued_call_future.get();
+      auto result_future = submit_future.get();
 
-      auto service_call_response = result_future.get();
+      auto response = result_future.get();
       const int elapsed_ms = static_cast<int>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
-      return serializeServiceCallResponse(
-        service_call_response.service,
-        service_call_response.interface_type,
-        service_call_response.response,
-        elapsed_ms);
+      return service_call_payloads::serialize(response.service, response.interface_type, response.response, elapsed_ms);
     } catch (const std::exception & exc) {
-      logAndRethrowRpcHandlerError(ctx, exc, RpcErrorContext{std::string_view(request.service)});
+      throwLoggedError(kServiceCallRpcMethod, invocation, exc, std::string_view(request.service));
     }
   });
 }
 
-std::optional<std::string> RpcRouter::handleInterfacesGet(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invocation)
 {
-  const RpcRequestContext ctx{kInterfacesGetMethod, invocation};
-  return handleRpcWithCallerIdentity(ctx, [this, &ctx]() {
+  return withRequiredCallerIdentity(kInterfacesGetRpcMethod, invocation, [&invocation]() {
     try {
-      auto types = parseRequestedInterfaceTypes(ctx.invocation.payload);
+      auto interface_types = interface_payloads::parse(invocation.payload);
 
+      // Repeated requested types and shared nested dependencies can both return
+      // the same definition; keep the first-seen wire order while deduplicating.
       std::set<std::string> seen;
-      std::vector<InterfaceDefinition> all_interfaces;
+      std::vector<InterfaceDefinition> definitions;
 
-      for (const auto & type : types) {
-        for (auto & definition : lookupInterfaceDefinitions(type)) {
+      for (const auto & interface_type : interface_types) {
+        for (auto & definition : lookupInterfaceDefinitions(interface_type)) {
           if (seen.insert(definition.interface_type).second) {
-            all_interfaces.push_back(std::move(definition));
+            definitions.push_back(std::move(definition));
           }
         }
       }
-      return serializeInterfacesResponse(all_interfaces);
+      return interface_payloads::serialize(definitions);
     } catch (const std::exception & exc) {
-      logAndRethrowRpcHandlerError(ctx, exc);
+      throwLoggedError(kInterfacesGetRpcMethod, invocation, exc);
     }
   });
 }
 
-std::optional<std::string> RpcRouter::handleServiceList(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocation)
 {
-  const RpcRequestContext ctx{kServicesListMethod, invocation};
-  return handleResourceListRpc(
-    ctx,
-    ros_executor_queue_,
-    access_policy_,
-    [this]() { return node_.get_service_names_and_types(); },
-    serializeServiceListResponse);
+  return withRequiredCallerIdentity(kServicesListRpcMethod, invocation, [this, &invocation]() {
+    try {
+      auto request = resource_list_payloads::parse(invocation.payload);
+      auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
+        return filterResourceEntries(
+          node_.get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
+      });
+      return resource_list_payloads::serializeServiceList(future.get());
+    } catch (const std::exception & exc) {
+      throwLoggedError(kServicesListRpcMethod, invocation, exc);
+    }
+  });
 }
 
-std::optional<std::string> RpcRouter::handleTopicList(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocation)
 {
-  const RpcRequestContext ctx{kTopicsListMethod, invocation};
-  return handleResourceListRpc(
-    ctx,
-    ros_executor_queue_,
-    access_policy_,
-    [this]() { return node_.get_topic_names_and_types(); },
-    serializeTopicListResponse);
+  return withRequiredCallerIdentity(kTopicsListRpcMethod, invocation, [this, &invocation]() {
+    try {
+      auto request = resource_list_payloads::parse(invocation.payload);
+      auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
+        return filterResourceEntries(
+          node_.get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
+      });
+      return resource_list_payloads::serializeTopicList(future.get());
+    } catch (const std::exception & exc) {
+      throwLoggedError(kTopicsListRpcMethod, invocation, exc);
+    }
+  });
 }
 
 }  // namespace livekit_ros2_bridge

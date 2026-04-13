@@ -109,20 +109,22 @@ class VideoStreamProfiler final
 public:
   using SteadyClock = std::chrono::steady_clock;
 
-  class ScopedStageTimer final
+  // RAII helper that records exactly one stage duration on destruction.
+  // The timer is move-only so ownership of the eventual emission stays singular.
+  class StageTimer final
   {
   public:
-    ScopedStageTimer() = default;
-    ScopedStageTimer(
+    StageTimer() = default;
+    StageTimer(
       VideoStreamProfiler * profiler,
       VideoProfileStage stage,
       std::optional<std::int64_t> frame_timestamp_us = std::nullopt);
-    ~ScopedStageTimer();
+    ~StageTimer();
 
-    ScopedStageTimer(const ScopedStageTimer &) = delete;
-    ScopedStageTimer & operator=(const ScopedStageTimer &) = delete;
-    ScopedStageTimer(ScopedStageTimer && other) noexcept;
-    ScopedStageTimer & operator=(ScopedStageTimer && other) noexcept;
+    StageTimer(const StageTimer &) = delete;
+    StageTimer & operator=(const StageTimer &) = delete;
+    StageTimer(StageTimer && other) noexcept;
+    StageTimer & operator=(StageTimer && other) noexcept;
 
   private:
     VideoStreamProfiler * profiler_ = nullptr;
@@ -139,9 +141,14 @@ public:
   VideoStreamProfiler(VideoStreamProfiler &&) = delete;
   VideoStreamProfiler & operator=(VideoStreamProfiler &&) = delete;
 
-  void noteIngressFrame(SteadyClock::time_point arrival_time, std::optional<std::int64_t> source_timestamp_us);
-  void noteSampledFrame(std::optional<std::int64_t> frame_timestamp_us = std::nullopt);
-  void noteFrameCaptured(std::optional<std::int64_t> frame_timestamp_us = std::nullopt);
+  // Starts or advances the ingress correlation window. Missing or negative
+  // source timestamps break correlation for that frame and clear pending matches.
+  void noteIngress(SteadyClock::time_point arrival_time, std::optional<std::int64_t> source_timestamp_us);
+  // Sampling keeps the ingress match available so a later capture callback can
+  // still attribute end-to-end latency to the same source frame.
+  void noteSample(std::optional<std::int64_t> frame_timestamp_us = std::nullopt);
+  // Capture is the terminal correlation point and consumes the matched ingress.
+  void noteCapture(std::optional<std::int64_t> frame_timestamp_us = std::nullopt);
 
   void notePipelineStart();
   void notePipelineFailure(const std::string & reason);
@@ -150,19 +157,24 @@ public:
   void noteSampleUnpackFailed(const std::string & error);
   void noteCaptureFailed(const std::string & error);
   void noteTrackPublished(int width, int height, bool republished);
-  void noteTrackUnpublishing();
+  void noteTrackUnpublish();
 
-  void recordStageDuration(
+  // Aggregates the stage into the next summary and, when tracing is enabled,
+  // optionally anchors the trace span to the caller-provided start time.
+  void recordStage(
     VideoProfileStage stage,
     std::chrono::microseconds duration,
     std::optional<std::int64_t> frame_timestamp_us = std::nullopt,
     std::optional<SteadyClock::time_point> start_time = std::nullopt);
 
-  std::optional<VideoStreamProfileSummary> collectAndResetSummary();
+  // Returns metrics accumulated since the previous successful summary and clears
+  // only the per-interval counters and samples.
+  std::optional<VideoStreamProfileSummary> takeSummary();
+
+  struct Impl;
 
 private:
   friend class VideoProfilingRegistry;
-  struct Impl;
   std::unique_ptr<Impl> impl_;
 };
 
@@ -180,11 +192,13 @@ public:
   bool enabled() const;
   const VideoProfilingConfig & config() const;
 
-  std::shared_ptr<VideoStreamProfiler> getOrCreateStreamProfiler(const VideoStreamSpec & spec);
-  std::vector<VideoStreamProfileSummary> collectAndResetSummaries();
+  // Profilers are keyed only by spec.stream_key. Repeated calls for the same
+  // key return the existing profiler and preserve its accumulated state.
+  std::shared_ptr<VideoStreamProfiler> getOrCreateProfiler(const VideoStreamSpec & spec);
+  std::vector<VideoStreamProfileSummary> takeSummaries();
   std::size_t traceDroppedEventCount() const;
-  void emitEnabledLog() const;
-  void emitSummaryLogs();
+  void logConfig() const;
+  void logSummaries();
   void flushTrace();
 
 private:

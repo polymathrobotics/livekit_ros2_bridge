@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -39,7 +40,7 @@ VideoStreamSpec makeSpec()
   return spec;
 }
 
-VideoProfilingRegistry makeEnabledRegistry(const std::filesystem::path & trace_path, std::size_t trace_max_events = 32U)
+VideoProfilingRegistry makeRegistry(const std::filesystem::path & trace_path, std::size_t trace_max_events = 32U)
 {
   VideoProfilingConfig config;
   config.enabled = true;
@@ -52,6 +53,26 @@ std::filesystem::path makeTracePath(const char * filename)
 {
   return std::filesystem::temp_directory_path() / filename;
 }
+
+constexpr std::array<VideoProfileStage, 7> kStages{{
+  VideoProfileStage::kPushToAppSrc,
+  VideoProfileStage::kSampleCallback,
+  VideoProfileStage::kSampleUnpack,
+  VideoProfileStage::kFrameSink,
+  VideoProfileStage::kPublisherHandleFrame,
+  VideoProfileStage::kEnsureTrack,
+  VideoProfileStage::kCaptureFrame,
+}};
+
+constexpr std::array<const char *, 7> kStageMetricNames{{
+  "source.queue_to_gst_ms",
+  "gst.sample_total_ms",
+  "gst.repack_i420_ms",
+  "bridge.to_publisher_ms",
+  "publish.total_ms",
+  "publish.ensure_track_ms",
+  "livekit.submit_ms",
+}};
 
 }  // namespace
 
@@ -76,7 +97,7 @@ TEST(VideoProfilingTest, DisabledRegistryRejectsProfilerCreationAndDoesNotWriteT
   VideoProfilingRegistry registry(rclcpp::get_logger("video_profiling_test"), config);
 
   EXPECT_FALSE(registry.enabled());
-  EXPECT_EQ(registry.getOrCreateStreamProfiler(makeSpec()), nullptr);
+  EXPECT_EQ(registry.getOrCreateProfiler(makeSpec()), nullptr);
   registry.flushTrace();
 
   EXPECT_FALSE(std::filesystem::exists(trace_path));
@@ -86,32 +107,32 @@ TEST(VideoProfilingTest, RegistryCollectsOnlyActiveStreamSummariesAndResetsThem)
 {
   test_support::ScopedRclcppInit init;
   const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_summary_trace.json");
-  VideoProfilingRegistry registry = makeEnabledRegistry(trace_path);
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
   const auto active_spec = makeSpec();
   auto idle_spec = makeSpec();
   idle_spec.stream_key = "topic:/synthetic/rear_camera/image_raw";
   idle_spec.track_name = "ros.video.synthetic.rear_camera";
   idle_spec.ros_topic = "/synthetic/rear_camera/image_raw";
 
-  const auto profiler = registry.getOrCreateStreamProfiler(active_spec);
-  const auto idle_profiler = registry.getOrCreateStreamProfiler(idle_spec);
+  const auto profiler = registry.getOrCreateProfiler(active_spec);
+  const auto idle_profiler = registry.getOrCreateProfiler(idle_spec);
   ASSERT_NE(profiler, nullptr);
   ASSERT_NE(idle_profiler, nullptr);
 
   const auto base = VideoStreamProfiler::SteadyClock::now();
-  profiler->noteIngressFrame(base, 1000);
-  profiler->noteIngressFrame(base + std::chrono::milliseconds(33), 34000);
-  profiler->noteSampledFrame(1000);
-  profiler->noteFrameCaptured(1000);
-  profiler->recordStageDuration(
+  profiler->noteIngress(base, 1000);
+  profiler->noteIngress(base + std::chrono::milliseconds(33), 34000);
+  profiler->noteSample(1000);
+  profiler->noteCapture(1000);
+  profiler->recordStage(
     VideoProfileStage::kPushToAppSrc, std::chrono::microseconds(1500), 34000, base + std::chrono::milliseconds(33));
-  profiler->noteSampledFrame(34000);
-  profiler->recordStageDuration(
+  profiler->noteSample(34000);
+  profiler->recordStage(
     VideoProfileStage::kSampleCallback, std::chrono::microseconds(2400), 34000, base + std::chrono::milliseconds(33));
   profiler->noteTrackPublished(640, 360, false);
-  profiler->noteFrameCaptured(34000);
+  profiler->noteCapture(34000);
 
-  const auto summaries = registry.collectAndResetSummaries();
+  const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
   EXPECT_EQ(summary.stream_key, active_spec.stream_key);
@@ -126,28 +147,28 @@ TEST(VideoProfilingTest, RegistryCollectsOnlyActiveStreamSummariesAndResetsThem)
   EXPECT_TRUE(summary.source_to_output_submit_ms.hasSamples());
   EXPECT_TRUE(summary.push_to_appsrc_ms.hasSamples());
   EXPECT_TRUE(summary.sample_callback_ms.hasSamples());
-  EXPECT_TRUE(registry.collectAndResetSummaries().empty());
+  EXPECT_TRUE(registry.takeSummaries().empty());
 }
 
 TEST(VideoProfilingTest, SummaryTracksTimestampRejectionsWithoutRecordingLatencyMetrics)
 {
   test_support::ScopedRclcppInit init;
   const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_timestamp_rejection_trace.json");
-  VideoProfilingRegistry registry = makeEnabledRegistry(trace_path);
-  const auto profiler = registry.getOrCreateStreamProfiler(makeSpec());
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
   ASSERT_NE(profiler, nullptr);
 
   const auto base = VideoStreamProfiler::SteadyClock::now();
-  profiler->noteIngressFrame(base, 1000);
-  profiler->noteIngressFrame(base + std::chrono::milliseconds(10), 2000);
-  profiler->noteIngressFrame(base + std::chrono::milliseconds(20), 1500);
-  profiler->noteSampledFrame(1000);
-  profiler->noteFrameCaptured(1000);
-  profiler->noteIngressFrame(base + std::chrono::milliseconds(30), -1);
-  profiler->noteSampledFrame(-1);
-  profiler->noteFrameCaptured(-1);
+  profiler->noteIngress(base, 1000);
+  profiler->noteIngress(base + std::chrono::milliseconds(10), 2000);
+  profiler->noteIngress(base + std::chrono::milliseconds(20), 1500);
+  profiler->noteSample(1000);
+  profiler->noteCapture(1000);
+  profiler->noteIngress(base + std::chrono::milliseconds(30), -1);
+  profiler->noteSample(-1);
+  profiler->noteCapture(-1);
 
-  const auto summaries = registry.collectAndResetSummaries();
+  const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
   EXPECT_EQ(summary.frames_in, 4U);
@@ -160,12 +181,35 @@ TEST(VideoProfilingTest, SummaryTracksTimestampRejectionsWithoutRecordingLatency
   EXPECT_FALSE(summary.source_to_output_submit_ms.hasSamples());
 }
 
+TEST(VideoProfilingTest, SampleKeepsIngressMatchAvailableUntilCaptureConsumesIt)
+{
+  test_support::ScopedRclcppInit init;
+  const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_match_lifecycle_trace.json");
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
+  ASSERT_NE(profiler, nullptr);
+
+  const auto base = VideoStreamProfiler::SteadyClock::now();
+  profiler->noteIngress(base, 1000);
+  profiler->noteSample(1000);
+  profiler->noteCapture(1000);
+  profiler->noteCapture(1000);
+
+  const auto summaries = registry.takeSummaries();
+  ASSERT_EQ(summaries.size(), 1U);
+  const auto & summary = summaries.front();
+  EXPECT_EQ(summary.frames_sampled, 1U);
+  EXPECT_EQ(summary.frames_captured, 2U);
+  EXPECT_EQ(summary.appsrc_to_sample_ms.sample_count, 1U);
+  EXPECT_EQ(summary.source_to_output_submit_ms.sample_count, 1U);
+}
+
 TEST(VideoProfilingTest, SummaryCapturesFailureLifecycleAndStageMetrics)
 {
   test_support::ScopedRclcppInit init;
   const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_failure_lifecycle_trace.json");
-  VideoProfilingRegistry registry = makeEnabledRegistry(trace_path);
-  const auto profiler = registry.getOrCreateStreamProfiler(makeSpec());
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
   ASSERT_NE(profiler, nullptr);
 
   profiler->notePipelineStart();
@@ -176,14 +220,14 @@ TEST(VideoProfilingTest, SummaryCapturesFailureLifecycleAndStageMetrics)
   profiler->noteCaptureFailed("capture_failed");
   profiler->noteTrackPublished(1280, 720, false);
   profiler->noteTrackPublished(1280, 720, true);
-  profiler->noteTrackUnpublishing();
-  profiler->recordStageDuration(VideoProfileStage::kSampleUnpack, std::chrono::microseconds(500));
-  profiler->recordStageDuration(VideoProfileStage::kFrameSink, std::chrono::microseconds(600));
-  profiler->recordStageDuration(VideoProfileStage::kPublisherHandleFrame, std::chrono::microseconds(700));
-  profiler->recordStageDuration(VideoProfileStage::kEnsureTrack, std::chrono::microseconds(800));
-  profiler->recordStageDuration(VideoProfileStage::kCaptureFrame, std::chrono::microseconds(900));
+  profiler->noteTrackUnpublish();
+  profiler->recordStage(VideoProfileStage::kSampleUnpack, std::chrono::microseconds(500));
+  profiler->recordStage(VideoProfileStage::kFrameSink, std::chrono::microseconds(600));
+  profiler->recordStage(VideoProfileStage::kPublisherHandleFrame, std::chrono::microseconds(700));
+  profiler->recordStage(VideoProfileStage::kEnsureTrack, std::chrono::microseconds(800));
+  profiler->recordStage(VideoProfileStage::kCaptureFrame, std::chrono::microseconds(900));
 
-  const auto summaries = registry.collectAndResetSummaries();
+  const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
   EXPECT_EQ(summary.pipeline_start_count, 1U);
@@ -206,17 +250,19 @@ TEST(VideoProfilingTest, RegistryFlushTraceWritesExpectedEvents)
 {
   test_support::ScopedRclcppInit init;
   const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_trace.json");
-  VideoProfilingRegistry registry = makeEnabledRegistry(trace_path);
-  const auto profiler = registry.getOrCreateStreamProfiler(makeSpec());
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
   ASSERT_NE(profiler, nullptr);
 
   const auto ingress_time = VideoStreamProfiler::SteadyClock::now();
-  profiler->noteIngressFrame(ingress_time, 1000);
-  profiler->noteSampledFrame(1000);
-  profiler->noteFrameCaptured(1000);
-  profiler->recordStageDuration(VideoProfileStage::kPushToAppSrc, std::chrono::microseconds(1500), 1000, ingress_time);
-  profiler->recordStageDuration(
-    VideoProfileStage::kSampleCallback, std::chrono::microseconds(2400), 1000, ingress_time);
+  profiler->noteIngress(ingress_time, 1000);
+  profiler->noteSample(1000);
+  profiler->noteCapture(1000);
+  std::int64_t stage_duration_us = 1500;
+  for (const auto stage : kStages) {
+    profiler->recordStage(stage, std::chrono::microseconds(stage_duration_us), 1000, ingress_time);
+    stage_duration_us += 100;
+  }
   profiler->noteTrackPublished(640, 360, false);
 
   registry.flushTrace();
@@ -228,7 +274,9 @@ TEST(VideoProfilingTest, RegistryFlushTraceWritesExpectedEvents)
   const std::string trace_contents = buffer.str();
   EXPECT_NE(trace_contents.find("\"traceEvents\""), std::string::npos);
   EXPECT_NE(trace_contents.find("stream.registered"), std::string::npos);
-  EXPECT_NE(trace_contents.find("source.queue_to_gst_ms"), std::string::npos);
+  for (const auto * metric_name : kStageMetricNames) {
+    EXPECT_NE(trace_contents.find(metric_name), std::string::npos);
+  }
   EXPECT_NE(trace_contents.find("source_to_sample_ready_ms"), std::string::npos);
   EXPECT_NE(trace_contents.find("source_to_livekit_submit_ms"), std::string::npos);
   EXPECT_NE(trace_contents.find("livekit.frame_submitted"), std::string::npos);
@@ -238,8 +286,8 @@ TEST(VideoProfilingTest, RegistryTracksDroppedTraceEvents)
 {
   test_support::ScopedRclcppInit init;
   const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_drop_trace.json");
-  VideoProfilingRegistry registry = makeEnabledRegistry(trace_path, 2U);
-  const auto profiler = registry.getOrCreateStreamProfiler(makeSpec());
+  VideoProfilingRegistry registry = makeRegistry(trace_path, 2U);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
   ASSERT_NE(profiler, nullptr);
 
   profiler->notePipelineFailure("failure_one");

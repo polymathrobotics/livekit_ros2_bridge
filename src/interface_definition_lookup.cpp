@@ -14,7 +14,6 @@
 
 #include "interface_definition_lookup.hpp"
 
-#include <cctype>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -37,9 +36,8 @@ namespace
 
 constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 constexpr char kServiceDefinitionSeparator[] = "---";
-constexpr std::size_t kInvalidInterfaceTypeCacheCapacity = 256U;
+constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
 
-// ROS 2 primitive types that do not need dependency resolution.
 const std::set<std::string> kPrimitiveTypes = {
   "bool",
   "byte",
@@ -60,55 +58,70 @@ const std::set<std::string> kPrimitiveTypes = {
   "octet",
 };
 
-std::string readInterfaceDefinitionFile(const std::string & path)
-{
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    throw std::runtime_error("Cannot open interface definition file: " + path);
-  }
-  std::ostringstream contents;
-  contents << file.rdbuf();
-  return contents.str();
-}
+using LookupFailureCache = LruCache<std::string, std::exception_ptr>;
 
-using InterfaceLookupFailureCache = LruCache<std::string, std::exception_ptr>;
-
-InterfaceLookupFailureCache & interfaceLookupFailureCache()
+LookupFailureCache & lookupFailureCache()
 {
-  static InterfaceLookupFailureCache cache(kInvalidInterfaceTypeCacheCapacity);
+  // Preserve the original exception type/message for repeated bad interface requests without
+  // re-hitting the ament index or filesystem each time.
+  static LookupFailureCache cache(kInvalidTypeCacheCapacity);
   return cache;
 }
 
-std::mutex & interfaceDefinitionLookupAttemptHookMutex()
-{
-  static std::mutex mutex;
-  return mutex;
-}
-
-std::function<void(const std::string &)> & interfaceDefinitionLookupAttemptHook()
-{
-  static std::function<void(const std::string &)> hook;
-  return hook;
-}
-
-void noteInterfaceDefinitionLookupAttempt(const std::string & interface_type)
-{
-  std::function<void(const std::string &)> hook;
-  {
-    std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
-    hook = interfaceDefinitionLookupAttemptHook();
-  }
-  if (hook) {
-    hook(interface_type);
-  }
-}
+// Test-only observability for uncached lookups. This is process-global like the negative cache, so
+// tests install/clear it around isolated lookup sequences rather than treating it as per-call
+// state.
+std::mutex attempt_hook_mutex;
+std::function<void(const std::string &)> attempt_hook;
 
 [[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
 {
   throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);
 }
 
-std::string getPackageShareDirectoryCompat(const std::string & package)
+// Parse once so validation, path lookup, and dependency resolution share the same identifier parts.
+struct InterfaceTypeParts
+{
+  std::string package;
+  std::string kind;
+  std::string name;
+
+  static InterfaceTypeParts parse(const std::string & interface_type)
+  {
+    const auto first_slash = interface_type.find('/');
+    if (first_slash == std::string::npos) {
+      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+    }
+    const auto second_slash = interface_type.find('/', first_slash + 1);
+    if (second_slash == std::string::npos) {
+      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+    }
+
+    const std::string package = interface_type.substr(0, first_slash);
+    const std::string kind = interface_type.substr(first_slash + 1, second_slash - first_slash - 1);
+    const std::string name = interface_type.substr(second_slash + 1);
+    if (package.empty() || kind.empty() || name.empty()) {
+      throwInvalidInterfaceType(interface_type, "empty component");
+    }
+    if (name.find('/') != std::string::npos) {
+      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+    }
+    if (kind != "msg" && kind != "srv" && kind != "action") {
+      throwInvalidInterfaceType(interface_type, "kind must be msg, srv, or action");
+    }
+
+    return {package, kind, name};
+  }
+};
+
+// Minimal lookup result carried forward into dependency traversal.
+struct ResolvedInterfaceDefinition
+{
+  std::string package;
+  std::string definition;
+};
+
+std::string getPackageShareDirCompat(const std::string & package)
 {
   // ament_index_cpp 1.11+ adds the filesystem-path overload used by Kilted/Rolling, while
   // Humble and Jazzy still only expose the legacy string-returning API. Keep one compatibility
@@ -123,171 +136,133 @@ std::string getPackageShareDirectoryCompat(const std::string & package)
 #endif
 }
 
-bool isSupportedInterfaceKind(const std::string & kind) noexcept
+void notifyLookupAttempt(const std::string & interface_type)
 {
-  return kind == "msg" || kind == "srv" || kind == "action";
+  std::function<void(const std::string &)> hook;
+  {
+    // Copy the hook while holding the mutex, then invoke it after releasing the lock so tests can
+    // replace or clear the hook from inside callbacks without self-deadlocking.
+    std::lock_guard<std::mutex> lock(attempt_hook_mutex);
+    hook = attempt_hook;
+  }
+  if (hook) {
+    hook(interface_type);
+  }
 }
 
-std::string resolveInterfaceDefinitionPath(const std::string & interface_type)
+ResolvedInterfaceDefinition loadInterfaceDefinition(const std::string & interface_type)
 {
-  // Expected: "package/kind/Name" where kind is msg, srv, or action
-  const auto first_slash = interface_type.find('/');
-  if (first_slash == std::string::npos) {
-    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
-  }
-  const auto second_slash = interface_type.find('/', first_slash + 1);
-  if (second_slash == std::string::npos) {
-    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
-  }
-
-  const std::string package = interface_type.substr(0, first_slash);
-  const std::string kind = interface_type.substr(first_slash + 1, second_slash - first_slash - 1);
-  const std::string name = interface_type.substr(second_slash + 1);
-  if (package.empty() || kind.empty() || name.empty()) {
-    throwInvalidInterfaceType(interface_type, "empty component");
-  }
-  if (name.find('/') != std::string::npos) {
-    throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
-  }
-  if (!isSupportedInterfaceKind(kind)) {
-    throwInvalidInterfaceType(interface_type, "kind must be msg, srv, or action");
-  }
-
-  std::string share_dir;
-  try {
-    share_dir = getPackageShareDirectoryCompat(package);
-  } catch (const std::exception &) {
-    throw std::runtime_error("Package '" + package + "' not found in ament index");
-  }
-  const std::string relative_definition_path = kind + "/" + name + "." + kind;
-  return share_dir + "/" + relative_definition_path;
-}
-
-std::string loadInterfaceDefinition(const std::string & interface_type)
-{
-  if (const auto failure = interfaceLookupFailureCache().get(interface_type); failure.has_value()) {
+  // Keep the uncached lookup path together so traversal only has to reason about ordering and
+  // de-duplication.
+  if (const auto failure = lookupFailureCache().get(interface_type); failure.has_value()) {
     std::rethrow_exception(*failure);
   }
-  noteInterfaceDefinitionLookupAttempt(interface_type);
+
+  notifyLookupAttempt(interface_type);
 
   try {
-    const std::string path = resolveInterfaceDefinitionPath(interface_type);
-    return readInterfaceDefinitionFile(path);
+    const InterfaceTypeParts parts = InterfaceTypeParts::parse(interface_type);
+
+    std::string share_dir;
+    try {
+      share_dir = getPackageShareDirCompat(parts.package);
+    } catch (const std::exception &) {
+      throw std::runtime_error("Package '" + parts.package + "' not found in ament index");
+    }
+
+    const std::filesystem::path definition_path =
+      std::filesystem::path(share_dir) / parts.kind / (parts.name + "." + parts.kind);
+    std::ifstream definition_file(definition_path);
+    if (!definition_file.is_open()) {
+      throw std::runtime_error("Cannot open interface definition file: " + definition_path.string());
+    }
+
+    std::ostringstream contents;
+    contents << definition_file.rdbuf();
+    return {parts.package, contents.str()};
   } catch (const std::invalid_argument &) {
-    interfaceLookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
     throw;
   } catch (const std::runtime_error &) {
-    interfaceLookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
     throw;
   }
 }
 
-/// Extract the base type from a field type string, stripping array suffixes.
-/// "float32[]" → "float32", "uint8[16]" → "uint8", "std_msgs/Header" → "std_msgs/Header"
-std::string stripArraySuffix(const std::string & type_token)
-{
-  const auto bracket = type_token.find('[');
-  if (bracket != std::string::npos) {
-    return type_token.substr(0, bracket);
-  }
-  return type_token;
-}
-
-/// Normalize a type reference found in a .msg file to a fully-qualified type.
-/// "std_msgs/Header" → "std_msgs/msg/Header" (short form)
-/// "std_msgs/msg/Header" → "std_msgs/msg/Header" (already qualified)
-std::string qualifyTypeReference(const std::string & type_ref, const std::string & context_subfolder)
-{
-  const auto first_slash = type_ref.find('/');
-  if (first_slash == std::string::npos) {
-    return type_ref;
-  }
-  const auto second_slash = type_ref.find('/', first_slash + 1);
-  if (second_slash != std::string::npos) {
-    return type_ref;
-  }
-  // Short form: "std_msgs/Header" → "std_msgs/msg/Header"
-  const std::string package = type_ref.substr(0, first_slash);
-  const std::string name = type_ref.substr(first_slash + 1);
-  return package + "/" + context_subfolder + "/" + name;
-}
-
-std::string qualifyTypeReference(
-  const std::string & type_ref, const std::string & context_package, const std::string & context_subfolder)
-{
-  const auto first_slash = type_ref.find('/');
-  if (first_slash == std::string::npos) {
-    return context_package + "/" + context_subfolder + "/" + type_ref;
-  }
-  return qualifyTypeReference(type_ref, context_subfolder);
-}
-
-/// Scan a .msg or .srv file for complex type references and return their fully-qualified names.
+/// Scan a .msg, .srv, or .action file for complex type references and return their fully-qualified
+/// names.
 /// Field types are always messages, so short-form references like "std_msgs/Header" are
-/// qualified as "std_msgs/msg/Header" regardless of whether the containing file is msg or srv.
-std::vector<std::string> extractTypeReferences(const std::string & definition, const std::string & context_package)
+/// qualified as "std_msgs/msg/Header" regardless of whether the containing file is msg, srv, or
+/// action.
+std::vector<std::string> extractDependencies(const std::string & definition, const std::string & package)
 {
-  std::vector<std::string> refs;
+  std::vector<std::string> dependencies;
   std::istringstream stream(definition);
   std::string line;
 
   while (std::getline(stream, line)) {
-    // Skip empty lines and comments
+    line = line.substr(0, line.find('#'));
     const auto first_non_space = line.find_first_not_of(" \t");
-    if (first_non_space == std::string::npos || line[first_non_space] == '#') {
+    if (first_non_space == std::string::npos) {
       continue;
     }
 
-    // Skip .srv separator lines
     if (line.compare(first_non_space, sizeof(kServiceDefinitionSeparator) - 1U, kServiceDefinitionSeparator) == 0) {
       continue;
     }
 
-    // Skip constant definitions (lines containing '=')
-    if (line.find('=') != std::string::npos) {
-      continue;
-    }
-
-    // Extract the first token (the type)
     std::istringstream line_stream(line.substr(first_non_space));
     std::string type_token;
-    line_stream >> type_token;
-    if (type_token.empty()) {
+    std::string name_token;
+    line_stream >> type_token >> name_token;
+    if (type_token.empty() || name_token.empty()) {
       continue;
     }
 
-    const std::string base_type = stripArraySuffix(type_token);
+    // Constant declarations look like `type NAME=...`; they do not introduce dependent types.
+    if (name_token.find('=') != std::string::npos) {
+      continue;
+    }
 
-    // Skip primitives
+    const std::string base_type = type_token.substr(0, type_token.find('['));
     if (kPrimitiveTypes.count(base_type) > 0) {
       continue;
     }
 
-    refs.push_back(qualifyTypeReference(base_type, context_package, "msg"));
+    const auto first_slash = base_type.find('/');
+    if (first_slash == std::string::npos) {
+      dependencies.push_back(package + "/msg/" + base_type);
+      continue;
+    }
+
+    const auto second_slash = base_type.find('/', first_slash + 1);
+    if (second_slash != std::string::npos) {
+      dependencies.push_back(base_type);
+      continue;
+    }
+
+    dependencies.push_back(base_type.substr(0, first_slash) + "/msg/" + base_type.substr(first_slash + 1));
   }
 
-  return refs;
+  return dependencies;
 }
 
-void collectDependencies(
-  const std::string & interface_type,
-  std::set<std::string> & visited,
-  std::vector<InterfaceDefinition> & definition_entries)
+// Depth-first walk that preserves response order by appending each interface at first discovery
+// before recursing into referenced message types. `visited` de-duplicates shared dependencies
+// across nested messages, services, and actions without disturbing that first-discovery order.
+void collectInterfaceDefinitions(
+  const std::string & interface_type, std::set<std::string> & visited, std::vector<InterfaceDefinition> & definitions)
 {
   if (visited.count(interface_type) > 0) {
     return;
   }
   visited.insert(interface_type);
 
-  const std::string definition = loadInterfaceDefinition(interface_type);
-  const std::string context_package = interface_type.substr(0, interface_type.find('/'));
+  const ResolvedInterfaceDefinition resolved = loadInterfaceDefinition(interface_type);
+  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, resolved.definition});
 
-  // Record each definition before recursing so callers can keep the requested type first and the
-  // remaining entries in the same first-discovery order used for dependency traversal.
-  definition_entries.push_back({interface_type, kDefinitionFormatRos2Msg, definition});
-
-  for (const auto & ref : extractTypeReferences(definition, context_package)) {
-    collectDependencies(ref, visited, definition_entries);
+  for (const auto & dependency : extractDependencies(resolved.definition, resolved.package)) {
+    collectInterfaceDefinitions(dependency, visited, definitions);
   }
 }
 
@@ -296,23 +271,23 @@ void collectDependencies(
 std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type)
 {
   std::set<std::string> visited;
-  std::vector<InterfaceDefinition> entries;
-  collectDependencies(interface_type, visited, entries);
-  return entries;
+  std::vector<InterfaceDefinition> definitions;
+  collectInterfaceDefinitions(interface_type, visited, definitions);
+  return definitions;
 }
 
-void setInterfaceDefinitionLookupAttemptHookForTest(std::function<void(const std::string &)> hook)
+void setInterfaceLookupAttemptHookForTest(std::function<void(const std::string &)> hook)
 {
-  std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
-  interfaceDefinitionLookupAttemptHook() = std::move(hook);
+  std::lock_guard<std::mutex> lock(attempt_hook_mutex);
+  attempt_hook = std::move(hook);
 }
 
-void resetInterfaceDefinitionLookupStateForTest()
+void resetInterfaceLookupForTest()
 {
-  interfaceLookupFailureCache().clear();
+  lookupFailureCache().clear();
 
-  std::lock_guard<std::mutex> lock(interfaceDefinitionLookupAttemptHookMutex());
-  interfaceDefinitionLookupAttemptHook() = nullptr;
+  std::lock_guard<std::mutex> lock(attempt_hook_mutex);
+  attempt_hook = nullptr;
 }
 
 }  // namespace livekit_ros2_bridge

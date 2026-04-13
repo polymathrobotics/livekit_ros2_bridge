@@ -19,6 +19,10 @@
 namespace livekit_ros2_bridge
 {
 
+// Frame source for configured-source streams whose ingress pipeline is fully
+// described by the stream spec at construction time, so failure recovery can
+// recreate the same launch string without coordinating with an external
+// producer.
 class ConfiguredSourceVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
@@ -28,15 +32,13 @@ public:
     VideoStreamLifecycleObserver & lifecycle_observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
-  void ensureRunning() override;
+  // Idempotent before shutdown(); EOS/ERROR recovery reuses the launch string
+  // captured at construction. After shutdown(), create a new instance.
+  void start() override;
+  // Safe to call repeatedly. Teardown is split into a detach-under-lock phase
+  // and a post-unlock GStreamer cleanup phase because pipeline shutdown can
+  // synchronously drain bus/appsink callbacks.
   void shutdown() override;
-
-private:
-  void startConfiguredSourcePipelineLocked();
-  void resetSourceStateLocked() override;
-  bool shouldRestartAfterFailure() const override;
-  std::chrono::milliseconds restartDelayOnFailure() const override;
-  void restartAfterFailureLocked() override;
 };
 
 }  // namespace livekit_ros2_bridge

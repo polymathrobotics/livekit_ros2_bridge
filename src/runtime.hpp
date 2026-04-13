@@ -58,8 +58,8 @@ class Runtime final
 public:
   Runtime(
     rclcpp::Node & node,
-    std::unique_ptr<RoomConnection> room_connection,
-    RuntimeConfig runtime_config,
+    std::unique_ptr<RoomConnection> connection,
+    RuntimeConfig config,
     FailFastCallbacks fail_fast_callbacks = {});
   ~Runtime();
 
@@ -102,18 +102,51 @@ private:
     rclcpp::TimerBase::SharedPtr video_profile_summary;
   };
 
-  struct ConnectionState
+  struct State
   {
+    struct FailFastTrigger
+    {
+      bool ready_once = false;
+      std::string reason;
+    };
+
+    // Shared by RoomConnection-managed callback threads, ROS wall timers, and explicit shutdown.
+    // These helpers keep the readiness/fail-fast state internally synchronized because those call
+    // paths do not all run on the ROS executor.
+    // Startup becomes ready only after both transport connectivity and required RPC registration
+    // succeed. Either prerequisite may complete first; markRoomConnected() and
+    // markRpcRegistered() return true only on the transition that satisfies the second
+    // prerequisite for the first time.
+    bool markRpcRegistered();
+    bool markRoomConnected();
+    void armGraceDeadline(std::chrono::milliseconds grace);
+    void markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace);
+    std::optional<FailFastTrigger> takeFailFastTrigger(SteadyClock::time_point now);
+
+  private:
+    void armGraceDeadlineLocked(std::chrono::milliseconds grace);
+    bool markReadyLocked();
+
+  public:
     std::atomic<bool> shutting_down{false};
     mutable std::mutex mutex;
 
     // Guarded by mutex.
-    bool connected = false;
+    bool room_connected = false;
+    // Sticky once the runtime has observed a fully usable session; reconnects clear
+    // `room_connected` but leave this latched so fail-fast can distinguish startup from recovery.
     bool ready_once = false;
-    bool rpc_methods_ready = false;
-    bool fail_fast_triggered = false;
-    std::optional<SteadyClock::time_point> disconnect_deadline;
-    std::string last_reconnect_reason;
+    // Tracks the local side of readiness because the room may connect before required RPC methods
+    // finish registering.
+    bool rpc_registered = false;
+    // One-shot latch so fail-fast shutdown and exit only happen once per runtime instance.
+    bool fail_fast_fired = false;
+    // Armed during startup or a reconnect grace window and cleared once connectivity is healthy
+    // again, or when fail-fast is disabled for the current reconnect attempt.
+    std::optional<SteadyClock::time_point> grace_deadline;
+    // Carries the latest disconnect cause into fail-fast logs; initial connect failures synthesize
+    // their own reason instead.
+    std::string reason;
   };
 
   struct Diagnostics
@@ -125,22 +158,23 @@ private:
     mutable EventThrottle control_packet_router_unavailable_drop{std::chrono::seconds(5)};
   };
 
-  bool isShuttingDown() const;
-  void handleRoomConnected();
-  void handleReconnectRequested(const std::string & reason);
-  void evaluateFailFast();
-  void emitReadyLogs();
-  void terminateForFailFast(const std::string & disconnect_reason, bool ready_once);
-  // Drops new ingress once shutdown starts. Work accepted before shutdown may still execute if it
-  // reaches the ROS executor before the queue is shut down.
-  void submitExecutorWork(std::function<void()> fn);
-  void handleIncomingControlPacket(const IncomingControlPacket & packet) const;
+  void checkFailFast();
+  void logReady() const;
+  void handleConnectionReset();
+  void handleParticipantDisconnected(std::string requester_identity);
+  void handleIncomingControlPacket(const IncomingControlPacket & packet);
+  void logControlPacketDrop(const IncomingControlPacket & packet, const char * reason, EventThrottle & throttle) const;
+  void logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle);
+  // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
+  // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
+  // if it reaches the queue before the executor is shut down.
+  void submitToExecutor(std::function<void()> work);
 
   rclcpp::Node & node_;
   Components components_;
   Config config_;
   Timers timers_;
-  ConnectionState state_;
+  State state_;
   Diagnostics diagnostics_;
 };
 

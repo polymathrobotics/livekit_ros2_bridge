@@ -14,7 +14,7 @@
 
 #include "payloads/interface_payloads.hpp"
 
-#include <stdexcept>
+#include <utility>
 
 #include "nlohmann/json.hpp"
 #include "payloads/json_object_parser.hpp"
@@ -22,49 +22,38 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
-{
-
 using Json = nlohmann::json;
 
-}  // namespace
-
-std::vector<std::string> parseRequestedInterfaceTypes(const std::string & payload)
+namespace interface_payloads
 {
-  const Json json =
-    parseJsonObject(payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
 
-  const auto types_it = json.find("interface_types");
-  if (types_it == json.end() || !types_it->is_array()) {
-    throw std::invalid_argument("interface_types must be an array");
-  }
-
-  std::vector<std::string> types;
-  for (const auto & element : *types_it) {
-    types.push_back(parseRequiredNonEmptyTrimmedString(
-      element, "interface_types entries must be strings", "interface_types entries must not be empty"));
-  }
-
-  if (types.empty()) {
-    throw std::invalid_argument("interface_types must not be empty");
-  }
-
-  return types;
+std::vector<std::string> parse(const std::string & payload)
+{
+  return parseRequiredNonEmptyTrimmedStringArrayField(
+    parseJsonObject(payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object"),
+    "interface_types",
+    "interface_types must be an array",
+    "interface_types entries must be strings",
+    "interface_types entries must not be empty",
+    "interface_types must not be empty");
 }
 
-std::string serializeInterfacesResponse(const std::vector<InterfaceDefinition> & interfaces)
+std::string serialize(const std::vector<InterfaceDefinition> & definitions)
 {
-  Json entries = Json::array();
-  for (const auto & iface : interfaces) {
-    entries.push_back({
-      {"interface_type", iface.interface_type},
-      {"format", iface.format},
-      {"definition", iface.definition},
-    });
+  Json::array_t entries;
+  entries.reserve(definitions.size());
+  for (const auto & definition : definitions) {
+    entries.push_back(
+      Json{
+        {"interface_type", definition.interface_type},
+        {"format", definition.format},
+        {"definition", definition.definition},
+      });
   }
 
-  const Json body = {{"interfaces", entries}};
-  return body.dump();
+  return Json{{"interfaces", std::move(entries)}}.dump();
 }
+
+}  // namespace interface_payloads
 
 }  // namespace livekit_ros2_bridge

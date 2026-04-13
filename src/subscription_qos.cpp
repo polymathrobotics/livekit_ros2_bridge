@@ -14,139 +14,98 @@
 
 #include "subscription_qos.hpp"
 
-#include <optional>
-
 #include "rclcpp/version.h"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-namespace
-{
-
-const TopicSubscriptionQosOverride * selectOverride(
-  const SubscriptionQosConfig * config, const std::string_view normalized_topic)
-{
-  if (config == nullptr) {
-    return nullptr;
-  }
-
-  const TopicSubscriptionQosOverride * best = nullptr;
-  for (const auto & candidate : config->topic_overrides) {
-    if (!rosResourceMatchesPattern(normalized_topic, candidate.pattern)) {
-      continue;
-    }
-    if (best == nullptr || candidate.pattern.size() > best->pattern.size()) {
-      best = &candidate;
-    }
-  }
-
-  return best;
-}
-
-std::optional<rclcpp::ReliabilityPolicy> inferReliability(
-  const std::vector<PublisherQosProfile> & publisher_qos_profiles, bool & mixed_reliability)
-{
-  bool saw_reliable = false;
-  bool saw_best_effort = false;
-  for (const auto & profile : publisher_qos_profiles) {
-    switch (profile.reliability) {
-      case rclcpp::ReliabilityPolicy::Reliable:
-        saw_reliable = true;
-        break;
-      case rclcpp::ReliabilityPolicy::BestEffort:
-        saw_best_effort = true;
-        break;
-      default:
-        break;
-    }
-  }
-
-  mixed_reliability = saw_reliable && saw_best_effort;
-  if (saw_best_effort) {
-    return rclcpp::ReliabilityPolicy::BestEffort;
-  }
-  if (saw_reliable) {
-    return rclcpp::ReliabilityPolicy::Reliable;
-  }
-  return std::nullopt;
-}
-
-std::optional<rclcpp::DurabilityPolicy> inferDurability(
-  const std::vector<PublisherQosProfile> & publisher_qos_profiles, bool & mixed_durability)
-{
-  bool saw_volatile = false;
-  bool saw_transient_local = false;
-  for (const auto & profile : publisher_qos_profiles) {
-    switch (profile.durability) {
-      case rclcpp::DurabilityPolicy::Volatile:
-        saw_volatile = true;
-        break;
-      case rclcpp::DurabilityPolicy::TransientLocal:
-        saw_transient_local = true;
-        break;
-      default:
-        break;
-    }
-  }
-
-  mixed_durability = saw_volatile && saw_transient_local;
-  if (saw_volatile) {
-    return rclcpp::DurabilityPolicy::Volatile;
-  }
-  if (saw_transient_local) {
-    return rclcpp::DurabilityPolicy::TransientLocal;
-  }
-  return std::nullopt;
-}
-
-}  // namespace
-
-ResolvedSubscriptionQos resolveTopicSubscriptionQos(
+ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
-  const std::vector<PublisherQosProfile> & publisher_qos_profiles)
+  const std::vector<PublisherQosProfile> & publisher_profiles)
 {
   ResolvedSubscriptionQos resolved;
   resolved.qos = base_qos;
 
-  const TopicSubscriptionQosOverride * matched_override = selectOverride(config, topic);
-  if (matched_override != nullptr) {
-    resolved.matched_override_id = matched_override->id;
-    resolved.matched_override_pattern = matched_override->pattern;
+  const TopicSubscriptionQosOverride * override_match = nullptr;
+  if (config != nullptr) {
+    // Prefer the most specific matching pattern. Equal-length matches keep the
+    // first configured override so configuration order remains the tiebreaker.
+    for (const auto & candidate : config->topic_overrides) {
+      if (!rosResourceMatchesPattern(topic, candidate.pattern)) {
+        continue;
+      }
+      if (override_match == nullptr || candidate.pattern.size() > override_match->pattern.size()) {
+        override_match = &candidate;
+      }
+    }
   }
 
-  bool inferred_reliability_used = false;
-  bool inferred_durability_used = false;
+  if (override_match != nullptr) {
+    resolved.override_id = override_match->id;
+    resolved.override_pattern = override_match->pattern;
+  }
 
-  const std::optional<rclcpp::ReliabilityPolicy> inferred_reliability =
-    inferReliability(publisher_qos_profiles, resolved.mixed_reliability);
-  if (matched_override != nullptr && matched_override->reliability != SubscriptionQosReliabilityMode::kAuto) {
+  // Only explicit publisher policies participate in resolution. Unknown and
+  // system-default entries do not provide a concrete policy to inherit.
+  bool has_reliable = false;
+  bool has_best_effort = false;
+  bool has_volatile = false;
+  bool has_transient_local = false;
+  for (const auto & profile : publisher_profiles) {
+    switch (profile.reliability) {
+      case rclcpp::ReliabilityPolicy::Reliable:
+        has_reliable = true;
+        break;
+      case rclcpp::ReliabilityPolicy::BestEffort:
+        has_best_effort = true;
+        break;
+      default:
+        break;
+    }
+
+    switch (profile.durability) {
+      case rclcpp::DurabilityPolicy::Volatile:
+        has_volatile = true;
+        break;
+      case rclcpp::DurabilityPolicy::TransientLocal:
+        has_transient_local = true;
+        break;
+      default:
+        break;
+    }
+  }
+  resolved.mixed_reliability = has_reliable && has_best_effort;
+  resolved.mixed_durability = has_volatile && has_transient_local;
+
+  // Each QoS axis resolves independently. A non-auto override wins for that
+  // axis; otherwise we consume publisher QoS only when it exposes a concrete
+  // policy for that same axis. When publishers disagree, prefer the weaker
+  // compatible policy so one subscription can attach to every known publisher.
+  if (override_match != nullptr && override_match->reliability != SubscriptionQosReliabilityMode::kAuto) {
     resolved.qos.reliability(
-      matched_override->reliability == SubscriptionQosReliabilityMode::kBestEffort
-        ? rclcpp::ReliabilityPolicy::BestEffort
-        : rclcpp::ReliabilityPolicy::Reliable);
-  } else if (inferred_reliability.has_value()) {
-    resolved.qos.reliability(*inferred_reliability);
-    inferred_reliability_used = true;
+      override_match->reliability == SubscriptionQosReliabilityMode::kBestEffort ? rclcpp::ReliabilityPolicy::BestEffort
+                                                                                 : rclcpp::ReliabilityPolicy::Reliable);
+  } else if (has_best_effort || has_reliable) {
+    resolved.qos.reliability(
+      has_best_effort ? rclcpp::ReliabilityPolicy::BestEffort : rclcpp::ReliabilityPolicy::Reliable);
+    resolved.used_publisher_qos = true;
   }
 
-  const std::optional<rclcpp::DurabilityPolicy> inferred_durability =
-    inferDurability(publisher_qos_profiles, resolved.mixed_durability);
-  if (matched_override != nullptr && matched_override->durability != SubscriptionQosDurabilityMode::kAuto) {
+  if (override_match != nullptr && override_match->durability != SubscriptionQosDurabilityMode::kAuto) {
     resolved.qos.durability(
-      matched_override->durability == SubscriptionQosDurabilityMode::kTransientLocal
+      override_match->durability == SubscriptionQosDurabilityMode::kTransientLocal
         ? rclcpp::DurabilityPolicy::TransientLocal
         : rclcpp::DurabilityPolicy::Volatile);
-  } else if (inferred_durability.has_value()) {
-    resolved.qos.durability(*inferred_durability);
-    inferred_durability_used = true;
+  } else if (has_volatile || has_transient_local) {
+    resolved.qos.durability(
+      has_volatile ? rclcpp::DurabilityPolicy::Volatile : rclcpp::DurabilityPolicy::TransientLocal);
+    resolved.used_publisher_qos = true;
   }
 
-  resolved.used_publisher_qos = inferred_reliability_used || inferred_durability_used;
-  if (matched_override != nullptr) {
+  if (override_match != nullptr) {
     resolved.source = SubscriptionQosResolutionSource::kOverride;
   } else if (resolved.used_publisher_qos) {
     resolved.source = SubscriptionQosResolutionSource::kPublisherQos;
@@ -157,20 +116,22 @@ ResolvedSubscriptionQos resolveTopicSubscriptionQos(
   return resolved;
 }
 
-ResolvedSubscriptionQos resolveTopicSubscriptionQos(
+ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::Node & node, std::string_view topic, const rclcpp::QoS & base_qos, const SubscriptionQosConfig * config)
 {
-  std::vector<PublisherQosProfile> publisher_qos_profiles;
-  const auto infos = node.get_publishers_info_by_topic(std::string(topic));
-  publisher_qos_profiles.reserve(infos.size());
-  for (const auto & info : infos) {
-    const auto & qos = info.qos_profile();
-    publisher_qos_profiles.push_back({qos.reliability(), qos.durability()});
+  std::vector<PublisherQosProfile> publisher_profiles;
+  // Resolve against a single graph snapshot. The publisher set may change
+  // immediately after this query, but we keep one consistent view per call.
+  const auto publishers = node.get_publishers_info_by_topic(std::string(topic));
+  publisher_profiles.reserve(publishers.size());
+  for (const auto & publisher : publishers) {
+    const auto & publisher_qos = publisher.qos_profile();
+    publisher_profiles.push_back({publisher_qos.reliability(), publisher_qos.durability()});
   }
-  return resolveTopicSubscriptionQos(topic, base_qos, config, publisher_qos_profiles);
+  return resolveSubscriptionQos(topic, base_qos, config, publisher_profiles);
 }
 
-const char * subscriptionQosResolutionSourceToString(SubscriptionQosResolutionSource source)
+const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)
 {
   switch (source) {
     case SubscriptionQosResolutionSource::kFallback:
@@ -184,7 +145,7 @@ const char * subscriptionQosResolutionSourceToString(SubscriptionQosResolutionSo
   return "unknown";
 }
 
-const char * reliabilityPolicyToString(rclcpp::ReliabilityPolicy policy)
+const char * subscriptionQosReliabilityString(rclcpp::ReliabilityPolicy policy)
 {
   switch (policy) {
     case rclcpp::ReliabilityPolicy::Reliable:
@@ -204,7 +165,7 @@ const char * reliabilityPolicyToString(rclcpp::ReliabilityPolicy policy)
   return "unknown";
 }
 
-const char * durabilityPolicyToString(rclcpp::DurabilityPolicy policy)
+const char * subscriptionQosDurabilityString(rclcpp::DurabilityPolicy policy)
 {
   switch (policy) {
     case rclcpp::DurabilityPolicy::Volatile:

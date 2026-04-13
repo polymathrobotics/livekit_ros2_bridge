@@ -14,6 +14,8 @@
 
 #include "payloads/service_call_payloads.hpp"
 
+#include <stdexcept>
+
 #include "nlohmann/json.hpp"
 #include "payloads/cdr_payload.hpp"
 #include "payloads/json_object_parser.hpp"
@@ -22,62 +24,63 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
+namespace service_call_payloads
 {
 
-using Json = nlohmann::json;
-
-}  // namespace
-
-ServiceCallRequest parseServiceCallRequest(const std::string & payload)
+ServiceCallRequest parse(const std::string & payload)
 {
-  const Json json =
+  const nlohmann::json body =
     parseJsonObject(payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
 
-  ServiceCallRequest result;
+  ServiceCallRequest request;
+  // Canonicalize at the protocol boundary so policy checks and downstream caches do not have to
+  // reason about multiple spellings of the same ROS service name.
+  request.service =
+    normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(body, "service", "service is required"));
 
-  const std::string normalized_service =
-    normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(json, "service", "service is required"));
-  result.service = normalized_service;
+  if (
+    const auto interface_type =
+      parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string"))
+  {
+    // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
+    // than "use an empty interface type".
+    request.interface_type = *interface_type;
+  }
 
-  result.request_payload = parseCdrPayload(json, "request");
-  if (result.request_payload.empty()) {
-    // Service calls always forward a concrete serialized request message; an empty payload is
-    // treated as malformed rather than as a typed default instance.
+  // Service calls always forward a concrete serialized request message; an empty payload is
+  // treated as malformed rather than as a typed default instance.
+  request.request_payload = cdr_payload::parse(body, "request");
+  if (request.request_payload.empty()) {
     throw std::invalid_argument("request.payload_base64 must not be empty");
   }
 
-  const auto requested_interface_type =
-    parseOptionalNonEmptyTrimmedStringField(json, "interface_type", "interface_type must be a string");
-  if (requested_interface_type) {
-    result.interface_type = *requested_interface_type;
-  }
-
-  const auto timeout_it = json.find("timeout_ms");
-  if (timeout_it != json.end()) {
-    if (!timeout_it->is_number_integer()) {
+  if (const auto timeout_field = body.find("timeout_ms"); timeout_field != body.end()) {
+    if (!timeout_field->is_number_integer()) {
       throw std::invalid_argument("timeout_ms must be an integer");
     }
-    result.timeout_ms = timeout_it->get<int>();
+    // Preserve the wire value as-is when present; the caller layer decides whether non-positive
+    // timeouts fall back to its default deadline.
+    request.timeout_ms = timeout_field->get<int>();
   }
 
-  return result;
+  return request;
 }
 
-std::string serializeServiceCallResponse(
+std::string serialize(
   const std::string & service,
   const std::string & interface_type,
-  const std::vector<std::uint8_t> & response_payload,
+  const std::vector<std::uint8_t> & response,
   int elapsed_ms)
 {
-  const Json service_descriptor = {{"name", service}, {"interface_type", interface_type}};
-  const Json body = {
+  return nlohmann::json{
     {"ok", true},
-    {"service", service_descriptor},
-    {"response", serializeCdrPayload(response_payload)},
+    {"service", nlohmann::json{{"name", service}, {"interface_type", interface_type}}},
+    {"response", cdr_payload::serialize(response)},
     {"elapsed_ms", elapsed_ms},
-  };
-  return body.dump();
+  }
+    .dump();
 }
+
+}  // namespace service_call_payloads
 
 }  // namespace livekit_ros2_bridge

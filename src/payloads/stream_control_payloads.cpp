@@ -14,9 +14,9 @@
 
 #include "payloads/stream_control_payloads.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -31,44 +31,27 @@
 namespace livekit_ros2_bridge
 {
 
+namespace stream_control_payloads
+{
+
 namespace
 {
 
-constexpr int kNoPreferredIntervalOverrideMs = 0;
-
-SubscriptionTargetKind parseHeartbeatSubscriptionTargetKind(std::string_view raw_kind)
+int clampJsonIntegerToInt(const nlohmann::json & value, const char * error_message)
 {
-  const auto kind = subscriptionTargetKindFromString(trim(raw_kind));
-  if (kind.has_value()) {
-    return *kind;
+  if (!value.is_number_integer()) {
+    throw std::invalid_argument(error_message);
   }
 
-  throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
-}
-
-std::string makeSubscriptionTargetKey(const SubscriptionTarget & target)
-{
-  return std::string(subscriptionTargetKindString(target.kind)) + ":" + target.name;
-}
-
-int parsePreferredIntervalMs(const nlohmann::json & prefs)
-{
-  const auto interval_it = prefs.find("interval_ms");
-  if (interval_it == prefs.end()) {
-    return kNoPreferredIntervalOverrideMs;
-  }
-
-  if (!interval_it->is_number_integer()) {
-    throw std::invalid_argument("delivery_preferences.interval_ms must be an integer");
-  }
-
-  if (interval_it->is_number_unsigned()) {
-    const auto raw_interval = interval_it->get<std::uint64_t>();
+  // Heartbeats can carry JSON integers wider than the local `int` storage used by
+  // `SubscriptionDemand`, so clamp before assigning instead of relying on narrowing casts.
+  if (value.is_number_unsigned()) {
+    const auto raw_interval = value.get<std::uint64_t>();
     const auto max_interval = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
     return raw_interval > max_interval ? std::numeric_limits<int>::max() : static_cast<int>(raw_interval);
   }
 
-  const auto raw_interval = interval_it->get<std::int64_t>();
+  const auto raw_interval = value.get<std::int64_t>();
   const auto min_interval = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max_interval = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw_interval < min_interval) {
@@ -77,26 +60,55 @@ int parsePreferredIntervalMs(const nlohmann::json & prefs)
   if (raw_interval > max_interval) {
     return std::numeric_limits<int>::max();
   }
+
   return static_cast<int>(raw_interval);
 }
 
-SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & subscription_json)
+std::optional<int> parsePreferredIntervalMs(const nlohmann::json & entry)
 {
-  const auto kind_it = subscription_json.find("kind");
-  if (kind_it == subscription_json.end() || !kind_it->is_string()) {
+  const auto delivery_preferences = entry.find("delivery_preferences");
+  if (delivery_preferences == entry.end()) {
+    return std::nullopt;
+  }
+
+  if (!delivery_preferences->is_object()) {
+    throw std::invalid_argument("delivery_preferences must be an object");
+  }
+
+  const auto interval_field = delivery_preferences->find("interval_ms");
+  if (interval_field == delivery_preferences->end()) {
+    return std::nullopt;
+  }
+
+  const int interval_ms = clampJsonIntegerToInt(*interval_field, "delivery_preferences.interval_ms must be an integer");
+  if (interval_ms == 0) {
+    return std::nullopt;
+  }
+
+  return interval_ms;
+}
+
+SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & entry)
+{
+  const auto kind_field = entry.find("kind");
+  if (kind_field == entry.end() || !kind_field->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
-  const SubscriptionTargetKind kind = parseHeartbeatSubscriptionTargetKind(kind_it->get_ref<const std::string &>());
+  const auto parsed_kind = subscriptionTargetKindFromString(trim(kind_field->get_ref<const std::string &>()));
+  if (!parsed_kind.has_value()) {
+    throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
+  }
 
-  const auto name_it = subscription_json.find("name");
-  if (name_it == subscription_json.end() || !name_it->is_string()) {
+  const SubscriptionTargetKind kind = *parsed_kind;
+  const auto name_field = entry.find("name");
+  if (name_field == entry.end() || !name_field->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
   std::string name = kind == SubscriptionTargetKind::Topic
-                       ? normalizeRosResourceName(name_it->get_ref<const std::string &>())
-                       : trimConfiguredSourceName(name_it->get_ref<const std::string &>());
+                       ? normalizeRosResourceName(name_field->get_ref<const std::string &>())
+                       : trim(name_field->get_ref<const std::string &>());
   if (name.empty()) {
     throw std::invalid_argument(
       kind == SubscriptionTargetKind::Topic
@@ -107,106 +119,90 @@ SubscriptionTarget parseSubscriptionTarget(const nlohmann::json & subscription_j
   return {kind, std::move(name)};
 }
 
-SubscriptionDemand parseSubscriptionDemand(const nlohmann::json & subscription_json)
-{
-  SubscriptionDemand demand;
-  demand.target = parseSubscriptionTarget(subscription_json);
-
-  const auto prefs_it = subscription_json.find("delivery_preferences");
-  if (prefs_it == subscription_json.end()) {
-    return demand;
-  }
-
-  if (!prefs_it->is_object()) {
-    throw std::invalid_argument("delivery_preferences must be an object");
-  }
-
-  const int interval = parsePreferredIntervalMs(*prefs_it);
-  if (interval == kNoPreferredIntervalOverrideMs) {
-    return demand;
-  }
-
-  demand.preferred_interval_ms = interval;
-  return demand;
-}
-
 }  // namespace
 
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
-  std::unordered_map<std::string, std::size_t> index_by_key;
+  std::unordered_map<std::string, std::size_t> demand_index_by_target;
   heartbeat.session_id =
     parseOptionalNonEmptyTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
 
-  const auto subs_it = body.find("subscriptions");
-  if (subs_it == body.end()) {
+  const auto subscriptions = body.find("subscriptions");
+  if (subscriptions == body.end()) {
     throw std::invalid_argument("heartbeat subscriptions are required");
   }
 
-  if (!subs_it->is_array()) {
+  if (!subscriptions->is_array()) {
     throw std::invalid_argument("heartbeat subscriptions must be an array");
   }
 
-  for (const auto & subscription_json : *subs_it) {
-    if (!subscription_json.is_object()) {
+  for (const auto & entry : *subscriptions) {
+    if (!entry.is_object()) {
       throw std::invalid_argument("heartbeat subscriptions must be objects");
     }
 
-    SubscriptionDemand demand = parseSubscriptionDemand(subscription_json);
-    const std::string index_key = makeSubscriptionTargetKey(demand.target);
-    const auto [it, inserted] = index_by_key.emplace(index_key, heartbeat.subscriptions.size());
+    SubscriptionDemand demand;
+    demand.target = parseSubscriptionTarget(entry);
+    demand.preferred_interval_ms = parsePreferredIntervalMs(entry);
+
+    // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and
+    // configured_source identifiers may share the same text, so name alone would alias
+    // distinct protocol targets.
+    const auto [it, inserted] = demand_index_by_target.emplace(
+      std::string(subscriptionTargetKindString(demand.target.kind)) + ":" + demand.target.name,
+      heartbeat.subscriptions.size());
     if (inserted) {
       heartbeat.subscriptions.push_back(std::move(demand));
       continue;
     }
 
-    auto & existing = heartbeat.subscriptions[it->second];
-    // Heartbeats carry a demand set keyed by canonical target; repeated demands tighten the
-    // interval so the bridge keeps the most demanding subscriber cadence.
-    if (demand.preferred_interval_ms.has_value() && existing.preferred_interval_ms.has_value()) {
-      existing.preferred_interval_ms = std::min(*existing.preferred_interval_ms, *demand.preferred_interval_ms);
-    } else if (demand.preferred_interval_ms.has_value()) {
-      existing.preferred_interval_ms = demand.preferred_interval_ms;
+    if (!demand.preferred_interval_ms.has_value()) {
+      continue;
+    }
+
+    auto & current = heartbeat.subscriptions[it->second];
+    if (!current.preferred_interval_ms.has_value() || *demand.preferred_interval_ms < *current.preferred_interval_ms) {
+      current.preferred_interval_ms = *demand.preferred_interval_ms;
     }
   }
 
   return heartbeat;
 }
 
-nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscription_status)
+nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status)
 {
-  const char * kind_str = subscriptionTargetKindString(subscription_status.target.kind);
-
-  nlohmann::json status_json = {
-    {"kind", kind_str},
-    {"name", subscription_status.target.name},
+  nlohmann::json body = {
+    {"kind", subscriptionTargetKindString(status.target.kind)},
+    {"name", status.target.name},
     {"status", "active"},
   };
 
-  if (!subscription_status.degraded_reason.empty()) {
-    status_json["degraded_reason"] = subscription_status.degraded_reason;
+  if (!status.degraded_reason.empty()) {
+    body["degraded_reason"] = status.degraded_reason;
   }
-  if (!subscription_status.interface_type.empty()) {
-    status_json["interface_type"] = subscription_status.interface_type;
+  if (!status.interface_type.empty()) {
+    body["interface_type"] = status.interface_type;
   }
 
-  switch (subscription_status.delivery_kind) {
+  switch (status.delivery_kind) {
     case SubscriptionDeliveryKind::kVideo:
-      status_json["delivery"] = {
-        {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
-        {"track_name", subscription_status.track_name}};
-      return status_json;
+      body["delivery"] = {
+        {"kind", subscriptionDeliveryKindString(status.delivery_kind)}, {"track_name", status.track_name}};
+      return body;
     case SubscriptionDeliveryKind::kData:
-      status_json["delivery"] = {
-        {"kind", subscriptionDeliveryKindString(subscription_status.delivery_kind)},
-        {"track_name", subscription_status.track_name},
+      // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
+      // LiveKit data track, so the content type is fixed by protocol rather than caller input.
+      body["delivery"] = {
+        {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
+        {"track_name", status.track_name},
         {"content_type", protocol::kDataContentTypeCdr},
-        {"interval_ms", subscription_status.applied_interval_ms}};
-      return status_json;
+        {"interval_ms", status.applied_interval_ms}};
+      return body;
   }
 
   throw std::invalid_argument("subscription status delivery kind is invalid");
 }
+}  // namespace stream_control_payloads
 
 }  // namespace livekit_ros2_bridge

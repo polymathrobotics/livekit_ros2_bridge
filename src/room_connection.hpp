@@ -45,8 +45,6 @@ struct RpcInvocation
 {
   RpcInvocation() = default;
 
-  // Preserve the historical two-argument construction shape used by tests and
-  // internal call sites that only provide caller identity plus payload.
   RpcInvocation(std::string caller_identity_in, std::string payload_in)
   : caller_identity(std::move(caller_identity_in))
   , payload(std::move(payload_in))
@@ -63,6 +61,8 @@ struct RpcInvocation
   std::string payload;
 };
 
+// Throw from an RpcHandler to propagate an explicit RPC error code/message back to the remote
+// caller. Other exceptions are treated as generic internal failures.
 class RpcHandlerError : public std::runtime_error
 {
 public:
@@ -96,9 +96,11 @@ struct OutgoingControlPacket
   std::string control_topic;
 };
 
-struct PublishedVideoTrack
+struct VideoTrackHandle
 {
-  std::string track_name;
+  // Opaque handle used only to request a later unpublish. Implementations may invalidate it after
+  // unpublish or any connection reset/reconnect.
+  std::string name;
 };
 
 enum class DataTrackPushErrorCode
@@ -119,12 +121,15 @@ struct DataTrackPushError
 class DataTrackPushResult
 {
 public:
+  // Non-throwing result for the hot data-track push path, where stale handles and queue pressure
+  // are expected runtime conditions.
   static DataTrackPushResult success();
   static DataTrackPushResult failure(DataTrackPushError error);
 
   bool ok() const noexcept;
   bool hasError() const noexcept;
   explicit operator bool() const noexcept;
+  // Throws std::logic_error when no error is present.
   const DataTrackPushError & error() const;
 
 private:
@@ -135,28 +140,27 @@ private:
 
 struct RoomConnectionCallbacks
 {
-  // Called when a room connection becomes active.
   std::function<void()> on_connected;
 
-  // Called when the current room connection begins a reconnect episode. The reason is a stable
-  // internal string such as `room_disconnected` or `connection_state_disconnected`.
+  // Called once when the current room connection begins a reconnect episode. The reason is a
+  // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
   std::function<void(const std::string &)> on_reconnect_requested;
 
   // Called after a connected room connection has been torn down and any per-connection state
-  // should be rebuilt on the next connect.
+  // should be rebuilt on the next connect. Final stop() does not fire this callback.
   std::function<void()> on_connection_reset;
 
   // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.
   std::function<void(const std::string &)> on_participant_disconnected;
 
-  // Delivers one incoming control packet. Callbacks may run on connection-managed background
-  // threads
-  // and must hand off ROS work instead of assuming executor-thread affinity.
+  // Delivers one incoming control packet on a connection-managed background thread; callbacks must
+  // hand off ROS work instead of assuming executor-thread affinity.
   std::function<void(const IncomingControlPacket &)> on_incoming_control_packet_received;
 };
 
-// Bridge-owned LiveKit room transport lifecycle.
+// Thread-safe transport facade around a reconnecting room connection. Implementations own background
+// worker state and may invoke callbacks from connection-managed threads.
 class RoomConnection
 {
 public:
@@ -176,22 +180,26 @@ public:
 
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
   // participant is available.
-  virtual bool registerRpcMethod(const std::string & method_name, RpcHandler handler) = 0;
-  virtual bool unregisterRpcMethod(const std::string & method_name) = 0;
+  virtual bool registerRpc(const std::string & method_name, RpcHandler handler) = 0;
+  virtual bool unregisterRpc(const std::string & method_name) = 0;
 
+  // These publication calls require an active local participant. Implementations may throw if
+  // used while disconnected, except tryPushDataTrack(), which reports expected push failures
+  // in-band.
   virtual void publishControlPacket(const OutgoingControlPacket & packet) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
   virtual DataTrackPushResult tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 
-  virtual std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name,
+  virtual std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+    const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const VideoPublishConfig & publish_config) = 0;
-  virtual void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) = 0;
+    const VideoPublishConfig & config) = 0;
+  // Best-effort no-op for null, already-unpublished, or reconnect-stale handles.
+  virtual void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) = 0;
 };
 
-std::unique_ptr<RoomConnection> makeRoomConnection();
+std::unique_ptr<RoomConnection> createRoomConnection();
 
 }  // namespace livekit_ros2_bridge

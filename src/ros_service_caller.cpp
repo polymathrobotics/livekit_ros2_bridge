@@ -23,7 +23,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -93,16 +92,6 @@ std::vector<std::uint8_t> unwrapSerializedPayload(const rclcpp::SerializedMessag
   return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
 }
 
-std::string serviceRequestMessageTypeName(const std::string & service_type)
-{
-  return service_type + kRequestMessageTypeSuffix;
-}
-
-std::string serviceResponseMessageTypeName(const std::string & service_type)
-{
-  return service_type + kResponseMessageTypeSuffix;
-}
-
 const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * introspection_type_support)
 {
   if (introspection_type_support == nullptr || introspection_type_support->data == nullptr) {
@@ -111,24 +100,27 @@ const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * i
   return *static_cast<const MessageMembers *>(introspection_type_support->data);
 }
 
-class DynamicMessageStorage
+class MessageStorage
 {
 public:
-  DynamicMessageStorage(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
+  // Runtime-discovered services only provide introspection callbacks, so we
+  // manage a raw message buffer and pair the generated init/fini functions
+  // explicitly instead of relying on a concrete generated C++ message type.
+  MessageStorage(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
   : members_(members)
   , data_(::operator new(members.size_of_))
   {
     members_.init_function(data_, init);
   }
 
-  ~DynamicMessageStorage()
+  ~MessageStorage()
   {
     members_.fini_function(data_);
     ::operator delete(data_);
   }
 
-  DynamicMessageStorage(const DynamicMessageStorage &) = delete;
-  DynamicMessageStorage & operator=(const DynamicMessageStorage &) = delete;
+  MessageStorage(const MessageStorage &) = delete;
+  MessageStorage & operator=(const MessageStorage &) = delete;
 
   void * data()
   {
@@ -140,11 +132,11 @@ private:
   void * data_;
 };
 
-struct ResolvedMessageTypeSupport
+struct MessageTypeSupport
 {
   // Keep both libraries alive for as long as the cached serialization and
   // introspection handles may be used by an active client entry.
-  explicit ResolvedMessageTypeSupport(const std::string & interface_type)
+  explicit MessageTypeSupport(const std::string & interface_type)
   : serialization_library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
   , introspection_library(rclcpp::get_typesupport_library(interface_type, kIntrospectionTypeSupportIdentifier))
   , serialization_type_support(
@@ -203,35 +195,34 @@ const rosidl_service_type_support_t * getServiceTypeSupportHandle(
 
 struct CachedServiceClient
 {
-  struct ResolvedServiceTypeSupport
+  struct TypeSupport
   {
-    explicit ResolvedServiceTypeSupport(const std::string & service_type)
-    : service_type_support_library(rclcpp::get_typesupport_library(service_type, kSerializationTypeSupportIdentifier))
-    , service_type_support(
-        getServiceTypeSupportHandle(service_type, kSerializationTypeSupportIdentifier, *service_type_support_library))
-    , request_message_type_support(serviceRequestMessageTypeName(service_type))
-    , response_message_type_support(serviceResponseMessageTypeName(service_type))
+    explicit TypeSupport(const std::string & interface_type)
+    : library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
+    , service_type_support(getServiceTypeSupportHandle(interface_type, kSerializationTypeSupportIdentifier, *library))
+    , request_type_support(interface_type + kRequestMessageTypeSuffix)
+    , response_type_support(interface_type + kResponseMessageTypeSuffix)
     {}
 
-    std::shared_ptr<rcpputils::SharedLibrary> service_type_support_library;
+    std::shared_ptr<rcpputils::SharedLibrary> library;
     const rosidl_service_type_support_t * service_type_support;
-    ResolvedMessageTypeSupport request_message_type_support;
-    ResolvedMessageTypeSupport response_message_type_support;
+    MessageTypeSupport request_type_support;
+    MessageTypeSupport response_type_support;
   };
 
   CachedServiceClient(
     const std::string & service_name,
-    const std::string & service_type,
-    ResolvedServiceTypeSupport & resolved_service_type_support,
+    const std::string & interface_type,
+    TypeSupport & type_support,
     rcl_node_t * node_handle)
   : service_name(service_name)
-  , service_type_name(service_type)
-  , resolved_service_type_support(&resolved_service_type_support)
+  , interface_type(interface_type)
+  , type_support(&type_support)
   , client(rcl_get_zero_initialized_client())
   {
     rcl_client_options_t options = rcl_client_get_default_options();
-    rcl_ret_t ret = rcl_client_init(
-      &client, node_handle, resolved_service_type_support.service_type_support, service_name.c_str(), &options);
+    rcl_ret_t ret =
+      rcl_client_init(&client, node_handle, type_support.service_type_support, service_name.c_str(), &options);
     if (ret != RCL_RET_OK) {
       throw std::runtime_error("Failed to create rcl service client for '" + service_name + "'");
     }
@@ -250,30 +241,30 @@ struct CachedServiceClient
   CachedServiceClient & operator=(const CachedServiceClient &) = delete;
 
   std::string service_name;
-  std::string service_type_name;
-  ResolvedServiceTypeSupport * resolved_service_type_support = nullptr;
+  std::string interface_type;
+  TypeSupport * type_support = nullptr;
   rcl_client_t client;
   rcl_node_t * node_handle_ = nullptr;
 };
 
-struct PendingCallKey
+struct PendingKey
 {
   // Sequence numbers come from the underlying rcl client, so the client
   // instance is part of the key when matching responses back to pending calls.
-  const CachedServiceClient * cached_client = nullptr;
+  const CachedServiceClient * client = nullptr;
   std::int64_t sequence_number = 0;
 
-  bool operator==(const PendingCallKey & other) const
+  bool operator==(const PendingKey & other) const
   {
-    return cached_client == other.cached_client && sequence_number == other.sequence_number;
+    return client == other.client && sequence_number == other.sequence_number;
   }
 };
 
-struct PendingCallKeyHash
+struct PendingKeyHash
 {
-  std::size_t operator()(const PendingCallKey & key) const
+  std::size_t operator()(const PendingKey & key) const
   {
-    return std::hash<const CachedServiceClient *>{}(key.cached_client) ^
+    return std::hash<const CachedServiceClient *>{}(key.client) ^
            (std::hash<std::int64_t>{}(key.sequence_number) << 1U);
   }
 };
@@ -286,328 +277,246 @@ struct RosServiceCaller::Impl
   : node(node)
   {}
 
+  struct PendingCall
+  {
+    std::string service;
+    std::string interface_type;
+    std::string requester;
+    std::promise<ServiceCallResponse> promise;
+    std::chrono::steady_clock::time_point deadline;
+  };
+
   class InflightReservation
   {
   public:
-    // Reserve quota before any request build or send step that can fail, then
-    // release automatically unless the call is committed into pending_calls.
-    InflightReservation(Impl & owner, std::string requester_identity)
-    : owner_(&owner)
-    , requester_identity_(std::move(requester_identity))
+    InflightReservation(Impl & impl, const std::string & requester)
+    : impl_(impl)
+    , requester_(requester)
     {
-      owner_->acquireInflight(requester_identity_);
+      impl_.reserveInflightSlot(requester_);
     }
 
     ~InflightReservation()
     {
-      if (owner_ != nullptr) {
-        owner_->releaseInflight(requester_identity_);
+      if (active_) {
+        impl_.releaseInflightSlot(requester_);
       }
     }
 
     InflightReservation(const InflightReservation &) = delete;
     InflightReservation & operator=(const InflightReservation &) = delete;
 
-    InflightReservation(InflightReservation && other) noexcept
-    : owner_(other.owner_)
-    , requester_identity_(std::move(other.requester_identity_))
+    void transferToPendingCall()
     {
-      other.owner_ = nullptr;
-    }
-
-    InflightReservation & operator=(InflightReservation &&) = delete;
-
-    void commit() noexcept
-    {
-      owner_ = nullptr;
+      active_ = false;
     }
 
   private:
-    Impl * owner_;
-    std::string requester_identity_;
+    Impl & impl_;
+    const std::string & requester_;
+    bool active_ = true;
   };
 
-  struct PendingCall
-  {
-    std::string service;
-    std::string interface_type;
-    std::string requester_identity;
-    std::promise<ServiceCallResponse> promise;
-    std::chrono::steady_clock::time_point deadline;
-  };
+  using PendingMap = std::unordered_map<PendingKey, PendingCall, PendingKeyHash>;
+  using PendingIter = PendingMap::iterator;
 
-  using PendingCalls = std::unordered_map<PendingCallKey, PendingCall, PendingCallKeyHash>;
-  using PendingCallIterator = PendingCalls::iterator;
-
-  std::string resolveServiceType(const std::string & service, const std::string & requested_interface_type) const;
-  CachedServiceClient::ResolvedServiceTypeSupport & getOrResolveServiceTypeSupport(const std::string & service_type);
-  CachedServiceClient & getOrCreateCachedClient(const std::string & service, const std::string & service_type);
-  void acquireInflight(const std::string & requester_identity);
-  void releaseInflight(const std::string & requester_identity);
-  void ensurePollTimer();
-  bool beginPollCallback(std::function<void()> & on_enter);
-  void endPollCallback();
-  void quiescePollCallbacks();
-  void setPollCallbackHooks(std::function<void()> on_enter, std::function<void()> on_exit);
-  void setTypeSupportResolveHook(std::function<void(const std::string &)> hook);
-  void onPollTimer();
+  CachedServiceClient::TypeSupport & getServiceTypeSupport(const std::string & interface_type);
+  CachedServiceClient & getClient(const std::string & service, const std::string & interface_type);
+  void reserveInflightSlot(const std::string & requester);
+  void releaseInflightSlot(const std::string & requester);
+  void poll();
   void drainResponses();
-  void checkTimeouts();
-  void logPendingSettlementSummary(
-    rclcpp::Logger logger,
-    bool warn,
-    const char * reason,
-    const char * action,
-    const char * service,
-    const char * interface_type,
-    const char * requester_identity,
-    std::size_t count) const;
+  void failExpiredCalls();
+  void clearCachedServiceState();
 
-  template <typename ShouldSettleFn, typename MakeExceptionFn>
-  std::size_t settlePendingCallsIf(ShouldSettleFn should_settle, MakeExceptionFn make_exception)
+  template <typename ShouldFailFn>
+  void failMatchingCalls(
+    ShouldFailFn should_fail,
+    const char * exception_message,
+    const char * reason,
+    bool warn = false,
+    const char * requester = kAnyServiceLogValue)
   {
-    std::size_t settled_count = 0U;
+    std::size_t count = 0U;
     for (auto it = pending_calls.begin(); it != pending_calls.end();) {
-      if (!should_settle(it->second)) {
+      if (!should_fail(it->second)) {
         ++it;
         continue;
       }
 
-      it = settlePendingCall(it, [&](PendingCall & call) { call.promise.set_exception(make_exception(call)); });
-      ++settled_count;
+      it = settle(it, [exception_message](PendingCall & call) {
+        call.promise.set_exception(std::make_exception_ptr(std::runtime_error(exception_message)));
+      });
+      ++count;
     }
-    return settled_count;
-  }
 
-  template <typename ShouldSettleFn>
-  std::size_t settlePendingCallsIf(ShouldSettleFn should_settle, const char * message)
-  {
-    return settlePendingCallsIf(std::move(should_settle), [message](const PendingCall &) {
-      return std::make_exception_ptr(std::runtime_error(message));
-    });
+    if (count == 0U) {
+      return;
+    }
+
+    if (warn) {
+      LogEvent(kRosServiceCallerLogger, "service_calls_settled")
+        .field("reason", reason)
+        .field("action", "fail_futures")
+        .field("service", kAnyServiceLogValue)
+        .field("interface_type", kAnyServiceLogValue)
+        .field("requester_identity", requester)
+        .field("count", count)
+        .warn();
+      return;
+    }
+
+    LogEvent(kRosServiceCallerLogger, "service_calls_settled")
+      .field("reason", reason)
+      .field("action", "fail_futures")
+      .field("service", kAnyServiceLogValue)
+      .field("interface_type", kAnyServiceLogValue)
+      .field("requester_identity", requester)
+      .field("count", count)
+      .info();
   }
 
   template <typename SettlePromiseFn>
-  PendingCallIterator settlePendingCall(PendingCallIterator it, SettlePromiseFn && settle_promise)
+  PendingIter settle(PendingIter it, SettlePromiseFn && settle_promise)
   {
+    // Keep promise completion and quota release coupled so every terminal path
+    // returns the requester's inflight slot exactly once.
     auto & call = it->second;
     std::forward<SettlePromiseFn>(settle_promise)(call);
-    releaseInflight(call.requester_identity);
+    releaseInflightSlot(call.requester);
     return pending_calls.erase(it);
   }
 
   rclcpp::Node & node;
+  // CachedServiceClient stores a raw pointer into type_supports, so clients
+  // must be destroyed before the backing type-support cache is cleared.
   std::unordered_map<std::string, std::unique_ptr<CachedServiceClient>> cached_clients;
-  std::unordered_map<std::string, std::unique_ptr<CachedServiceClient::ResolvedServiceTypeSupport>>
-    resolved_service_type_supports;
-  PendingCalls pending_calls;
-  std::unordered_map<std::string, int> inflight;
-  FailureCache invalid_service_type_cache{kInvalidServiceTypeCacheCapacity};
+  std::unordered_map<std::string, std::unique_ptr<CachedServiceClient::TypeSupport>> type_supports;
+  PendingMap pending_calls;
+  std::unordered_map<std::string, int> inflight_counts;
+  // Remember bad interface types so repeated invalid requests fail without
+  // reloading type-support libraries every time.
+  FailureCache type_support_failures{kInvalidServiceTypeCacheCapacity};
   rclcpp::TimerBase::SharedPtr poll_timer;
-  std::mutex poll_callback_hook_mutex;
-  std::mutex type_support_resolve_hook_mutex;
-  // shutdown() disables new poll callbacks, then waits for any callback already
-  // running on another thread to finish before tearing down clients or timers.
-  ReentrantQuiesceGate poll_callback_gate;
-  std::function<void()> poll_callback_enter_hook;
-  std::function<void()> poll_callback_exit_hook;
-  std::function<void(const std::string &)> type_support_resolve_hook;
+  std::mutex poll_callback_mutex;
+  std::mutex type_support_load_callback_mutex;
+  // shutdown() closes this gate and waits for any active poll() callback
+  // before clearing timers or caches. Reentrancy matters because shutdown()
+  // may be triggered from within poll().
+  ReentrantQuiesceGate poll_gate;
+  std::function<void()> on_poll_enter;
+  std::function<void()> on_poll_exit;
+  std::function<void(const std::string &)> on_type_support_load;
   bool shutdown_flag = false;
-  EventThrottle late_response_drop_throttle{std::chrono::milliseconds(kResponseLogThrottleMs)};
+  EventThrottle late_response_throttle{std::chrono::milliseconds(kResponseLogThrottleMs)};
 };
 
-std::string RosServiceCaller::Impl::resolveServiceType(
-  const std::string & service, const std::string & requested_interface_type) const
+CachedServiceClient::TypeSupport & RosServiceCaller::Impl::getServiceTypeSupport(const std::string & interface_type)
 {
-  if (!requested_interface_type.empty()) {
-    return requested_interface_type;
-  }
-  return requireSingleInterfaceType(node.get_service_names_and_types(), service, "service");
-}
-
-CachedServiceClient::ResolvedServiceTypeSupport & RosServiceCaller::Impl::getOrResolveServiceTypeSupport(
-  const std::string & service_type)
-{
-  auto it = resolved_service_type_supports.find(service_type);
-  if (it != resolved_service_type_supports.end()) {
+  auto it = type_supports.find(interface_type);
+  if (it != type_supports.end()) {
     return *it->second;
   }
 
-  if (const auto failure = invalid_service_type_cache.get(service_type); failure.has_value()) {
+  if (const auto failure = type_support_failures.get(interface_type); failure.has_value()) {
     std::rethrow_exception(*failure);
   }
 
-  std::function<void(const std::string &)> hook;
+  std::function<void(const std::string &)> on_type_support_load;
   {
-    std::lock_guard<std::mutex> lock(type_support_resolve_hook_mutex);
-    hook = type_support_resolve_hook;
+    std::lock_guard<std::mutex> lock(type_support_load_callback_mutex);
+    on_type_support_load = this->on_type_support_load;
   }
-  if (hook) {
-    hook(service_type);
+  if (on_type_support_load) {
+    on_type_support_load(interface_type);
   }
 
   try {
-    auto resolved_service_type_support =
-      std::make_unique<CachedServiceClient::ResolvedServiceTypeSupport>(service_type);
-    auto & ref = *resolved_service_type_support;
-    resolved_service_type_supports.emplace(service_type, std::move(resolved_service_type_support));
+    auto type_support = std::make_unique<CachedServiceClient::TypeSupport>(interface_type);
+    auto & ref = *type_support;
+    type_supports.emplace(interface_type, std::move(type_support));
     return ref;
   } catch (const std::invalid_argument &) {
-    invalid_service_type_cache.insertOrAssign(service_type, std::current_exception());
+    type_support_failures.insertOrAssign(interface_type, std::current_exception());
     throw;
   } catch (const std::runtime_error &) {
-    invalid_service_type_cache.insertOrAssign(service_type, std::current_exception());
+    type_support_failures.insertOrAssign(interface_type, std::current_exception());
     throw;
   }
 }
 
-CachedServiceClient & RosServiceCaller::Impl::getOrCreateCachedClient(
-  const std::string & service, const std::string & service_type)
+CachedServiceClient & RosServiceCaller::Impl::getClient(const std::string & service, const std::string & interface_type)
 {
-  const std::string service_client_cache_key = service + ":" + service_type;
-  auto it = cached_clients.find(service_client_cache_key);
+  const std::string key = service + ":" + interface_type;
+  auto it = cached_clients.find(key);
   if (it != cached_clients.end()) {
     return *it->second;
   }
 
   auto * rcl_node = node.get_node_base_interface()->get_rcl_node_handle();
-  auto & resolved_service_type_support = getOrResolveServiceTypeSupport(service_type);
-  auto client = std::make_unique<CachedServiceClient>(service, service_type, resolved_service_type_support, rcl_node);
-  auto & ref = *client;
-  cached_clients.emplace(service_client_cache_key, std::move(client));
+  auto & type_support = getServiceTypeSupport(interface_type);
+  auto entry = std::make_unique<CachedServiceClient>(service, interface_type, type_support, rcl_node);
+  auto & ref = *entry;
+  cached_clients.emplace(key, std::move(entry));
   return ref;
 }
 
-void RosServiceCaller::Impl::acquireInflight(const std::string & requester_identity)
+void RosServiceCaller::Impl::reserveInflightSlot(const std::string & requester)
 {
-  if (requester_identity.empty()) {
+  if (requester.empty()) {
     return;
   }
-  const int current = inflight[requester_identity];
+  const int current = inflight_counts[requester];
   if (current >= kMaxInflightPerRequester) {
     throw std::runtime_error("Requester identity service call limit reached.");
   }
-  inflight[requester_identity] = current + 1;
+  inflight_counts[requester] = current + 1;
 }
 
-void RosServiceCaller::Impl::releaseInflight(const std::string & requester_identity)
+void RosServiceCaller::Impl::releaseInflightSlot(const std::string & requester)
 {
-  if (requester_identity.empty()) {
+  if (requester.empty()) {
     return;
   }
-  auto it = inflight.find(requester_identity);
-  if (it == inflight.end()) {
+  auto it = inflight_counts.find(requester);
+  if (it == inflight_counts.end()) {
     return;
   }
   if (it->second <= 1) {
-    inflight.erase(it);
+    inflight_counts.erase(it);
     return;
   }
   it->second -= 1;
 }
 
-void RosServiceCaller::Impl::ensurePollTimer()
+void RosServiceCaller::Impl::poll()
 {
-  if (poll_timer != nullptr) {
+  if (!poll_gate.tryEnter()) {
     return;
   }
-  poll_timer = node.create_wall_timer(kPollInterval, [this]() { onPollTimer(); });
-}
 
-bool RosServiceCaller::Impl::beginPollCallback(std::function<void()> & on_enter)
-{
-  if (!poll_callback_gate.tryEnter()) {
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
-  on_enter = poll_callback_enter_hook;
-  return true;
-}
-
-void RosServiceCaller::Impl::endPollCallback()
-{
+  std::function<void()> on_enter;
   std::function<void()> on_exit;
   {
-    std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
-    on_exit = poll_callback_exit_hook;
+    // Callbacks are copied under the mutex but invoked without it so test callbacks can
+    // reenter RosServiceCaller, including calling shutdown() from poll().
+    std::lock_guard<std::mutex> lock(poll_callback_mutex);
+    on_enter = this->on_poll_enter;
+    on_exit = this->on_poll_exit;
   }
-
-  if (on_exit) {
-    on_exit();
-  }
-  poll_callback_gate.leave();
-}
-
-void RosServiceCaller::Impl::quiescePollCallbacks()
-{
-  poll_callback_gate.close();
-  poll_callback_gate.awaitIdle();
-}
-
-void RosServiceCaller::Impl::setPollCallbackHooks(std::function<void()> on_enter, std::function<void()> on_exit)
-{
-  std::lock_guard<std::mutex> lock(poll_callback_hook_mutex);
-  poll_callback_enter_hook = std::move(on_enter);
-  poll_callback_exit_hook = std::move(on_exit);
-}
-
-void RosServiceCaller::Impl::setTypeSupportResolveHook(std::function<void(const std::string &)> hook)
-{
-  std::lock_guard<std::mutex> lock(type_support_resolve_hook_mutex);
-  type_support_resolve_hook = std::move(hook);
-}
-
-void RosServiceCaller::Impl::logPendingSettlementSummary(
-  rclcpp::Logger logger,
-  bool warn,
-  const char * reason,
-  const char * action,
-  const char * service,
-  const char * interface_type,
-  const char * requester_identity,
-  std::size_t count) const
-{
-  if (count == 0U) {
-    return;
-  }
-
-  if (warn) {
-    LogEvent(logger, "service_calls_settled")
-      .field("reason", reason)
-      .field("action", action)
-      .field("service", service)
-      .field("interface_type", interface_type)
-      .field("requester_identity", requester_identity)
-      .field("count", count)
-      .warn();
-    return;
-  }
-
-  LogEvent(logger, "service_calls_settled")
-    .field("reason", reason)
-    .field("action", action)
-    .field("service", service)
-    .field("interface_type", interface_type)
-    .field("requester_identity", requester_identity)
-    .field("count", count)
-    .info();
-}
-
-void RosServiceCaller::Impl::onPollTimer()
-{
-  std::function<void()> on_enter;
-  if (!beginPollCallback(on_enter)) {
-    return;
-  }
-  ScopeExit finish_poll([this]() { endPollCallback(); });
+  ScopeExit finish_poll([this, on_exit = std::move(on_exit)]() mutable {
+    if (on_exit) {
+      on_exit();
+    }
+    poll_gate.leave();
+  });
 
   if (on_enter) {
     on_enter();
   }
 
   drainResponses();
-  checkTimeouts();
+  failExpiredCalls();
 
   if (pending_calls.empty() && poll_timer != nullptr) {
     poll_timer.reset();
@@ -616,28 +525,30 @@ void RosServiceCaller::Impl::onPollTimer()
 
 void RosServiceCaller::Impl::drainResponses()
 {
-  for (auto & [service_client_cache_key, cached_client] : cached_clients) {
-    (void)service_client_cache_key;
+  for (auto & [cache_key, entry] : cached_clients) {
+    (void)cache_key;
     while (true) {
-      DynamicMessageStorage response_storage(
-        cached_client->resolved_service_type_support->response_message_type_support.message_members,
-        rosidl_runtime_cpp::MessageInitialization::ZERO);
+      MessageStorage response(
+        entry->type_support->response_type_support.message_members, rosidl_runtime_cpp::MessageInitialization::ZERO);
       rmw_request_id_t header{};
-      rcl_ret_t ret = rcl_take_response(&cached_client->client, &header, response_storage.data());
+      rcl_ret_t ret = rcl_take_response(&entry->client, &header, response.data());
       if (ret != RCL_RET_OK) {
         break;
       }
 
-      // Match on both the client instance and sequence number so concurrent
-      // callers to different services cannot steal each other's responses.
-      const PendingCallKey pending_call_key{cached_client.get(), header.sequence_number};
-      auto call_it = pending_calls.find(pending_call_key);
-      if (call_it == pending_calls.end()) {
-        if (const std::size_t count = late_response_drop_throttle.recordAndTakePendingCount(); count > 0U) {
+      // rcl sequence numbers are scoped to a client instance, so settle by
+      // both the client pointer and sequence number.
+      const PendingKey key{entry.get(), header.sequence_number};
+      auto it = pending_calls.find(key);
+      if (it == pending_calls.end()) {
+        // The original call already timed out, was cancelled, or belonged to a
+        // reset session. Never match a late response by service name alone,
+        // because a newer call on the same service may now be pending.
+        if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
           LogEvent(kRosServiceCallerLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
-            .field("service", cached_client->service_name)
-            .field("interface_type", cached_client->service_type_name)
+            .field("service", entry->service_name)
+            .field("interface_type", entry->interface_type)
             .field("sequence_number", static_cast<long long>(header.sequence_number))
             .field("count", count)
             .warn();
@@ -645,11 +556,10 @@ void RosServiceCaller::Impl::drainResponses()
         continue;
       }
 
-      settlePendingCall(call_it, [&](PendingCall & call) {
+      settle(it, [&](PendingCall & call) {
         try {
           rclcpp::SerializedMessage serialized;
-          cached_client->resolved_service_type_support->response_message_type_support.serializer.serialize_message(
-            response_storage.data(), &serialized);
+          entry->type_support->response_type_support.serializer.serialize_message(response.data(), &serialized);
           call.promise.set_value(
             ServiceCallResponse{call.service, call.interface_type, unwrapSerializedPayload(serialized)});
         } catch (const std::exception & exc) {
@@ -662,20 +572,19 @@ void RosServiceCaller::Impl::drainResponses()
   }
 }
 
-void RosServiceCaller::Impl::checkTimeouts()
+void RosServiceCaller::Impl::failExpiredCalls()
 {
   const auto now = std::chrono::steady_clock::now();
-  const std::size_t timed_out_count =
-    settlePendingCallsIf([now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.");
-  logPendingSettlementSummary(
-    kRosServiceCallerLogger,
-    true,
-    "timeout",
-    "fail_futures",
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    timed_out_count);
+  failMatchingCalls(
+    [now](const PendingCall & call) { return now >= call.deadline; }, "Service call timed out.", "timeout", true);
+}
+
+void RosServiceCaller::Impl::clearCachedServiceState()
+{
+  // CachedServiceClient stores raw pointers into type_supports, so clients
+  // must be destroyed before the backing type-support cache is cleared.
+  cached_clients.clear();
+  type_supports.clear();
 }
 
 RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
@@ -690,169 +599,149 @@ RosServiceCaller::~RosServiceCaller()
 }
 
 std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
-  const std::string & requester_identity, const ServiceCallRequest & request)
+  const std::string & requester, const ServiceCallRequest & request)
 {
-  std::promise<ServiceCallResponse> result_promise;
-  auto result_future = result_promise.get_future();
+  std::promise<ServiceCallResponse> promise;
+  auto future = promise.get_future();
 
   std::string interface_type;
-  CachedServiceClient * cached_client = nullptr;
-  std::int64_t sequence_number = 0;
-  std::optional<Impl::InflightReservation> inflight;
 
   try {
     if (impl_->shutdown_flag) {
       throw std::runtime_error("Service caller is shut down.");
     }
-    if (requester_identity.empty()) {
+    if (requester.empty()) {
       throw std::invalid_argument("requester_identity is required");
     }
 
-    interface_type = impl_->resolveServiceType(request.service, request.interface_type);
-    // Count the request against the requester before any expensive setup so the
-    // limit covers work that is already being assembled for rcl_send_request().
-    inflight.emplace(*impl_, requester_identity);
-
+    interface_type =
+      request.interface_type.empty()
+        ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
+        : request.interface_type;
+    // Reserve quota before client lookup, request deserialization, or send.
+    // pending_calls takes ownership only after the entry is inserted.
+    Impl::InflightReservation inflight_reservation(*impl_, requester);
+    PendingKey key;
     try {
-      cached_client = &impl_->getOrCreateCachedClient(request.service, interface_type);
-    } catch (const std::exception & exc) {
-      throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
-    }
+      CachedServiceClient * client = nullptr;
+      try {
+        client = &impl_->getClient(request.service, interface_type);
+      } catch (const std::exception & exc) {
+        throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
+      }
 
-    std::unique_ptr<DynamicMessageStorage> request_storage;
-    try {
-      auto serialized = wrapSerializedPayload(request.request_payload);
-      request_storage = std::make_unique<DynamicMessageStorage>(
-        cached_client->resolved_service_type_support->request_message_type_support.message_members,
-        rosidl_runtime_cpp::MessageInitialization::ZERO);
-      cached_client->resolved_service_type_support->request_message_type_support.serializer.deserialize_message(
-        &serialized, request_storage->data());
-    } catch (const std::exception & exc) {
-      throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
-    }
+      std::unique_ptr<MessageStorage> service_request;
+      try {
+        auto serialized = wrapSerializedPayload(request.request_payload);
+        service_request = std::make_unique<MessageStorage>(
+          client->type_support->request_type_support.message_members, rosidl_runtime_cpp::MessageInitialization::ZERO);
+        client->type_support->request_type_support.serializer.deserialize_message(&serialized, service_request->data());
+      } catch (const std::exception & exc) {
+        throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
+      }
 
-    const rcl_ret_t ret = rcl_send_request(&cached_client->client, request_storage->data(), &sequence_number);
-    if (ret != RCL_RET_OK) {
-      throw std::runtime_error("Failed to send service request.");
-    }
-  } catch (const std::exception & exc) {
-    if (inflight.has_value()) {
+      std::int64_t sequence_number = 0;
+      const rcl_ret_t ret = rcl_send_request(&client->client, service_request->data(), &sequence_number);
+      if (ret != RCL_RET_OK) {
+        throw std::runtime_error("Failed to send service request.");
+      }
+
+      key = PendingKey{client, sequence_number};
+    } catch (const std::exception & exc) {
       LogEvent(kRosServiceCallerLogger, "service_call_failed")
         .field("reason", "start_failed")
         .field("service", request.service)
         .field("interface_type", interface_type)
-        .field("requester_identity", requester_identity)
+        .field("requester_identity", requester)
         .field("action", "fail_future")
         .field("error", exc.what())
         .error();
+      throw;
     }
-    result_promise.set_exception(std::current_exception());
-    return result_future;
+
+    if (impl_->pending_calls.find(key) != impl_->pending_calls.end()) {
+      LogEvent(kRosServiceCallerLogger, "service_call_failed")
+        .field("reason", "duplicate_pending_key")
+        .field("service", request.service)
+        .field("interface_type", interface_type)
+        .field("requester_identity", requester)
+        .field("action", "fail_future")
+        .error();
+      throw std::runtime_error("Duplicate pending service call key.");
+    }
+
+    const int timeout_ms =
+      request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
+    impl_->pending_calls.emplace(
+      key,
+      Impl::PendingCall{
+        request.service,
+        interface_type,
+        requester,
+        std::move(promise),
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
+      });
+    // From here on every settle path goes through pending_calls, so that entry
+    // owns releasing the requester's inflight quota.
+    inflight_reservation.transferToPendingCall();
+  } catch (const std::exception &) {
+    promise.set_exception(std::current_exception());
+    return future;
   }
 
-  const PendingCallKey pending_call_key{cached_client, sequence_number};
-  if (impl_->pending_calls.find(pending_call_key) != impl_->pending_calls.end()) {
-    LogEvent(kRosServiceCallerLogger, "service_call_failed")
-      .field("reason", "duplicate_pending_key")
-      .field("service", request.service)
-      .field("interface_type", interface_type)
-      .field("requester_identity", requester_identity)
-      .field("action", "fail_future")
-      .error();
-    result_promise.set_exception(std::make_exception_ptr(std::runtime_error("Duplicate pending service call key.")));
-    return result_future;
+  if (impl_->poll_timer == nullptr) {
+    auto * impl = impl_.get();
+    impl_->poll_timer = impl_->node.create_wall_timer(kPollInterval, [impl]() { impl->poll(); });
   }
-
-  const int timeout_ms = request.timeout_ms > 0 ? request.timeout_ms : kDefaultTimeoutMs;
-  impl_->pending_calls.emplace(
-    pending_call_key,
-    Impl::PendingCall{
-      request.service,
-      interface_type,
-      requester_identity,
-      std::move(result_promise),
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
-    });
-  // From here on every settlement path goes through pending_calls, so ownership
-  // of the inflight quota transfers from the local guard to that map entry.
-  inflight->commit();
-
-  impl_->ensurePollTimer();
-  return result_future;
+  return future;
 }
 
-void RosServiceCaller::cancelCallsForRequester(const std::string & requester_identity)
+void RosServiceCaller::cancelCallsForRequester(const std::string & requester)
 {
-  if (requester_identity.empty()) {
+  if (requester.empty()) {
     return;
   }
-  const std::size_t canceled_count = impl_->settlePendingCallsIf(
-    [&requester_identity](const Impl::PendingCall & call) { return call.requester_identity == requester_identity; },
-    "Requester identity disconnected.");
-  impl_->logPendingSettlementSummary(
-    kRosServiceCallerLogger,
-    false,
+  impl_->failMatchingCalls(
+    [&requester](const Impl::PendingCall & call) { return call.requester == requester; },
+    "Requester identity disconnected.",
     "requester_disconnected",
-    "fail_futures",
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    requester_identity.c_str(),
-    canceled_count);
+    false,
+    requester.c_str());
 }
 
 void RosServiceCaller::resetSessionState()
 {
-  const std::size_t canceled_count =
-    impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.");
-  impl_->logPendingSettlementSummary(
-    kRosServiceCallerLogger,
-    false,
-    "session_reset",
-    "fail_futures",
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    canceled_count);
+  impl_->failMatchingCalls([](const Impl::PendingCall &) { return true; }, "LiveKit session reset.", "session_reset");
 
-  impl_->cached_clients.clear();
-  impl_->resolved_service_type_supports.clear();
+  impl_->clearCachedServiceState();
 }
 
 void RosServiceCaller::shutdown()
 {
   impl_->shutdown_flag = true;
-  // The poll timer touches pending_calls and clients, so stop future callbacks
-  // and wait for any active callback before tearing down shared state below.
-  impl_->quiescePollCallbacks();
+  impl_->poll_gate.close();
+  impl_->poll_gate.awaitIdle();
 
   if (impl_->poll_timer != nullptr) {
     impl_->poll_timer.reset();
   }
 
-  const std::size_t canceled_count =
-    impl_->settlePendingCallsIf([](const Impl::PendingCall &) { return true; }, "Service caller shut down.");
-  impl_->logPendingSettlementSummary(
-    kRosServiceCallerLogger,
-    false,
-    "shutdown",
-    "fail_futures",
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    kAnyServiceLogValue,
-    canceled_count);
+  impl_->failMatchingCalls([](const Impl::PendingCall &) { return true; }, "Service caller shut down.", "shutdown");
 
-  impl_->cached_clients.clear();
-  impl_->resolved_service_type_supports.clear();
+  impl_->clearCachedServiceState();
 }
 
-void RosServiceCaller::setPollCallbackHooksForTest(std::function<void()> on_enter, std::function<void()> on_exit)
+void RosServiceCaller::setPollCallbacksForTest(std::function<void()> on_poll_enter, std::function<void()> on_poll_exit)
 {
-  impl_->setPollCallbackHooks(std::move(on_enter), std::move(on_exit));
+  std::lock_guard<std::mutex> lock(impl_->poll_callback_mutex);
+  impl_->on_poll_enter = std::move(on_poll_enter);
+  impl_->on_poll_exit = std::move(on_poll_exit);
 }
 
-void RosServiceCaller::setTypeSupportResolveHookForTest(std::function<void(const std::string &)> hook)
+void RosServiceCaller::setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load)
 {
-  impl_->setTypeSupportResolveHook(std::move(hook));
+  std::lock_guard<std::mutex> lock(impl_->type_support_load_callback_mutex);
+  impl_->on_type_support_load = std::move(on_type_support_load);
 }
 
 }  // namespace livekit_ros2_bridge

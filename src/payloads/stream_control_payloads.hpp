@@ -23,15 +23,26 @@ namespace livekit_ros2_bridge
 // Control-path subscription heartbeats carry lease-backed demands and report status. RPC
 // request/response naming stays separate for RPC payloads such as service calls.
 
-/// Parse a heartbeat JSON object with optional `session_id` and required `subscriptions`.
-/// Each heartbeat demand must contain required `kind` and `name` strings, plus an optional
-/// `delivery_preferences.interval_ms` integer. `topic` names are normalized as ROS names,
-/// `configured_source` names are trimmed only, duplicate canonical targets are coalesced, and
-/// duplicate demand intervals keep the smallest non-zero value.
+namespace stream_control_payloads
+{
+
+/// Parse one control heartbeat body from `ros.subscriptions.request`.
+/// `session_id` is optional and trimmed; missing, null, or blank values are treated as absent.
+/// `subscriptions` is required. `topic` names are normalized as ROS resource names, while
+/// `configured_source` names are only trimmed because they are bridge-defined identifiers.
+/// Duplicate canonical targets are coalesced in first-seen order, keeping the smallest non-zero
+/// preferred interval. Wire integer intervals are clamped into `int`; later policy code may
+/// further normalize values such as negatives.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
-/// Serialize one active subscription status object. Data deliveries include
-/// `content_type="application/x-ros-cdr"` and `delivery.interval_ms`.
-nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & subscription_status);
+/// Serialize one active subscription status object for `ros.subscriptions.status`.
+/// The wire shape always emits `status="active"`; partial health is reported via
+/// `degraded_reason` instead of a separate status literal. The caller supplies the
+/// already-resolved delivery mode and, for data deliveries, the effective applied interval.
+/// Data payloads include `content_type="application/x-ros-cdr"` and `delivery.interval_ms`;
+/// video payloads omit both.
+nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status);
+
+}  // namespace stream_control_payloads
 
 }  // namespace livekit_ros2_bridge

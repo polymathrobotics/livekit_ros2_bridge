@@ -64,12 +64,12 @@ TEST(AccessPolicyTest, UsesOperationSpecificRulesAndDenylistPrecedence)
 
 TEST(AccessPolicyTest, AllowAllStillHonorsDenylistEntries)
 {
-  const AccessPolicy exact_deny_policy = makeSubscribePolicy({"*"}, {"/blocked"});
-  const AccessPolicy wildcard_deny_policy = makeSubscribePolicy({"*"}, {"*"});
+  const AccessPolicy exact_deny = makeSubscribePolicy({"*"}, {"/blocked"});
+  const AccessPolicy wildcard_deny = makeSubscribePolicy({"*"}, {"*"});
 
-  EXPECT_TRUE(exact_deny_policy.allows(AccessOperation::Subscribe, "/ok"));
-  EXPECT_FALSE(exact_deny_policy.allows(AccessOperation::Subscribe, "/blocked"));
-  EXPECT_FALSE(wildcard_deny_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+  EXPECT_TRUE(exact_deny.allows(AccessOperation::Subscribe, "/ok"));
+  EXPECT_FALSE(exact_deny.allows(AccessOperation::Subscribe, "/blocked"));
+  EXPECT_FALSE(wildcard_deny.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
 TEST(AccessPolicyTest, NormalizesConfiguredEntriesAndRequestedNames)
@@ -83,18 +83,16 @@ TEST(AccessPolicyTest, NormalizesConfiguredEntriesAndRequestedNames)
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, " \t\n "));
 }
 
-// TODO(jon): Keep matcher-specific prefix-boundary edge cases in
-// test_ros_resource_name_utils.cpp if this file needs further trimming.
 TEST(AccessPolicyTest, ExactAndSubtreeRulesHaveDistinctMatchBoundaries)
 {
-  const AccessPolicy exact_policy = makeSubscribePolicy({"/camera/front"});
-  const AccessPolicy subtree_policy = makeSubscribePolicy({"/camera/front/*"});
+  const AccessPolicy exact = makeSubscribePolicy({"/camera/front"});
+  const AccessPolicy subtree = makeSubscribePolicy({"/camera/front/*"});
 
-  EXPECT_TRUE(exact_policy.allows(AccessOperation::Subscribe, "/camera/front"));
-  EXPECT_FALSE(exact_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+  EXPECT_TRUE(exact.allows(AccessOperation::Subscribe, "/camera/front"));
+  EXPECT_FALSE(exact.allows(AccessOperation::Subscribe, "/camera/front/image"));
 
-  EXPECT_FALSE(subtree_policy.allows(AccessOperation::Subscribe, "/camera/front"));
-  EXPECT_TRUE(subtree_policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
+  EXPECT_FALSE(subtree.allows(AccessOperation::Subscribe, "/camera/front"));
+  EXPECT_TRUE(subtree.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
 TEST(AccessPolicyTest, RootSubtreeWildcardAllowsAnyResourceExceptDeniedSubtrees)

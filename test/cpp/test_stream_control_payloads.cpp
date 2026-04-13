@@ -27,13 +27,13 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-void expectSingleDemand(
+void expectParsedDemand(
   const nlohmann::json & body,
   SubscriptionTargetKind expected_kind,
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto heartbeat = parseSubscriptionHeartbeat(body);
+  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
 
   const SubscriptionDemand & demand = heartbeat.subscriptions[0];
@@ -42,12 +42,12 @@ void expectSingleDemand(
   EXPECT_EQ(demand.preferred_interval_ms, expected_interval_ms);
 }
 
-void expectHeartbeatParseFailure(const nlohmann::json & body)
+void expectParseError(const nlohmann::json & body)
 {
-  EXPECT_THROW((void)parseSubscriptionHeartbeat(body), std::invalid_argument);
+  EXPECT_THROW((void)stream_control_payloads::parseSubscriptionHeartbeat(body), std::invalid_argument);
 }
 
-SubscriptionStatus makeSubscriptionStatus(
+SubscriptionStatus makeStatus(
   SubscriptionTargetKind target_kind,
   std::string target_name,
   SubscriptionDeliveryKind delivery_kind,
@@ -62,21 +62,28 @@ SubscriptionStatus makeSubscriptionStatus(
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 {
-  expectSingleDemand(
+  expectParsedDemand(
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":" topic ","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
+    SubscriptionTargetKind::Topic,
+    "/battery",
+    125);
+
+  expectParsedDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"topic","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
     "/battery",
     125);
 
-  expectSingleDemand(
+  expectParsedDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
     125);
 
-  expectSingleDemand(
+  expectParsedDemand(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/camera"}]})"),
     SubscriptionTargetKind::Topic,
     "/camera",
@@ -85,30 +92,30 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
 {
-  const auto with_trimmed_session_id = parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto trimmed = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":"  session-1  ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
-  ASSERT_TRUE(with_trimmed_session_id.session_id.has_value());
-  EXPECT_EQ(*with_trimmed_session_id.session_id, "session-1");
+  ASSERT_TRUE(trimmed.session_id.has_value());
+  EXPECT_EQ(*trimmed.session_id, "session-1");
 
-  const auto without_session_id =
-    parseSubscriptionHeartbeat(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})"));
-  EXPECT_EQ(without_session_id.session_id, std::nullopt);
+  const auto missing = stream_control_payloads::parseSubscriptionHeartbeat(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})"));
+  EXPECT_EQ(missing.session_id, std::nullopt);
 
-  const auto with_blank_session_id = parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto blank = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":"   ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
-  EXPECT_EQ(with_blank_session_id.session_id, std::nullopt);
+  EXPECT_EQ(blank.session_id, std::nullopt);
 
-  const auto with_null_session_id = parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto null_id = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":null,
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
-  EXPECT_EQ(with_null_session_id.session_id, std::nullopt);
+  EXPECT_EQ(null_id.session_id, std::nullopt);
 
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({
+  expectParseError(nlohmann::json::parse(R"({
     "session_id":125,
     "subscriptions":[{"kind":"topic","name":"/battery"}]
   })"));
@@ -116,31 +123,29 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsM
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsMissingOrMalformedSubscriptions)
 {
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({})"));
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({"subscriptions":{"topic":"/battery"}})"));
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({"subscriptions":["/battery"]})"));
+  expectParseError(nlohmann::json::parse(R"({})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":{"topic":"/battery"}})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":["/battery"]})"));
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFields)
 {
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic"}]})"));
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":123}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic"}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":123}]})"));
 }
 
-// TODO: If legacy shorthand subscription payloads need an explicit compatibility contract, cover
-// that in a control-packet compatibility test instead of repeating missing-field failures here.
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
 {
-  expectHeartbeatParseFailure(
-    nlohmann::json::parse(R"({"subscriptions":[{"kind":"configured_source","name":"   "}]})"));
-  expectHeartbeatParseFailure(nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"configured_source","name":"   "}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"));
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsInvalidIntervalTypes)
 {
-  expectHeartbeatParseFailure(
+  expectParseError(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":125}]})"));
-  expectHeartbeatParseFailure(
+  expectParseError(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":"125"}}]})"));
 }
@@ -152,11 +157,18 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
       {"subscriptions",
        {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", raw_interval_ms}}}}}}};
 
-    expectSingleDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_interval_ms);
+    expectParsedDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_interval_ms);
   };
 
   expectClampedInterval(std::numeric_limits<std::int64_t>::max(), std::numeric_limits<int>::max());
   expectClampedInterval(std::numeric_limits<std::int64_t>::min(), std::numeric_limits<int>::min());
+
+  const nlohmann::json unsigned_body = {
+    {"subscriptions",
+     {{{"kind", "topic"},
+       {"name", "/lidar"},
+       {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::uint64_t>::max()}}}}}}};
+  expectParsedDemand(unsigned_body, SubscriptionTargetKind::Topic, "/lidar", std::numeric_limits<int>::max());
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)
@@ -166,16 +178,31 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":25}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto update = parseSubscriptionHeartbeat(body);
+  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
 
-  ASSERT_EQ(update.subscriptions.size(), 1U);
-  EXPECT_EQ(update.subscriptions[0].target.name, "/battery");
-  EXPECT_EQ(update.subscriptions[0].preferred_interval_ms, 25);
+  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
+  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
+}
+
+TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSourcesUsingTrimmedName)
+{
+  const auto body = nlohmann::json::parse(
+    R"({"subscriptions":[
+      {"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
+      {"kind":" configured_source ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
+    ]})");
+  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+
+  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
+  EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::ConfiguredSource);
+  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "front_camera");
+  EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDuringCoalescing)
 {
-  const auto zero_then_non_zero = parseSubscriptionHeartbeat(
+  const auto zero_then_non_zero = stream_control_payloads::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":0}},
@@ -185,7 +212,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
-  const auto non_zero_then_zero = parseSubscriptionHeartbeat(
+  const auto non_zero_then_zero = stream_control_payloads::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
@@ -194,6 +221,29 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
   ASSERT_EQ(non_zero_then_zero.subscriptions.size(), 1U);
   EXPECT_EQ(non_zero_then_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(non_zero_then_zero.subscriptions[0].preferred_interval_ms, 125);
+}
+
+TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoPreferenceDuringCoalescing)
+{
+  const auto empty_then_non_zero = stream_control_payloads::parseSubscriptionHeartbeat(
+    nlohmann::json::parse(
+      R"({"subscriptions":[
+      {"kind":"topic","name":"/battery","delivery_preferences":{}},
+      {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
+    ]})"));
+  ASSERT_EQ(empty_then_non_zero.subscriptions.size(), 1U);
+  EXPECT_EQ(empty_then_non_zero.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(empty_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
+
+  const auto non_zero_then_empty = stream_control_payloads::parseSubscriptionHeartbeat(
+    nlohmann::json::parse(
+      R"({"subscriptions":[
+      {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
+      {"kind":"topic","name":" /battery ","delivery_preferences":{}}
+    ]})"));
+  ASSERT_EQ(non_zero_then_empty.subscriptions.size(), 1U);
+  EXPECT_EQ(non_zero_then_empty.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(non_zero_then_empty.subscriptions[0].preferred_interval_ms, 125);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSeparate)
@@ -205,32 +255,32 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
       {"kind":"configured_source","name":"front_camera","delivery_preferences":{"interval_ms":25}},
       {"kind":"configured_source","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto update = parseSubscriptionHeartbeat(body);
+  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
 
-  ASSERT_EQ(update.subscriptions.size(), 4U);
-  EXPECT_EQ(update.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(update.subscriptions[0].target.name, "/camera/front");
-  EXPECT_EQ(update.subscriptions[1].target.kind, SubscriptionTargetKind::ConfiguredSource);
-  EXPECT_EQ(update.subscriptions[1].target.name, "/camera/front");
-  EXPECT_EQ(update.subscriptions[2].target.name, "front_camera");
-  EXPECT_EQ(update.subscriptions[3].target.name, "front_camera/");
+  ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
+  EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
+  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/camera/front");
+  EXPECT_EQ(heartbeat.subscriptions[1].target.kind, SubscriptionTargetKind::ConfiguredSource);
+  EXPECT_EQ(heartbeat.subscriptions[1].target.name, "/camera/front");
+  EXPECT_EQ(heartbeat.subscriptions[2].target.name, "front_camera");
+  EXPECT_EQ(heartbeat.subscriptions[3].target.name, "front_camera/");
 }
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesVideoDeliveriesAndOptionalFields)
 {
-  auto topic_video = makeSubscriptionStatus(
+  auto topic_video = makeStatus(
     SubscriptionTargetKind::Topic, "/camera/image", SubscriptionDeliveryKind::kVideo, "ros.video.camera.image");
   topic_video.interface_type = "sensor_msgs/msg/Image";
   topic_video.degraded_reason = "source warming up";
 
-  auto configured_source_video = makeSubscriptionStatus(
+  auto configured_source_video = makeStatus(
     SubscriptionTargetKind::ConfiguredSource,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
     "ros.video.configured_source.%2Fsources%2Ffront");
 
   EXPECT_EQ(
-    serializeSubscriptionStatus(topic_video),
+    stream_control_payloads::serializeSubscriptionStatus(topic_video),
     nlohmann::json(
       {{"kind", "topic"},
        {"name", "/camera/image"},
@@ -240,7 +290,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesVideoDelive
        {"delivery", {{"kind", "video"}, {"track_name", "ros.video.camera.image"}}}}));
 
   EXPECT_EQ(
-    serializeSubscriptionStatus(configured_source_video),
+    stream_control_payloads::serializeSubscriptionStatus(configured_source_video),
     nlohmann::json(
       {{"kind", "configured_source"},
        {"name", "/sources/front"},
@@ -250,13 +300,13 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesVideoDelive
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesDataDeliveries)
 {
-  auto topic_data = makeSubscriptionStatus(
+  auto topic_data = makeStatus(
     SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "ros.data.lidar.points");
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
   topic_data.applied_interval_ms = 0;
 
   EXPECT_EQ(
-    serializeSubscriptionStatus(topic_data),
+    stream_control_payloads::serializeSubscriptionStatus(topic_data),
     nlohmann::json(
       {{"kind", "topic"},
        {"name", "/lidar/points"},
@@ -271,11 +321,11 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesDataDeliver
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusRejectsUnknownDeliveryKind)
 {
-  SubscriptionStatus subscription_status;
-  subscription_status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
-  subscription_status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
+  SubscriptionStatus status;
+  status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
+  status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
-  EXPECT_THROW((void)serializeSubscriptionStatus(subscription_status), std::invalid_argument);
+  EXPECT_THROW((void)stream_control_payloads::serializeSubscriptionStatus(status), std::invalid_argument);
 }
 
 }  // namespace

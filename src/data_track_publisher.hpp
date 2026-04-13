@@ -37,28 +37,39 @@ class RoomConnection;
 class DataTrackPublisher final
 {
 public:
-  using PublishAcceptedFn = std::function<bool(std::size_t generation)>;
-  using PublishFailedFn = std::function<void()>;
+  // Called after LiveKit returns a new track but before this publisher adopts it. Returning false
+  // rejects that publish generation, reclaims the just-published track, and leaves any previously
+  // active track untouched.
+  using AcceptHandler = std::function<bool(std::size_t generation)>;
 
-  DataTrackPublisher(RoomConnection & room_connection, std::string track_name, rclcpp::Clock::SharedPtr clock);
+  // Called when a publish attempt cannot produce an active track for this publisher, including
+  // publish exceptions and exceptions escaping AcceptHandler. A false AcceptHandler result is
+  // treated as a stale completion rather than a failure signal.
+  using FailHandler = std::function<void()>;
 
-  // Best-effort push to an already-published data track carrying ROS CDR payloads. Missing
-  // tracks and backpressure are dropped so ROS message delivery never blocks waiting on LiveKit's
-  // data-track queue.
-  void tryPush(const std::uint8_t * data, std::size_t size);
+  DataTrackPublisher(RoomConnection & connection, std::string track_name, rclcpp::Clock::SharedPtr clock);
 
-  // Publishes the LiveKit data track for a registry-reserved track name. Completion is reported
-  // back with the caller's generation so the registry can reject stale publishes after teardown.
-  void publish(
-    std::size_t generation, const PublishAcceptedFn & publish_accepted_fn, const PublishFailedFn & publish_failed_fn);
+  // Best-effort write to an already-published data track carrying ROS CDR payloads. Missing
+  // tracks, backpressure, and transient LiveKit push failures are swallowed so ROS message
+  // delivery never blocks or tears down the current publication.
+  void write(const std::uint8_t * cdr, std::size_t size);
 
+  // Publishes the LiveKit data track for a registry-reserved track name. Callbacks run inline,
+  // and the generation lets the registry reject stale completions after teardown or same-topic
+  // replacement.
+  void publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail);
+
+  // Best-effort teardown of the currently accepted publication. After this returns, later writes
+  // are ignored even if LiveKit rejected the unpublish request.
   void unpublish();
-  void shutdown();
 
 private:
+  // Non-owning room connection facade. The connection must outlive this publisher.
   RoomConnection & room_connection_;
   std::string track_name_;
-  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Clock::SharedPtr log_clock_;
+  // Only the currently accepted publication lives here. Rejected or failed replacement attempts
+  // are reclaimed before this handle changes, and unpublish() clears it before touching LiveKit.
   std::shared_ptr<livekit::LocalDataTrack> published_track_;
 };
 

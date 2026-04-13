@@ -15,6 +15,7 @@
 #include "livekit_ros2_bridge/node.hpp"
 
 #include <exception>
+#include <string>
 #include <utility>
 
 #include "rclcpp/logging.hpp"
@@ -30,31 +31,38 @@ namespace livekit_ros2_bridge
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
-  LogEvent(get_logger(), "node_startup_begin").field("phase", "startup").info();
-  RuntimeConfig runtime_config = [this]() {
-    try {
-      return loadRuntimeConfig(get_node_parameters_interface());
-    } catch (const std::exception & exc) {
-      LogEvent(get_logger(), "node_startup_failed")
-        .field("phase", "startup")
-        .field("reason", "runtime_config_load_failed")
-        .field("error", exc.what())
-        .error();
-      throw;
-    } catch (...) {
-      LogEvent(get_logger(), "node_startup_failed")
-        .field("phase", "startup")
-        .field("reason", "runtime_config_load_failed")
-        .field("error", "unknown_exception")
-        .error();
-      throw;
-    }
-  }();
-  const std::string room = runtime_config.room_connection_config.room;
+  const auto logger = get_logger();
+  LogEvent(logger, "node_startup_begin").field("phase", "startup").info();
+
+  RuntimeConfig config;
+  std::string room;
   try {
-    runtime_ = std::make_unique<Runtime>(*this, makeRoomConnection(), std::move(runtime_config), FailFastCallbacks{});
+    config = loadRuntimeConfig(get_node_parameters_interface());
+    // Copy the room before Runtime takes ownership of config so later startup failures can
+    // still attribute the error to the intended room.
+    room = config.room_connection_config.room;
   } catch (const std::exception & exc) {
-    LogEvent(get_logger(), "node_startup_failed")
+    LogEvent(logger, "node_startup_failed")
+      .field("phase", "startup")
+      .field("reason", "runtime_config_load_failed")
+      .field("error", exc.what())
+      .error();
+    throw;
+  } catch (...) {
+    LogEvent(logger, "node_startup_failed")
+      .field("phase", "startup")
+      .field("reason", "runtime_config_load_failed")
+      .field("error", "unknown_exception")
+      .error();
+    throw;
+  }
+
+  // Keep configuration loading separate from runtime startup so startup logs distinguish
+  // invalid parameters from room-connection or runtime initialization failures.
+  try {
+    runtime_ = std::make_unique<Runtime>(*this, createRoomConnection(), std::move(config));
+  } catch (const std::exception & exc) {
+    LogEvent(logger, "node_startup_failed")
       .field("phase", "startup")
       .field("reason", "runtime_initialization_failed")
       .fieldOr("room", room, "<unset>")
@@ -62,7 +70,7 @@ Node::Node(const rclcpp::NodeOptions & options)
       .error();
     throw;
   } catch (...) {
-    LogEvent(get_logger(), "node_startup_failed")
+    LogEvent(logger, "node_startup_failed")
       .field("phase", "startup")
       .field("reason", "runtime_initialization_failed")
       .fieldOr("room", room, "<unset>")
@@ -75,6 +83,8 @@ Node::Node(const rclcpp::NodeOptions & options)
 Node::~Node()
 {
   LogEvent(get_logger(), "node_shutdown_start").field("phase", "shutdown").info();
+  // Tear Runtime down before the component reports shutdown complete so its teardown can still use
+  // this node's logger and interfaces.
   runtime_.reset();
   LogEvent(get_logger(), "node_shutdown_complete").field("phase", "shutdown").info();
 }

@@ -26,27 +26,45 @@
 namespace livekit_ros2_bridge
 {
 
+// Parses ingress control packets at the room-transport boundary and forwards only validated
+// commands to runtime-specific handlers. The router preserves caller-thread affinity and leaves any
+// required executor handoff or synchronization to those handlers.
 class ControlPacketRouter final
 {
 public:
-  struct Callbacks
+  // route() invokes handlers inline on the caller's thread after the matched control topic has
+  // been fully parsed and validated. Parsed payloads are passed by value so handlers can assume
+  // ownership without depending on packet storage lifetimes.
+  using HeartbeatHandler = std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)>;
+  using PublishHandler = std::function<void(std::string requester_identity, TopicPublishCommand command)>;
+
+  struct Handlers
   {
-    std::function<void(std::string requester_identity, SubscriptionHeartbeat heartbeat)> on_subscription_heartbeat;
-    std::function<void(std::string requester_identity, TopicPublishCommand command)> on_topic_publish_command;
+    // Heartbeats may be dispatched with an empty requester_identity so downstream session-based
+    // recovery can resolve the sender from heartbeat.session_id.
+    HeartbeatHandler heartbeat_handler;
+    // Publish commands are dispatched only after requester_identity presence has been enforced.
+    PublishHandler publish_handler;
   };
 
-  // Both callbacks are required; construction fails if either callback is empty.
-  ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Callbacks callbacks);
+  // The clock is used for throttled drop/rejection logs; all dependencies are required.
+  ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers);
 
-  // Routes only the control topics this bridge understands. Unknown topics, malformed payloads,
-  // and anonymous publish commands are dropped before dispatch. Anonymous heartbeats are still
-  // forwarded so client-session fallback can recover the requester identity downstream.
+  // Routes supported control topics synchronously. Unsupported topics, malformed payloads, and
+  // std::exception failures from parsing or handlers are converted into throttled logs instead of
+  // escaping the ingress path. Anonymous heartbeats are still forwarded so downstream session
+  // fallback can recover requester_identity; publish commands are not.
   void route(const IncomingControlPacket & packet) const;
 
 private:
+  // Keeps all packet rejections on one throttled log path so malformed bursts stay observable
+  // without flooding logs.
+  void logRejection(const IncomingControlPacket & packet, const char * reason, const char * error = nullptr) const;
+
   rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr clock_;
-  Callbacks callbacks_;
+  HeartbeatHandler heartbeat_handler_;
+  PublishHandler publish_handler_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -27,103 +27,84 @@ namespace
 {
 
 const auto kAccessPolicyLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
-constexpr char kMatchAllRuleEntry[] = "*";
+constexpr char kMatchAllEntry[] = "*";
 
 }  // namespace
 
-AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
-: publish_rules_(parseRuleset(config.publish.allow, config.publish.deny))
-, subscribe_rules_(parseRuleset(config.subscribe.allow, config.subscribe.deny))
-, service_rules_(parseRuleset(config.service.allow, config.service.deny))
+bool AccessPolicy::RuleEntries::matches(std::string_view name) const
 {
-  LogEvent(kAccessPolicyLogger, "access_policy_loaded")
-    .field("phase", "startup")
-    .field("publish_allow_all", publish_rules_.allow.matches_all)
-    .field("publish_allow_patterns", publish_rules_.allow.patterns.size())
-    .field("publish_deny_all", publish_rules_.deny.matches_all)
-    .field("publish_deny_patterns", publish_rules_.deny.patterns.size())
-    .field("subscribe_allow_all", subscribe_rules_.allow.matches_all)
-    .field("subscribe_allow_patterns", subscribe_rules_.allow.patterns.size())
-    .field("subscribe_deny_all", subscribe_rules_.deny.matches_all)
-    .field("subscribe_deny_patterns", subscribe_rules_.deny.patterns.size())
-    .field("service_allow_all", service_rules_.allow.matches_all)
-    .field("service_allow_patterns", service_rules_.allow.patterns.size())
-    .field("service_deny_all", service_rules_.deny.matches_all)
-    .field("service_deny_patterns", service_rules_.deny.patterns.size())
-    .info();
+  return matches_all || std::any_of(patterns.begin(), patterns.end(), [name](const std::string & pattern) {
+           return rosResourceMatchesPattern(name, pattern);
+         });
 }
 
-bool AccessPolicy::allows(AccessOperation op, std::string_view name) const
+AccessPolicy::RuleEntries AccessPolicy::RuleEntries::parse(const std::vector<std::string> & entries)
 {
-  const std::string normalized = normalizeRosResourceName(name);
-  if (normalized.empty()) {
+  RuleEntries rules;
+  for (const auto & raw_entry : entries) {
+    const std::string entry = trim(raw_entry);
+    if (entry.empty()) {
+      continue;
+    }
+    if (entry == kMatchAllEntry) {
+      // `"*"` means allow or deny the entire operation. Normalizing it into `/*` would narrow
+      // it to descendant matching instead of preserving the policy-wide override.
+      rules.matches_all = true;
+      continue;
+    }
+
+    const std::string pattern = normalizeRosResourceName(entry);
+    if (!pattern.empty()) {
+      rules.patterns.insert(pattern);
+    }
+  }
+
+  return rules;
+}
+
+AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
+: publish_allow_(RuleEntries::parse(config.publish.allow))
+, publish_deny_(RuleEntries::parse(config.publish.deny))
+, subscribe_allow_(RuleEntries::parse(config.subscribe.allow))
+, subscribe_deny_(RuleEntries::parse(config.subscribe.deny))
+, service_allow_(RuleEntries::parse(config.service.allow))
+, service_deny_(RuleEntries::parse(config.service.deny))
+{
+  // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
+  // trimming, normalization, wildcard handling, and duplicate collapse.
+  LogEvent event(kAccessPolicyLogger, "access_policy_loaded");
+  event.field("phase", "startup");
+  event.field("publish_allow_all", publish_allow_.matches_all)
+    .field("publish_allow_patterns", publish_allow_.patterns.size())
+    .field("publish_deny_all", publish_deny_.matches_all)
+    .field("publish_deny_patterns", publish_deny_.patterns.size())
+    .field("subscribe_allow_all", subscribe_allow_.matches_all)
+    .field("subscribe_allow_patterns", subscribe_allow_.patterns.size())
+    .field("subscribe_deny_all", subscribe_deny_.matches_all)
+    .field("subscribe_deny_patterns", subscribe_deny_.patterns.size())
+    .field("service_allow_all", service_allow_.matches_all)
+    .field("service_allow_patterns", service_allow_.patterns.size())
+    .field("service_deny_all", service_deny_.matches_all)
+    .field("service_deny_patterns", service_deny_.patterns.size());
+  event.info();
+}
+
+bool AccessPolicy::allows(AccessOperation operation, std::string_view resource_name) const
+{
+  const std::string name = normalizeRosResourceName(resource_name);
+  if (name.empty()) {
     return false;
   }
 
-  switch (op) {
+  switch (operation) {
     case AccessOperation::Publish:
-      return isAllowed(normalized, publish_rules_);
+      return !publish_deny_.matches(name) && publish_allow_.matches(name);
     case AccessOperation::Subscribe:
-      return isAllowed(normalized, subscribe_rules_);
+      return !subscribe_deny_.matches(name) && subscribe_allow_.matches(name);
     case AccessOperation::CallService:
-      return isAllowed(normalized, service_rules_);
+      return !service_deny_.matches(name) && service_allow_.matches(name);
   }
 
   return false;
 }
-
-AccessPolicy::ParsedRuleEntries AccessPolicy::parseRuleEntries(const std::vector<std::string> & entries)
-{
-  ParsedRuleEntries parsed;
-  for (const auto & entry : entries) {
-    const std::string token = trim(entry);
-    if (token.empty()) {
-      continue;
-    }
-    if (token == kMatchAllRuleEntry) {
-      parsed.matches_all = true;
-      continue;
-    }
-
-    const std::string normalized = normalizeRosResourceName(token);
-    if (!normalized.empty()) {
-      parsed.patterns.insert(normalized);
-    }
-  }
-
-  return parsed;
-}
-
-AccessPolicy::ParsedRuleset AccessPolicy::parseRuleset(
-  const std::vector<std::string> & allow_entries, const std::vector<std::string> & deny_entries)
-{
-  ParsedRuleset parsed;
-  parsed.allow = parseRuleEntries(allow_entries);
-  parsed.deny = parseRuleEntries(deny_entries);
-  return parsed;
-}
-
-bool AccessPolicy::isAllowed(std::string_view name, const ParsedRuleset & ruleset)
-{
-  const auto matches = [name](const ParsedRuleEntries & entries) {
-    return std::any_of(entries.patterns.begin(), entries.patterns.end(), [name](const std::string & entry) {
-      return rosResourceMatchesPattern(name, entry);
-    });
-  };
-
-  const bool deny_rule_matched = ruleset.deny.matches_all || matches(ruleset.deny);
-  if (deny_rule_matched) {
-    return false;
-  }
-
-  if (ruleset.allow.matches_all) {
-    return true;
-  }
-
-  if (ruleset.allow.patterns.empty()) {
-    return false;
-  }
-  return matches(ruleset.allow);
-}
-
 }  // namespace livekit_ros2_bridge

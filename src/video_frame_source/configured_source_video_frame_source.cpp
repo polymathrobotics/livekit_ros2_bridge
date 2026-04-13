@@ -15,11 +15,8 @@
 #include "video_frame_source/configured_source_video_frame_source.hpp"
 
 #include <chrono>
-#include <memory>
 #include <stdexcept>
 #include <utility>
-
-#include "video_frame_source.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -27,7 +24,9 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kConfiguredSourceRestartDelay = std::chrono::milliseconds(250);
+// Configured sources can restart immediately, but a small backoff avoids tight
+// loops on a broken static launch string.
+constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 
 }  // namespace
 
@@ -36,10 +35,19 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
   VideoFrameSink & frame_sink,
   VideoStreamLifecycleObserver & lifecycle_observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
-: VideoPipelineFrameSource(std::move(spec), frame_sink, lifecycle_observer, std::move(profiler))
+: VideoPipelineFrameSource(
+    spec,
+    frame_sink,
+    lifecycle_observer,
+    std::move(profiler),
+    VideoPipelineFrameSource::RestartConfig{
+      buildFrameSourcePipelineDescription(spec.ingress_fragment, spec.transform_fragment),
+      false,
+      kRestartDelay,
+    })
 {}
 
-void ConfiguredSourceVideoFrameSource::ensureRunning()
+void ConfiguredSourceVideoFrameSource::start()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -47,13 +55,14 @@ void ConfiguredSourceVideoFrameSource::ensureRunning()
   }
 
   if (pipeline_ == nullptr) {
-    startConfiguredSourcePipelineLocked();
+    const auto & restart_config = restart_config_.value();
+    startPipelineLocked(restart_config.pipeline_description, restart_config.require_appsrc);
   }
 }
 
 void ConfiguredSourceVideoFrameSource::shutdown()
 {
-  DetachedPipelineState detached_pipeline_state;
+  PipelineHandles handles;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -61,44 +70,13 @@ void ConfiguredSourceVideoFrameSource::shutdown()
     }
 
     is_shutdown_ = true;
-    detached_pipeline_state = detachPipelineStateLocked();
+    // Drop the internal handles while holding mutex_ so any in-flight
+    // callbacks observe the terminal shutdown state before GStreamer teardown
+    // removes callbacks and transitions the pipeline to NULL.
+    handles = takePipelineLocked();
   }
 
-  teardownDetachedPipelineState(detached_pipeline_state);
-}
-
-void ConfiguredSourceVideoFrameSource::startConfiguredSourcePipelineLocked()
-{
-  startPipelineLocked(composeVideoPipeline(spec_.ingress_fragment, spec_.transform_fragment));
-  playPipelineLocked();
-}
-
-void ConfiguredSourceVideoFrameSource::resetSourceStateLocked()
-{}
-
-bool ConfiguredSourceVideoFrameSource::shouldRestartAfterFailure() const
-{
-  return true;
-}
-
-std::chrono::milliseconds ConfiguredSourceVideoFrameSource::restartDelayOnFailure() const
-{
-  return kConfiguredSourceRestartDelay;
-}
-
-void ConfiguredSourceVideoFrameSource::restartAfterFailureLocked()
-{
-  startConfiguredSourcePipelineLocked();
-}
-
-std::shared_ptr<VideoFrameSource> makeConfiguredSourceVideoFrameSource(
-  VideoStreamSpec spec,
-  VideoFrameSink & frame_sink,
-  VideoStreamLifecycleObserver & lifecycle_observer,
-  std::shared_ptr<VideoStreamProfiler> profiler)
-{
-  return std::make_shared<ConfiguredSourceVideoFrameSource>(
-    std::move(spec), frame_sink, lifecycle_observer, std::move(profiler));
+  teardown(handles.pipeline, handles.appsrc, handles.appsink);
 }
 
 }  // namespace livekit_ros2_bridge

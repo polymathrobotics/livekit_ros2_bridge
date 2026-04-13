@@ -21,11 +21,12 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "utils/gstreamer_raii.hpp"
-#include "video_frame_source.hpp"
 #include "video_profiling.hpp"
+#include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -36,59 +37,84 @@ inline constexpr char kVideoAppSrcName[] = "bridge_video_src";
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
-std::string composeVideoPipeline(const std::string & ingress_fragment, const std::string & transform_fragment);
+std::string buildFrameSourcePipelineDescription(
+  const std::string & ingress_fragment, const std::string & transform_fragment);
 
 class VideoPipelineFrameSource : public VideoFrameSource, public std::enable_shared_from_this<VideoPipelineFrameSource>
 {
 public:
+  // Configures optional self-recovery for sources whose pipeline can be
+  // recreated from a stable launch description after EOS or ERROR.
+  struct RestartConfig
+  {
+    // Must resolve to a GstBin containing `kAppSinkName`; when
+    // `require_appsrc` is true it must also expose `kVideoAppSrcName`.
+    std::string pipeline_description;
+    // Requires the named appsrc and captures its handle so ROS-backed
+    // subclasses can resume pushing into a restarted pipeline.
+    bool require_appsrc = false;
+    // Optional backoff to avoid tight restart loops for hot-failing pipelines.
+    std::chrono::milliseconds restart_delay = std::chrono::milliseconds(0);
+  };
+
   VideoPipelineFrameSource(
     VideoStreamSpec spec,
     VideoFrameSink & frame_sink,
     VideoStreamLifecycleObserver & lifecycle_observer,
-    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+    std::shared_ptr<VideoStreamProfiler> profiler = nullptr,
+    std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
 
 protected:
-  struct DetachedPipelineState
+  // Moves the live GStreamer handles out of member state while mutex_ is held
+  // so callers can choose when teardown runs without leaving dangling members.
+  struct PipelineHandles
   {
     GstElementPtr pipeline;
     GstAppSrcPtr appsrc;
     GstAppSinkPtr appsink;
   };
 
-  static GstFlowReturn onNewSampleThunk(GstAppSink * sink, gpointer user_data);
+  static GstFlowReturn onSampleThunk(GstAppSink * sink, gpointer user_data);
   static GstBusSyncReply onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data);
 
-  DetachedPipelineState detachPipelineStateLocked();
-  static void teardownDetachedPipelineState(DetachedPipelineState & detached);
+  // Disconnects callbacks before forcing the pipeline to NULL so GStreamer
+  // does not call back into this object after ownership has been detached.
+  static void teardown(GstElementPtr & pipeline, GstAppSrcPtr & appsrc, GstAppSinkPtr & appsink);
 
-  void startPipelineLocked(const std::string & pipeline_description, bool expect_appsrc = false);
-  void playPipelineLocked();
-  void discardPipelineElementsLocked();
-  void stopPipelineLocked();
+  // Resets subclass-specific bookkeeping and atomically transfers the current
+  // pipeline handles out of the object. Caller must hold mutex_.
+  [[nodiscard]] PipelineHandles takePipelineLocked();
+  // Caller must hold mutex_. Parses `pipeline_description`, validates the named
+  // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
+  void startPipelineLocked(const std::string & pipeline_description, bool require_appsrc = false);
 
-  virtual void resetSourceStateLocked() = 0;
-  virtual bool shouldRestartAfterFailure() const;
-  virtual std::chrono::milliseconds restartDelayOnFailure() const;
-  virtual void restartAfterFailureLocked();
+  virtual void resetLocked();
 
   VideoStreamSpec spec_;
   VideoFrameSink & frame_sink_;
   VideoStreamLifecycleObserver & lifecycle_observer_;
   std::shared_ptr<VideoStreamProfiler> profiler_;
+  const std::optional<RestartConfig> restart_config_;
+  // Guards lifecycle flags and GStreamer handle ownership across start(),
+  // shutdown(), appsink callbacks, bus callbacks, and recovery.
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  bool failure_recovery_pending_ = false;
+  // Coalesces repeated EOS/ERROR notifications so only one async recovery path
+  // tears down and rebuilds the current pipeline at a time.
+  bool recovery_pending_ = false;
   bool first_sample_logged_ = false;
+  // Owned handles for the currently installed pipeline. They are moved out
+  // under mutex_ before teardown so subsequent callbacks see detached members.
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
   GstAppSinkPtr appsink_;
 
 private:
-  GstFlowReturn onNewSample(GstAppSink * sink);
+  GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
   void handlePipelineFailure(const std::string & reason);
-  void recoverFromPipelineFailure();
+  void recoverPipelineAfterFailure();
 };
 
 }  // namespace livekit_ros2_bridge

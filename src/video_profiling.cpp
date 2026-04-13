@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
@@ -28,6 +29,7 @@
 #include <numeric>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -45,9 +47,9 @@ namespace
 {
 
 using SteadyClock = VideoStreamProfiler::SteadyClock;
-using TraceArgValue = std::variant<std::int64_t, double, bool, std::string>;
+using TraceValue = std::variant<std::int64_t, double, bool, std::string>;
 
-enum class TraceEventKind
+enum class TraceKind
 {
   kComplete,
   kInstant,
@@ -56,12 +58,12 @@ enum class TraceEventKind
 struct TraceArg
 {
   std::string key;
-  TraceArgValue value;
+  TraceValue value;
 };
 
 struct TraceEvent
 {
-  TraceEventKind kind = TraceEventKind::kInstant;
+  TraceKind kind = TraceKind::kInstant;
   std::string category;
   std::string name;
   std::int64_t timestamp_us = 0;
@@ -70,32 +72,32 @@ struct TraceEvent
   std::vector<TraceArg> args;
 };
 
-struct MetricSamples
+struct DurationSamples
 {
-  std::vector<double> values_ms;
+  std::vector<double> durations_ms;
 
-  void addMilliseconds(double value_ms)
+  void addDurationMs(double duration_ms)
   {
-    values_ms.push_back(value_ms);
+    durations_ms.push_back(duration_ms);
   }
 
-  VideoProfileDurationSummary summarizeAndReset()
+  VideoProfileDurationSummary takeSummary()
   {
     VideoProfileDurationSummary summary;
-    summary.sample_count = values_ms.size();
-    if (values_ms.empty()) {
+    summary.sample_count = durations_ms.size();
+    if (durations_ms.empty()) {
       return summary;
     }
 
-    const double sum_ms = std::accumulate(values_ms.begin(), values_ms.end(), 0.0);
-    summary.avg_ms = sum_ms / static_cast<double>(values_ms.size());
+    const double sum_ms = std::accumulate(durations_ms.begin(), durations_ms.end(), 0.0);
+    summary.avg_ms = sum_ms / static_cast<double>(durations_ms.size());
 
-    std::sort(values_ms.begin(), values_ms.end());
+    std::sort(durations_ms.begin(), durations_ms.end());
     const std::size_t p95_index =
-      static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(values_ms.size()))) - 1U;
-    summary.p95_ms = values_ms[std::min(p95_index, values_ms.size() - 1U)];
-    summary.max_ms = values_ms.back();
-    values_ms.clear();
+      static_cast<std::size_t>(std::ceil(0.95 * static_cast<double>(durations_ms.size()))) - 1U;
+    summary.p95_ms = durations_ms[std::min(p95_index, durations_ms.size() - 1U)];
+    summary.max_ms = durations_ms.back();
+    durations_ms.clear();
     return summary;
   }
 };
@@ -119,7 +121,7 @@ std::string toUtcIso8601(std::chrono::system_clock::time_point time_point)
   return output.str();
 }
 
-nlohmann::json traceArgToJson(const TraceArgValue & value)
+nlohmann::json traceArgToJson(const TraceValue & value)
 {
   return std::visit([](const auto & typed_value) -> nlohmann::json { return typed_value; }, value);
 }
@@ -152,205 +154,54 @@ void addMetricFields(LogEvent & event, const char * field_prefix, const VideoPro
     .field(base + "_max", metric.max_ms);
 }
 
-const char * ingressTraceEventName()
-{
-  return "source.received";
-}
+constexpr char kIngressTraceEventName[] = "source.received";
+constexpr char kSampledTraceEventName[] = "gst.sample_ready";
+constexpr char kCapturedTraceEventName[] = "livekit.frame_submitted";
+constexpr char kPipelineStartTraceEventName[] = "gst.pipeline_started";
+constexpr char kPipelineFailureTraceEventName[] = "gst.pipeline_failed";
+constexpr char kRestartFailureTraceEventName[] = "gst.restart_failed";
+constexpr char kPushFailureTraceEventName[] = "source.queue_to_gst_failed";
+constexpr char kSampleUnpackFailureTraceEventName[] = "gst.repack_failed";
+constexpr char kCaptureFailureTraceEventName[] = "livekit.submit_failed";
+constexpr char kSourceToSampleReadyFieldName[] = "source_to_sample_ready_ms";
+constexpr char kSourceToLiveKitSubmitFieldName[] = "source_to_livekit_submit_ms";
+constexpr char kTrackPublishedTraceEventName[] = "publish.track_published";
+constexpr char kTrackRepublishedTraceEventName[] = "publish.track_republished";
+constexpr char kTrackUnpublishingTraceEventName[] = "publish.track_unpublishing";
+constexpr char kStreamRegisteredTraceEventName[] = "stream.registered";
 
-const char * sampledTraceEventName()
-{
-  return "gst.sample_ready";
-}
+constexpr char kFramesInCountFieldName[] = "source.received_count";
+constexpr char kFramesSampledCountFieldName[] = "gst.sample_count";
+constexpr char kFramesCapturedCountFieldName[] = "livekit.frame_submitted_count";
+constexpr char kPipelineStartCountFieldName[] = "gst.pipeline_started_count";
+constexpr char kPipelineFailureCountFieldName[] = "gst.pipeline_failed_count";
+constexpr char kRestartFailedCountFieldName[] = "gst.restart_failed_count";
+constexpr char kPushFailedCountFieldName[] = "source.queue_to_gst_failed_count";
+constexpr char kSampleUnpackFailedCountFieldName[] = "gst.repack_failed_count";
+constexpr char kCaptureFailedCountFieldName[] = "livekit.submit_failed_count";
+constexpr char kTrackPublishCountFieldName[] = "publish.track_published_count";
+constexpr char kTrackRepublishCountFieldName[] = "publish.track_republished_count";
+constexpr char kTrackUnpublishCountFieldName[] = "publish.track_unpublishing_count";
+constexpr char kSourceTimestampRegressionCountFieldName[] = "source.timestamp_regression_count";
 
-const char * capturedTraceEventName()
-{
-  return "livekit.frame_submitted";
-}
+constexpr char kIngressArrivalGapFieldName[] = "source.interarrival_gap_ms";
+constexpr char kSourceTimestampGapFieldName[] = "source.timestamp_gap_ms";
+constexpr char kOutputArrivalGapFieldName[] = "livekit.interarrival_gap_ms";
+constexpr char kPushToAppSrcStageName[] = "source.queue_to_gst_ms";
+constexpr char kSampleCallbackStageName[] = "gst.sample_total_ms";
+constexpr char kSampleUnpackStageName[] = "gst.repack_i420_ms";
+constexpr char kFrameSinkStageName[] = "bridge.to_publisher_ms";
+constexpr char kPublisherHandleStageName[] = "publish.total_ms";
+constexpr char kEnsureTrackStageName[] = "publish.ensure_track_ms";
+constexpr char kCaptureFrameStageName[] = "livekit.submit_ms";
 
-const char * pipelineStartTraceEventName()
-{
-  return "gst.pipeline_started";
-}
-
-const char * pipelineFailureTraceEventName()
-{
-  return "gst.pipeline_failed";
-}
-
-const char * restartFailureTraceEventName()
-{
-  return "gst.restart_failed";
-}
-
-const char * pushFailureTraceEventName()
-{
-  return "source.queue_to_gst_failed";
-}
-
-const char * sampleUnpackFailureTraceEventName()
-{
-  return "gst.repack_failed";
-}
-
-const char * captureFailureTraceEventName()
-{
-  return "livekit.submit_failed";
-}
-
-const char * sourceToSampleReadyTraceEventName()
-{
-  return "source_to_sample_ready_ms";
-}
-
-const char * sourceToLiveKitSubmitTraceEventName()
-{
-  return "source_to_livekit_submit_ms";
-}
-
-const char * trackPublishedTraceEventName(bool republished)
-{
-  return republished ? "publish.track_republished" : "publish.track_published";
-}
-
-const char * trackUnpublishingTraceEventName()
-{
-  return "publish.track_unpublishing";
-}
-
-const char * streamRegisteredTraceEventName()
-{
-  return "stream.registered";
-}
-
-const char * summaryFramesInFieldName()
-{
-  return "source.received_count";
-}
-
-const char * summaryFramesSampledFieldName()
-{
-  return "gst.sample_count";
-}
-
-const char * summaryFramesCapturedFieldName()
-{
-  return "livekit.frame_submitted_count";
-}
-
-const char * summaryPipelineStartCountFieldName()
-{
-  return "gst.pipeline_started_count";
-}
-
-const char * summaryPipelineFailureCountFieldName()
-{
-  return "gst.pipeline_failed_count";
-}
-
-const char * summaryRestartFailedCountFieldName()
-{
-  return "gst.restart_failed_count";
-}
-
-const char * summaryPushFailedCountFieldName()
-{
-  return "source.queue_to_gst_failed_count";
-}
-
-const char * summarySampleUnpackFailedCountFieldName()
-{
-  return "gst.repack_failed_count";
-}
-
-const char * summaryCaptureFailedCountFieldName()
-{
-  return "livekit.submit_failed_count";
-}
-
-const char * summaryTrackPublishCountFieldName()
-{
-  return "publish.track_published_count";
-}
-
-const char * summaryTrackRepublishCountFieldName()
-{
-  return "publish.track_republished_count";
-}
-
-const char * summaryTrackUnpublishCountFieldName()
-{
-  return "publish.track_unpublishing_count";
-}
-
-const char * summarySourceTimestampRegressionCountFieldName()
-{
-  return "source.timestamp_regression_count";
-}
-
-const char * summaryIngressArrivalGapFieldName()
-{
-  return "source.interarrival_gap_ms";
-}
-
-const char * summarySourceTimestampGapFieldName()
-{
-  return "source.timestamp_gap_ms";
-}
-
-const char * summaryOutputArrivalGapFieldName()
-{
-  return "livekit.interarrival_gap_ms";
-}
-
-const char * summarySourceToOutputSubmitFieldName()
-{
-  return "source_to_livekit_submit_ms";
-}
-
-const char * summarySourceToSampleReadyFieldName()
-{
-  return "source_to_sample_ready_ms";
-}
-
-const char * summaryPushToAppSrcFieldName()
-{
-  return "source.queue_to_gst_ms";
-}
-
-const char * summarySampleCallbackFieldName()
-{
-  return "gst.sample_total_ms";
-}
-
-const char * summarySampleUnpackFieldName()
-{
-  return "gst.repack_i420_ms";
-}
-
-const char * summaryFrameSinkFieldName()
-{
-  return "bridge.to_publisher_ms";
-}
-
-const char * summaryPublisherHandleFieldName()
-{
-  return "publish.total_ms";
-}
-
-const char * summaryEnsureTrackFieldName()
-{
-  return "publish.ensure_track_ms";
-}
-
-const char * summaryCaptureFrameFieldName()
-{
-  return "livekit.submit_ms";
-}
-
-class VideoTraceRecorder final
+// Emits Chrome Trace Event JSON using steady-clock-relative timestamps so trace
+// durations stay monotonic even if the wall clock changes. Wall-clock metadata
+// is recorded separately for offline correlation with logs and external events.
+class TraceRecorder final
 {
 public:
-  explicit VideoTraceRecorder(const VideoProfilingConfig & config)
+  explicit TraceRecorder(const VideoProfilingConfig & config)
   : trace_file_(config.trace_file)
   , max_events_(config.trace_max_events)
   , steady_origin_(SteadyClock::now())
@@ -376,7 +227,7 @@ public:
     std::vector<TraceArg> args = {})
   {
     TraceEvent event;
-    event.kind = TraceEventKind::kComplete;
+    event.kind = TraceKind::kComplete;
     event.category = std::move(category);
     event.name = std::move(name);
     event.timestamp_us = toTraceTimestampUs(start_time);
@@ -390,7 +241,7 @@ public:
     std::string category, std::string name, SteadyClock::time_point event_time, std::vector<TraceArg> args = {})
   {
     TraceEvent event;
-    event.kind = TraceEventKind::kInstant;
+    event.kind = TraceKind::kInstant;
     event.category = std::move(category);
     event.name = std::move(name);
     event.timestamp_us = toTraceTimestampUs(event_time);
@@ -399,13 +250,13 @@ public:
     appendEvent(std::move(event));
   }
 
-  std::size_t droppedEventCount() const
+  std::size_t droppedEvents() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
     return dropped_event_count_;
   }
 
-  std::size_t writeTraceFile() const
+  std::size_t writeTrace() const
   {
     std::deque<TraceEvent> events;
     std::vector<std::uint64_t> thread_ids;
@@ -448,7 +299,7 @@ public:
         {"ts", event.timestamp_us},
         {"args", std::move(args)},
       };
-      if (event.kind == TraceEventKind::kComplete) {
+      if (event.kind == TraceKind::kComplete) {
         json_event["ph"] = "X";
         json_event["dur"] = event.duration_us;
       } else {
@@ -518,76 +369,90 @@ private:
   mutable std::size_t dropped_event_count_ = 0;
 };
 
-VideoProfileDurationSummary summarizeAndResetMetric(MetricSamples & metric)
+// Stores a bounded ingress window for timestamp-based correlation across
+// sample and capture callbacks.
+class IngressMatcher final
 {
-  return metric.summarizeAndReset();
-}
+public:
+  enum class RecordResult
+  {
+    kAccepted,
+    kTimestampRegression,
+  };
 
-std::optional<std::int64_t> validateSourceTimestampUs(std::optional<std::int64_t> source_timestamp_us)
-{
-  if (!source_timestamp_us.has_value()) {
-    return std::nullopt;
+  enum class MatchMode
+  {
+    kKeep,
+    kConsume,
+  };
+
+  void reset()
+  {
+    last_timestamp_us_.reset();
   }
-  if (*source_timestamp_us < 0) {
-    return std::nullopt;
+
+  RecordResult record(std::int64_t timestamp_us, SteadyClock::time_point arrival_time, DurationSamples & gap_ms)
+  {
+    if (last_timestamp_us_.has_value()) {
+      if (timestamp_us < *last_timestamp_us_) {
+        pending_frames_.clear();
+        last_timestamp_us_ = timestamp_us;
+        return RecordResult::kTimestampRegression;
+      }
+
+      gap_ms.addDurationMs(static_cast<double>(timestamp_us - *last_timestamp_us_) / 1000.0);
+    }
+
+    pending_frames_.emplace_back(timestamp_us, arrival_time);
+    while (pending_frames_.size() > kMaxPendingFrames) {
+      pending_frames_.pop_front();
+    }
+
+    last_timestamp_us_ = timestamp_us;
+    return RecordResult::kAccepted;
   }
-  return source_timestamp_us;
-}
+
+  std::optional<SteadyClock::time_point> match(std::int64_t timestamp_us, MatchMode mode)
+  {
+    // Samples and captures are expected to observe source timestamps in order.
+    // Once a newer timestamp is requested, older unmatched ingress frames can
+    // no longer be correlated safely and are dropped from the front.
+    while (!pending_frames_.empty() && pending_frames_.front().first < timestamp_us) {
+      pending_frames_.pop_front();
+    }
+
+    if (pending_frames_.empty() || pending_frames_.front().first != timestamp_us) {
+      return std::nullopt;
+    }
+
+    const auto ingress_time = pending_frames_.front().second;
+    if (mode == MatchMode::kConsume) {
+      pending_frames_.pop_front();
+    }
+    return ingress_time;
+  }
+
+private:
+  static constexpr std::size_t kMaxPendingFrames = 1024U;
+
+  std::optional<std::int64_t> last_timestamp_us_;
+  std::deque<std::pair<std::int64_t, SteadyClock::time_point>> pending_frames_;
+};
 
 }  // namespace
 
+// Protected by mutex. Ingress correlation state survives takeSummary() so
+// frames crossing a summary boundary can still be matched end-to-end.
 struct VideoStreamProfiler::Impl
 {
-  explicit Impl(VideoStreamSpec stream_spec)
-  : spec(std::move(stream_spec))
+  explicit Impl(VideoStreamSpec spec)
+  : spec(std::move(spec))
   {}
-
-  void markActivityLocked()
-  {
-    activity_since_last_summary = true;
-  }
-
-  void recordTraceInstant(const char * name, std::vector<TraceArg> args = {})
-  {
-    if (trace_recorder == nullptr) {
-      return;
-    }
-    trace_recorder->recordInstant(spec.stream_key, name, SteadyClock::now(), std::move(args));
-  }
-
-  void recordTraceComplete(
-    const char * name,
-    SteadyClock::time_point start_time,
-    std::chrono::microseconds duration,
-    std::vector<TraceArg> args = {})
-  {
-    if (trace_recorder == nullptr) {
-      return;
-    }
-    trace_recorder->recordComplete(spec.stream_key, name, start_time, duration, std::move(args));
-  }
-
-  void recordTraceStage(
-    VideoProfileStage stage,
-    SteadyClock::time_point start_time,
-    std::chrono::microseconds duration,
-    std::optional<std::int64_t> frame_timestamp_us)
-  {
-    if (trace_recorder == nullptr) {
-      return;
-    }
-    std::vector<TraceArg> args;
-    if (frame_timestamp_us.has_value()) {
-      addTraceArg(args, "frame_timestamp_us", *frame_timestamp_us);
-    }
-    trace_recorder->recordComplete(
-      spec.stream_key, videoProfileStageToString(stage), start_time, duration, std::move(args));
-  }
 
   VideoStreamSpec spec;
   std::mutex mutex;
-  std::shared_ptr<VideoTraceRecorder> trace_recorder;
-  bool activity_since_last_summary = false;
+  std::shared_ptr<TraceRecorder> recorder;
+  bool has_activity = false;
 
   std::size_t frames_in = 0;
   std::size_t frames_sampled = 0;
@@ -605,75 +470,128 @@ struct VideoStreamProfiler::Impl
 
   std::optional<SteadyClock::time_point> last_ingress_arrival;
   std::optional<SteadyClock::time_point> last_output_arrival;
-  std::optional<std::int64_t> last_source_timestamp_us;
-  std::deque<std::pair<std::int64_t, SteadyClock::time_point>> pending_source_frames;
+  IngressMatcher ingress_matcher;
 
-  MetricSamples ingress_arrival_gap_ms;
-  MetricSamples output_arrival_gap_ms;
-  MetricSamples source_timestamp_gap_ms;
-  MetricSamples appsrc_to_sample_ms;
-  MetricSamples source_to_output_submit_ms;
-  MetricSamples push_to_appsrc_ms;
-  MetricSamples sample_callback_ms;
-  MetricSamples sample_unpack_ms;
-  MetricSamples frame_sink_ms;
-  MetricSamples publisher_handle_frame_ms;
-  MetricSamples ensure_track_ms;
-  MetricSamples capture_frame_ms;
+  DurationSamples ingress_arrival_gap_ms;
+  DurationSamples output_arrival_gap_ms;
+  DurationSamples source_timestamp_gap_ms;
+  DurationSamples appsrc_to_sample_ms;
+  DurationSamples source_to_output_submit_ms;
+  DurationSamples push_to_appsrc_ms;
+  DurationSamples sample_callback_ms;
+  DurationSamples sample_unpack_ms;
+  DurationSamples frame_sink_ms;
+  DurationSamples publisher_handle_frame_ms;
+  DurationSamples ensure_track_ms;
+  DurationSamples capture_frame_ms;
 };
 
 struct VideoProfilingRegistry::Impl
 {
-  explicit Impl(rclcpp::Logger profiling_logger, VideoProfilingConfig profiling_config)
-  : logger(std::move(profiling_logger))
-  , config(std::move(profiling_config))
-  , recorder(config.enabled ? std::make_shared<VideoTraceRecorder>(config) : nullptr)
+  explicit Impl(rclcpp::Logger logger, VideoProfilingConfig config)
+  : logger(std::move(logger))
+  , config(std::move(config))
+  , recorder(this->config.enabled ? std::make_shared<TraceRecorder>(this->config) : nullptr)
   {}
 
   rclcpp::Logger logger;
   VideoProfilingConfig config;
-  std::shared_ptr<VideoTraceRecorder> recorder;
+  std::shared_ptr<TraceRecorder> recorder;
   mutable std::mutex mutex;
   std::unordered_map<std::string, std::shared_ptr<VideoStreamProfiler>> profilers;
-  std::size_t last_reported_trace_drop_count = 0;
+  std::size_t last_logged_drop_count = 0;
 };
+
+namespace
+{
+
+struct StageMetric
+{
+  VideoProfileStage stage;
+  const char * metric_name = "unknown";
+  DurationSamples VideoStreamProfiler::Impl::* samples = nullptr;
+  VideoProfileDurationSummary VideoStreamProfileSummary::* summary = nullptr;
+};
+
+const std::array<StageMetric, 7> kStageMetrics{{
+  {VideoProfileStage::kPushToAppSrc,
+   kPushToAppSrcStageName,
+   &VideoStreamProfiler::Impl::push_to_appsrc_ms,
+   &VideoStreamProfileSummary::push_to_appsrc_ms},
+  {VideoProfileStage::kSampleCallback,
+   kSampleCallbackStageName,
+   &VideoStreamProfiler::Impl::sample_callback_ms,
+   &VideoStreamProfileSummary::sample_callback_ms},
+  {VideoProfileStage::kSampleUnpack,
+   kSampleUnpackStageName,
+   &VideoStreamProfiler::Impl::sample_unpack_ms,
+   &VideoStreamProfileSummary::sample_unpack_ms},
+  {VideoProfileStage::kFrameSink,
+   kFrameSinkStageName,
+   &VideoStreamProfiler::Impl::frame_sink_ms,
+   &VideoStreamProfileSummary::frame_sink_ms},
+  {VideoProfileStage::kPublisherHandleFrame,
+   kPublisherHandleStageName,
+   &VideoStreamProfiler::Impl::publisher_handle_frame_ms,
+   &VideoStreamProfileSummary::publisher_handle_frame_ms},
+  {VideoProfileStage::kEnsureTrack,
+   kEnsureTrackStageName,
+   &VideoStreamProfiler::Impl::ensure_track_ms,
+   &VideoStreamProfileSummary::ensure_track_ms},
+  {VideoProfileStage::kCaptureFrame,
+   kCaptureFrameStageName,
+   &VideoStreamProfiler::Impl::capture_frame_ms,
+   &VideoStreamProfileSummary::capture_frame_ms},
+}};
+
+const StageMetric & stageMetric(VideoProfileStage stage)
+{
+  const auto metric = std::find_if(
+    kStageMetrics.begin(), kStageMetrics.end(), [stage](const auto & candidate) { return candidate.stage == stage; });
+  if (metric == kStageMetrics.end()) {
+    throw std::logic_error("unsupported video profile stage");
+  }
+  return *metric;
+}
+
+std::vector<TraceArg> makeFrameTimestampArgs(std::optional<std::int64_t> frame_timestamp_us)
+{
+  std::vector<TraceArg> args;
+  if (frame_timestamp_us.has_value()) {
+    addTraceArg(args, "frame_timestamp_us", *frame_timestamp_us);
+  }
+  return args;
+}
+
+}  // namespace
 
 const char * videoProfileStageToString(VideoProfileStage stage)
 {
-  switch (stage) {
-    case VideoProfileStage::kPushToAppSrc:
-      return "source.queue_to_gst_ms";
-    case VideoProfileStage::kSampleCallback:
-      return "gst.sample_total_ms";
-    case VideoProfileStage::kSampleUnpack:
-      return "gst.repack_i420_ms";
-    case VideoProfileStage::kFrameSink:
-      return "bridge.to_publisher_ms";
-    case VideoProfileStage::kPublisherHandleFrame:
-      return "publish.total_ms";
-    case VideoProfileStage::kEnsureTrack:
-      return "publish.ensure_track_ms";
-    case VideoProfileStage::kCaptureFrame:
-      return "livekit.submit_ms";
-  }
-
-  return "unknown";
+  return stageMetric(stage).metric_name;
 }
 
 bool VideoStreamProfileSummary::hasActivity() const
 {
-  return frames_in > 0 || frames_sampled > 0 || frames_captured > 0 || pipeline_start_count > 0 ||
-         pipeline_failure_count > 0 || restart_failed_count > 0 || push_failed_count > 0 ||
-         sample_unpack_failed_count > 0 || capture_failed_count > 0 || track_publish_count > 0 ||
-         track_republish_count > 0 || track_unpublish_count > 0 || source_timestamp_regression_count > 0 ||
-         ingress_arrival_gap_ms.hasSamples() || output_arrival_gap_ms.hasSamples() ||
-         source_timestamp_gap_ms.hasSamples() || appsrc_to_sample_ms.hasSamples() ||
-         source_to_output_submit_ms.hasSamples() || push_to_appsrc_ms.hasSamples() || sample_callback_ms.hasSamples() ||
-         sample_unpack_ms.hasSamples() || frame_sink_ms.hasSamples() || publisher_handle_frame_ms.hasSamples() ||
-         ensure_track_ms.hasSamples() || capture_frame_ms.hasSamples();
+  if (
+    frames_in > 0 || frames_sampled > 0 || frames_captured > 0 || pipeline_start_count > 0 ||
+    pipeline_failure_count > 0 || restart_failed_count > 0 || push_failed_count > 0 || sample_unpack_failed_count > 0 ||
+    capture_failed_count > 0 || track_publish_count > 0 || track_republish_count > 0 || track_unpublish_count > 0 ||
+    source_timestamp_regression_count > 0 || ingress_arrival_gap_ms.hasSamples() ||
+    output_arrival_gap_ms.hasSamples() || source_timestamp_gap_ms.hasSamples() || appsrc_to_sample_ms.hasSamples() ||
+    source_to_output_submit_ms.hasSamples())
+  {
+    return true;
+  }
+
+  for (const auto & metric : kStageMetrics) {
+    if ((this->*(metric.summary)).hasSamples()) {
+      return true;
+    }
+  }
+  return false;
 }
 
-VideoStreamProfiler::ScopedStageTimer::ScopedStageTimer(
+VideoStreamProfiler::StageTimer::StageTimer(
   VideoStreamProfiler * profiler, VideoProfileStage stage, std::optional<std::int64_t> frame_timestamp_us)
 : profiler_(profiler)
 , stage_(stage)
@@ -681,20 +599,20 @@ VideoStreamProfiler::ScopedStageTimer::ScopedStageTimer(
 , start_time_(SteadyClock::now())
 {}
 
-VideoStreamProfiler::ScopedStageTimer::~ScopedStageTimer()
+VideoStreamProfiler::StageTimer::~StageTimer()
 {
   if (profiler_ == nullptr) {
     return;
   }
   const auto end_time = SteadyClock::now();
-  profiler_->recordStageDuration(
+  profiler_->recordStage(
     stage_,
     std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_),
     frame_timestamp_us_,
     start_time_);
 }
 
-VideoStreamProfiler::ScopedStageTimer::ScopedStageTimer(ScopedStageTimer && other) noexcept
+VideoStreamProfiler::StageTimer::StageTimer(StageTimer && other) noexcept
 : profiler_(other.profiler_)
 , stage_(other.stage_)
 , frame_timestamp_us_(other.frame_timestamp_us_)
@@ -703,8 +621,7 @@ VideoStreamProfiler::ScopedStageTimer::ScopedStageTimer(ScopedStageTimer && othe
   other.profiler_ = nullptr;
 }
 
-VideoStreamProfiler::ScopedStageTimer & VideoStreamProfiler::ScopedStageTimer::operator=(
-  ScopedStageTimer && other) noexcept
+VideoStreamProfiler::StageTimer & VideoStreamProfiler::StageTimer::operator=(StageTimer && other) noexcept
 {
   if (this == &other) {
     return *this;
@@ -723,138 +640,120 @@ VideoStreamProfiler::VideoStreamProfiler(VideoStreamSpec spec)
 
 VideoStreamProfiler::~VideoStreamProfiler() = default;
 
-void VideoStreamProfiler::noteIngressFrame(
+void VideoStreamProfiler::noteIngress(
   SteadyClock::time_point arrival_time, std::optional<std::int64_t> source_timestamp_us)
 {
-  std::vector<TraceArg> args;
-  if (source_timestamp_us.has_value()) {
-    addTraceArg(args, "frame_timestamp_us", *source_timestamp_us);
-  }
-
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->frames_in++;
-  impl_->recordTraceInstant(ingressTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kIngressTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(source_timestamp_us));
+  }
 
   if (impl_->last_ingress_arrival.has_value()) {
     const auto gap_us =
       std::chrono::duration_cast<std::chrono::microseconds>(arrival_time - *impl_->last_ingress_arrival);
-    impl_->ingress_arrival_gap_ms.addMilliseconds(static_cast<double>(gap_us.count()) / 1000.0);
+    impl_->ingress_arrival_gap_ms.addDurationMs(static_cast<double>(gap_us.count()) / 1000.0);
   }
   impl_->last_ingress_arrival = arrival_time;
 
-  const auto validated_timestamp_us = validateSourceTimestampUs(source_timestamp_us);
-  if (!validated_timestamp_us.has_value()) {
+  if (!source_timestamp_us.has_value() || *source_timestamp_us < 0) {
+    // Drop pending matches once source timestamps stop being usable.
     impl_->source_timestamp_regression_count++;
-    impl_->last_source_timestamp_us.reset();
+    impl_->ingress_matcher.reset();
     return;
   }
 
-  if (impl_->last_source_timestamp_us.has_value()) {
-    if (*validated_timestamp_us < *impl_->last_source_timestamp_us) {
-      impl_->source_timestamp_regression_count++;
-      impl_->pending_source_frames.clear();
-      impl_->last_source_timestamp_us = validated_timestamp_us;
-      return;
-    }
-    impl_->source_timestamp_gap_ms.addMilliseconds(
-      static_cast<double>(*validated_timestamp_us - *impl_->last_source_timestamp_us) / 1000.0);
+  if (
+    impl_->ingress_matcher.record(*source_timestamp_us, arrival_time, impl_->source_timestamp_gap_ms) ==
+    IngressMatcher::RecordResult::kTimestampRegression)
+  {
+    impl_->source_timestamp_regression_count++;
   }
-  impl_->pending_source_frames.emplace_back(*validated_timestamp_us, arrival_time);
-  while (impl_->pending_source_frames.size() > 1024U) {
-    impl_->pending_source_frames.pop_front();
-  }
-  impl_->last_source_timestamp_us = validated_timestamp_us;
 }
 
-void VideoStreamProfiler::noteSampledFrame(std::optional<std::int64_t> frame_timestamp_us)
+void VideoStreamProfiler::noteSample(std::optional<std::int64_t> frame_timestamp_us)
 {
   const auto sample_ready_time = SteadyClock::now();
-  std::vector<TraceArg> args;
-  if (frame_timestamp_us.has_value()) {
-    addTraceArg(args, "frame_timestamp_us", *frame_timestamp_us);
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  impl_->has_activity = true;
+  impl_->frames_sampled++;
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kSampledTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(frame_timestamp_us));
   }
 
-  std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
-  impl_->frames_sampled++;
-  impl_->recordTraceInstant(sampledTraceEventName(), std::move(args));
-
-  const auto validated_timestamp_us = validateSourceTimestampUs(frame_timestamp_us);
-  if (!validated_timestamp_us.has_value()) {
+  if (!frame_timestamp_us.has_value() || *frame_timestamp_us < 0) {
     return;
   }
 
-  while (!impl_->pending_source_frames.empty() && impl_->pending_source_frames.front().first < *validated_timestamp_us)
-  {
-    impl_->pending_source_frames.pop_front();
+  const auto ingress_time = impl_->ingress_matcher.match(*frame_timestamp_us, IngressMatcher::MatchMode::kKeep);
+  if (!ingress_time.has_value()) {
+    return;
   }
 
-  if (!impl_->pending_source_frames.empty() && impl_->pending_source_frames.front().first == *validated_timestamp_us) {
-    const auto source_to_sample_ready = std::chrono::duration_cast<std::chrono::microseconds>(
-      sample_ready_time - impl_->pending_source_frames.front().second);
-    impl_->appsrc_to_sample_ms.addMilliseconds(static_cast<double>(source_to_sample_ready.count()) / 1000.0);
-    std::vector<TraceArg> span_args;
-    addTraceArg(span_args, "frame_timestamp_us", *validated_timestamp_us);
-    impl_->recordTraceComplete(
-      sourceToSampleReadyTraceEventName(),
-      impl_->pending_source_frames.front().second,
-      source_to_sample_ready,
-      std::move(span_args));
+  const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(sample_ready_time - *ingress_time);
+  impl_->appsrc_to_sample_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
+
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordComplete(
+      impl_->spec.stream_key,
+      kSourceToSampleReadyFieldName,
+      *ingress_time,
+      latency_us,
+      makeFrameTimestampArgs(frame_timestamp_us));
   }
 }
 
-void VideoStreamProfiler::noteFrameCaptured(std::optional<std::int64_t> frame_timestamp_us)
+void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestamp_us)
 {
   const auto capture_complete_time = SteadyClock::now();
-  std::vector<TraceArg> args;
-  if (frame_timestamp_us.has_value()) {
-    addTraceArg(args, "frame_timestamp_us", *frame_timestamp_us);
-  }
-
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->frames_captured++;
-  impl_->recordTraceInstant(capturedTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kCapturedTraceEventName, SteadyClock::now(), makeFrameTimestampArgs(frame_timestamp_us));
+  }
 
   if (impl_->last_output_arrival.has_value()) {
     const auto gap_us =
       std::chrono::duration_cast<std::chrono::microseconds>(capture_complete_time - *impl_->last_output_arrival);
-    impl_->output_arrival_gap_ms.addMilliseconds(static_cast<double>(gap_us.count()) / 1000.0);
+    impl_->output_arrival_gap_ms.addDurationMs(static_cast<double>(gap_us.count()) / 1000.0);
   }
   impl_->last_output_arrival = capture_complete_time;
 
-  const auto validated_timestamp_us = validateSourceTimestampUs(frame_timestamp_us);
-  if (!validated_timestamp_us.has_value()) {
+  if (!frame_timestamp_us.has_value() || *frame_timestamp_us < 0) {
     return;
   }
 
-  while (!impl_->pending_source_frames.empty() && impl_->pending_source_frames.front().first < *validated_timestamp_us)
-  {
-    impl_->pending_source_frames.pop_front();
+  const auto ingress_time = impl_->ingress_matcher.match(*frame_timestamp_us, IngressMatcher::MatchMode::kConsume);
+  if (!ingress_time.has_value()) {
+    return;
   }
 
-  if (!impl_->pending_source_frames.empty() && impl_->pending_source_frames.front().first == *validated_timestamp_us) {
-    const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
-      capture_complete_time - impl_->pending_source_frames.front().second);
-    impl_->source_to_output_submit_ms.addMilliseconds(static_cast<double>(latency_us.count()) / 1000.0);
-    std::vector<TraceArg> span_args;
-    addTraceArg(span_args, "frame_timestamp_us", *validated_timestamp_us);
-    impl_->recordTraceComplete(
-      sourceToLiveKitSubmitTraceEventName(),
-      impl_->pending_source_frames.front().second,
+  const auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(capture_complete_time - *ingress_time);
+  impl_->source_to_output_submit_ms.addDurationMs(static_cast<double>(latency_us.count()) / 1000.0);
+
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordComplete(
+      impl_->spec.stream_key,
+      kSourceToLiveKitSubmitFieldName,
+      *ingress_time,
       latency_us,
-      std::move(span_args));
-    impl_->pending_source_frames.pop_front();
+      makeFrameTimestampArgs(frame_timestamp_us));
   }
 }
 
 void VideoStreamProfiler::notePipelineStart()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->pipeline_start_count++;
-  impl_->recordTraceInstant(pipelineStartTraceEventName());
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(impl_->spec.stream_key, kPipelineStartTraceEventName, SteadyClock::now());
+  }
 }
 
 void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
@@ -863,9 +762,12 @@ void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
   addTraceArg(args, "reason", reason);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->pipeline_failure_count++;
-  impl_->recordTraceInstant(pipelineFailureTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kPipelineFailureTraceEventName, SteadyClock::now(), std::move(args));
+  }
 }
 
 void VideoStreamProfiler::noteRestartFailed(const std::string & error)
@@ -874,9 +776,12 @@ void VideoStreamProfiler::noteRestartFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->restart_failed_count++;
-  impl_->recordTraceInstant(restartFailureTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kRestartFailureTraceEventName, SteadyClock::now(), std::move(args));
+  }
 }
 
 void VideoStreamProfiler::notePushFailed(const std::string & error)
@@ -885,9 +790,12 @@ void VideoStreamProfiler::notePushFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->push_failed_count++;
-  impl_->recordTraceInstant(pushFailureTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kPushFailureTraceEventName, SteadyClock::now(), std::move(args));
+  }
 }
 
 void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
@@ -896,9 +804,12 @@ void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->sample_unpack_failed_count++;
-  impl_->recordTraceInstant(sampleUnpackFailureTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kSampleUnpackFailureTraceEventName, SteadyClock::now(), std::move(args));
+  }
 }
 
 void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
@@ -907,9 +818,12 @@ void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->capture_failed_count++;
-  impl_->recordTraceInstant(captureFailureTraceEventName(), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key, kCaptureFailureTraceEventName, SteadyClock::now(), std::move(args));
+  }
 }
 
 void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republished)
@@ -920,65 +834,61 @@ void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republi
   addTraceArg(args, "republished", republished);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   if (republished) {
     impl_->track_republish_count++;
   } else {
     impl_->track_publish_count++;
   }
-  impl_->recordTraceInstant(trackPublishedTraceEventName(republished), std::move(args));
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(
+      impl_->spec.stream_key,
+      republished ? kTrackRepublishedTraceEventName : kTrackPublishedTraceEventName,
+      SteadyClock::now(),
+      std::move(args));
+  }
 }
 
-void VideoStreamProfiler::noteTrackUnpublishing()
+void VideoStreamProfiler::noteTrackUnpublish()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
+  impl_->has_activity = true;
   impl_->track_unpublish_count++;
-  impl_->recordTraceInstant(trackUnpublishingTraceEventName());
+  if (impl_->recorder != nullptr) {
+    impl_->recorder->recordInstant(impl_->spec.stream_key, kTrackUnpublishingTraceEventName, SteadyClock::now());
+  }
 }
 
-void VideoStreamProfiler::recordStageDuration(
+void VideoStreamProfiler::recordStage(
   VideoProfileStage stage,
   std::chrono::microseconds duration,
   std::optional<std::int64_t> frame_timestamp_us,
   std::optional<SteadyClock::time_point> start_time)
 {
   const double duration_ms = static_cast<double>(duration.count()) / 1000.0;
+  const auto & metric = stageMetric(stage);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->markActivityLocked();
-  switch (stage) {
-    case VideoProfileStage::kPushToAppSrc:
-      impl_->push_to_appsrc_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kSampleCallback:
-      impl_->sample_callback_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kSampleUnpack:
-      impl_->sample_unpack_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kFrameSink:
-      impl_->frame_sink_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kPublisherHandleFrame:
-      impl_->publisher_handle_frame_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kEnsureTrack:
-      impl_->ensure_track_ms.addMilliseconds(duration_ms);
-      break;
-    case VideoProfileStage::kCaptureFrame:
-      impl_->capture_frame_ms.addMilliseconds(duration_ms);
-      break;
+  impl_->has_activity = true;
+  (impl_.get()->*(metric.samples)).addDurationMs(duration_ms);
+
+  if (impl_->recorder == nullptr) {
+    return;
   }
 
-  impl_->recordTraceStage(
-    stage, start_time.has_value() ? *start_time : SteadyClock::now() - duration, duration, frame_timestamp_us);
+  auto args = makeFrameTimestampArgs(frame_timestamp_us);
+  impl_->recorder->recordComplete(
+    impl_->spec.stream_key,
+    metric.metric_name,
+    start_time.value_or(SteadyClock::now() - duration),
+    duration,
+    std::move(args));
 }
 
-std::optional<VideoStreamProfileSummary> VideoStreamProfiler::collectAndResetSummary()
+std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  if (!impl_->activity_since_last_summary) {
+  if (!impl_->has_activity) {
     return std::nullopt;
   }
 
@@ -1000,20 +910,16 @@ std::optional<VideoStreamProfileSummary> VideoStreamProfiler::collectAndResetSum
   summary.track_republish_count = impl_->track_republish_count;
   summary.track_unpublish_count = impl_->track_unpublish_count;
   summary.source_timestamp_regression_count = impl_->source_timestamp_regression_count;
-  summary.ingress_arrival_gap_ms = summarizeAndResetMetric(impl_->ingress_arrival_gap_ms);
-  summary.output_arrival_gap_ms = summarizeAndResetMetric(impl_->output_arrival_gap_ms);
-  summary.source_timestamp_gap_ms = summarizeAndResetMetric(impl_->source_timestamp_gap_ms);
-  summary.appsrc_to_sample_ms = summarizeAndResetMetric(impl_->appsrc_to_sample_ms);
-  summary.source_to_output_submit_ms = summarizeAndResetMetric(impl_->source_to_output_submit_ms);
-  summary.push_to_appsrc_ms = summarizeAndResetMetric(impl_->push_to_appsrc_ms);
-  summary.sample_callback_ms = summarizeAndResetMetric(impl_->sample_callback_ms);
-  summary.sample_unpack_ms = summarizeAndResetMetric(impl_->sample_unpack_ms);
-  summary.frame_sink_ms = summarizeAndResetMetric(impl_->frame_sink_ms);
-  summary.publisher_handle_frame_ms = summarizeAndResetMetric(impl_->publisher_handle_frame_ms);
-  summary.ensure_track_ms = summarizeAndResetMetric(impl_->ensure_track_ms);
-  summary.capture_frame_ms = summarizeAndResetMetric(impl_->capture_frame_ms);
+  summary.ingress_arrival_gap_ms = impl_->ingress_arrival_gap_ms.takeSummary();
+  summary.output_arrival_gap_ms = impl_->output_arrival_gap_ms.takeSummary();
+  summary.source_timestamp_gap_ms = impl_->source_timestamp_gap_ms.takeSummary();
+  summary.appsrc_to_sample_ms = impl_->appsrc_to_sample_ms.takeSummary();
+  summary.source_to_output_submit_ms = impl_->source_to_output_submit_ms.takeSummary();
+  for (const auto & metric : kStageMetrics) {
+    summary.*(metric.summary) = (impl_.get()->*(metric.samples)).takeSummary();
+  }
 
-  impl_->activity_since_last_summary = false;
+  impl_->has_activity = false;
   impl_->frames_in = 0;
   impl_->frames_sampled = 0;
   impl_->frames_captured = 0;
@@ -1046,7 +952,7 @@ const VideoProfilingConfig & VideoProfilingRegistry::config() const
   return impl_->config;
 }
 
-std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateStreamProfiler(const VideoStreamSpec & spec)
+std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler(const VideoStreamSpec & spec)
 {
   if (!enabled()) {
     return nullptr;
@@ -1056,25 +962,27 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateStreamPr
   auto [it, inserted] = impl_->profilers.try_emplace(spec.stream_key);
   if (inserted || it->second == nullptr) {
     auto profiler = std::make_shared<VideoStreamProfiler>(spec);
-    profiler->impl_->trace_recorder = impl_->recorder;
+    profiler->impl_->recorder = impl_->recorder;
     if (impl_->recorder != nullptr) {
       std::vector<TraceArg> args;
       addTraceArg(args, "track_name", spec.track_name);
       addTraceArg(args, "input_kind", std::string(videoInputKindToString(spec.input_kind)));
       addTraceArg(args, "ingest_mode", spec.ingest_mode);
       impl_->recorder->recordInstant(
-        spec.stream_key, streamRegisteredTraceEventName(), SteadyClock::now(), std::move(args));
+        spec.stream_key, kStreamRegisteredTraceEventName, SteadyClock::now(), std::move(args));
     }
     it->second = std::move(profiler);
   }
   return it->second;
 }
 
-std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::collectAndResetSummaries()
+std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::takeSummaries()
 {
   std::vector<std::shared_ptr<VideoStreamProfiler>> profilers;
   {
     std::lock_guard<std::mutex> lock(impl_->mutex);
+    // Copy the shared_ptr set under the registry lock, then release it before
+    // taking each profiler's own mutex inside VideoStreamProfiler::takeSummary().
     profilers.reserve(impl_->profilers.size());
     for (const auto & entry : impl_->profilers) {
       if (entry.second != nullptr) {
@@ -1086,7 +994,7 @@ std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::collectAndResetSu
   std::vector<VideoStreamProfileSummary> summaries;
   summaries.reserve(profilers.size());
   for (const auto & profiler : profilers) {
-    if (const auto summary = profiler->collectAndResetSummary(); summary.has_value()) {
+    if (const auto summary = profiler->takeSummary(); summary.has_value()) {
       summaries.push_back(*summary);
     }
   }
@@ -1095,10 +1003,10 @@ std::vector<VideoStreamProfileSummary> VideoProfilingRegistry::collectAndResetSu
 
 std::size_t VideoProfilingRegistry::traceDroppedEventCount() const
 {
-  return impl_->recorder == nullptr ? 0U : impl_->recorder->droppedEventCount();
+  return impl_->recorder == nullptr ? 0U : impl_->recorder->droppedEvents();
 }
 
-void VideoProfilingRegistry::emitEnabledLog() const
+void VideoProfilingRegistry::logConfig() const
 {
   if (!enabled()) {
     return;
@@ -1111,49 +1019,45 @@ void VideoProfilingRegistry::emitEnabledLog() const
     .info();
 }
 
-void VideoProfilingRegistry::emitSummaryLogs()
+void VideoProfilingRegistry::logSummaries()
 {
   if (!enabled()) {
     return;
   }
 
-  const auto summaries = collectAndResetSummaries();
+  const auto summaries = takeSummaries();
   for (const auto & summary : summaries) {
     LogEvent event(impl_->logger, "video_profile_summary");
     event.field("stream_key", summary.stream_key)
       .field("track_name", summary.track_name)
       .field("input_kind", summary.input_kind)
       .field("ingest_mode", summary.ingest_mode)
-      .field(summaryFramesInFieldName(), summary.frames_in)
-      .field(summaryFramesSampledFieldName(), summary.frames_sampled)
-      .field(summaryFramesCapturedFieldName(), summary.frames_captured)
-      .field(summaryPipelineStartCountFieldName(), summary.pipeline_start_count)
-      .field(summaryPipelineFailureCountFieldName(), summary.pipeline_failure_count)
-      .field(summaryRestartFailedCountFieldName(), summary.restart_failed_count)
-      .field(summaryPushFailedCountFieldName(), summary.push_failed_count)
-      .field(summarySampleUnpackFailedCountFieldName(), summary.sample_unpack_failed_count)
-      .field(summaryCaptureFailedCountFieldName(), summary.capture_failed_count)
-      .field(summaryTrackPublishCountFieldName(), summary.track_publish_count)
-      .field(summaryTrackRepublishCountFieldName(), summary.track_republish_count)
-      .field(summaryTrackUnpublishCountFieldName(), summary.track_unpublish_count)
-      .field(summarySourceTimestampRegressionCountFieldName(), summary.source_timestamp_regression_count);
-    addMetricFields(event, summaryIngressArrivalGapFieldName(), summary.ingress_arrival_gap_ms);
-    addMetricFields(event, summaryOutputArrivalGapFieldName(), summary.output_arrival_gap_ms);
-    addMetricFields(event, summarySourceTimestampGapFieldName(), summary.source_timestamp_gap_ms);
-    addMetricFields(event, summarySourceToSampleReadyFieldName(), summary.appsrc_to_sample_ms);
-    addMetricFields(event, summarySourceToOutputSubmitFieldName(), summary.source_to_output_submit_ms);
-    addMetricFields(event, summaryPushToAppSrcFieldName(), summary.push_to_appsrc_ms);
-    addMetricFields(event, summarySampleCallbackFieldName(), summary.sample_callback_ms);
-    addMetricFields(event, summarySampleUnpackFieldName(), summary.sample_unpack_ms);
-    addMetricFields(event, summaryFrameSinkFieldName(), summary.frame_sink_ms);
-    addMetricFields(event, summaryPublisherHandleFieldName(), summary.publisher_handle_frame_ms);
-    addMetricFields(event, summaryEnsureTrackFieldName(), summary.ensure_track_ms);
-    addMetricFields(event, summaryCaptureFrameFieldName(), summary.capture_frame_ms);
+      .field(kFramesInCountFieldName, summary.frames_in)
+      .field(kFramesSampledCountFieldName, summary.frames_sampled)
+      .field(kFramesCapturedCountFieldName, summary.frames_captured)
+      .field(kPipelineStartCountFieldName, summary.pipeline_start_count)
+      .field(kPipelineFailureCountFieldName, summary.pipeline_failure_count)
+      .field(kRestartFailedCountFieldName, summary.restart_failed_count)
+      .field(kPushFailedCountFieldName, summary.push_failed_count)
+      .field(kSampleUnpackFailedCountFieldName, summary.sample_unpack_failed_count)
+      .field(kCaptureFailedCountFieldName, summary.capture_failed_count)
+      .field(kTrackPublishCountFieldName, summary.track_publish_count)
+      .field(kTrackRepublishCountFieldName, summary.track_republish_count)
+      .field(kTrackUnpublishCountFieldName, summary.track_unpublish_count)
+      .field(kSourceTimestampRegressionCountFieldName, summary.source_timestamp_regression_count);
+    addMetricFields(event, kIngressArrivalGapFieldName, summary.ingress_arrival_gap_ms);
+    addMetricFields(event, kOutputArrivalGapFieldName, summary.output_arrival_gap_ms);
+    addMetricFields(event, kSourceTimestampGapFieldName, summary.source_timestamp_gap_ms);
+    addMetricFields(event, kSourceToSampleReadyFieldName, summary.appsrc_to_sample_ms);
+    addMetricFields(event, kSourceToLiveKitSubmitFieldName, summary.source_to_output_submit_ms);
+    for (const auto & metric : kStageMetrics) {
+      addMetricFields(event, metric.metric_name, summary.*(metric.summary));
+    }
     event.info();
   }
 
   const std::size_t trace_drop_count = traceDroppedEventCount();
-  const std::size_t trace_drop_delta = trace_drop_count - impl_->last_reported_trace_drop_count;
+  const std::size_t trace_drop_delta = trace_drop_count - impl_->last_logged_drop_count;
   if (!summaries.empty() || trace_drop_delta > 0U) {
     LogEvent(impl_->logger, "video_profile_summary")
       .field("stream_key", "<aggregate>")
@@ -1164,7 +1068,7 @@ void VideoProfilingRegistry::emitSummaryLogs()
       .field("trace_dropped_event_count", trace_drop_delta)
       .info();
   }
-  impl_->last_reported_trace_drop_count = trace_drop_count;
+  impl_->last_logged_drop_count = trace_drop_count;
 }
 
 void VideoProfilingRegistry::flushTrace()
@@ -1174,11 +1078,11 @@ void VideoProfilingRegistry::flushTrace()
   }
 
   try {
-    const std::size_t event_count = impl_->recorder->writeTraceFile();
+    const std::size_t event_count = impl_->recorder->writeTrace();
     LogEvent(impl_->logger, "video_profile_trace_flushed")
       .field("trace_file", impl_->config.trace_file)
       .field("event_count", event_count)
-      .field("dropped_event_count", impl_->recorder->droppedEventCount())
+      .field("dropped_event_count", impl_->recorder->droppedEvents())
       .info();
   } catch (const std::exception & error) {
     LogEvent(impl_->logger, "video_profile_trace_flush_failed")

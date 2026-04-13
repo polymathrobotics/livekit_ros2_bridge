@@ -15,7 +15,6 @@
 #pragma once
 
 #include <chrono>
-#include <cstddef>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -32,9 +31,10 @@ namespace livekit_ros2_bridge
 class RoomConnection;
 class SubscriptionRegistry;
 
-// Resolves heartbeat lease ownership, including anonymous renewals that present a still-leased
-// wire `session_id`, then renews the heartbeat demand set and publishes one subscription-status
-// envelope back.
+// Resolves heartbeat lease ownership, including anonymous renewals via a still-leased wire
+// `session_id`, and publishes subscription-status responses.
+// This type has no internal synchronization; callers are expected to serialize `process()` and
+// `pruneExpiredLeases()` on one execution lane.
 class SubscriptionHeartbeatProcessor final
 {
 public:
@@ -44,48 +44,50 @@ public:
     AccessPolicy access_policy,
     rclcpp::Clock::SharedPtr clock);
 
-  // Renews every subscription demand for the resolved requester identity. Anonymous heartbeats are
-  // accepted only when the wire session_id already maps to an active requester lease.
+  // Renews every demand for the resolved requester identity. An empty `requester_identity` is
+  // treated as anonymous and succeeds only when `heartbeat.session_id` already owns a live lease.
   void process(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
-  // Expires only the client session leases used for anonymous-heartbeat fallback.
-  void pruneExpiredClientSessionLeases();
+  // Expires the client-session leases used for anonymous-heartbeat fallback. There is no
+  // background timer; callers choose when this maintenance runs.
+  void pruneExpiredLeases();
 
 private:
-  // Time-bound binding from the wire session_id to requester_identity.
-  struct ClientSessionLease
+  // Tracks the requester identity bound to a wire `session_id` so anonymous heartbeats from an
+  // already authenticated browser tab can renew until expiry.
+  struct SessionLease
   {
     std::string requester_identity;
     std::chrono::steady_clock::time_point expiry;
   };
 
-  // Returns the requester identity that owns this heartbeat, binding or renewing the wire
-  // session_id when present. A missing requester_identity is accepted only for a known,
-  // unexpired client session lease.
-  std::optional<std::string> resolveRequesterIdentity(
-    const std::string & requester_identity,
-    const SubscriptionHeartbeat & heartbeat,
-    std::chrono::steady_clock::time_point requester_lease_expiry);
-  // Renews a client session lease for exactly one requester identity until requester_lease_expiry.
-  // Conflicts are rejected so a delayed or replayed heartbeat cannot steal another requester's
-  // lease.
-  bool renewClientSessionLease(
-    const std::string & client_session_id,
-    const std::string & requester_identity,
-    std::chrono::steady_clock::time_point requester_lease_expiry);
-  void publishSubscriptionStatus(
-    const std::string & requester_identity,
-    const std::optional<std::string> & client_session_id,
-    std::chrono::steady_clock::time_point requester_lease_expiry,
-    const nlohmann::json & subscription_statuses);
+  // Accepted-heartbeat processing keeps one resolved requester identity and one shared lease
+  // expiry across both subscription renewal and the echoed status envelope.
+  struct ResolvedHeartbeatLease
+  {
+    std::string requester_identity;
+    std::optional<std::string> session_id;
+    std::chrono::steady_clock::time_point expiry;
+  };
+
+  std::optional<ResolvedHeartbeatLease> resolveHeartbeatLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id);
+  // Recovers the requester identity for an anonymous heartbeat from an existing leased
+  // `session_id`, and extends that lease when the fallback succeeds.
+  std::optional<std::string> resolveAnonymousIdentity(
+    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point lease_expiry);
+  nlohmann::json renewSubscriptionStatuses(
+    const ResolvedHeartbeatLease & lease, const std::vector<SubscriptionDemand> & subscriptions);
+
+  void publishStatuses(const ResolvedHeartbeatLease & lease, const nlohmann::json & statuses);
 
   SubscriptionRegistry & subscription_registry_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
+  // Used only for throttled ROS logging. Lease ownership uses `steady_clock` so ROS/system time
+  // jumps do not change anonymous-heartbeat acceptance.
   rclcpp::Clock::SharedPtr clock_;
-  // Tracks which requester identity is allowed to renew a wire session_id anonymously until
-  // expiry. A client session lease is not a room connection and not a participant_session.
-  std::unordered_map<std::string, ClientSessionLease> client_session_leases_;
-  EventThrottle client_session_conflict_throttle_{std::chrono::seconds(5)};
+  std::unordered_map<std::string, SessionLease> session_leases_;
+  EventThrottle session_conflict_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge

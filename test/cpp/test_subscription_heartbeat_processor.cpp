@@ -87,7 +87,7 @@ std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
   return publisher;
 }
 
-nlohmann::json extractSinglePublishedStatusEnvelope(
+nlohmann::json extractPublishedStatusEnvelope(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
   if (state.published_outgoing_control_packets.size() != 1U) {
@@ -107,59 +107,54 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
-nlohmann::json extractSingleSubscriptionStatus(const nlohmann::json & response)
+nlohmann::json extractStatusEntry(const nlohmann::json & envelope)
 {
-  if (!response.contains("subscriptions") || response["subscriptions"].size() != 1U) {
+  if (!envelope.contains("subscriptions") || envelope["subscriptions"].size() != 1U) {
     ADD_FAILURE() << "Expected one subscription status object in status response";
     return nlohmann::json::object();
   }
 
-  return response["subscriptions"].front();
+  return envelope["subscriptions"].front();
 }
 
-nlohmann::json extractSinglePublishedSubscriptionStatus(
+nlohmann::json extractPublishedStatusEntry(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
-  return extractSingleSubscriptionStatus(extractSinglePublishedStatusEnvelope(state, requester_identity));
+  return extractStatusEntry(extractPublishedStatusEnvelope(state, requester_identity));
 }
 
-std::optional<nlohmann::json> findSubscriptionStatus(
-  const nlohmann::json & response, const char * kind, const char * name)
+std::optional<nlohmann::json> findStatusEntry(const nlohmann::json & envelope, const char * kind, const char * name)
 {
-  if (!response.contains("subscriptions") || !response["subscriptions"].is_array()) {
+  if (!envelope.contains("subscriptions") || !envelope["subscriptions"].is_array()) {
     return std::nullopt;
   }
 
-  for (const auto & subscription_status : response["subscriptions"]) {
-    if (
-      subscription_status.value("kind", std::string()) == kind &&
-      subscription_status.value("name", std::string()) == name)
-    {
-      return std::optional<nlohmann::json>{subscription_status};
+  for (const auto & status : envelope["subscriptions"]) {
+    if (status.value("kind", std::string()) == kind && status.value("name", std::string()) == name) {
+      return std::optional<nlohmann::json>{status};
     }
   }
 
   return std::nullopt;
 }
 
-void expectSubscriptionStatus(
-  const nlohmann::json & subscription_status, const char * kind, const char * name, const char * status)
+void expectStatusEntry(const nlohmann::json & status, const char * kind, const char * name, const char * value)
 {
-  EXPECT_EQ(subscription_status["kind"], kind);
-  EXPECT_EQ(subscription_status["name"], name);
-  EXPECT_EQ(subscription_status["status"], status);
+  EXPECT_EQ(status["kind"], kind);
+  EXPECT_EQ(status["name"], name);
+  EXPECT_EQ(status["status"], value);
 }
 
-void expectPublishedSubscriptionError(
+void expectPublishedError(
   const FakeRoomConnectionState & state,
   const std::string & requester_identity,
   const char * kind,
   const char * name,
   const char * reason)
 {
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(state, requester_identity);
-  expectSubscriptionStatus(subscription_status, kind, name, "error");
-  EXPECT_EQ(subscription_status["error"]["reason"], reason);
+  const auto status = extractPublishedStatusEntry(state, requester_identity);
+  expectStatusEntry(status, kind, name, "error");
+  EXPECT_EQ(status["error"]["reason"], reason);
 }
 
 class SubscriptionHeartbeatProcessorTest : public ::testing::Test
@@ -199,7 +194,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
+  expectPublishedError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
@@ -209,7 +204,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)}));
 
-  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/nonexistent_topic", "not_found");
+  expectPublishedError(*state_, "requester-1", "topic", "/nonexistent_topic", "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnavailable)
@@ -224,7 +219,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
 
-  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/camera/front", "unavailable");
+  expectPublishedError(*state_, "requester-1", "topic", "/camera/front", "unavailable");
   (void)publisher;
 }
 
@@ -239,9 +234,9 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ConfiguredSourceBypassesRosAccessPoli
 
   processor.process("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
 
-  const auto subscription_status = extractSinglePublishedSubscriptionStatus(*state_, "requester-1");
-  expectSubscriptionStatus(subscription_status, "configured_source", "/sources/front", "active");
-  const auto & delivery = subscription_status["delivery"];
+  const auto status = extractPublishedStatusEntry(*state_, "requester-1");
+  expectStatusEntry(status, "configured_source", "/sources/front", "active");
+  const auto & delivery = status["delivery"];
   EXPECT_EQ(delivery["kind"], "video");
   EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
 }
@@ -256,7 +251,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
 
   processor.process("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
 
-  expectPublishedSubscriptionError(*state_, "requester-1", "configured_source", "/sources/missing", "not_found");
+  expectPublishedError(*state_, "requester-1", "configured_source", "/sources/missing", "not_found");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)
@@ -272,17 +267,17 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
-  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
-  EXPECT_EQ(response["v"], protocol::kProtocolVersion);
-  EXPECT_EQ(response["type"], protocol::kControlSubscriptionsStatus);
-  EXPECT_EQ(response["session_id"], "session-1");
-  ASSERT_TRUE(response["lease_expires_in_ms"].is_number_integer());
-  EXPECT_GT(response["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["v"], protocol::kProtocolVersion);
+  EXPECT_EQ(envelope["type"], protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(envelope["session_id"], "session-1");
+  ASSERT_TRUE(envelope["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(envelope["lease_expires_in_ms"].get<std::int64_t>(), 0);
 
-  const auto subscription = extractSingleSubscriptionStatus(response);
-  const auto & delivery = subscription["delivery"];
-  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
-  EXPECT_EQ(subscription["interface_type"], "sensor_msgs/msg/BatteryState");
+  const auto status = extractStatusEntry(envelope);
+  const auto & delivery = status["delivery"];
+  expectStatusEntry(status, "topic", "/battery_state", "active");
+  EXPECT_EQ(status["interface_type"], "sensor_msgs/msg/BatteryState");
   EXPECT_EQ(delivery["track_name"], "ros.data.battery_state");
   EXPECT_EQ(delivery["interval_ms"], 100);
   (void)publisher;
@@ -305,11 +300,11 @@ TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSe
 
   processor.process("", heartbeat);
 
-  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
-  EXPECT_EQ(response["session_id"], "session-1");
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["session_id"], "session-1");
 
-  const auto subscription = extractSingleSubscriptionStatus(response);
-  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
+  const auto status = extractStatusEntry(envelope);
+  expectStatusEntry(status, "topic", "/battery_state", "active");
   (void)publisher;
 }
 
@@ -340,27 +335,24 @@ TEST_F(
   auto registry = makeRegistry();
   SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
 
-  const auto session_only_heartbeat = makeHeartbeat({}, std::string("session-1"));
-  processor.process("requester-1", session_only_heartbeat);
+  const auto lease_heartbeat = makeHeartbeat({}, std::string("session-1"));
+  processor.process("requester-1", lease_heartbeat);
 
   EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 
-  processor.process("requester-2", session_only_heartbeat);
+  processor.process("requester-2", lease_heartbeat);
 
   EXPECT_EQ(state_->publish_control_packet_call_count, 0);
 
   processor.process("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
-  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
-  EXPECT_EQ(response["session_id"], "session-1");
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["session_id"], "session-1");
 
-  const auto subscription = extractSingleSubscriptionStatus(response);
-  expectSubscriptionStatus(subscription, "topic", "/battery_state", "active");
+  const auto status = extractStatusEntry(envelope);
+  expectStatusEntry(status, "topic", "/battery_state", "active");
   (void)publisher;
 }
-
-// TODO: Add lease-expiry/prune coverage once requester lease timing is injectable. This processor
-// currently hardcodes std::chrono::steady_clock and a 45-second lease duration.
 
 TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 {
@@ -373,7 +365,7 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  expectPublishedSubscriptionError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
+  expectPublishedError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledGracefully)
@@ -401,17 +393,17 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MixedSubscriptionResultsArePublishedI
   processor.process(
     "requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100), makeTopicDemand("/nonexistent_topic", 100)}));
 
-  const auto response = extractSinglePublishedStatusEnvelope(*state_, "requester-1");
-  ASSERT_TRUE(response.contains("subscriptions"));
-  ASSERT_EQ(response["subscriptions"].size(), 2U);
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  ASSERT_TRUE(envelope.contains("subscriptions"));
+  ASSERT_EQ(envelope["subscriptions"].size(), 2U);
 
-  const auto active_status = findSubscriptionStatus(response, "topic", "/battery_state");
+  const auto active_status = findStatusEntry(envelope, "topic", "/battery_state");
   ASSERT_TRUE(active_status.has_value());
-  expectSubscriptionStatus(*active_status, "topic", "/battery_state", "active");
+  expectStatusEntry(*active_status, "topic", "/battery_state", "active");
 
-  const auto missing_status = findSubscriptionStatus(response, "topic", "/nonexistent_topic");
+  const auto missing_status = findStatusEntry(envelope, "topic", "/nonexistent_topic");
   ASSERT_TRUE(missing_status.has_value());
-  expectSubscriptionStatus(*missing_status, "topic", "/nonexistent_topic", "error");
+  expectStatusEntry(*missing_status, "topic", "/nonexistent_topic", "error");
   EXPECT_EQ((*missing_status)["error"]["reason"], "not_found");
   (void)publisher;
 }

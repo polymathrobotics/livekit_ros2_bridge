@@ -24,16 +24,21 @@ namespace livekit_ros2_bridge
 
 class Runtime;
 
-// ROS component boundary that loads startup config and owns one runtime.
+// Thin ROS component boundary that translates parameterized startup into one Runtime instance.
+// Construction is eager: configuration loading and runtime startup both happen in the
+// constructor, and failures are surfaced by throwing instead of leaving a partially started
+// bridge behind.
 class Node final : public rclcpp::Node
 {
 public:
-  // Builds the default LiveKit session implementation and starts the runtime before returning.
   explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+  // Defined out-of-line so shutdown can reset runtime_ while the rclcpp::Node base and its
+  // interfaces are still alive.
   ~Node() override;
 
 private:
-  // Keeps the bridge runtime alive for the full node lifetime, including shutdown ordering.
+  // Runtime keeps references into this node, so Node tears it down explicitly from the
+  // destructor body while rclcpp state needed during shutdown is still alive.
   std::unique_ptr<Runtime> runtime_;
 };
 

@@ -25,6 +25,7 @@
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
+#include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
 #include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
@@ -35,44 +36,41 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr std::size_t kDataSubscriptionDepth = 2U;
-constexpr auto kTrackDeliveryFailureLogThrottlePeriod = std::chrono::seconds(5);
+constexpr std::size_t kSubscriptionDepth = 2U;
+constexpr auto kDeliveryFailureLogThrottle = std::chrono::seconds(5);
 const auto kDataStreamInstanceLogger = rclcpp::get_logger("data_stream_instance");
 
-std::string deriveTrackName(const std::string & normalized_topic)
+// Keep the topic-to-track mapping deterministic so reconnect-driven republishes reuse the same
+// externally visible LiveKit identity for this ROS topic.
+std::string makeDataTrackName(const std::string & topic)
 {
-  std::string name = "ros.data";
-  for (char ch : normalized_topic) {
-    name.push_back(ch == '/' ? '.' : ch);
+  std::string track_name = "ros.data";
+  track_name.reserve(track_name.size() + topic.size());
+  for (char ch : topic) {
+    track_name.push_back(ch == '/' ? '.' : ch);
   }
-  return name;
+  return track_name;
 }
 
 }  // namespace
 
-DataStreamSpec makeDataStreamSpec(std::string topic, std::string interface_type)
-{
-  DataStreamSpec spec;
-  spec.topic = std::move(topic);
-  spec.interface_type = std::move(interface_type);
-  spec.track_name = deriveTrackName(spec.topic);
-  return spec;
-}
-
 DataStreamInstance::DataStreamInstance(
-  DataStreamSpec spec,
+  std::string topic,
+  std::string interface_type,
   rclcpp::Node & node,
   RoomConnection & room_connection,
-  DataTrackPublicationObserver & publication_observer,
-  QuiesceGate & message_callback_gate,
-  const SubscriptionQosConfig * subscription_qos_config)
+  SubscriptionRegistry & registry,
+  QuiesceGate & callback_gate,
+  const SubscriptionQosConfig * qos_config)
 : node_(node)
-, spec_(std::move(spec))
-, data_track_publisher_(room_connection, spec_.track_name, node_.get_clock())
-, callback_generation_(message_callback_gate.currentGeneration())
-, publication_observer_(publication_observer)
-, message_callback_gate_(message_callback_gate)
-, subscription_qos_config_(subscription_qos_config)
+, topic_(std::move(topic))
+, interface_type_(std::move(interface_type))
+, track_name_(makeDataTrackName(topic_))
+, publisher_(room_connection, track_name_, node_.get_clock())
+, callback_generation_(callback_gate.currentGeneration())
+, registry_(registry)
+, callback_gate_(callback_gate)
+, qos_config_(qos_config)
 {}
 
 DataStreamInstance::~DataStreamInstance()
@@ -82,181 +80,176 @@ DataStreamInstance::~DataStreamInstance()
 
 const std::string & DataStreamInstance::trackName() const
 {
-  return spec_.track_name;
+  return track_name_;
 }
 
-int DataStreamInstance::appliedIntervalMs() const
+int DataStreamInstance::suppressionIntervalMs() const
 {
-  return applied_interval_ms_;
+  return suppression_window_.intervalMs();
 }
 
 DataStreamInstance::State DataStreamInstance::state() const
 {
-  return state_;
+  return publication_.current();
 }
 
-void DataStreamInstance::updateAppliedIntervalMs(int applied_interval_ms)
+void DataStreamInstance::setSuppressionIntervalMs(int interval_ms)
 {
-  applied_interval_ms_ = applied_interval_ms;
+  suppression_window_.setIntervalMs(interval_ms);
 }
 
-void DataStreamInstance::start(const std::string & requester_identity, std::size_t publish_generation)
+void DataStreamInstance::start(const std::string & requester_identity, std::size_t generation)
 {
-  if (state_ != State::kNone && state_ != State::kFailed) {
+  if (!publication_.canStart()) {
     return;
   }
 
-  generation_ = publish_generation;
-  publishPendingDataTrack(requester_identity);
-}
-
-void DataStreamInstance::republish(const std::string & requester_identity, std::size_t publish_generation)
-{
-  if (state_ != State::kPublished) {
-    return;
-  }
-
-  data_track_publisher_.unpublish();
-  state_ = State::kNone;
-  last_sent_time_.reset();
-  generation_ = publish_generation;
-  publishPendingDataTrack(requester_identity);
-}
-
-bool DataStreamInstance::onPublishComplete(std::size_t generation)
-{
-  if (state_ != State::kPending) {
-    return false;
-  }
-  if (generation_ != generation) {
-    return false;
-  }
-
-  state_ = State::kPublished;
-  LogEvent(kDataStreamInstanceLogger, "data_track_published")
-    .field("resource", spec_.topic)
+  // Enter pending before asking DataTrackPublisher to publish. ROS messages can still arrive
+  // while the track handshake is in flight, and forwardMessage() must drop them until the
+  // matching completePublish() confirms this exact generation.
+  publication_.beginPublish(generation);
+  LogEvent(kDataStreamInstanceLogger, "data_track_pending")
+    .field("resource", topic_)
     .field("kind", "topic")
-    .field("track_name", spec_.track_name)
+    .field("track_name", track_name_)
+    .field("requester_identity", requester_identity)
+    .info();
+  publisher_.publish(
+    generation,
+    [this](std::size_t generation) { return registry_.onDataTrackPublished(track_name_, generation); },
+    [this]() { registry_.onDataTrackFailed(track_name_); });
+}
+
+void DataStreamInstance::republish(const std::string & requester_identity, std::size_t generation)
+{
+  if (!publication_.canRepublish()) {
+    return;
+  }
+
+  resetPublication();
+  // Enter pending before asking DataTrackPublisher to publish. ROS messages can still arrive
+  // while the track handshake is in flight, and forwardMessage() must drop them until the
+  // matching completePublish() confirms this exact generation.
+  publication_.beginPublish(generation);
+  LogEvent(kDataStreamInstanceLogger, "data_track_pending")
+    .field("resource", topic_)
+    .field("kind", "topic")
+    .field("track_name", track_name_)
+    .field("requester_identity", requester_identity)
+    .info();
+  publisher_.publish(
+    generation,
+    [this](std::size_t generation) { return registry_.onDataTrackPublished(track_name_, generation); },
+    [this]() { registry_.onDataTrackFailed(track_name_); });
+}
+
+bool DataStreamInstance::completePublish(std::size_t generation)
+{
+  if (!publication_.completePublish(generation)) {
+    return false;
+  }
+
+  LogEvent(kDataStreamInstanceLogger, "data_track_published")
+    .field("resource", topic_)
+    .field("kind", "topic")
+    .field("track_name", track_name_)
     .info();
   return true;
 }
 
-void DataStreamInstance::onPublishFailed()
+void DataStreamInstance::failPublish()
 {
   LogEvent(kDataStreamInstanceLogger, "data_track_publish_failed")
-    .field("resource", spec_.topic)
+    .field("resource", topic_)
     .field("kind", "topic")
-    .field("track_name", spec_.track_name)
+    .field("track_name", track_name_)
     .warn();
-  state_ = State::kFailed;
+  publication_.failPublish();
 }
 
 void DataStreamInstance::shutdown()
 {
-  data_track_publisher_.shutdown();
-  state_ = State::kNone;
-  last_sent_time_.reset();
-  subscription_handle_.reset();
+  resetPublication();
+  subscription_.reset();
 }
 
-void DataStreamInstance::initializeSubscription()
+void DataStreamInstance::resetPublication()
 {
-  const rclcpp::QoS base_qos(kDataSubscriptionDepth);
-  const ResolvedSubscriptionQos resolved_qos =
-    resolveTopicSubscriptionQos(node_, spec_.topic, base_qos, subscription_qos_config_);
+  publisher_.unpublish();
+  publication_.reset();
+  suppression_window_.reset();
+}
+
+void DataStreamInstance::subscribe()
+{
+  const rclcpp::QoS base_qos(kSubscriptionDepth);
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, topic_, base_qos, qos_config_);
 
   LogEvent(kDataStreamInstanceLogger, "subscription_qos_resolved")
-    .field("resource", spec_.topic)
+    .field("resource", topic_)
     .field("kind", "topic")
     .field("delivery", protocol::kDeliveryKindData)
-    .field("interface_type", spec_.interface_type)
-    .field("source", subscriptionQosResolutionSourceToString(resolved_qos.source))
-    .field("reliability", reliabilityPolicyToString(resolved_qos.qos.reliability()))
-    .field("durability", durabilityPolicyToString(resolved_qos.qos.durability()))
-    .field("used_publisher_qos", resolved_qos.used_publisher_qos)
-    .field("mixed_reliability", resolved_qos.mixed_reliability)
-    .field("mixed_durability", resolved_qos.mixed_durability)
-    .field("override_id", resolved_qos.matched_override_id)
-    .field("override_pattern", resolved_qos.matched_override_pattern)
+    .field("interface_type", interface_type_)
+    .field("source", subscriptionQosSourceString(qos.source))
+    .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
+    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+    .field("used_publisher_qos", qos.used_publisher_qos)
+    .field("mixed_reliability", qos.mixed_reliability)
+    .field("mixed_durability", qos.mixed_durability)
+    .field("override_id", qos.override_id)
+    .field("override_pattern", qos.override_pattern)
     .info();
 
+  // ROS may already have queued a callback when SubscriptionRegistry starts reset/shutdown.
+  // The gate rejects old-session callbacks before they touch shared state, and the weak pointer
+  // keeps a late callback from extending the instance lifetime past teardown.
   const std::weak_ptr<DataStreamInstance> weak_self = weak_from_this();
-  subscription_handle_ = node_.create_generic_subscription(
-    spec_.topic,
-    spec_.interface_type,
-    resolved_qos.qos,
-    [weak_self, callback_generation = callback_generation_, &message_callback_gate = message_callback_gate_](
+  subscription_ = node_.create_generic_subscription(
+    topic_,
+    interface_type_,
+    qos.qos,
+    [weak_self, callback_generation = callback_generation_, &callback_gate = callback_gate_](
       std::shared_ptr<rclcpp::SerializedMessage> message) {
       if (message == nullptr) {
         return;
       }
-      if (!message_callback_gate.tryEnter(callback_generation)) {
+      if (!callback_gate.tryEnter(callback_generation)) {
         return;
       }
 
-      ScopeExit finish_delivery([&message_callback_gate]() { message_callback_gate.leave(); });
+      ScopeExit leave_gate([&callback_gate]() { callback_gate.leave(); });
       const auto self = weak_self.lock();
       if (!self) {
         return;
       }
 
-      self->handleSerializedMessage(*message);
+      self->forwardMessage(*message);
     });
 }
 
-void DataStreamInstance::handleSerializedMessage(const rclcpp::SerializedMessage & message)
+void DataStreamInstance::forwardMessage(const rclcpp::SerializedMessage & message)
 {
-  if (state_ != State::kPublished) {
+  // ROS callbacks may still arrive while publish is pending or after teardown wins a race. Drop
+  // instead of buffering so a later publication never replays stale pre-publish data.
+  if (!publication_.isPublished()) {
     return;
   }
 
-  if (shouldSkipDueToInterval()) {
+  if (!suppression_window_.allow(Clock::now())) {
     return;
   }
 
-  const auto & rcl_msg = message.get_rcl_serialized_message();
+  const auto & cdr = message.get_rcl_serialized_message();
   try {
-    data_track_publisher_.tryPush(rcl_msg.buffer, rcl_msg.buffer_length);
+    publisher_.write(cdr.buffer, cdr.buffer_length);
   } catch (const std::exception & exc) {
     LogEvent(kDataStreamInstanceLogger, "data_track_delivery_failed")
-      .field("resource", spec_.topic)
+      .field("resource", topic_)
       .field("kind", "topic")
-      .field("track_name", spec_.track_name)
+      .field("track_name", track_name_)
       .field("error", exc.what())
-      .warnThrottle(*node_.get_clock(), kTrackDeliveryFailureLogThrottlePeriod);
+      .warnThrottle(*node_.get_clock(), kDeliveryFailureLogThrottle);
   }
-}
-
-bool DataStreamInstance::shouldSkipDueToInterval()
-{
-  if (applied_interval_ms_ == 0) {
-    return false;
-  }
-
-  const auto now = Clock::now();
-  const auto suppression_window = std::chrono::milliseconds(applied_interval_ms_);
-  const bool within_suppression_window = last_sent_time_ && now - *last_sent_time_ < suppression_window;
-  if (within_suppression_window) {
-    return true;
-  }
-
-  last_sent_time_ = now;
-  return false;
-}
-
-void DataStreamInstance::publishPendingDataTrack(const std::string & requester_identity)
-{
-  state_ = State::kPending;
-  LogEvent(kDataStreamInstanceLogger, "data_track_pending")
-    .field("resource", spec_.topic)
-    .field("kind", "topic")
-    .field("track_name", spec_.track_name)
-    .field("requester_identity", requester_identity)
-    .info();
-  data_track_publisher_.publish(
-    generation_,
-    [this](std::size_t generation) { return publication_observer_.onDataTrackPublished(spec_.track_name, generation); },
-    [this]() { publication_observer_.onDataTrackFailed(spec_.track_name); });
 }
 
 }  // namespace livekit_ros2_bridge

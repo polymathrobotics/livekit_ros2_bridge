@@ -92,7 +92,7 @@ public:
     state->callbacks = std::move(callbacks);
   }
 
-  bool registerRpcMethod(const std::string & method_name, RpcHandler handler) override
+  bool registerRpc(const std::string & method_name, RpcHandler handler) override
   {
     state->registered_rpc_methods.push_back(method_name);
     const bool registration_rejected =
@@ -105,7 +105,7 @@ public:
     return true;
   }
 
-  bool unregisterRpcMethod(const std::string & method_name) override
+  bool unregisterRpc(const std::string & method_name) override
   {
     state->event_log.push_back("unregister:" + method_name);
     state->unregistered_rpc_methods.push_back(method_name);
@@ -163,27 +163,27 @@ public:
     data_track_names_.erase(track.get());
   }
 
-  std::shared_ptr<PublishedVideoTrack> publishVideoTrack(
-    const std::string & track_name,
+  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+    const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const VideoPublishConfig & publish_config) override
+    const VideoPublishConfig & config) override
   {
     (void)source;
-    state->event_log.push_back("publish_video_track:" + track_name);
-    state->published_video_track_names.push_back(track_name);
-    state->published_video_configs.push_back(publish_config);
-    auto track = std::make_shared<PublishedVideoTrack>();
-    track->track_name = track_name;
-    return track;
+    state->event_log.push_back("publish_video_track:" + name);
+    state->published_video_track_names.push_back(name);
+    state->published_video_configs.push_back(config);
+    auto handle = std::make_shared<VideoTrackHandle>();
+    handle->name = name;
+    return handle;
   }
 
-  void unpublishVideoTrack(const std::shared_ptr<PublishedVideoTrack> & track) override
+  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
   {
-    if (track == nullptr) {
+    if (handle == nullptr) {
       return;
     }
-    state->event_log.push_back("unpublish_video_track:" + track->track_name);
-    state->unpublished_video_track_names.push_back(track->track_name);
+    state->event_log.push_back("unpublish_video_track:" + handle->name);
+    state->unpublished_video_track_names.push_back(handle->name);
   }
 
   void stop() override

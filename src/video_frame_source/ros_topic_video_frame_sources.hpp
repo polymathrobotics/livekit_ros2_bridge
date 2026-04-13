@@ -29,16 +29,22 @@
 namespace livekit_ros2_bridge
 {
 
-struct RawSourceConfig
+struct FrameLayout
 {
+  // This reflects the observed raw frame layout used for appsrc caps and video
+  // metadata. Any change requires rebuilding the pipeline instead of mutating
+  // the existing appsrc in place.
   int width = 0;
   int height = 0;
   GstVideoFormat format = GST_VIDEO_FORMAT_UNKNOWN;
   std::uint32_t stride = 0;
 };
 
-bool operator==(const RawSourceConfig & lhs, const RawSourceConfig & rhs);
-bool operator!=(const RawSourceConfig & lhs, const RawSourceConfig & rhs);
+enum class CompressedImageCodec
+{
+  kJpeg,
+  kPng,
+};
 
 class RawRosVideoFrameSource final : public VideoPipelineFrameSource
 {
@@ -46,26 +52,26 @@ public:
   RawRosVideoFrameSource(
     rclcpp::Node & node,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config,
+    const SubscriptionQosConfig * qos_config,
     VideoFrameSink & frame_sink,
     VideoStreamLifecycleObserver & lifecycle_observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
-  void ensureRunning() override;
+  void start() override;
   void shutdown() override;
 
 private:
-  void createRosSubscriptionLocked();
-  void handleRawImageMessage(const sensor_msgs::msg::Image::ConstSharedPtr & message);
-  void startRawRosPipelineLocked(const RawSourceConfig & config);
-  void pushRawImageLocked(const sensor_msgs::msg::Image & message, const RawSourceConfig & config);
-  void resetSourceStateLocked() override;
+  void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
+  void startLocked(const FrameLayout & layout);
+  void pushLocked(const sensor_msgs::msg::Image & image, const FrameLayout & layout);
+  void resetLocked() override;
 
   rclcpp::Node & node_;
-  const SubscriptionQosConfig * subscription_qos_config_;
+  // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
+  const SubscriptionQosConfig * qos_config_;
   bool first_input_logged_ = false;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
-  std::optional<RawSourceConfig> raw_source_config_;
+  std::optional<FrameLayout> frame_layout_;
 };
 
 class CompressedRosVideoFrameSource final : public VideoPipelineFrameSource
@@ -74,26 +80,26 @@ public:
   CompressedRosVideoFrameSource(
     rclcpp::Node & node,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config,
+    const SubscriptionQosConfig * qos_config,
     VideoFrameSink & frame_sink,
     VideoStreamLifecycleObserver & lifecycle_observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
-  void ensureRunning() override;
+  void start() override;
   void shutdown() override;
 
 private:
-  void createRosSubscriptionLocked();
-  void handleCompressedImageMessage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & message);
-  void startCompressedRosPipelineLocked(const std::string & format);
-  void pushCompressedImageLocked(const sensor_msgs::msg::CompressedImage & message);
-  void resetSourceStateLocked() override;
+  void onImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
+  void startLocked(CompressedImageCodec codec);
+  void pushLocked(const sensor_msgs::msg::CompressedImage & image);
+  void resetLocked() override;
 
   rclcpp::Node & node_;
-  const SubscriptionQosConfig * subscription_qos_config_;
+  // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
+  const SubscriptionQosConfig * qos_config_;
   bool first_input_logged_ = false;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
-  std::string compressed_format_;
+  std::optional<CompressedImageCodec> codec_;
 };
 
 }  // namespace livekit_ros2_bridge

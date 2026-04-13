@@ -24,17 +24,16 @@ namespace livekit_ros2_bridge
 /// Parsed form of a `ros.topics.publish` control message.
 struct TopicPublishCommand
 {
-  /// Normalized absolute topic name from the required `topic` field.
+  /// Normalized absolute topic name.
   std::string topic;
-  /// Trimmed ROS interface type from the required `interface_type` field.
+  /// Trimmed interface type. Package/msg spelling stays exact for later ROS-graph validation.
   std::string interface_type;
-  /// Raw CDR bytes from the required non-empty `message` payload object.
-  std::vector<std::uint8_t> cdr_payload;
+  std::vector<std::uint8_t> cdr;
 };
 
-/// Parse a JSON command object with required `topic`, `interface_type`, and `message` fields.
-/// `topic` is normalized as a ROS resource name and `message` must use the stable CDR payload object
-/// format.
-TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload);
+/// Parse a JSON topic-publish command. Normalizes `topic`, trims `interface_type` without
+/// rewriting its package/msg spelling, and requires a non-empty CDR `message` payload. Throws
+/// `std::invalid_argument` on malformed JSON or protocol-contract violations.
+TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & bytes);
 
 }  // namespace livekit_ros2_bridge

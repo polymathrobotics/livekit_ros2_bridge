@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <exception>
 #include <functional>
 #include <future>
@@ -32,17 +33,20 @@
 namespace livekit_ros2_bridge
 {
 
-class ExecutorWakeWaitable;
-
-// Queues work that must run on the node's ROS executor thread. Submitted
-// futures either complete from that executor context or fail with a shutdown
-// error if the task never starts draining.
+// Queues work that must run on the node's ROS executor thread. Work is exposed
+// through a waitable on the node's default callback group, so submitted futures
+// either complete from that executor context or fail with a shutdown error if
+// the task never starts draining. The queue borrows the node's waitables and
+// callback-group interfaces, so the node must outlive this queue.
 class RosExecutorQueue final
 {
 public:
   explicit RosExecutorQueue(rclcpp::Node & node);
   ~RosExecutorQueue();
 
+  // Enqueues work in FIFO order for execution on the executor thread. If
+  // shutdown() wins the race before this task begins draining, the returned
+  // future completes with the queue's shutdown error instead.
   template <typename Fn>
   auto submit(Fn && fn) -> std::future<std::invoke_result_t<Fn>>
   {
@@ -51,7 +55,7 @@ public:
     auto promise = std::make_shared<std::promise<Result>>();
     auto future = promise->get_future();
 
-    PendingTask task;
+    Task task;
     task.run = [promise, fn = std::forward<Fn>(fn)]() mutable {
       try {
         if constexpr (std::is_void_v<Result>) {
@@ -81,7 +85,7 @@ public:
       tasks_.push(std::move(task));
     }
 
-    wake_executor();
+    wake();
 
     return future;
   }
@@ -91,20 +95,30 @@ public:
   void shutdown();
 
 private:
-  struct PendingTask
+  class DrainWaitable;
+
+  struct Task
   {
     std::function<void()> run;
     std::function<void()> cancel;
   };
 
   void drain();
-  void wake_executor();
+  void wake();
 
+  // Protects shutdown_ and all state shared between submit(), wake(), drain(),
+  // and shutdown().
   std::mutex mutex_;
-  std::queue<PendingTask> tasks_;
-  std::shared_ptr<ExecutorWakeWaitable> waitable_;
-  rclcpp::CallbackGroup::SharedPtr callback_group_;
-  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_interface_;
+  std::queue<Task> tasks_;
+  // Cleared during shutdown() before the waitable is detached so concurrent
+  // wake() callers either use the live waitable or cleanly become a no-op.
+  std::shared_ptr<DrainWaitable> waitable_;
+  // Retained solely so shutdown() can unregister waitable_ from the same
+  // node interfaces it was added to.
+  rclcpp::CallbackGroup::SharedPtr default_callback_group_;
+  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
+  // Once set, new submissions are rejected and only work already running in
+  // drain() is allowed to finish.
   bool shutdown_ = false;
   // Used so shutdown() can wait for an in-progress drain without deadlocking
   // when shutdown itself is called from the executor thread running drain().

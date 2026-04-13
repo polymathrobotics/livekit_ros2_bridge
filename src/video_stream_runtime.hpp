@@ -26,7 +26,8 @@ class VideoFrameSink
 public:
   virtual ~VideoFrameSink() = default;
 
-  virtual void handleFrame(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
+  virtual void write(
+    int frame_width, int frame_height, std::vector<std::uint8_t> i420_frame, std::int64_t frame_timestamp_us) = 0;
 };
 
 // VideoStreamInstance owns one frame source on the input side and wires it to a
@@ -36,7 +37,7 @@ class VideoFrameSource
 public:
   virtual ~VideoFrameSource() = default;
 
-  virtual void ensureRunning() = 0;
+  virtual void start() = 0;
   virtual void shutdown() = 0;
 };
 
@@ -45,13 +46,14 @@ class VideoStreamLifecycleObserver
 public:
   virtual ~VideoStreamLifecycleObserver() = default;
 
-  virtual void onVideoTrackPublished(int width, int height, bool republished) = 0;
-  virtual void onVideoTrackUnpublishing() = 0;
-  virtual void onVideoStreamSampleUnpackFailed(const std::string & error) = 0;
-  virtual void onVideoStreamCaptureFailed(const std::string & error) = 0;
-  virtual void onVideoStreamPipelineFailed(const std::string & reason) = 0;
-  virtual void onVideoStreamRestartFailed(const std::string & error) = 0;
-  virtual void onVideoStreamPushFailed(const std::string & error) = 0;
+  virtual void onTrackPublished(int width, int height, bool republished) = 0;
+  // Called immediately before the current published track is unpublished.
+  virtual void onTrackUnpublishing() = 0;
+  virtual void onSampleUnpackFailed(const std::string & error) = 0;
+  virtual void onCaptureFailed(const std::string & error) = 0;
+  virtual void onPipelineFailed(const std::string & reason) = 0;
+  virtual void onRestartFailed(const std::string & error) = 0;
+  virtual void onPushFailed(const std::string & error) = 0;
 };
 
 }  // namespace livekit_ros2_bridge

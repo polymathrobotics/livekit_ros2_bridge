@@ -28,16 +28,19 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-using Json = nlohmann::json;
+constexpr char kTopicFieldError[] = "Publish command requires a string 'topic' field.";
+constexpr char kTopicEmptyError[] = "Publish command requires a non-empty 'topic' field.";
+constexpr char kInterfaceTypeError[] = "Publish command requires a non-empty 'interface_type' field.";
+constexpr char kMessagePayloadError[] = "Publish command requires a non-empty message.payload_base64 field.";
 
 }  // namespace
 
-TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & command_payload)
+TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & bytes)
 {
-  Json body;
+  nlohmann::json body;
   try {
-    body = Json::parse(command_payload.begin(), command_payload.end());
-  } catch (const Json::exception & exc) {
+    body = nlohmann::json::parse(bytes.begin(), bytes.end());
+  } catch (const nlohmann::json::exception & exc) {
     throw std::invalid_argument(std::string("Invalid publish command JSON: ") + exc.what());
   }
 
@@ -45,27 +48,21 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & c
     throw std::invalid_argument("Publish command must be a JSON object.");
   }
 
-  auto cdr_payload = parseCdrPayload(body, "message");
-  if (cdr_payload.empty()) {
-    throw std::invalid_argument("Publish command requires a non-empty message.payload_base64 field.");
+  // Reject an empty decoded CDR blob instead of treating it as an implicit default-constructed
+  // message instance.
+  auto cdr = cdr_payload::parse(body, "message");
+  if (cdr.empty()) {
+    throw std::invalid_argument(kMessagePayloadError);
   }
 
-  const auto topic_it = body.find("topic");
-  if (topic_it == body.end() || !topic_it->is_string()) {
-    throw std::invalid_argument("Publish command requires a string 'topic' field.");
-  }
-
-  std::string topic = normalizeRosResourceName(topic_it->get_ref<const std::string &>());
-  if (topic.empty()) {
-    throw std::invalid_argument("Publish command requires a non-empty 'topic' field.");
-  }
-
-  const std::string interface_type = parseRequiredNonEmptyTrimmedStringField(
-    body, "interface_type", "Publish command requires a non-empty 'interface_type' field.");
+  // Normalize topic names here so policy checks, publisher lookup, and logs see one resource
+  // spelling. Keep `interface_type` trimmed-but-exact because publish-time validation compares it
+  // against the ROS graph.
   return TopicPublishCommand{
-    std::move(topic),
-    std::move(interface_type),
-    std::move(cdr_payload),
+    normalizeRosResourceName(
+      parseRequiredNonEmptyTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError)),
+    parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError),
+    std::move(cdr),
   };
 }
 

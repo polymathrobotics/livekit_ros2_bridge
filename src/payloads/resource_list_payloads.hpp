@@ -22,7 +22,7 @@
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a topics/services list request. Unknown JSON fields are ignored.
+/// Parsed form of a resource-list request. Unknown JSON fields are ignored.
 struct ResourceListRequest
 {
   /// Optional trimmed query string. Missing, null, or blank values are treated as absent.
@@ -31,20 +31,68 @@ struct ResourceListRequest
   std::optional<std::size_t> limit;
 };
 
-/// A single topics/services list response entry.
+/// The wire format carries one `interface_type`, so callers must resolve or drop multi-type ROS
+/// graph entries before serializing.
 struct ResourceListEntry
 {
   std::string name;
   std::string interface_type;
 };
 
-/// Parse a JSON object request with optional `query` and `limit` fields.
-ResourceListRequest parseResourceListRequest(const std::string & payload);
+namespace resource_list_payloads
+{
 
-/// Serialize a response body as `{ "services": [{ "name", "interface_type" }, ...] }`.
-std::string serializeServiceListResponse(const std::vector<ResourceListEntry> & services);
+/// Parse a resource-list request object.
+/// Throws `std::invalid_argument` when the payload is not a JSON object or `query` / `limit`
+/// violate the RPC contract. Missing, null, and blank queries normalize to "no filter".
+ResourceListRequest parse(const std::string & request_payload);
 
-/// Serialize a response body as `{ "topics": [{ "name", "interface_type" }, ...] }`.
-std::string serializeTopicListResponse(const std::vector<ResourceListEntry> & topics);
+/// Serialize services as `{ "services": [{ "name", "interface_type" }, ...] }` in caller order.
+/// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
+/// the single `interface_type` wire shape before calling this helper.
+std::string serializeServiceList(const std::vector<ResourceListEntry> & entries);
+
+/// Serialize topics as `{ "topics": [{ "name", "interface_type" }, ...] }` in caller order.
+/// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
+/// the single `interface_type` wire shape before calling this helper.
+std::string serializeTopicList(const std::vector<ResourceListEntry> & entries);
+
+// TODO: Remove these compatibility wrappers once remaining call sites migrate to
+// `resource_list_payloads::parse` / `resource_list_payloads::serializeServiceList` /
+// `resource_list_payloads::serializeTopicList`.
+inline ResourceListRequest parseRequest(const std::string & request_payload)
+{
+  return parse(request_payload);
+}
+
+inline std::string serializeServices(const std::vector<ResourceListEntry> & entries)
+{
+  return serializeServiceList(entries);
+}
+
+inline std::string serializeTopics(const std::vector<ResourceListEntry> & entries)
+{
+  return serializeTopicList(entries);
+}
+
+}  // namespace resource_list_payloads
+
+// TODO: Remove these compatibility wrappers once remaining external call sites migrate to
+// `resource_list_payloads::parse` / `resource_list_payloads::serializeServiceList` /
+// `resource_list_payloads::serializeTopicList`.
+inline ResourceListRequest parseResourceListRequest(const std::string & request_payload)
+{
+  return resource_list_payloads::parse(request_payload);
+}
+
+inline std::string serializeServices(const std::vector<ResourceListEntry> & entries)
+{
+  return resource_list_payloads::serializeServiceList(entries);
+}
+
+inline std::string serializeTopics(const std::vector<ResourceListEntry> & entries)
+{
+  return resource_list_payloads::serializeTopicList(entries);
+}
 
 }  // namespace livekit_ros2_bridge

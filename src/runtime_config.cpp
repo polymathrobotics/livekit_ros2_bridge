@@ -41,46 +41,14 @@ constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 
-RoomConnectionConfig loadRoomConnectionConfig(const Params & params)
-{
-  if (params.livekit.url.empty()) {
-    throw std::runtime_error("livekit.url is required");
-  }
-  if (params.livekit.room.empty()) {
-    throw std::runtime_error("livekit.room is required");
-  }
-
-  RoomConnectionConfig config;
-  config.url = params.livekit.url;
-  config.room = params.livekit.room;
-  return config;
-}
-
-RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
-{
-  RuntimeConfig::HealthConfig config;
-  config.fail_fast_enabled = params.health.fail_fast.enabled;
-  config.fail_fast_disconnect_grace = std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::duration<double>(params.health.fail_fast.disconnect_grace_seconds));
-  return config;
-}
-
-VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
-{
-  VideoProfilingConfig config;
-  config.enabled = params.debug.video_profiling.enabled;
-  config.summary_interval = std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
-  config.trace_file = params.debug.video_profiling.trace_file;
-  config.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
-  return config;
-}
-
-std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * context)
+std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char * context)
 {
   const std::string trimmed = trim(raw_pattern);
   if (trimmed.empty()) {
     throw std::runtime_error(std::string(context) + " pattern must not be empty");
   }
+  // Store patterns in the canonical absolute form used by downstream matching.
+  // User-facing "*" is still accepted here and normalized to the catch-all "/*".
   if (trimmed == "*") {
     return "/*";
   }
@@ -100,12 +68,7 @@ std::string normalizeRosTopicPattern(std::string_view raw_pattern, const char * 
   return normalized;
 }
 
-std::string normalizeVideoRulePattern(std::string_view raw_pattern)
-{
-  return normalizeRosTopicPattern(raw_pattern, "video topic rule");
-}
-
-SubscriptionQosReliabilityMode parseSubscriptionQosReliabilityMode(const std::string & raw_mode)
+SubscriptionQosReliabilityMode parseSubscriptionQosReliability(const std::string & raw_mode)
 {
   if (raw_mode == "auto") {
     return SubscriptionQosReliabilityMode::kAuto;
@@ -120,7 +83,7 @@ SubscriptionQosReliabilityMode parseSubscriptionQosReliabilityMode(const std::st
   throw std::runtime_error("unsupported subscription.qos_overrides reliability mode '" + raw_mode + "'");
 }
 
-SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::string & raw_mode)
+SubscriptionQosDurabilityMode parseSubscriptionQosDurability(const std::string & raw_mode)
 {
   if (raw_mode == "auto") {
     return SubscriptionQosDurabilityMode::kAuto;
@@ -135,7 +98,7 @@ SubscriptionQosDurabilityMode parseSubscriptionQosDurabilityMode(const std::stri
   throw std::runtime_error("unsupported subscription.qos_overrides durability mode '" + raw_mode + "'");
 }
 
-VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec)
+VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
 {
   if (raw_codec == "auto") {
     return VideoPublishCodec::Auto;
@@ -156,10 +119,10 @@ VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec)
     return VideoPublishCodec::H265;
   }
 
-  throw std::runtime_error("unsupported video.publish.codec '" + raw_codec + "'");
+  throw std::runtime_error("unsupported " + field_name + " '" + raw_codec + "'");
 }
 
-VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast)
+VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
 {
   if (raw_simulcast == "auto") {
     return VideoPublishSimulcast::Auto;
@@ -171,53 +134,7 @@ VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulca
     return VideoPublishSimulcast::Disabled;
   }
 
-  throw std::runtime_error("unsupported video.publish.simulcast '" + raw_simulcast + "'");
-}
-
-struct VideoPublishOverride
-{
-  std::optional<VideoPublishCodec> codec;
-  std::optional<std::uint64_t> max_bitrate_bps;
-  std::optional<double> max_framerate;
-  std::optional<VideoPublishSimulcast> simulcast;
-};
-
-VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
-{
-  try {
-    return parseVideoPublishCodec(raw_codec);
-  } catch (const std::runtime_error &) {
-    throw std::runtime_error("unsupported " + field_name + " '" + raw_codec + "'");
-  }
-}
-
-VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
-{
-  try {
-    return parseVideoPublishSimulcast(raw_simulcast);
-  } catch (const std::runtime_error &) {
-    throw std::runtime_error("unsupported " + field_name + " '" + raw_simulcast + "'");
-  }
-}
-
-std::optional<VideoPublishCodec> parseOptionalVideoPublishCodec(
-  const std::string & raw_codec, const std::string & field_name)
-{
-  const std::string codec = trim(raw_codec);
-  if (codec.empty()) {
-    return std::nullopt;
-  }
-  return parseVideoPublishCodec(codec, field_name);
-}
-
-std::optional<VideoPublishSimulcast> parseOptionalVideoPublishSimulcast(
-  const std::string & raw_simulcast, const std::string & field_name)
-{
-  const std::string simulcast = trim(raw_simulcast);
-  if (simulcast.empty()) {
-    return std::nullopt;
-  }
-  return parseVideoPublishSimulcast(simulcast, field_name);
+  throw std::runtime_error("unsupported " + field_name + " '" + raw_simulcast + "'");
 }
 
 VideoPublishConfig parseVideoPublishConfig(const Params & params)
@@ -231,17 +148,19 @@ VideoPublishConfig parseVideoPublishConfig(const Params & params)
 }
 
 template <typename EntryT>
-VideoPublishOverride parseVideoPublishOverride(const EntryT & entry, const std::string & context)
+VideoPublishConfig parseVideoPublishConfig(
+  const EntryT & entry, const std::string & context, const VideoPublishConfig & default_publish_config)
 {
-  VideoPublishOverride config;
+  VideoPublishConfig config = default_publish_config;
 
-  if (
-    const auto codec = parseOptionalVideoPublishCodec(entry.publish.codec, context + " publish.codec");
-    codec.has_value())
-  {
-    config.codec = *codec;
+  const std::string codec = trim(entry.publish.codec);
+  if (!codec.empty()) {
+    config.codec = parseVideoPublishCodec(codec, context + " publish.codec");
   }
 
+  // Entry-level numeric overrides use negative values as "inherit the global
+  // default" sentinels because the generated parameter schema cannot express
+  // optional scalars for these fields.
   if (entry.publish.max_bitrate_bps >= 0) {
     config.max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
   }
@@ -249,36 +168,15 @@ VideoPublishOverride parseVideoPublishOverride(const EntryT & entry, const std::
     config.max_framerate = entry.publish.max_framerate;
   }
 
-  if (
-    const auto simulcast = parseOptionalVideoPublishSimulcast(entry.publish.simulcast, context + " publish.simulcast");
-    simulcast.has_value())
-  {
-    config.simulcast = *simulcast;
+  const std::string simulcast = trim(entry.publish.simulcast);
+  if (!simulcast.empty()) {
+    config.simulcast = parseVideoPublishSimulcast(simulcast, context + " publish.simulcast");
   }
 
   return config;
 }
 
-VideoPublishConfig mergeVideoPublishConfig(const VideoPublishConfig & defaults, const VideoPublishOverride & override)
-{
-  VideoPublishConfig merged = defaults;
-  if (override.codec.has_value()) {
-    merged.codec = *override.codec;
-  }
-  if (override.max_bitrate_bps.has_value()) {
-    merged.max_bitrate_bps = *override.max_bitrate_bps;
-  }
-  if (override.max_framerate.has_value()) {
-    merged.max_framerate = *override.max_framerate;
-  }
-  if (override.simulcast.has_value()) {
-    merged.simulcast = *override.simulcast;
-  }
-  return merged;
-}
-
-std::string composeVideoPipelineDescription(
-  const std::string & ingress_fragment, const std::string & transform_fragment)
+std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   std::string pipeline = ingress_fragment;
   if (!transform_fragment.empty()) {
@@ -296,17 +194,55 @@ std::string composeVideoPipelineDescription(
   return pipeline;
 }
 
-struct ParsedEndpointCounts
+struct EndpointCounts
 {
   guint appsrc_count = 0;
   guint appsink_count = 0;
-  guint named_bridge_appsrc_count = 0;
-  guint named_bridge_appsink_count = 0;
+  guint bridge_appsrc_count = 0;
+  guint bridge_appsink_count = 0;
 };
 
-ParsedEndpointCounts inspectReservedEndpoints(const std::string & context, GstElement * pipeline)
+// Parse failures can leave bridge-owned endpoints partially instantiated, so
+// validation needs both an exact layout check and a looser user-endpoint check.
+struct EndpointLayout
 {
-  ParsedEndpointCounts counts;
+  guint appsrc_count = 0;
+  guint appsink_count = 1;
+  guint bridge_appsrc_count = 0;
+  guint bridge_appsink_count = 1;
+
+  constexpr bool matches(const EndpointCounts & counts) const noexcept
+  {
+    return counts.appsrc_count == appsrc_count && counts.appsink_count == appsink_count &&
+           counts.bridge_appsrc_count == bridge_appsrc_count && counts.bridge_appsink_count == bridge_appsink_count;
+  }
+
+  constexpr bool hasUserEndpoints(const EndpointCounts & counts) const noexcept
+  {
+    if (
+      counts.appsrc_count > appsrc_count || counts.appsink_count > appsink_count ||
+      counts.bridge_appsrc_count > bridge_appsrc_count || counts.bridge_appsink_count > bridge_appsink_count)
+    {
+      return true;
+    }
+
+    if (counts.appsrc_count != 0U && counts.bridge_appsrc_count == 0U) {
+      return true;
+    }
+    if (counts.appsink_count != 0U && counts.bridge_appsink_count == 0U) {
+      return true;
+    }
+
+    return false;
+  }
+};
+
+constexpr EndpointLayout kRosTopicRuleEndpointLayout{1U, 1U, 1U, 1U};
+constexpr EndpointLayout kConfiguredSourceEndpointLayout{};
+
+EndpointCounts countPipelineEndpoints(const std::string & context, GstElement * pipeline)
+{
+  EndpointCounts counts;
 
   GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(pipeline)));
   GValueGuard item;
@@ -341,13 +277,13 @@ ParsedEndpointCounts inspectReservedEndpoints(const std::string & context, GstEl
       if (!is_appsrc) {
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSrcName + "'");
       }
-      ++counts.named_bridge_appsrc_count;
+      ++counts.bridge_appsrc_count;
     }
     if (element_name == kBridgeVideoAppSinkName) {
       if (!is_appsink) {
         throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSinkName + "'");
       }
-      ++counts.named_bridge_appsink_count;
+      ++counts.bridge_appsink_count;
     }
 
     item.reset();
@@ -356,49 +292,20 @@ ParsedEndpointCounts inspectReservedEndpoints(const std::string & context, GstEl
   return counts;
 }
 
-bool hasUserDefinedReservedEndpoints(const ParsedEndpointCounts & counts, bool expect_bridge_appsrc)
-{
-  if (expect_bridge_appsrc) {
-    return counts.appsrc_count > 1U || counts.appsink_count > 1U || counts.named_bridge_appsrc_count > 1U ||
-           counts.named_bridge_appsink_count > 1U ||
-           (counts.appsrc_count == 1U && counts.named_bridge_appsrc_count == 0U) ||
-           (counts.appsink_count == 1U && counts.named_bridge_appsink_count == 0U);
-  }
-
-  return counts.appsrc_count != 0U || counts.appsink_count > 1U || counts.named_bridge_appsink_count > 1U ||
-         (counts.appsink_count == 1U && counts.named_bridge_appsink_count == 0U);
-}
-
-void validateReservedEndpoints(const std::string & context, GstElement * pipeline, bool expect_bridge_appsrc)
-{
-  const ParsedEndpointCounts counts = inspectReservedEndpoints(context, pipeline);
-
-  if (expect_bridge_appsrc) {
-    if (
-      counts.appsrc_count != 1U || counts.named_bridge_appsrc_count != 1U || counts.appsink_count != 1U ||
-      counts.named_bridge_appsink_count != 1U)
-    {
-      throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
-    }
-    return;
-  }
-
-  if (counts.appsrc_count != 0U || counts.appsink_count != 1U || counts.named_bridge_appsink_count != 1U) {
-    throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
-  }
-}
-
-void validatePipelineDescription(
-  const std::string & context, const std::string & pipeline_description, bool expect_bridge_appsrc)
+void validateVideoPipelineDescription(
+  const std::string & context, const std::string & pipeline_description, const EndpointLayout & layout)
 {
   ensureGstreamerInitialized();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
   GErrorPtr error(raw_error);
+  // gst_parse_launch can return both an error and a partially built bin. Check
+  // endpoint ownership first so appsrc/appsink misuse is reported even if
+  // parsing later failed for a second reason in the same fragment.
   if (error != nullptr && pipeline != nullptr) {
-    const ParsedEndpointCounts counts = inspectReservedEndpoints(context, pipeline.get());
-    if (hasUserDefinedReservedEndpoints(counts, expect_bridge_appsrc)) {
+    const EndpointCounts counts = countPipelineEndpoints(context, pipeline.get());
+    if (layout.hasUserEndpoints(counts)) {
       throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
     }
   }
@@ -411,170 +318,130 @@ void validatePipelineDescription(
     throw std::runtime_error(context + " must parse to a GstBin");
   }
 
-  validateReservedEndpoints(context, pipeline.get(), expect_bridge_appsrc);
-}
-
-std::string makeRosValidationPrefix()
-{
-  std::string prefix = "appsrc name=";
-  prefix += kBridgeVideoAppSrcName;
-  prefix += " is-live=true block=false format=time do-timestamp=true";
-  prefix += " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
-  return prefix;
-}
-
-std::string parseVideoTransformFragment(const std::string & raw_transform)
-{
-  return trim(raw_transform);
-}
-
-std::string parseConfiguredSourceIngressFragment(const std::string & entry_id, const std::string & raw_source)
-{
-  const std::string ingress_fragment = trim(raw_source);
-  if (ingress_fragment.empty()) {
-    throw std::runtime_error("video configured source '" + entry_id + "' requires a non-empty source");
-  }
-  return ingress_fragment;
-}
-
-void validateVideoTopicRuleTransformFragment(const std::string & entry_id, const std::string & transform_fragment)
-{
-  const std::string context = "video topic rule '" + entry_id + "' transform";
-  validatePipelineDescription(
-    context, composeVideoPipelineDescription(makeRosValidationPrefix(), transform_fragment), true);
-}
-
-void validateConfiguredSourceConfigFragments(
-  const std::string & entry_id, const std::string & ingress_fragment, const std::string & transform_fragment)
-{
-  const std::string context = "video configured source '" + entry_id + "'";
-  validatePipelineDescription(context, composeVideoPipelineDescription(ingress_fragment, transform_fragment), false);
-}
-
-void requireUniqueEntryKey(std::unordered_set<std::string> & seen_keys, const std::string & key, const char * context)
-{
-  if (!seen_keys.emplace(key).second) {
-    throw std::runtime_error(std::string("duplicate ") + context + " '" + key + "'");
+  const EndpointCounts counts = countPipelineEndpoints(context, pipeline.get());
+  if (!layout.matches(counts)) {
+    throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
   }
 }
 
 template <typename EntryMap>
-const typename EntryMap::mapped_type & requireUniqueGeneratedEntry(
+const typename EntryMap::mapped_type & requireUniqueEntry(
   std::unordered_set<std::string> & seen_ids,
   const std::string & entry_id,
-  const EntryMap & ids_map,
+  const EntryMap & entries,
   const char * duplicate_context,
   const char * missing_context)
 {
-  requireUniqueEntryKey(seen_ids, entry_id, duplicate_context);
+  // The generated parameter library exposes entry ids and entry payload maps as
+  // separate structures, so validate both declaration order and map presence
+  // before reading a referenced entry.
+  if (!seen_ids.emplace(entry_id).second) {
+    throw std::runtime_error(std::string("duplicate ") + duplicate_context + " '" + entry_id + "'");
+  }
 
-  const auto entry_it = ids_map.find(entry_id);
-  if (entry_it == ids_map.end()) {
+  const auto it = entries.find(entry_id);
+  if (it == entries.end()) {
     throw std::runtime_error(std::string(missing_context) + " '" + entry_id + "' is missing generated parameters");
   }
 
-  return entry_it->second;
+  return it->second;
 }
 
 }  // namespace
 
 VideoStreamConfig loadVideoStreamConfig(const Params & params)
 {
-  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
-  stream_config.default_publish_config = parseVideoPublishConfig(params);
-  for (auto & rule : stream_config.ros_topic_rules) {
-    rule.publish_config = stream_config.default_publish_config;
+  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  config.default_publish_config = parseVideoPublishConfig(params);
+  for (auto & rule : config.ros_topic_rules) {
+    rule.publish_config = config.default_publish_config;
   }
 
   // Rebuild user rules ahead of the built-in catch-all so longest-match selection
   // still works and same-length ties stay first-declared.
-  auto builtin_rules = std::move(stream_config.ros_topic_rules);
-  stream_config.ros_topic_rules.clear();
+  auto builtin_rules = std::move(config.ros_topic_rules);
+  config.ros_topic_rules.clear();
 
-  std::unordered_set<std::string> seen_topic_rule_ids;
-  std::unordered_set<std::string> seen_configured_source_ids;
-  std::unordered_set<std::string> seen_configured_source_names;
-  // Keep video_topic_rule_ids at the root until generate_parameter_library 0.7+
-  // is the baseline across the full distro matrix. GPL 0.6.x does not support
-  // moving this cleanly to video.topic_rules.ids for every target we test.
+  std::unordered_set<std::string> seen_rule_ids;
+  std::unordered_set<std::string> seen_source_ids;
+  std::unordered_set<std::string> seen_source_names;
+  // Topic-rule transforms are middle fragments only. Wrap them in a synthetic
+  // bridge-owned ingress so validation exercises the same ownership shape the
+  // runtime will assemble around a ROS subscription.
+  const std::string validation_ingress = "appsrc name=" + std::string{kBridgeVideoAppSrcName} +
+                                         " is-live=true block=false format=time do-timestamp=true"
+                                         " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
   for (const auto & entry_id : params.video_topic_rule_ids) {
-    const auto & entry = requireUniqueGeneratedEntry(
-      seen_topic_rule_ids,
+    const auto & entry = requireUniqueEntry(
+      seen_rule_ids,
       entry_id,
       params.video.topic_rules.video_topic_rule_ids_map,
       "video topic rule id",
       "video topic rule");
 
-    const std::string pattern = normalizeVideoRulePattern(entry.pattern);
-    const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
-    validateVideoTopicRuleTransformFragment(entry_id, transform_fragment);
+    const std::string rule_context = "video topic rule '" + entry_id + "'";
+    const std::string pattern = normalizeRosResourcePattern(entry.pattern, "video topic rule");
+    const std::string transform_fragment = trim(entry.transform);
+    validateVideoPipelineDescription(
+      rule_context + " transform",
+      buildVideoPipelineDescription(validation_ingress, transform_fragment),
+      kRosTopicRuleEndpointLayout);
 
     RosVideoTopicRule rule;
     rule.pattern = pattern;
     rule.rule_id = entry_id;
     rule.transform_fragment = transform_fragment;
-    rule.publish_config = mergeVideoPublishConfig(
-      stream_config.default_publish_config, parseVideoPublishOverride(entry, "video topic rule '" + entry_id + "'"));
-    stream_config.ros_topic_rules.push_back(std::move(rule));
+    rule.publish_config = parseVideoPublishConfig(entry, rule_context, config.default_publish_config);
+    config.ros_topic_rules.push_back(std::move(rule));
   }
 
-  // Keep video_configured_source_ids at the root until generate_parameter_library
-  // 0.7+ is the baseline across the full distro matrix. GPL 0.6.x does not
-  // support moving this cleanly to video.configured_sources.ids for every target we
-  // test.
   for (const auto & entry_id : params.video_configured_source_ids) {
-    const auto & entry = requireUniqueGeneratedEntry(
-      seen_configured_source_ids,
+    const auto & entry = requireUniqueEntry(
+      seen_source_ids,
       entry_id,
       params.video.configured_sources.video_configured_source_ids_map,
       "video configured source id",
       "video configured source");
 
-    const std::string ingress_fragment = parseConfiguredSourceIngressFragment(entry_id, entry.source);
-    const std::string transform_fragment = parseVideoTransformFragment(entry.transform);
-    validateConfiguredSourceConfigFragments(entry_id, ingress_fragment, transform_fragment);
+    const std::string source_context = "video configured source '" + entry_id + "'";
+    const std::string ingress_fragment = trim(entry.source);
+    if (ingress_fragment.empty()) {
+      throw std::runtime_error(source_context + " requires a non-empty source");
+    }
+    const std::string transform_fragment = trim(entry.transform);
+    validateVideoPipelineDescription(
+      source_context,
+      buildVideoPipelineDescription(ingress_fragment, transform_fragment),
+      kConfiguredSourceEndpointLayout);
 
     // Configured sources are keyed by the trimmed configured-source name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
-    const std::string trimmed_configured_source_name = trimConfiguredSourceName(entry_id);
-    if (trimmed_configured_source_name.empty()) {
+    const std::string source_name = trim(entry_id);
+    if (source_name.empty()) {
       throw std::runtime_error(
         "video configured source '" + entry_id + "' must trim to a non-empty configured source name");
     }
-    requireUniqueEntryKey(seen_configured_source_names, trimmed_configured_source_name, "configured video source name");
+    if (!seen_source_names.emplace(source_name).second) {
+      throw std::runtime_error("duplicate configured video source name '" + source_name + "'");
+    }
 
-    ConfiguredVideoStreamSource configured_source;
-    configured_source.ingress_fragment = ingress_fragment;
-    configured_source.transform_fragment = transform_fragment;
-    configured_source.publish_config = mergeVideoPublishConfig(
-      stream_config.default_publish_config,
-      parseVideoPublishOverride(entry, "video configured source '" + entry_id + "'"));
-    stream_config.configured_sources.emplace(trimmed_configured_source_name, std::move(configured_source));
+    ConfiguredVideoStreamSource source;
+    source.ingress_fragment = ingress_fragment;
+    source.transform_fragment = transform_fragment;
+    source.publish_config = parseVideoPublishConfig(entry, source_context, config.default_publish_config);
+    config.configured_sources.emplace(source_name, std::move(source));
   }
 
-  // Append built-in catch-all after user entries.
-  stream_config.ros_topic_rules.insert(
-    stream_config.ros_topic_rules.end(),
+  config.ros_topic_rules.insert(
+    config.ros_topic_rules.end(),
     std::make_move_iterator(builtin_rules.begin()),
     std::make_move_iterator(builtin_rules.end()));
 
-  return stream_config;
+  return config;
 }
 
 namespace
 {
-
-AccessPolicy loadAccessPolicy(const Params & params)
-{
-  AccessPolicyConfig config;
-  config.publish.allow = params.access.rules.publish.allow;
-  config.publish.deny = params.access.rules.publish.deny;
-  config.subscribe.allow = params.access.rules.subscribe.allow;
-  config.subscribe.deny = params.access.rules.subscribe.deny;
-  config.service.allow = params.access.rules.service.allow;
-  config.service.deny = params.access.rules.service.deny;
-  return AccessPolicy(config);
-}
 
 SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 {
@@ -582,61 +449,106 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 
   std::unordered_set<std::string> seen_override_ids;
   for (const auto & override_id : params.subscription_qos_overrides_ids) {
-    const auto & entry = requireUniqueGeneratedEntry(
+    const auto & entry = requireUniqueEntry(
       seen_override_ids,
       override_id,
       params.subscription.qos_overrides.subscription_qos_overrides_ids_map,
       "subscription QoS override id",
       "subscription QoS override entry");
 
-    TopicSubscriptionQosOverride override_entry;
-    override_entry.id = override_id;
-    override_entry.pattern = normalizeRosTopicPattern(entry.pattern, "subscription.qos_overrides");
-    override_entry.reliability = parseSubscriptionQosReliabilityMode(entry.reliability);
-    override_entry.durability = parseSubscriptionQosDurabilityMode(entry.durability);
-    config.topic_overrides.push_back(std::move(override_entry));
+    TopicSubscriptionQosOverride topic_override;
+    topic_override.id = override_id;
+    topic_override.pattern = normalizeRosResourcePattern(entry.pattern, "subscription.qos_overrides");
+    topic_override.reliability = parseSubscriptionQosReliability(entry.reliability);
+    topic_override.durability = parseSubscriptionQosDurability(entry.durability);
+    config.topic_overrides.push_back(std::move(topic_override));
   }
 
   return config;
 }
 
+// Keep the generated parameter-library field layout at the edge so startup
+// config assembly reads in terms of runtime-owned concepts.
+RoomConnectionConfig loadRequiredRoomConnectionConfig(const Params & params)
+{
+  if (params.livekit.url.empty()) {
+    throw std::runtime_error("livekit.url is required");
+  }
+  if (params.livekit.room.empty()) {
+    throw std::runtime_error("livekit.room is required");
+  }
+
+  RoomConnectionConfig config;
+  config.url = params.livekit.url;
+  config.room = params.livekit.room;
+  return config;
+}
+
+RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
+{
+  RuntimeConfig::HealthConfig config;
+  config.fail_fast_enabled = params.health.fail_fast.enabled;
+  config.fail_fast_disconnect_grace = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::duration<double>(params.health.fail_fast.disconnect_grace_seconds));
+  return config;
+}
+
+AccessPolicy loadAccessPolicy(const Params & params)
+{
+  AccessPolicyConfig config;
+  config.publish = AccessRuleConfig{params.access.rules.publish.allow, params.access.rules.publish.deny};
+  config.subscribe = AccessRuleConfig{params.access.rules.subscribe.allow, params.access.rules.subscribe.deny};
+  config.service = AccessRuleConfig{params.access.rules.service.allow, params.access.rules.service.deny};
+  return AccessPolicy(config);
+}
+
+VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
+{
+  VideoProfilingConfig config;
+  config.enabled = params.debug.video_profiling.enabled;
+  config.summary_interval = std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
+  config.trace_file = params.debug.video_profiling.trace_file;
+  config.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
+  return config;
+}
+
 }  // namespace
 
-RuntimeConfig loadRuntimeConfig(
-  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters_interface)
+RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
 {
+  // Keep the last-known room outside the guarded load path so startup failure
+  // logs can still identify which room was being configured.
   std::string room = kUnsetLogValue;
 
   try {
-    if (parameters_interface == nullptr) {
+    if (parameters == nullptr) {
       throw std::invalid_argument("parameters_interface is required");
     }
 
-    ParamListener param_listener(parameters_interface);
-    RuntimeConfig runtime_config;
-    runtime_config.loaded_params = param_listener.get_params();
-    room =
-      runtime_config.loaded_params.livekit.room.empty() ? kUnsetLogValue : runtime_config.loaded_params.livekit.room;
+    ParamListener listener(parameters);
+    RuntimeConfig config;
+    config.params = listener.get_params();
+    const Params & params = config.params;
+    room = params.livekit.room.empty() ? kUnsetLogValue : params.livekit.room;
 
-    runtime_config.room_connection_config = loadRoomConnectionConfig(runtime_config.loaded_params);
-    runtime_config.access_token = runtime_config.loaded_params.livekit.token;
-    runtime_config.health_config = loadHealthConfig(runtime_config.loaded_params);
-    runtime_config.access_policy = loadAccessPolicy(runtime_config.loaded_params);
-    runtime_config.subscription_qos_config = loadSubscriptionQosConfig(runtime_config.loaded_params);
-    runtime_config.video_stream_config = loadVideoStreamConfig(runtime_config.loaded_params);
-    runtime_config.video_profiling_config = loadVideoProfilingConfig(runtime_config.loaded_params);
+    config.room_connection_config = loadRequiredRoomConnectionConfig(params);
+    config.access_token = params.livekit.token;
+    config.health_config = loadHealthConfig(params);
+    config.access_policy = loadAccessPolicy(params);
+    config.subscription_qos_config = loadSubscriptionQosConfig(params);
+    config.video_stream_config = loadVideoStreamConfig(params);
+    config.video_profiling_config = loadVideoProfilingConfig(params);
 
     LogEvent(kRuntimeConfigLogger, "runtime_config_loaded")
       .field("phase", "startup")
-      .fieldOr("room", runtime_config.room_connection_config.room, kUnsetLogValue)
+      .fieldOr("room", config.room_connection_config.room, kUnsetLogValue)
       .field("auth_mode", "static_token")
-      .field("fail_fast_enabled", runtime_config.health_config.fail_fast_enabled)
-      .field("video_profiling_enabled", runtime_config.video_profiling_config.enabled)
-      .field(
-        "fail_fast_disconnect_grace_seconds", runtime_config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
+      .field("fail_fast_enabled", config.health_config.fail_fast_enabled)
+      .field("video_profiling_enabled", config.video_profiling_config.enabled)
+      .field("fail_fast_disconnect_grace_seconds", config.health_config.fail_fast_disconnect_grace.count() / 1000.0)
       .info();
 
-    return runtime_config;
+    return config;
   } catch (const std::exception & exc) {
     LogEvent(kRuntimeConfigLogger, "runtime_config_load_failed")
       .field("phase", "startup")

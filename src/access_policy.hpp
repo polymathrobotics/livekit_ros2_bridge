@@ -26,18 +26,21 @@ namespace livekit_ros2_bridge
 
 struct AccessRuleConfig
 {
+  /// Raw policy entries for one operation. `AccessPolicy` trims surrounding whitespace, normalizes
+  /// ROS resource names, and treats a literal `"*"` as an operation-wide allow/deny override.
   std::vector<std::string> allow;
   std::vector<std::string> deny;
 };
 
 struct AccessPolicyConfig
 {
+  /// Rules are evaluated independently per operation; leaving one empty keeps that operation
+  /// default-deny.
   AccessRuleConfig publish;
   AccessRuleConfig subscribe;
   AccessRuleConfig service;
 };
 
-/// Resource access categories enforced by the bridge.
 enum class AccessOperation
 {
   Publish,
@@ -49,41 +52,40 @@ enum class AccessOperation
 /// The policy is default-deny, a literal `"*"` allow entry means allow all for that operation,
 /// and deny entries always win over allows. Entries are trimmed and normalized before matching;
 /// exact patterns match one resource and `.../*` patterns match descendants.
+/// Instances are immutable after construction and can be shared across threads without
+/// external synchronization.
 class AccessPolicy
 {
 public:
   AccessPolicy() = default;
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
-  /// Return whether `name` is allowed after normalization. Empty or whitespace-only names are denied.
-  bool allows(AccessOperation op, std::string_view name) const;
+  /// Return whether `resource_name` is allowed after normalization. Empty or whitespace-only names
+  /// are denied.
+  bool allows(AccessOperation operation, std::string_view resource_name) const;
 
 private:
-  struct ParsedRuleEntries
+  struct RuleEntries
   {
-    // True when the configured entries contained `"*"`.
+    /// Parse configured entries into normalized lookup state. `"*"` is tracked separately from
+    /// `patterns` so it keeps its policy-wide meaning instead of becoming the root-subtree
+    /// pattern `/*` during normalization.
+    static RuleEntries parse(const std::vector<std::string> & entries);
+
+    /// Requires a normalized resource name.
+    bool matches(std::string_view name) const;
+
     bool matches_all = false;
     // Normalized exact or subtree patterns. `"*"` is represented only by `matches_all`.
     std::set<std::string> patterns;
   };
 
-  struct ParsedRuleset
-  {
-    ParsedRuleEntries allow;
-    ParsedRuleEntries deny;
-  };
-
-  static ParsedRuleEntries parseRuleEntries(const std::vector<std::string> & entries);
-  static ParsedRuleset parseRuleset(
-    const std::vector<std::string> & allow_entries, const std::vector<std::string> & deny_entries);
-  static bool isAllowed(std::string_view name, const ParsedRuleset & ruleset);
-
-  // Normalized publish rules. Denies always override allows.
-  ParsedRuleset publish_rules_;
-  // Normalized subscribe rules. Denies always override allows.
-  ParsedRuleset subscribe_rules_;
-  // Normalized service-call rules. Denies always override allows.
-  ParsedRuleset service_rules_;
+  RuleEntries publish_allow_;
+  RuleEntries publish_deny_;
+  RuleEntries subscribe_allow_;
+  RuleEntries subscribe_deny_;
+  RuleEntries service_allow_;
+  RuleEntries service_deny_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -14,7 +14,9 @@
 
 #include "video_stream_registry.hpp"
 
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "video_stream_instance.hpp"
 
@@ -37,7 +39,7 @@ VideoStreamRegistry::~VideoStreamRegistry()
   shutdown();
 }
 
-std::string VideoStreamRegistry::ensureStreamRunning(const VideoStreamSpec & spec)
+std::string VideoStreamRegistry::start(const VideoStreamSpec & spec)
 {
   std::shared_ptr<VideoStreamInstance> instance;
   {
@@ -46,54 +48,63 @@ std::string VideoStreamRegistry::ensureStreamRunning(const VideoStreamSpec & spe
       throw std::runtime_error("Video stream registry is shut down.");
     }
 
-    auto [it, inserted] = stream_instances_.try_emplace(spec.stream_key);
-    if (inserted) {
-      const std::shared_ptr<VideoStreamProfiler> profiler =
-        profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateStreamProfiler(spec);
-      it->second =
+    const auto it = instances_.find(spec.stream_key);
+    if (it != instances_.end()) {
+      instance = it->second;
+    } else {
+      const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
+      instance =
         std::make_shared<VideoStreamInstance>(node_, room_connection_, spec, subscription_qos_config_, profiler);
+      instances_.emplace(spec.stream_key, instance);
     }
-    instance = it->second;
   }
 
-  return instance->ensureRunning();
+  // Start outside the registry mutex; VideoStreamInstance owns the heavier startup path and its
+  // lifecycle locking.
+  return instance->start();
 }
 
-void VideoStreamRegistry::stopStream(const std::string & stream_key)
+void VideoStreamRegistry::stop(const std::string & stream_key)
 {
   std::shared_ptr<VideoStreamInstance> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = stream_instances_.find(stream_key);
-    if (it == stream_instances_.end()) {
-      return;
+    const auto it = instances_.find(stream_key);
+    if (it != instances_.end()) {
+      instance = std::move(it->second);
+      instances_.erase(it);
     }
-    instance = std::move(it->second);
-    stream_instances_.erase(it);
+  }
+  if (instance == nullptr) {
+    return;
   }
 
-  if (instance) {
-    instance->shutdown();
-  }
+  // Erase first so a concurrent restart gets a fresh registry entry. The detached shared_ptr keeps
+  // the instance alive through teardown.
+  instance->shutdown();
 }
 
 void VideoStreamRegistry::shutdown()
 {
-  std::unordered_map<std::string, std::shared_ptr<VideoStreamInstance>> stream_instances;
+  std::vector<std::shared_ptr<VideoStreamInstance>> instances;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
+    // Mark shutdown before detaching entries so concurrent `start()` calls fail during teardown.
     is_shutdown_ = true;
-    stream_instances = std::move(stream_instances_);
-    stream_instances_.clear();
+    instances.reserve(instances_.size());
+    for (auto & entry : instances_) {
+      instances.push_back(std::move(entry.second));
+    }
+    instances_.clear();
   }
 
-  for (auto & entry : stream_instances) {
-    if (entry.second) {
-      entry.second->shutdown();
-    }
+  // Preserve ownership after clearing the map because shutdown touches external ROS and LiveKit
+  // state.
+  for (auto & instance : instances) {
+    instance->shutdown();
   }
 }
 

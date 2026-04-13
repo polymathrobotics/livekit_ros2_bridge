@@ -14,6 +14,7 @@
 
 #include "control_packet_router.hpp"
 
+#include <chrono>
 #include <exception>
 #include <stdexcept>
 #include <utility>
@@ -29,78 +30,62 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kControlPacketLogThrottleMs = 5000;
+constexpr auto kLogThrottleMs = 5000;
+constexpr auto kLogThrottle = std::chrono::milliseconds(kLogThrottleMs);
 }  // namespace
 
-ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Callbacks callbacks)
+ControlPacketRouter::ControlPacketRouter(rclcpp::Logger logger, rclcpp::Clock::SharedPtr clock, Handlers handlers)
 : logger_(std::move(logger))
 , clock_(std::move(clock))
-, callbacks_(std::move(callbacks))
+, heartbeat_handler_(std::move(handlers.heartbeat_handler))
+, publish_handler_(std::move(handlers.publish_handler))
 {
   if (clock_ == nullptr) {
     throw std::invalid_argument("ControlPacketRouter requires a clock.");
   }
 
-  if (!callbacks_.on_subscription_heartbeat) {
-    throw std::invalid_argument("ControlPacketRouter requires an on_subscription_heartbeat callback.");
+  if (!heartbeat_handler_) {
+    throw std::invalid_argument("ControlPacketRouter requires a heartbeat callback.");
   }
 
-  if (!callbacks_.on_topic_publish_command) {
-    throw std::invalid_argument("ControlPacketRouter requires an on_topic_publish_command callback.");
+  if (!publish_handler_) {
+    throw std::invalid_argument("ControlPacketRouter requires a publish callback.");
   }
 }
 
 void ControlPacketRouter::route(const IncomingControlPacket & packet) const
 {
-  const auto rejection_log_interval = std::chrono::milliseconds(kControlPacketLogThrottleMs);
   if (packet.control_topic == protocol::kControlSubscriptionsHeartbeat) {
-    // Heartbeats may arrive without requester_identity when LiveKit omits it from user data. The
-    // heartbeat processor can still recover that identity from a leased session_id.
+    // Keep transport-level JSON decoding separate from semantic heartbeat validation so the
+    // rejection reason distinguishes broken wire payloads from protocol-shape violations.
     nlohmann::json body;
     try {
       body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
     } catch (const std::exception & exc) {
-      LogEvent(logger_, "control_packet_rejected")
-        .field("reason", "malformed_heartbeat")
-        .field("control_topic", packet.control_topic)
-        .fieldOr("requester_identity", packet.requester_identity)
-        .field("error", exc.what())
-        .warnThrottle(*clock_, rejection_log_interval);
+      logRejection(packet, "malformed_heartbeat", exc.what());
       return;
     }
 
     try {
-      callbacks_.on_subscription_heartbeat(packet.requester_identity, parseSubscriptionHeartbeat(body));
+      heartbeat_handler_(packet.requester_identity, stream_control_payloads::parseSubscriptionHeartbeat(body));
     } catch (const std::exception & exc) {
-      LogEvent(logger_, "control_packet_rejected")
-        .field("reason", "invalid_heartbeat")
-        .field("control_topic", packet.control_topic)
-        .fieldOr("requester_identity", packet.requester_identity)
-        .field("error", exc.what())
-        .warnThrottle(*clock_, rejection_log_interval);
+      logRejection(packet, "invalid_heartbeat", exc.what());
     }
     return;
   }
 
   if (packet.control_topic == protocol::kControlTopicPublish) {
+    // Unlike heartbeats, publish commands have no session-based requester recovery path
+    // downstream, so anonymous packets are rejected at the protocol boundary.
     if (packet.requester_identity.empty()) {
-      LogEvent(logger_, "control_packet_rejected")
-        .field("reason", "missing_requester_identity")
-        .field("control_topic", packet.control_topic)
-        .fieldOr("requester_identity", packet.requester_identity)
-        .warnThrottle(*clock_, rejection_log_interval);
+      logRejection(packet, "missing_requester_identity");
       return;
     }
 
     try {
-      callbacks_.on_topic_publish_command(packet.requester_identity, parseTopicPublishCommand(packet.payload));
+      publish_handler_(packet.requester_identity, parseTopicPublishCommand(packet.payload));
     } catch (const std::exception & exc) {
-      LogEvent(logger_, "control_packet_rejected")
-        .field("reason", "invalid_publish_command")
-        .field("control_topic", packet.control_topic)
-        .fieldOr("requester_identity", packet.requester_identity)
-        .field("error", exc.what())
-        .warnThrottle(*clock_, rejection_log_interval);
+      logRejection(packet, "invalid_publish_command", exc.what());
     }
     return;
   }
@@ -109,7 +94,20 @@ void ControlPacketRouter::route(const IncomingControlPacket & packet) const
     .field("reason", "unsupported_control_topic")
     .field("control_topic", packet.control_topic)
     .fieldOr("requester_identity", packet.requester_identity)
-    .warnThrottle(*clock_, std::chrono::milliseconds(kControlPacketLogThrottleMs));
+    .warnThrottle(*clock_, kLogThrottle);
+}
+
+void ControlPacketRouter::logRejection(
+  const IncomingControlPacket & packet, const char * reason, const char * error) const
+{
+  LogEvent event(logger_, "control_packet_rejected");
+  event.field("reason", reason)
+    .field("control_topic", packet.control_topic)
+    .fieldOr("requester_identity", packet.requester_identity);
+  if (error != nullptr) {
+    event.field("error", error);
+  }
+  event.warnThrottle(*clock_, kLogThrottle);
 }
 
 }  // namespace livekit_ros2_bridge

@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "video_profiling.hpp"
@@ -34,9 +35,10 @@ struct SubscriptionQosConfig;
 class RoomConnection;
 class VideoTrackPublisher;
 
-// VideoStreamRegistry owns one VideoStreamInstance per resolved stream key.
-// Each instance owns one live runtime: the input-side VideoFrameSource plus the paired
-// VideoTrackPublisher for the matching LiveKit video publication.
+// VideoStreamRegistry owns one instance per resolved stream key.
+// Each instance owns the input-side VideoFrameSource and its paired LiveKit publisher.
+// Those runtime pieces can call back on different threads, so shutdown and shared
+// bookkeeping stay local to this object behind mutex_.
 class VideoStreamInstance final : public VideoStreamLifecycleObserver
 {
 public:
@@ -44,7 +46,7 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * subscription_qos_config,
+    const SubscriptionQosConfig * qos_config,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
   ~VideoStreamInstance();
 
@@ -53,34 +55,46 @@ public:
   VideoStreamInstance(VideoStreamInstance &&) = delete;
   VideoStreamInstance & operator=(VideoStreamInstance &&) = delete;
 
-  void onVideoTrackPublished(int width, int height, bool republished) override;
-  void onVideoTrackUnpublishing() override;
-  void onVideoStreamSampleUnpackFailed(const std::string & error) override;
-  void onVideoStreamCaptureFailed(const std::string & error) override;
-  void onVideoStreamPipelineFailed(const std::string & reason) override;
-  void onVideoStreamRestartFailed(const std::string & error) override;
-  void onVideoStreamPushFailed(const std::string & error) override;
+  // Callbacks may arrive from ROS, GStreamer, or LiveKit worker threads, including
+  // after shutdown() has started. They only touch local bookkeeping here and never
+  // reach back into source_ or publisher_ while teardown is in flight.
+  void onTrackPublished(int width, int height, bool republished) override;
+  void onTrackUnpublishing() override;
+  void onSampleUnpackFailed(const std::string & error) override;
+  void onCaptureFailed(const std::string & error) override;
+  void onPipelineFailed(const std::string & reason) override;
+  void onRestartFailed(const std::string & error) override;
+  void onPushFailed(const std::string & error) override;
 
-  std::string ensureRunning();
+  // Lazily constructs the input source on first start and reuses it until shutdown().
+  // Throws if shutdown() has already begun.
+  std::string start();
+  // Idempotent. Detaches owned runtime objects under mutex_ and tears them down after
+  // unlocking so their shutdown paths never re-enter this instance while the mutex is held.
   void shutdown();
 
 private:
-  void logRuntimeError(const char * event_name, const std::string & error);
-
-  std::shared_ptr<VideoFrameSource> createFrameSourceLocked();
+  struct TrackDimensions
+  {
+    int width = 0;
+    int height = 0;
+  };
 
   rclcpp::Node & node_;
   VideoStreamSpec spec_;
-  const SubscriptionQosConfig * subscription_qos_config_;
+  // Borrowed bridge-wide QoS overrides; the owner must outlive this instance.
+  const SubscriptionQosConfig * qos_config_;
   std::shared_ptr<VideoStreamProfiler> profiler_;
+  // Guards shutdown state and protects owned runtime handles across public methods and callbacks.
   std::mutex mutex_;
   bool is_shutdown_ = false;
-  bool has_published_track_ = false;
-  int published_width_ = 0;
-  int published_height_ = 0;
-  std::string last_runtime_error_;
-  std::shared_ptr<VideoFrameSource> frame_source_;
-  std::unique_ptr<VideoTrackPublisher> video_track_publisher_;
+  // Set only while a track is currently published so final unpublish logging can
+  // report the last advertised dimensions without reaching back into publisher_.
+  std::optional<TrackDimensions> published_dimensions_;
+  // Created on first start() so unused streams do not allocate subscriptions or pipelines.
+  std::shared_ptr<VideoFrameSource> source_;
+  // Constructed eagerly because every frame source needs a stable sink/publisher reference.
+  std::unique_ptr<VideoTrackPublisher> publisher_;
 };
 
 }  // namespace livekit_ros2_bridge

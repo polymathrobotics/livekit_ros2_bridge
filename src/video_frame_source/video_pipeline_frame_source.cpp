@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -33,7 +34,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kVideoStreamRegistryLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 constexpr char kAppSinkName[] = "bridge_video_sink";
 
 struct PackedI420Frame
@@ -43,7 +44,67 @@ struct PackedI420Frame
   std::vector<std::uint8_t> data;
 };
 
-void copyPlaneRows(const GstVideoFrame * frame, guint component_index, std::uint8_t * dst, std::size_t dst_stride)
+struct I420Layout
+{
+  int width = 0;
+  int height = 0;
+  std::size_t luma_width = 0;
+  std::size_t luma_height = 0;
+  std::size_t chroma_width = 0;
+  std::size_t chroma_height = 0;
+
+  static I420Layout fromInfo(const GstVideoInfo & video_info)
+  {
+    I420Layout layout;
+    layout.width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&video_info));
+    layout.height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&video_info));
+    if (layout.width <= 0 || layout.height <= 0) {
+      throw std::runtime_error("I420 sample dimensions are invalid.");
+    }
+
+    layout.luma_width = static_cast<std::size_t>(layout.width);
+    layout.luma_height = static_cast<std::size_t>(layout.height);
+    layout.chroma_width = (layout.luma_width + 1U) / 2U;
+    layout.chroma_height = (layout.luma_height + 1U) / 2U;
+    return layout;
+  }
+
+  [[nodiscard]] std::size_t lumaPlaneSize() const
+  {
+    return luma_width * luma_height;
+  }
+
+  [[nodiscard]] std::size_t chromaPlaneSize() const
+  {
+    return chroma_width * chroma_height;
+  }
+
+  [[nodiscard]] std::size_t byteCount() const
+  {
+    return lumaPlaneSize() + chromaPlaneSize() * 2U;
+  }
+
+  void validate(const GstVideoFrame * frame) const
+  {
+    if (
+      !hasPlaneDimensions(frame, 0, luma_width, luma_height) ||
+      !hasPlaneDimensions(frame, 1, chroma_width, chroma_height) ||
+      !hasPlaneDimensions(frame, 2, chroma_width, chroma_height))
+    {
+      throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
+    }
+  }
+
+private:
+  static bool hasPlaneDimensions(
+    const GstVideoFrame * frame, guint component_index, std::size_t expected_width, std::size_t expected_height)
+  {
+    return static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(frame, component_index)) == expected_width &&
+           static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(frame, component_index)) == expected_height;
+  }
+};
+
+void copyI420Plane(const GstVideoFrame * frame, guint component_index, std::uint8_t * dst, std::size_t dst_stride)
 {
   const auto * src = static_cast<const std::uint8_t *>(GST_VIDEO_FRAME_COMP_DATA(frame, component_index));
   const int src_stride = GST_VIDEO_FRAME_COMP_STRIDE(frame, component_index);
@@ -69,7 +130,7 @@ void copyPlaneRows(const GstVideoFrame * frame, guint component_index, std::uint
   }
 }
 
-PackedI420Frame copySampleToPackedI420(GstSample * sample)
+PackedI420Frame packI420Frame(GstSample * sample)
 {
   GstCaps * caps = gst_sample_get_caps(sample);
   GstBuffer * buffer = gst_sample_get_buffer(sample);
@@ -85,12 +146,7 @@ PackedI420Frame copySampleToPackedI420(GstSample * sample)
     throw std::runtime_error("Video pipeline did not output I420 frames.");
   }
 
-  PackedI420Frame frame;
-  frame.width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&video_info));
-  frame.height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&video_info));
-  if (frame.width <= 0 || frame.height <= 0) {
-    throw std::runtime_error("I420 sample dimensions are invalid.");
-  }
+  const I420Layout layout = I420Layout::fromInfo(video_info);
 
   GstVideoFrameGuard mapped_frame(&video_info, buffer, GST_MAP_READ);
   if (!mapped_frame.is_valid()) {
@@ -100,49 +156,33 @@ PackedI420Frame copySampleToPackedI420(GstSample * sample)
   // The LiveKit C++ API accepts owned, tightly-packed frame bytes. Appsink may
   // hand us planar I420 with padding, so we repack planes row-by-row while
   // keeping the frame in I420 to avoid any CPU color conversion.
-  const std::size_t luma_width = static_cast<std::size_t>(frame.width);
-  const std::size_t luma_height = static_cast<std::size_t>(frame.height);
-  const std::size_t chroma_width = (luma_width + 1U) / 2U;
-  const std::size_t chroma_height = (luma_height + 1U) / 2U;
   const auto * gst_frame = mapped_frame.get();
-  if (
-    GST_VIDEO_FRAME_COMP_WIDTH(gst_frame, 0) != frame.width ||
-    GST_VIDEO_FRAME_COMP_HEIGHT(gst_frame, 0) != frame.height ||
-    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(gst_frame, 1)) != chroma_width ||
-    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(gst_frame, 1)) != chroma_height ||
-    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(gst_frame, 2)) != chroma_width ||
-    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(gst_frame, 2)) != chroma_height)
-  {
-    throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
-  }
+  layout.validate(gst_frame);
 
-  frame.data.resize(luma_width * luma_height + chroma_width * chroma_height * 2U);
-  auto * y_plane = frame.data.data();
-  auto * u_plane = y_plane + luma_width * luma_height;
-  auto * v_plane = u_plane + chroma_width * chroma_height;
-  copyPlaneRows(gst_frame, 0, y_plane, luma_width);
-  copyPlaneRows(gst_frame, 1, u_plane, chroma_width);
-  copyPlaneRows(gst_frame, 2, v_plane, chroma_width);
+  PackedI420Frame frame;
+  frame.width = layout.width;
+  frame.height = layout.height;
+  frame.data.resize(layout.byteCount());
+
+  auto * dst = frame.data.data();
+  copyI420Plane(gst_frame, 0, dst, layout.luma_width);
+  copyI420Plane(gst_frame, 1, dst + layout.lumaPlaneSize(), layout.chroma_width);
+  copyI420Plane(gst_frame, 2, dst + layout.lumaPlaneSize() + layout.chromaPlaneSize(), layout.chroma_width);
   return frame;
-}
-
-std::optional<std::int64_t> gstBufferPtsToTimestampUs(GstBuffer * buffer)
-{
-  if (buffer == nullptr || !GST_BUFFER_PTS_IS_VALID(buffer)) {
-    return std::nullopt;
-  }
-  return static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
 }
 
 }  // namespace
 
-std::string composeVideoPipeline(const std::string & ingress_fragment, const std::string & transform_fragment)
+std::string buildFrameSourcePipelineDescription(
+  const std::string & ingress_fragment, const std::string & transform_fragment)
 {
   std::string pipeline = ingress_fragment;
   if (!transform_fragment.empty()) {
     pipeline += " ! ";
     pipeline += transform_fragment;
   }
+  // Keep only a tiny downstream queue so backpressure drops stale frames
+  // instead of letting latency grow without bound.
   pipeline += " ! queue max-size-buffers=2 leaky=downstream";
   pipeline += " ! videoconvert";
   // Emit encoder-native I420 so LiveKit/WebRTC does not have to do an extra
@@ -158,18 +198,20 @@ VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & frame_sink,
   VideoStreamLifecycleObserver & lifecycle_observer,
-  std::shared_ptr<VideoStreamProfiler> profiler)
+  std::shared_ptr<VideoStreamProfiler> profiler,
+  std::optional<RestartConfig> restart_config)
 : spec_(std::move(spec))
 , frame_sink_(frame_sink)
 , lifecycle_observer_(lifecycle_observer)
 , profiler_(std::move(profiler))
+, restart_config_(std::move(restart_config))
 {}
 
 VideoPipelineFrameSource::~VideoPipelineFrameSource() = default;
 
-GstFlowReturn VideoPipelineFrameSource::onNewSampleThunk(GstAppSink * sink, gpointer user_data)
+GstFlowReturn VideoPipelineFrameSource::onSampleThunk(GstAppSink * sink, gpointer user_data)
 {
-  return static_cast<VideoPipelineFrameSource *>(user_data)->onNewSample(sink);
+  return static_cast<VideoPipelineFrameSource *>(user_data)->onSample(sink);
 }
 
 GstBusSyncReply VideoPipelineFrameSource::onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
@@ -178,113 +220,8 @@ GstBusSyncReply VideoPipelineFrameSource::onBusMessageThunk(GstBus *, GstMessage
   return GST_BUS_PASS;
 }
 
-VideoPipelineFrameSource::DetachedPipelineState VideoPipelineFrameSource::detachPipelineStateLocked()
+void VideoPipelineFrameSource::teardown(GstElementPtr & pipeline, GstAppSrcPtr & appsrc, GstAppSinkPtr & appsink)
 {
-  DetachedPipelineState detached;
-  detached.pipeline = std::move(pipeline_);
-  detached.appsrc = std::move(appsrc_);
-  detached.appsink = std::move(appsink_);
-  resetSourceStateLocked();
-  first_sample_logged_ = false;
-  return detached;
-}
-
-void VideoPipelineFrameSource::teardownDetachedPipelineState(DetachedPipelineState & detached)
-{
-  if (detached.appsink != nullptr) {
-    GstAppSinkCallbacks callbacks{};
-    gst_app_sink_set_callbacks(detached.appsink.get(), &callbacks, nullptr, nullptr);
-  }
-  if (detached.pipeline != nullptr) {
-    GstBusPtr bus(gst_element_get_bus(detached.pipeline.get()));
-    gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
-    gst_element_set_state(detached.pipeline.get(), GST_STATE_NULL);
-  }
-
-  detached.appsrc.reset();
-  detached.appsink.reset();
-  detached.pipeline.reset();
-}
-
-void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_description, bool expect_appsrc)
-{
-  ensureGstreamerInitialized();
-  first_sample_logged_ = false;
-  if (profiler_ != nullptr) {
-    profiler_->notePipelineStart();
-  }
-
-  LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_starting")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .field("ingest_mode", spec_.ingest_mode)
-    .field("expect_appsrc", expect_appsrc)
-    .field("pipeline", pipeline_description)
-    .info();
-
-  GError * raw_error = nullptr;
-  GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
-  GErrorPtr error(raw_error);
-  if (pipeline == nullptr) {
-    const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
-    throw std::runtime_error("Failed to create GStreamer pipeline: " + message);
-  }
-
-  if (!GST_IS_BIN(pipeline.get())) {
-    throw std::runtime_error("Video pipeline must resolve to a GstBin.");
-  }
-
-  GstElementPtr sink(gst_bin_get_by_name(GST_BIN(pipeline.get()), kAppSinkName));
-  if (sink == nullptr) {
-    throw std::runtime_error("Video pipeline did not create the expected appsink.");
-  }
-
-  GstElementPtr src;
-  if (expect_appsrc) {
-    src.reset(gst_bin_get_by_name(GST_BIN(pipeline.get()), kVideoAppSrcName));
-    if (src == nullptr) {
-      throw std::runtime_error("Video pipeline did not create the expected appsrc.");
-    }
-  }
-
-  GstAppSinkCallbacks callbacks{};
-  callbacks.new_sample = &VideoPipelineFrameSource::onNewSampleThunk;
-  gst_app_sink_set_callbacks(GST_APP_SINK(sink.get()), &callbacks, this, nullptr);
-
-  GstBusPtr bus(gst_element_get_bus(pipeline.get()));
-  gst_bus_set_sync_handler(bus.get(), &VideoPipelineFrameSource::onBusMessageThunk, this, nullptr);
-
-  pipeline_ = std::move(pipeline);
-  appsink_.reset(GST_APP_SINK(sink.release()));
-  appsrc_.reset(src == nullptr ? nullptr : GST_APP_SRC(src.release()));
-}
-
-void VideoPipelineFrameSource::playPipelineLocked()
-{
-  if (pipeline_ == nullptr) {
-    throw std::runtime_error("Video pipeline is unavailable.");
-  }
-
-  const GstStateChangeReturn change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
-  if (change != GST_STATE_CHANGE_FAILURE) {
-    LogEvent(kVideoStreamRegistryLogger, "video_stream_pipeline_playing")
-      .field("stream_key", spec_.stream_key)
-      .field("track_name", spec_.track_name)
-      .field("state_change", static_cast<int>(change))
-      .info();
-    return;
-  }
-
-  discardPipelineElementsLocked();
-  throw std::runtime_error("Failed to set video pipeline to PLAYING.");
-}
-
-void VideoPipelineFrameSource::discardPipelineElementsLocked()
-{
-  GstElementPtr pipeline = std::move(pipeline_);
-  GstAppSrcPtr appsrc = std::move(appsrc_);
-  GstAppSinkPtr appsink = std::move(appsink_);
-
   if (appsink != nullptr) {
     GstAppSinkCallbacks callbacks{};
     gst_app_sink_set_callbacks(appsink.get(), &callbacks, nullptr, nullptr);
@@ -300,40 +237,112 @@ void VideoPipelineFrameSource::discardPipelineElementsLocked()
   pipeline.reset();
 }
 
-void VideoPipelineFrameSource::stopPipelineLocked()
+VideoPipelineFrameSource::PipelineHandles VideoPipelineFrameSource::takePipelineLocked()
 {
-  resetSourceStateLocked();
+  resetLocked();
+  recovery_pending_ = false;
   first_sample_logged_ = false;
-  discardPipelineElementsLocked();
+
+  PipelineHandles handles;
+  handles.pipeline = std::move(pipeline_);
+  handles.appsrc = std::move(appsrc_);
+  handles.appsink = std::move(appsink_);
+  return handles;
 }
 
-bool VideoPipelineFrameSource::shouldRestartAfterFailure() const
+void VideoPipelineFrameSource::startPipelineLocked(const std::string & pipeline_description, bool require_appsrc)
 {
-  return false;
+  ensureGstreamerInitialized();
+  if (profiler_ != nullptr) {
+    profiler_->notePipelineStart();
+  }
+
+  LogEvent(kLogger, "video_stream_pipeline_starting")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("ingest_mode", spec_.ingest_mode)
+    .field("expect_appsrc", require_appsrc)
+    .field("pipeline", pipeline_description)
+    .info();
+
+  GError * raw_error = nullptr;
+  GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
+  GErrorPtr error(raw_error);
+  if (pipeline == nullptr) {
+    const std::string message = error != nullptr ? error->message : "gst_parse_launch returned null";
+    throw std::runtime_error("Failed to create GStreamer pipeline: " + message);
+  }
+  if (!GST_IS_BIN(pipeline.get())) {
+    throw std::runtime_error("Video pipeline must resolve to a GstBin.");
+  }
+
+  PipelineHandles handles;
+  handles.pipeline = std::move(pipeline);
+
+  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kAppSinkName));
+  if (appsink == nullptr) {
+    throw std::runtime_error("Video pipeline did not create the expected appsink.");
+  }
+  if (!GST_IS_APP_SINK(appsink.get())) {
+    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
+  }
+  handles.appsink.reset(GST_APP_SINK(appsink.release()));
+
+  if (require_appsrc) {
+    GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kVideoAppSrcName));
+    if (appsrc == nullptr) {
+      throw std::runtime_error("Video pipeline did not create the expected appsrc.");
+    }
+    if (!GST_IS_APP_SRC(appsrc.get())) {
+      throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
+    }
+    handles.appsrc.reset(GST_APP_SRC(appsrc.release()));
+  }
+
+  first_sample_logged_ = false;
+
+  // Register callbacks before moving to PLAYING so startup-time samples or bus
+  // errors are still routed through this instance.
+  GstAppSinkCallbacks callbacks{};
+  callbacks.new_sample = &VideoPipelineFrameSource::onSampleThunk;
+  gst_app_sink_set_callbacks(handles.appsink.get(), &callbacks, this, nullptr);
+
+  GstBusPtr bus(gst_element_get_bus(handles.pipeline.get()));
+  gst_bus_set_sync_handler(bus.get(), &VideoPipelineFrameSource::onBusMessageThunk, this, nullptr);
+
+  pipeline_ = std::move(handles.pipeline);
+  appsink_ = std::move(handles.appsink);
+  appsrc_ = std::move(handles.appsrc);
+
+  const GstStateChangeReturn state_change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
+  if (state_change == GST_STATE_CHANGE_FAILURE) {
+    teardown(pipeline_, appsrc_, appsink_);
+    throw std::runtime_error("Failed to set video pipeline to PLAYING.");
+  }
+
+  LogEvent(kLogger, "video_stream_pipeline_playing")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("state_change", static_cast<int>(state_change))
+    .info();
 }
 
-std::chrono::milliseconds VideoPipelineFrameSource::restartDelayOnFailure() const
-{
-  return std::chrono::milliseconds(0);
-}
-
-void VideoPipelineFrameSource::restartAfterFailureLocked()
+void VideoPipelineFrameSource::resetLocked()
 {}
 
-GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
+GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
 {
-  const auto callback_start_time = VideoStreamProfiler::SteadyClock::now();
-  std::optional<std::int64_t> frame_timestamp_us;
-  ScopeExit callback_timer([this, callback_start_time, &frame_timestamp_us]() {
+  const auto start_time = VideoStreamProfiler::SteadyClock::now();
+  std::optional<std::int64_t> pts_us;
+  ScopeExit callback_timer([this, start_time, &pts_us]() {
     if (profiler_ == nullptr) {
       return;
     }
-    profiler_->recordStageDuration(
+    profiler_->recordStage(
       VideoProfileStage::kSampleCallback,
-      std::chrono::duration_cast<std::chrono::microseconds>(
-        VideoStreamProfiler::SteadyClock::now() - callback_start_time),
-      frame_timestamp_us,
-      callback_start_time);
+      std::chrono::duration_cast<std::chrono::microseconds>(VideoStreamProfiler::SteadyClock::now() - start_time),
+      pts_us,
+      start_time);
   });
 
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
@@ -342,28 +351,29 @@ GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
   }
 
   GstBuffer * buffer = gst_sample_get_buffer(sample.get());
-  frame_timestamp_us = gstBufferPtsToTimestampUs(buffer);
+  if (buffer != nullptr && GST_BUFFER_PTS_IS_VALID(buffer)) {
+    pts_us = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
+  }
   if (profiler_ != nullptr) {
     if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
-      profiler_->noteIngressFrame(VideoStreamProfiler::SteadyClock::now(), frame_timestamp_us);
+      profiler_->noteIngress(VideoStreamProfiler::SteadyClock::now(), pts_us);
     }
-    profiler_->noteSampledFrame(frame_timestamp_us);
+    profiler_->noteSample(pts_us);
   }
 
   PackedI420Frame frame;
   try {
-    VideoStreamProfiler::ScopedStageTimer unpack_timer(
-      profiler_.get(), VideoProfileStage::kSampleUnpack, frame_timestamp_us);
-    frame = copySampleToPackedI420(sample.get());
+    VideoStreamProfiler::StageTimer unpack_timer(profiler_.get(), VideoProfileStage::kSampleUnpack, pts_us);
+    frame = packI420Frame(sample.get());
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onVideoStreamSampleUnpackFailed(exc.what());
+    lifecycle_observer_.onSampleUnpackFailed(exc.what());
     return GST_FLOW_ERROR;
   }
 
   if (buffer == nullptr) {
     return GST_FLOW_ERROR;
   }
-  const std::int64_t timestamp_us = frame_timestamp_us.value_or(0);
+  const std::int64_t timestamp_us = pts_us.value_or(0);
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -372,7 +382,7 @@ GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
     }
 
     if (!first_sample_logged_) {
-      LogEvent(kVideoStreamRegistryLogger, "video_stream_sample_received")
+      LogEvent(kLogger, "video_stream_sample_received")
         .field("stream_key", spec_.stream_key)
         .field("track_name", spec_.track_name)
         .field("width", frame.width)
@@ -385,12 +395,13 @@ GstFlowReturn VideoPipelineFrameSource::onNewSample(GstAppSink * sink)
   }
 
   try {
-    VideoStreamProfiler::ScopedStageTimer frame_sink_timer(
-      profiler_.get(), VideoProfileStage::kFrameSink, frame_timestamp_us);
-    frame_sink_.handleFrame(frame.width, frame.height, std::move(frame.data), timestamp_us);
+    // The mutex only protects local lifecycle state. Writing to the sink may
+    // block in downstream LiveKit code, so keep that handoff outside the lock.
+    VideoStreamProfiler::StageTimer sink_timer(profiler_.get(), VideoProfileStage::kFrameSink, pts_us);
+    frame_sink_.write(frame.width, frame.height, std::move(frame.data), timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onVideoStreamCaptureFailed(exc.what());
+    lifecycle_observer_.onCaptureFailed(exc.what());
     return GST_FLOW_ERROR;
   }
 }
@@ -424,41 +435,50 @@ void VideoPipelineFrameSource::handlePipelineFailure(const std::string & reason)
     return;
   }
 
-  lifecycle_observer_.onVideoStreamPipelineFailed(reason);
+  lifecycle_observer_.onPipelineFailed(reason);
 
-  if (failure_recovery_pending_) {
+  if (recovery_pending_) {
     return;
   }
-  failure_recovery_pending_ = true;
+  recovery_pending_ = true;
 
   auto self = shared_from_this();
-  const auto restart_delay = restartDelayOnFailure();
+  const auto restart_delay =
+    restart_config_.has_value() ? restart_config_->restart_delay : std::chrono::milliseconds(0);
+  // Bus sync handlers run on GStreamer-owned threads. Defer teardown/restart so
+  // pipeline destruction never re-enters the bus callback stack.
   std::thread([self, restart_delay]() {
     if (restart_delay.count() > 0) {
       std::this_thread::sleep_for(restart_delay);
     }
-    self->recoverFromPipelineFailure();
+    self->recoverPipelineAfterFailure();
   }).detach();
 }
 
-void VideoPipelineFrameSource::recoverFromPipelineFailure()
+void VideoPipelineFrameSource::recoverPipelineAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
-  stopPipelineLocked();
-  failure_recovery_pending_ = false;
+  // Serialize teardown and replacement startup with the base mutex so
+  // shutdown() or producer-side reconfiguration never observes half-installed
+  // pipeline members during recovery.
+  auto handles = takePipelineLocked();
+  teardown(handles.pipeline, handles.appsrc, handles.appsink);
+  // Allow a freshly started pipeline to schedule a new recovery cycle if it
+  // immediately fails during startup or before the next steady-state frame.
+  recovery_pending_ = false;
 
-  if (!shouldRestartAfterFailure()) {
+  if (!restart_config_.has_value()) {
     return;
   }
 
   try {
-    restartAfterFailureLocked();
+    startPipelineLocked(restart_config_->pipeline_description, restart_config_->require_appsrc);
   } catch (const std::exception & exc) {
-    lifecycle_observer_.onVideoStreamRestartFailed(exc.what());
+    lifecycle_observer_.onRestartFailed(exc.what());
   }
 }
 
