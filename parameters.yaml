@@ -25,15 +25,18 @@ livekit_ros2_bridge:
         not_empty<>: null
 
   health:
-    fail_fast:
+    watchdog:
       enabled:
         type: bool
         default_value: true
-        description: "Exit non-zero when the bridge stays disconnected longer than the configured grace window."
-      disconnect_grace_seconds:
+        description: "Shut down the bridge when it stays unhealthy longer than the configured recovery timeout."
+      recovery_timeout_seconds:
         type: double
         default_value: 600.0
-        description: "Maximum continuous disconnected time before fail-fast exits the process."
+        description: >-
+          Maximum time the bridge may spend recovering connectivity before it
+          shuts down. The 10-minute default matches LiveKit's reconnect-token
+          window.
         validation:
           gt_eq<>: [0.0]
 

@@ -58,68 +58,11 @@ public:
 
 private:
   using SteadyClock = std::chrono::steady_clock;
+  std::atomic<bool> shutting_down_{false};
+  std::mutex watchdog_mutex_;
+  std::optional<SteadyClock::time_point> watchdog_deadline_;
 
-  struct State
-  {
-    struct ConnectTransition
-    {
-      bool became_ready = false;
-      bool recovered = false;
-      std::string disconnect_reason;
-    };
-
-    struct DisconnectTransition
-    {
-      bool ready_once = false;
-    };
-
-    struct FailFastTrigger
-    {
-      bool ready_once = false;
-      std::string reason;
-    };
-
-    // Shared by RoomConnection-managed callback threads, ROS wall timers, and explicit shutdown.
-    // These helpers keep the readiness/fail-fast state internally synchronized because those call
-    // paths do not all run on the ROS executor.
-    // Startup becomes ready only after both transport connectivity and required RPC registration
-    // succeed. Either prerequisite may complete first; markRpcRegistered() returns true only on
-    // the transition that satisfies the second prerequisite for the first time, while
-    // markConnected() reports whether the connect completed initial readiness or recovered a
-    // previously ready runtime.
-    bool markRpcRegistered();
-    ConnectTransition markConnected();
-    void armGraceDeadline(std::chrono::milliseconds grace);
-    DisconnectTransition markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace);
-    std::optional<FailFastTrigger> takeFailFastTrigger(SteadyClock::time_point now);
-
-  private:
-    void armGraceDeadlineLocked(std::chrono::milliseconds grace);
-    bool markReadyLocked();
-
-  public:
-    std::atomic<bool> shutting_down{false};
-    mutable std::mutex mutex;
-
-    // Guarded by mutex.
-    bool room_connected = false;
-    // Sticky once the runtime has observed a fully usable session; reconnects clear
-    // `room_connected` but leave this latched so fail-fast can distinguish startup from recovery.
-    bool ready_once = false;
-    // Tracks the local side of readiness because the room may connect before required RPC methods
-    // finish registering.
-    bool rpc_registered = false;
-    // One-shot latch so fail-fast shutdown and exit only happen once per runtime instance.
-    bool fail_fast_fired = false;
-    // Armed during startup or a reconnect grace window and cleared once connectivity is healthy
-    // again, or when fail-fast is disabled for the current reconnect attempt.
-    std::optional<SteadyClock::time_point> grace_deadline;
-    // Carries the latest disconnect cause into fail-fast logs; initial connect failures synthesize
-    // their own reason instead.
-    std::string reason;
-  };
-
-  void checkFailFast();
+  void checkWatchdog();
   void onConnectionReset();
   void onIncomingPacket(const IncomingPacket & packet);
   void onParticipantDisconnected(std::string requester_identity);
@@ -146,15 +89,13 @@ private:
   std::unique_ptr<PacketRouter> packet_router_;
 
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
-  rclcpp::TimerBase::SharedPtr fail_fast_timer_;
+  rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
 
   // Throttle repeated drop logs so disconnect and shutdown bursts stay readable.
   EventThrottle executor_shutdown_enqueue_drop_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_{std::chrono::seconds(5)};
   EventThrottle executor_shutdown_execute_drop_{std::chrono::seconds(5)};
-
-  State state_;
 };
 
 }  // namespace livekit_ros2_bridge

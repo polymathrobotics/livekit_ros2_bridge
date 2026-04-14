@@ -47,10 +47,10 @@ using test_support::waitForTopicType;
 using test_support::waitUntil;
 
 constexpr auto kHealthyConnectionObservationWindow = std::chrono::milliseconds(1200);
-constexpr auto kFailFastObservationWindow = std::chrono::seconds(2);
+constexpr auto kWatchdogObservationWindow = std::chrono::seconds(2);
 constexpr auto kRuntimeTestPollInterval = std::chrono::milliseconds(20);
 constexpr int kRuntimeScenarioCompleted = EXIT_SUCCESS;
-constexpr int kRuntimeScenarioTimedOutWithoutFailFast = 64;
+constexpr int kRuntimeScenarioTimedOutWithoutWatchdog = 64;
 
 std::string nextNodeName(const std::string & prefix)
 {
@@ -184,7 +184,7 @@ protected:
   }
 };
 
-TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
+TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
 {
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
@@ -198,29 +198,29 @@ TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_packet_received));
 }
 
-TEST_F(RuntimeTest, FailFastExitsWhenInitialConnectNeverSucceeds)
+TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
       runRuntimeScenario(
-        options, [](RuntimeHarness &) {}, kFailFastObservationWindow, kRuntimeScenarioTimedOutWithoutFailFast);
+        options, [](RuntimeHarness &) {}, kWatchdogObservationWindow, kRuntimeScenarioTimedOutWithoutWatchdog);
     },
     ::testing::ExitedWithCode(EXIT_FAILURE),
     ".*");
 }
 
-TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
+TEST_F(RuntimeTest, WatchdogDoesNotExitAfterInitialConnectSucceeds)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
       runRuntimeScenario(
         options,
         [](RuntimeHarness & harness) { harness.fake_room_connection->emitConnected(); },
@@ -231,35 +231,35 @@ TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
     ".*");
 }
 
-TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
+TEST_F(RuntimeTest, WatchdogExitsWhenRecoveryTimeoutExpires)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
       runRuntimeScenario(
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
           harness.fake_room_connection->emitReconnectRequested("room_disconnected");
         },
-        kFailFastObservationWindow,
-        kRuntimeScenarioTimedOutWithoutFailFast);
+        kWatchdogObservationWindow,
+        kRuntimeScenarioTimedOutWithoutWatchdog);
     },
     ::testing::ExitedWithCode(EXIT_FAILURE),
     ".*");
 }
 
-TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
+TEST_F(RuntimeTest, WatchdogClearsRecoveryTimeoutAfterRecovery)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
       runRuntimeScenario(
         options,
         [](RuntimeHarness & harness) {
@@ -274,15 +274,15 @@ TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
     ".*");
 }
 
-TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
+TEST_F(RuntimeTest, WatchdogDisabledNeverExitsForDisconnectedConnection)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.enabled", false);
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      options.append_parameter_override("health.watchdog.enabled", false);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
       runRuntimeScenario(
         options, [](RuntimeHarness &) {}, kHealthyConnectionObservationWindow, kRuntimeScenarioCompleted);
     },
@@ -290,14 +290,14 @@ TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
     ".*");
 }
 
-TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
+TEST_F(RuntimeTest, ShutdownPreventsPendingWatchdogExit)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
       runRuntimeScenario(
         options,
         [](RuntimeHarness & harness) { harness.runtime.reset(); },
@@ -323,7 +323,7 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
     EXPECT_STREQ(exc.what(), "Failed to register required RPC methods");
   }
 
-  EXPECT_TRUE(state->started);
+  EXPECT_FALSE(state->started);
   EXPECT_TRUE(state->stopped);
   EXPECT_EQ(state->registered_rpc_methods, expectedRpcMethods());
   EXPECT_EQ(state->unregistered_rpc_methods, expectedRpcMethods());

@@ -146,22 +146,22 @@ TEST_F(RuntimeConfigTest, DefaultVideoConfigAddsBuiltInCatchAllRosRule)
   expectPublishConfigEq(rule.publish_config, config.video_stream.default_publish_config);
 }
 
-TEST_F(RuntimeConfigTest, FailFastDefaultsAndOverridesLoadFromParameters)
+TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
 {
   const RuntimeConfig default_config =
-    loadRuntimeConfigForNode("startup_config_fail_fast_defaults", makeStaticTokenOptions());
+    loadRuntimeConfigForNode("startup_config_watchdog_defaults", makeStaticTokenOptions());
 
-  EXPECT_TRUE(default_config.health.fail_fast_enabled);
-  EXPECT_EQ(default_config.health.fail_fast_disconnect_grace, std::chrono::minutes(10));
+  EXPECT_TRUE(default_config.health.watchdog_enabled);
+  EXPECT_EQ(default_config.health.watchdog_recovery_timeout, std::chrono::minutes(10));
 
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.enabled", false);
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 12.5);
+  options.append_parameter_override("health.watchdog.enabled", false);
+  options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 12.5);
 
-  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_fail_fast_overrides", options);
+  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_watchdog_overrides", options);
 
-  EXPECT_FALSE(overridden_config.health.fail_fast_enabled);
-  EXPECT_EQ(overridden_config.health.fail_fast_disconnect_grace, std::chrono::milliseconds(12500));
+  EXPECT_FALSE(overridden_config.health.watchdog_enabled);
+  EXPECT_EQ(overridden_config.health.watchdog_recovery_timeout, std::chrono::milliseconds(12500));
 }
 
 TEST_F(RuntimeConfigTest, AccessRulesLoadIntoRuntimeAccessPolicy)

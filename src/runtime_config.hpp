@@ -36,10 +36,11 @@ struct RuntimeConfig
 {
   struct HealthConfig
   {
-    bool fail_fast_enabled = true;
-    // Maximum time startup or any later reconnect may remain disconnected
-    // before Runtime requests process shutdown.
-    std::chrono::milliseconds fail_fast_disconnect_grace{std::chrono::minutes(10)};
+    bool watchdog_enabled = true;
+    // Maximum time the bridge may spend trying to recover connectivity before
+    // Runtime requests process shutdown. The 10-minute default matches the
+    // LiveKit reconnect-token window for long outages.
+    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::minutes(10)};
   };
 
   Params params;

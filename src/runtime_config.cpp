@@ -484,9 +484,9 @@ LiveKitConfig loadLiveKitConfig(const Params & params)
 RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
 {
   RuntimeConfig::HealthConfig config;
-  config.fail_fast_enabled = params.health.fail_fast.enabled;
-  config.fail_fast_disconnect_grace = std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::duration<double>(params.health.fail_fast.disconnect_grace_seconds));
+  config.watchdog_enabled = params.health.watchdog.enabled;
+  config.watchdog_recovery_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::duration<double>(params.health.watchdog.recovery_timeout_seconds));
   return config;
 }
 
