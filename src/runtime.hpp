@@ -71,19 +71,9 @@ public:
 private:
   using SteadyClock = std::chrono::steady_clock;
 
-  struct Config
-  {
-    VideoStreamConfig video_stream;
-    SubscriptionQosConfig subscription_qos;
-    std::string room;
-    FailFastCallbacks fail_fast_callbacks;
-    bool fail_fast_enabled = false;
-    std::chrono::milliseconds fail_fast_disconnect_grace{0};
-  };
-
   struct State
   {
-    struct RoomConnectedTransition
+    struct ConnectTransition
     {
       bool became_ready = false;
       bool recovered = false;
@@ -107,10 +97,10 @@ private:
     // Startup becomes ready only after both transport connectivity and required RPC registration
     // succeed. Either prerequisite may complete first; markRpcRegistered() returns true only on
     // the transition that satisfies the second prerequisite for the first time, while
-    // markRoomConnected() reports whether the connect completed initial readiness or recovered a
+    // markConnected() reports whether the connect completed initial readiness or recovered a
     // previously ready runtime.
     bool markRpcRegistered();
-    RoomConnectedTransition markRoomConnected();
+    ConnectTransition markConnected();
     void armGraceDeadline(std::chrono::milliseconds grace);
     DisconnectTransition markDisconnected(const std::string & reason, bool fail_fast, std::chrono::milliseconds grace);
     std::optional<FailFastTrigger> takeFailFastTrigger(SteadyClock::time_point now);
@@ -153,20 +143,19 @@ private:
   };
 
   void checkFailFast();
-  void handleConnectionReset();
-  void handleIncomingPacket(const IncomingPacket & packet);
-  void handleParticipantDisconnected(std::string requester_identity);
-  void handleReconnectRequested(const std::string & reason);
-  void handleRoomConnected();
+  void onConnectionReset();
+  void onIncomingPacket(const IncomingPacket & packet);
+  void onParticipantDisconnected(std::string requester_identity);
+  void onReconnectRequested(const std::string & reason);
+  void onConnected();
   void initPacketRouting();
   void initFailFast();
-  void initRosInterfaces(const AccessPolicy & access_policy);
-  void initSubscriptionRuntime(const AccessPolicy & access_policy);
-  void initVideoProfiling(VideoProfilingConfig video_profiling);
+  void initRosInterfaces();
+  void initSubscriptionRuntime();
+  void initVideoProfiling();
   void logPacketDrop(const IncomingPacket & packet, const char * reason, EventThrottle & throttle) const;
   void logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle);
-  void registerRequiredRpcs();
-  void startRoomConnection(const LiveKitConfig & livekit_config);
+  void startRoomConnection();
 
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
@@ -186,7 +175,8 @@ private:
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<PacketRouter> packet_router_;
 
-  Config config_;
+  RuntimeConfig config_;
+  FailFastCallbacks fail_fast_callbacks_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr fail_fast_timer_;
   rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;

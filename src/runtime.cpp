@@ -49,7 +49,7 @@ bool Runtime::State::markRpcRegistered()
   return markReadyLocked();
 }
 
-Runtime::State::RoomConnectedTransition Runtime::State::markRoomConnected()
+Runtime::State::ConnectTransition Runtime::State::markConnected()
 {
   std::lock_guard<std::mutex> lock(mutex);
   const bool was_connected = room_connected;
@@ -59,7 +59,7 @@ Runtime::State::RoomConnectedTransition Runtime::State::markRoomConnected()
   grace_deadline.reset();
   reason.clear();
 
-  RoomConnectedTransition transition;
+  ConnectTransition transition;
   transition.became_ready = markReadyLocked();
   transition.recovered = was_ready_once && !was_connected;
   transition.disconnect_reason = std::move(disconnect_reason);
@@ -136,28 +136,21 @@ Runtime::Runtime(
   RuntimeConfig config,
   FailFastCallbacks fail_fast_callbacks)
 : node_(node)
-, config_{
-    std::move(config.video_stream),
-    std::move(config.subscription_qos),
-    config.livekit.room,
-    std::move(fail_fast_callbacks),
-    config.health.fail_fast_enabled,
-    config.health.fail_fast_disconnect_grace,
-  }
+, room_connection_(std::move(connection))
+, config_(std::move(config))
+, fail_fast_callbacks_(std::move(fail_fast_callbacks))
 {
-  room_connection_ = std::move(connection);
   if (room_connection_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit room connection");
   }
-  LogEvent(node_.get_logger(), "runtime_startup_begin").fieldOr("room", config_.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_startup_begin").fieldOr("room", config_.livekit.room, "<unset>").info();
 
   initFailFast();
-  initVideoProfiling(std::move(config.video_profiling));
-  initRosInterfaces(config.access_policy);
-  initSubscriptionRuntime(config.access_policy);
+  initVideoProfiling();
+  initRosInterfaces();
+  initSubscriptionRuntime();
   initPacketRouting();
-  startRoomConnection(config.livekit);
-  registerRequiredRpcs();
+  startRoomConnection();
 }
 
 Runtime::~Runtime()
@@ -167,46 +160,45 @@ Runtime::~Runtime()
 
 void Runtime::initFailFast()
 {
-  if (!config_.fail_fast_callbacks.shutdown_callback) {
-    config_.fail_fast_callbacks.shutdown_callback = []() {
+  if (!fail_fast_callbacks_.shutdown_callback) {
+    fail_fast_callbacks_.shutdown_callback = []() {
       if (rclcpp::ok()) {
         rclcpp::shutdown();
       }
     };
   }
 
-  if (!config_.fail_fast_callbacks.exit_callback) {
-    config_.fail_fast_callbacks.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
+  if (!fail_fast_callbacks_.exit_callback) {
+    fail_fast_callbacks_.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
   }
 
-  if (config_.fail_fast_enabled) {
-    state_.armGraceDeadline(config_.fail_fast_disconnect_grace);
+  if (config_.health.fail_fast_enabled) {
+    state_.armGraceDeadline(config_.health.fail_fast_disconnect_grace);
   }
 
   fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { checkFailFast(); });
 }
 
-void Runtime::initVideoProfiling(VideoProfilingConfig video_profiling)
+void Runtime::initVideoProfiling()
 {
-  if (!video_profiling.enabled) {
+  if (!config_.video_profiling.enabled) {
     return;
   }
 
-  video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), std::move(video_profiling));
+  video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.video_profiling);
   video_profiling_registry_->logConfig();
   video_profile_summary_timer_ = node_.create_wall_timer(
     video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
 }
 
-void Runtime::initRosInterfaces(const AccessPolicy & access_policy)
+void Runtime::initRosInterfaces()
 {
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
-  ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, access_policy);
+  ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, config_.access_policy);
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
-  rpc_router_ = std::make_unique<RpcRouter>(node_, access_policy, *ros_executor_queue_, *ros_service_caller_);
 }
 
-void Runtime::initSubscriptionRuntime(const AccessPolicy & access_policy)
+void Runtime::initSubscriptionRuntime()
 {
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
     node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
@@ -215,7 +207,7 @@ void Runtime::initSubscriptionRuntime(const AccessPolicy & access_policy)
     node_, *room_connection_, video_stream_registry_.get(), &config_.video_stream, &config_.subscription_qos);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-    *subscription_registry_, *room_connection_, access_policy, node_.get_clock());
+    *subscription_registry_, *room_connection_, config_.access_policy, node_.get_clock());
 
   subscription_lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitToExecutor([this]() {
@@ -234,73 +226,73 @@ void Runtime::initPacketRouting()
     *ros_topic_publisher_);
 }
 
-void Runtime::startRoomConnection(const LiveKitConfig & livekit_config)
+void Runtime::startRoomConnection()
 {
   // `start()` may deliver callbacks before RPC registration completes, so readiness is logged when
   // the second prerequisite arrives.
   room_connection_->start(
-    livekit_config,
+    config_.livekit,
     RoomConnectionCallbacks{
-      std::bind(&Runtime::handleRoomConnected, this),
-      std::bind(&Runtime::handleReconnectRequested, this, std::placeholders::_1),
-      std::bind(&Runtime::handleConnectionReset, this),
-      std::bind(&Runtime::handleParticipantDisconnected, this, std::placeholders::_1),
-      std::bind(&Runtime::handleIncomingPacket, this, std::placeholders::_1),
+      std::bind(&Runtime::onConnected, this),
+      std::bind(&Runtime::onReconnectRequested, this, std::placeholders::_1),
+      std::bind(&Runtime::onConnectionReset, this),
+      std::bind(&Runtime::onParticipantDisconnected, this, std::placeholders::_1),
+      std::bind(&Runtime::onIncomingPacket, this, std::placeholders::_1),
     });
-}
 
-void Runtime::registerRequiredRpcs()
-{
+  rpc_router_ = std::make_unique<RpcRouter>(node_, config_.access_policy, *ros_executor_queue_, *ros_service_caller_);
+
   if (!rpc_router_->registerRpcs(*room_connection_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
-      .fieldOr("room", config_.room, "<unset>")
+      .fieldOr("room", config_.livekit.room, "<unset>")
       .field("reason", "required_rpc_registration_failed")
       .error();
     shutdown();
     throw std::runtime_error("Failed to register required RPC methods");
   }
+
   if (state_.markRpcRegistered()) {
-    LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.room, "<unset>").info();
+    LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.livekit.room, "<unset>").info();
   }
 }
 
-void Runtime::handleRoomConnected()
+void Runtime::onConnected()
 {
   if (state_.shutting_down.load()) {
     return;
   }
 
-  const auto transition = state_.markRoomConnected();
+  const auto transition = state_.markConnected();
   if (transition.became_ready) {
-    LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.room, "<unset>").info();
+    LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.livekit.room, "<unset>").info();
   } else if (transition.recovered) {
     LogEvent(node_.get_logger(), "runtime_reconnected")
-      .fieldOr("room", config_.room, "<unset>")
+      .fieldOr("room", config_.livekit.room, "<unset>")
       .fieldOr("disconnect_reason", transition.disconnect_reason, "connection_lost")
       .info();
   }
 }
 
-void Runtime::handleReconnectRequested(const std::string & reason)
+void Runtime::onReconnectRequested(const std::string & reason)
 {
   if (state_.shutting_down.load()) {
     return;
   }
 
-  const auto disconnect =
-    state_.markDisconnected(reason, config_.fail_fast_enabled, config_.fail_fast_disconnect_grace);
+  const auto transition =
+    state_.markDisconnected(reason, config_.health.fail_fast_enabled, config_.health.fail_fast_disconnect_grace);
 
   LogEvent log = LogEvent(node_.get_logger(), "runtime_disconnect_observed")
-                   .fieldOr("room", config_.room, "<unset>")
-                   .field("phase", disconnect.ready_once ? "reconnect" : "startup")
+                   .fieldOr("room", config_.livekit.room, "<unset>")
+                   .field("phase", transition.ready_once ? "reconnect" : "startup")
                    .fieldOr("disconnect_reason", reason, "connection_lost");
 
-  if (!config_.fail_fast_enabled) {
+  if (!config_.health.fail_fast_enabled) {
     log.info();
     return;
   }
 
-  log.field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0);
+  log.field("grace_seconds", config_.health.fail_fast_disconnect_grace.count() / 1000.0);
   log.warn();
 }
 
@@ -310,7 +302,7 @@ void Runtime::shutdown()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start").fieldOr("room", config_.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_start").fieldOr("room", config_.livekit.room, "<unset>").info();
 
   // Disarm periodic work first so lease GC and fail-fast evaluation stop racing a deliberate
   // shutdown while the shared components below are being torn down.
@@ -353,12 +345,12 @@ void Runtime::shutdown()
     video_profiling_registry_->flushTrace();
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_complete").fieldOr("room", config_.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_complete").fieldOr("room", config_.livekit.room, "<unset>").info();
 }
 
 void Runtime::checkFailFast()
 {
-  if (!config_.fail_fast_enabled || state_.shutting_down.load()) {
+  if (!config_.health.fail_fast_enabled || state_.shutting_down.load()) {
     return;
   }
 
@@ -368,19 +360,19 @@ void Runtime::checkFailFast()
   }
 
   LogEvent(node_.get_logger(), "runtime_fail_fast_triggered")
-    .fieldOr("room", config_.room, "<unset>")
+    .fieldOr("room", config_.livekit.room, "<unset>")
     .field("phase", trigger->ready_once ? "reconnect" : "startup")
     .field("disconnect_reason", trigger->reason)
-    .field("grace_seconds", config_.fail_fast_disconnect_grace.count() / 1000.0)
+    .field("grace_seconds", config_.health.fail_fast_disconnect_grace.count() / 1000.0)
     .error();
 
   // Give ROS shutdown and log flushing a brief head start before forcing process exit.
-  config_.fail_fast_callbacks.shutdown_callback();
+  fail_fast_callbacks_.shutdown_callback();
   std::this_thread::sleep_for(kFailFastExitDelay);
-  config_.fail_fast_callbacks.exit_callback(EXIT_FAILURE);
+  fail_fast_callbacks_.exit_callback(EXIT_FAILURE);
 }
 
-void Runtime::handleConnectionReset()
+void Runtime::onConnectionReset()
 {
   submitToExecutor([this]() {
     // Reset session-owned state on the ROS executor so cleanup stays ordered with any
@@ -390,7 +382,7 @@ void Runtime::handleConnectionReset()
   });
 }
 
-void Runtime::handleParticipantDisconnected(std::string requester_identity)
+void Runtime::onParticipantDisconnected(std::string requester_identity)
 {
   const std::size_t generation = subscription_registry_->generation();
   submitToExecutor([this, requester_identity = std::move(requester_identity), generation]() {
@@ -401,7 +393,7 @@ void Runtime::handleParticipantDisconnected(std::string requester_identity)
   });
 }
 
-void Runtime::handleIncomingPacket(const IncomingPacket & packet)
+void Runtime::onIncomingPacket(const IncomingPacket & packet)
 {
   if (state_.shutting_down.load()) {
     logPacketDrop(packet, "shutdown", diagnostics_.packet_shutdown_drop);
@@ -449,10 +441,12 @@ void Runtime::submitToExecutor(std::function<void()> work)
     logExecutorWorkDrop("shutdown", "enqueue", diagnostics_.executor_shutdown_enqueue_drop);
     return;
   }
+
   if (ros_executor_queue_ == nullptr) {
     logExecutorWorkDrop("executor_unavailable", "enqueue", diagnostics_.executor_unavailable_drop);
     return;
   }
+
   (void)ros_executor_queue_->submit([this, work = std::move(work)]() mutable {
     // Work accepted before shutdown may still be draining through the queue.
     if (state_.shutting_down.load()) {

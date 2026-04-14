@@ -32,25 +32,13 @@ Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   const auto logger = get_logger();
-
-  RuntimeConfig config;
   std::string room;
+
   try {
-    config = loadRuntimeConfig(get_node_parameters_interface());
+    RuntimeConfig config = loadRuntimeConfig(get_node_parameters_interface());
     // Copy the room before Runtime takes ownership of config so later startup failures can
     // still attribute the error to the intended room.
     room = config.livekit.room;
-  } catch (...) {
-    LogEvent(logger, "node_startup_failed")
-      .field("reason", "runtime_config_load_failed")
-      .fieldException("error", std::current_exception())
-      .error();
-    throw;
-  }
-
-  // Keep configuration loading separate from runtime startup so startup logs distinguish
-  // invalid parameters from room-connection or runtime initialization failures.
-  try {
     auto room_connection = createRoomConnection();
     runtime_ = std::make_unique<Runtime>(*this, std::move(room_connection), std::move(config));
   } catch (...) {
