@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <functional>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -88,11 +87,18 @@ private:
     std::map<std::string, Lease> leases;
   };
 
+  struct ExpiredLeaseRemoval
+  {
+    std::string requester_identity;
+    Clock::time_point expiry;
+  };
+
   using SubscriptionMap = std::unordered_map<std::string, Subscription>;
-  using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
+  static std::vector<ExpiredLeaseRemoval> collectExpiredLeaseRemovals(
+    const Subscription & subscription, Clock::time_point reference_time);
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
@@ -116,8 +122,11 @@ private:
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   SubscriptionStatus status(const Subscription & subscription) const;
 
+  void applyExpiredLeaseRemovals(
+    Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time);
   void destroy(Subscription & subscription, bool log_destroy = true);
-  void removeIf(const LeasePredicate & should_remove, Clock::time_point reference_time);
+  void pruneExpiredSubscriptionLeases(Clock::time_point reference_time);
+  void refreshDataSubscriptionInterval(const Subscription & subscription);
   void republishTracks(const std::string & requester_identity);
 };
 

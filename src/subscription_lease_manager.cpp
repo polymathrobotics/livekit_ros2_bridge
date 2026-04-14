@@ -38,6 +38,7 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("subscription_lease_manager");
+constexpr const char * kLeaseExpiredReason = "lease_expired";
 
 }  // namespace
 
@@ -286,6 +287,7 @@ SubscriptionStatus SubscriptionLeaseManager::create(
     throw;
   }
 
+  // TODO: put this before the start calls
   auto subscription_it =
     subscriptions_
       .emplace(
@@ -391,7 +393,7 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
     it = session_leases_.erase(it);
   }
 
-  removeIf([now](const std::string &, const Lease & lease) { return now >= lease.expiry; }, now);
+  pruneExpiredSubscriptionLeases(now);
 }
 
 SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
@@ -493,82 +495,78 @@ int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Leas
   return applied_interval_ms;
 }
 
-void SubscriptionLeaseManager::removeIf(const LeasePredicate & should_remove, Clock::time_point reference_time)
+std::vector<SubscriptionLeaseManager::ExpiredLeaseRemoval> SubscriptionLeaseManager::collectExpiredLeaseRemovals(
+  const Subscription & subscription, Clock::time_point reference_time)
 {
-  constexpr const char * kRemovalReason = "lease_expired";
-
-  for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
-    auto & subscription = it->second;
-    bool removed_any = false;
-
-    for (auto req_it = subscription.leases.begin(); req_it != subscription.leases.end();) {
-      const auto & requester_identity = req_it->first;
-      const auto & lease = req_it->second;
-      if (!should_remove(requester_identity, lease)) {
-        ++req_it;
-        continue;
-      }
-
-      const auto remaining_requesters = subscription.leases.size() - 1U;
-      const auto delta_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(lease.expiry - reference_time).count();
-      if (remaining_requesters > 0U) {
-        LogEvent(kLogger, "requester_lease_removed")
-          .field("resource", subscription.name)
-          .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-          .field("requester_identity", requester_identity)
-          .field("reason", kRemovalReason)
-          .field("remaining_requesters", remaining_requesters)
-          .field("expired_by_ms", static_cast<long>(-delta_ms))
-          .info();
-      }
-
-      removed_any = true;
-      republish_requesters_.erase(requester_identity);
-      req_it = subscription.leases.erase(req_it);
+  std::vector<ExpiredLeaseRemoval> removals;
+  for (const auto & [requester_identity, lease] : subscription.leases) {
+    if (reference_time < lease.expiry) {
+      continue;
     }
 
-    if (!removed_any) {
+    removals.push_back(ExpiredLeaseRemoval{requester_identity, lease.expiry});
+  }
+  return removals;
+}
+
+void SubscriptionLeaseManager::applyExpiredLeaseRemovals(
+  Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time)
+{
+  for (const auto & removal : removals) {
+    const auto remaining_requesters = subscription.leases.size() - 1U;
+    const auto delta_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(removal.expiry - reference_time).count();
+    if (remaining_requesters > 0U) {
+      LogEvent(kLogger, "requester_lease_removed")
+        .field("resource", subscription.name)
+        .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
+        .field("requester_identity", removal.requester_identity)
+        .field("reason", kLeaseExpiredReason)
+        .field("remaining_requesters", remaining_requesters)
+        .field("expired_by_ms", static_cast<long>(-delta_ms))
+        .info();
+    }
+
+    republish_requesters_.erase(removal.requester_identity);
+    subscription.leases.erase(removal.requester_identity);
+  }
+}
+
+void SubscriptionLeaseManager::refreshDataSubscriptionInterval(const Subscription & subscription)
+{
+  if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo || subscription.leases.empty()) {
+    return;
+  }
+
+  data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
+}
+
+void SubscriptionLeaseManager::pruneExpiredSubscriptionLeases(Clock::time_point reference_time)
+{
+  for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
+    auto & subscription = it->second;
+    const auto removals = collectExpiredLeaseRemovals(subscription, reference_time);
+    if (removals.empty()) {
       ++it;
       continue;
     }
 
-    if (subscription.leases.empty()) {
-      if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
-        const auto * data = data_stream_registry_.find(subscription.name);
-        if (data == nullptr) {
-          throw std::logic_error("data subscription invariant violated: data stream is required");
-        }
-        LogEvent(kLogger, "subscription_pruned")
-          .field("resource", subscription.name)
-          .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-          .field("reason", kRemovalReason)
-          .field("track_name", data->trackName())
-          .info();
-      } else {
-        const auto video =
-          video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
-        if (!video.has_value()) {
-          throw std::logic_error("video subscription invariant violated: video stream is required");
-        }
-        LogEvent(kLogger, "subscription_pruned")
-          .field("resource", subscription.name)
-          .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-          .field("reason", kRemovalReason)
-          .field("stream_key", video->stream_key)
-          .field("track_name", video->track_name)
-          .info();
-      }
-      // `subscription_pruned` already captures this lease-driven teardown boundary.
-      destroy(subscription, false);
-      it = subscriptions_.erase(it);
+    applyExpiredLeaseRemovals(subscription, removals, reference_time);
+
+    if (!subscription.leases.empty()) {
+      refreshDataSubscriptionInterval(subscription);
+      ++it;
       continue;
     }
 
-    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
-      data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
-    }
-    ++it;
+    LogEvent(kLogger, "subscription_pruned")
+      .field("resource", subscription.name)
+      .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
+      .field("reason", kLeaseExpiredReason)
+      .info();
+    // `subscription_pruned` already captures this lease-driven teardown boundary.
+    destroy(subscription, false);
+    it = subscriptions_.erase(it);
   }
 }
 

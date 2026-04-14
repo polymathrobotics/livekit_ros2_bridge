@@ -690,6 +690,37 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 }
 
+TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedVideoTrack)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_prune_video_unpublish_test");
+  FakeRoomConnection session;
+  const std::string topic = "/camera/prune_expired";
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
+
+  VideoStreamRegistry video_stream_registry(*node, session);
+  DataStreamRegistry data_stream_registry(*node, session);
+  auto registry =
+    makeLeaseManager(*node, session, data_stream_registry, video_stream_registry, kShortHeartbeatLeaseDuration);
+  const auto status =
+    sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
+  const std::string track_name = status["delivery"]["track_name"].get<std::string>();
+
+  ASSERT_TRUE(publishUntil(
+    executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
+  EXPECT_EQ(session.state->published_video_track_names, std::vector<std::string>{track_name});
+
+  std::this_thread::sleep_for(kShortHeartbeatLeaseDuration + kLeaseWaitBuffer);
+  registry.pruneExpiredLeases();
+
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{track_name});
+}
+
 TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 {
   ScopedRclcppInit init;
