@@ -14,6 +14,9 @@
 
 #pragma once
 
+#include <chrono>
+#include <optional>
+
 #include "nlohmann/json_fwd.hpp"
 #include "subscription_types.hpp"
 
@@ -35,13 +38,24 @@ namespace stream_control_payloads
 /// further normalize values such as negatives.
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body);
 
-/// Serialize one active subscription status object for `ros.subscriptions.status`.
-/// The wire shape always emits `status="active"`; partial health is reported via
-/// `degraded_reason` instead of a separate status literal. The caller supplies the
-/// already-resolved delivery mode and, for data deliveries, the effective applied interval.
-/// Data payloads include `content_type="application/x-ros-cdr"` and `delivery.interval_ms`;
-/// video payloads omit both.
-nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status);
+struct SubscriptionStatusLease
+{
+  std::string session_id;
+  std::chrono::steady_clock::time_point expiry;
+};
+
+/// Serialize the full `ros.subscriptions.status` response body from reported status DTOs and
+/// optional lease metadata. The serializer owns the per-entry `active`/`error` mapping and the
+/// top-level envelope shape, including `lease_expires_in_ms`.
+nlohmann::json serializeSubscriptionStatuses(
+  const std::vector<SubscriptionReportedStatus> & statuses,
+  const std::optional<SubscriptionStatusLease> & lease,
+  std::chrono::steady_clock::time_point now);
+
+/// Serialize the full `ros.subscriptions.status` response body using `steady_clock::now()` for
+/// `lease_expires_in_ms`.
+nlohmann::json serializeSubscriptionStatuses(
+  const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease);
 
 }  // namespace stream_control_payloads
 

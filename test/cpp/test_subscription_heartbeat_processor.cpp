@@ -150,11 +150,13 @@ void expectPublishedError(
   const std::string & requester_identity,
   const char * kind,
   const char * name,
-  const char * reason)
+  const char * reason,
+  const char * message)
 {
   const auto status = extractPublishedStatusEntry(state, requester_identity);
   expectStatusEntry(status, kind, name, "error");
   EXPECT_EQ(status["error"]["reason"], reason);
+  EXPECT_EQ(status["error"]["message"], message);
 }
 
 class SubscriptionHeartbeatProcessorTest : public ::testing::Test
@@ -194,7 +196,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ForbiddenTopicReturnsError)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  expectPublishedError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
@@ -204,7 +207,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, NotFoundTopicReturnsError)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)}));
 
-  expectPublishedError(*state_, "requester-1", "topic", "/nonexistent_topic", "not_found");
+  expectPublishedError(
+    *state_,
+    "requester-1",
+    "topic",
+    "/nonexistent_topic",
+    "not_found",
+    "No ROS types found for topic '/nonexistent_topic'.");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnavailable)
@@ -219,7 +228,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingVideoStreamRegistryReturnsUnav
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
 
-  expectPublishedError(*state_, "requester-1", "topic", "/camera/front", "unavailable");
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/camera/front", "unavailable", "Video stream registry is unavailable.");
   (void)publisher;
 }
 
@@ -251,7 +261,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MissingConfiguredSourceReturnsErrorOn
 
   processor.process("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
 
-  expectPublishedError(*state_, "requester-1", "configured_source", "/sources/missing", "not_found");
+  expectPublishedError(
+    *state_,
+    "requester-1",
+    "configured_source",
+    "/sources/missing",
+    "not_found",
+    "Unknown configured video source '/sources/missing'.");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)
@@ -365,7 +381,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, CopiesAccessPolicyAtConstruction)
 
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  expectPublishedError(*state_, "requester-1", "topic", "/battery_state", "forbidden");
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
 TEST_F(SubscriptionHeartbeatProcessorTest, PublishControlPacketFailureIsHandledGracefully)
@@ -403,8 +420,13 @@ TEST_F(SubscriptionHeartbeatProcessorTest, MixedSubscriptionResultsArePublishedI
 
   const auto missing_status = findStatusEntry(envelope, "topic", "/nonexistent_topic");
   ASSERT_TRUE(missing_status.has_value());
-  expectStatusEntry(*missing_status, "topic", "/nonexistent_topic", "error");
-  EXPECT_EQ((*missing_status)["error"]["reason"], "not_found");
+  EXPECT_EQ(
+    *missing_status,
+    nlohmann::json(
+      {{"kind", "topic"},
+       {"name", "/nonexistent_topic"},
+       {"status", "error"},
+       {"error", {{"reason", "not_found"}, {"message", "No ROS types found for topic '/nonexistent_topic'."}}}}));
   (void)publisher;
 }
 

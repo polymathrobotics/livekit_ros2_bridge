@@ -25,7 +25,6 @@
 #include "access_policy.hpp"
 #include "nlohmann/json.hpp"
 #include "payloads/stream_control_payloads.hpp"
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "room_connection.hpp"
 #include "subscription_registry.hpp"
@@ -60,12 +59,18 @@ void SubscriptionHeartbeatProcessor::process(
     return;
   }
 
-  const auto statuses = renewStatuses(*lease, heartbeat.subscriptions);
+  std::vector<SubscriptionReportedStatus> statuses;
+  statuses.reserve(heartbeat.subscriptions.size());
+
+  for (const auto & demand : heartbeat.subscriptions) {
+    statuses.emplace_back(renewSubscription(*lease, demand));
+  }
 
   // A page refresh can reuse the requester identity before the old lease expires, but the
   // rejoined participant still needs a fresh data-track publication because the previous one
   // belonged to the disconnected participant_session.
   subscription_registry_.republishDataTracks(lease->requester_identity);
+
   publishStatuses(*lease, statuses);
 }
 
@@ -87,12 +92,24 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
 {
   const auto expiry = std::chrono::steady_clock::now() + kHeartbeatLeaseDuration;
   if (requester_identity.empty()) {
-    auto identity = resolveAnonymousIdentity(session_id, expiry);
-    if (!identity.has_value()) {
+    // LiveKit should normally attach the requester identity to user-data packets. If it does not, a
+    // known wire session_id is enough to treat the heartbeat as belonging to the same authenticated
+    // browser tab and renew that client-session lease instead of dropping it.
+    const auto it = session_id.has_value() ? leases_.find(*session_id) : leases_.end();
+    if (it == leases_.end()) {
+      LogEvent(kLogger, "heartbeat_dropped")
+        .field("reason", "anonymous_requester_without_resolvable_client_session")
+        .fieldOr("session_id", session_id.value_or(""), "<absent>")
+        .warnThrottle(*clock_, kLogThrottle);
       return std::nullopt;
     }
 
-    return ResolvedLease{std::move(*identity), session_id, expiry};
+    it->second.expiry = expiry;
+    LogEvent(kLogger, "heartbeat_client_session_fallback")
+      .field("requester_identity", it->second.requester_identity)
+      .fieldOr("session_id", session_id.value_or(""), "<absent>")
+      .warnThrottle(*clock_, kLogThrottle);
+    return ResolvedLease{it->second.requester_identity, session_id, expiry};
   }
 
   if (!session_id.has_value()) {
@@ -117,82 +134,40 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
   return ResolvedLease{requester_identity, session_id, expiry};
 }
 
-std::optional<std::string> SubscriptionHeartbeatProcessor::resolveAnonymousIdentity(
-  const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry)
+SubscriptionReportedStatus SubscriptionHeartbeatProcessor::renewSubscription(
+  const ResolvedLease & lease, const SubscriptionDemand & demand)
 {
-  if (!session_id.has_value()) {
-    LogEvent(kLogger, "heartbeat_dropped")
-      .field("reason", "anonymous_requester_without_client_session")
-      .warnThrottle(*clock_, kLogThrottle);
-    return std::nullopt;
+  const auto & target = demand.target;
+
+  // `configured_source` targets name bridge-owned config entries rather than ROS graph
+  // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
+  if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name)) {
+    return SubscriptionErrorStatus{
+      target,
+      SubscriptionStatusErrorReason::kForbidden,
+      "ROS topic '" + target.name + "' not permitted.",
+    };
   }
 
-  const auto it = leases_.find(*session_id);
-  if (it == leases_.end()) {
-    LogEvent(kLogger, "heartbeat_dropped")
-      .field("reason", "unknown_session_id")
-      .field("session_id", *session_id)
-      .warnThrottle(*clock_, kLogThrottle);
-    return std::nullopt;
+  try {
+    return subscription_registry_.renewSubscription(lease.requester_identity, demand, lease.expiry);
+  } catch (const StreamUnavailableError & exc) {
+    return SubscriptionErrorStatus{
+      target,
+      SubscriptionStatusErrorReason::kUnavailable,
+      exc.what(),
+    };
+  } catch (const std::exception & exc) {
+    return SubscriptionErrorStatus{
+      target,
+      SubscriptionStatusErrorReason::kNotFound,
+      exc.what(),
+    };
   }
-
-  // LiveKit should normally attach the requester identity to user-data packets. If it does not, a
-  // known wire session_id is enough to treat the heartbeat as belonging to the same authenticated
-  // browser tab and renew that client-session lease instead of dropping it.
-  it->second.expiry = expiry;
-
-  LogEvent(kLogger, "heartbeat_client_session_fallback")
-    .field("requester_identity", it->second.requester_identity)
-    .fieldOr("session_id", session_id.value_or(""), "<absent>")
-    .warnThrottle(*clock_, kLogThrottle);
-  return it->second.requester_identity;
 }
 
-nlohmann::json SubscriptionHeartbeatProcessor::renewStatuses(
-  const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands)
-{
-  nlohmann::json statuses = nlohmann::json::array();
-
-  for (const auto & demand : demands) {
-    const auto & target = demand.target;
-
-    // `configured_source` targets name bridge-owned config entries rather than ROS graph
-    // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
-    if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name))
-    {
-      statuses.push_back({
-        {"kind", subscriptionTargetKindString(target.kind)},
-        {"name", target.name},
-        {"status", "error"},
-        {"error", {{"reason", "forbidden"}, {"message", "ROS topic '" + target.name + "' not permitted."}}},
-      });
-      continue;
-    }
-
-    try {
-      auto status = subscription_registry_.renewSubscription(lease.requester_identity, demand, lease.expiry);
-      statuses.push_back(stream_control_payloads::serializeSubscriptionStatus(status));
-    } catch (const StreamUnavailableError & exc) {
-      statuses.push_back({
-        {"kind", subscriptionTargetKindString(target.kind)},
-        {"name", target.name},
-        {"status", "error"},
-        {"error", {{"reason", "unavailable"}, {"message", exc.what()}}},
-      });
-    } catch (const std::exception & exc) {
-      statuses.push_back({
-        {"kind", subscriptionTargetKindString(target.kind)},
-        {"name", target.name},
-        {"status", "error"},
-        {"error", {{"reason", "not_found"}, {"message", exc.what()}}},
-      });
-    }
-  }
-
-  return statuses;
-}
-
-void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses)
+void SubscriptionHeartbeatProcessor::publishStatuses(
+  const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses)
 {
   // A heartbeat may exist only to bind or renew the client-session lease. In that case the wire
   // contract does not send an empty status envelope back.
@@ -200,21 +175,12 @@ void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease
     return;
   }
 
-  nlohmann::json envelope = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
-    // The wire contract keeps the broad `subscriptions` array name even though each object is a
-    // reported `SubscriptionStatus`.
-    {"subscriptions", statuses},
-  };
+  std::optional<stream_control_payloads::SubscriptionStatusLease> lease_metadata;
   if (lease.session_id.has_value()) {
-    const auto lease_expires_in_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(lease.expiry - std::chrono::steady_clock::now()).count();
-    envelope["session_id"] = *lease.session_id;
-    envelope["lease_expires_in_ms"] = lease_expires_in_ms;
+    lease_metadata = stream_control_payloads::SubscriptionStatusLease{*lease.session_id, lease.expiry};
   }
 
-  const std::string body = envelope.dump();
+  const std::string body = stream_control_payloads::serializeSubscriptionStatuses(statuses, lease_metadata).dump();
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {lease.requester_identity};

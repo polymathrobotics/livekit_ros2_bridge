@@ -18,9 +18,9 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "access_policy.hpp"
-#include "nlohmann/json_fwd.hpp"
 #include "rclcpp/clock.hpp"
 #include "subscription_types.hpp"
 #include "utils/event_throttle.hpp"
@@ -82,12 +82,8 @@ private:
 
   std::optional<ResolvedLease> resolveLease(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
-  // Recovers the requester identity for an anonymous heartbeat from an existing leased
-  // `session_id`, and extends that lease when the fallback succeeds.
-  std::optional<std::string> resolveAnonymousIdentity(
-    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry);
-  nlohmann::json renewStatuses(const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands);
-  void publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses);
+  SubscriptionReportedStatus renewSubscription(const ResolvedLease & lease, const SubscriptionDemand & demand);
+  void publishStatuses(const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses);
 };
 
 }  // namespace livekit_ros2_bridge

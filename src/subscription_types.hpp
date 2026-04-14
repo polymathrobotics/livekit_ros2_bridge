@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "protocol.hpp"
@@ -100,7 +101,7 @@ inline const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind deli
   throw std::invalid_argument("subscription delivery kind is invalid");
 }
 
-// Control-path subscription status object serialized onto `ros.subscriptions.status`.
+// Active control-path subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionStatus
 {
   SubscriptionTarget target;
@@ -116,5 +117,22 @@ struct SubscriptionStatus
   // Serialized for both delivery modes.
   std::string track_name;
 };
+
+enum class SubscriptionStatusErrorReason
+{
+  kForbidden,
+  kUnavailable,
+  kNotFound,
+};
+
+// Error control-path subscription status object reported on `ros.subscriptions.status`.
+struct SubscriptionErrorStatus
+{
+  SubscriptionTarget target;
+  SubscriptionStatusErrorReason reason = SubscriptionStatusErrorReason::kNotFound;
+  std::string message;
+};
+
+using SubscriptionReportedStatus = std::variant<SubscriptionStatus, SubscriptionErrorStatus>;
 
 }  // namespace livekit_ros2_bridge

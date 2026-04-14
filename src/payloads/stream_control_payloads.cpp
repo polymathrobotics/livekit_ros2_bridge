@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <variant>
 
 #include "nlohmann/json.hpp"
 #include "payloads/json_object_parser.hpp"
@@ -80,6 +81,20 @@ const char * clampBoundaryString(ClampBoundary boundary)
   }
 
   return "unknown";
+}
+
+const char * subscriptionStatusErrorReasonString(SubscriptionStatusErrorReason reason)
+{
+  switch (reason) {
+    case SubscriptionStatusErrorReason::kForbidden:
+      return "forbidden";
+    case SubscriptionStatusErrorReason::kUnavailable:
+      return "unavailable";
+    case SubscriptionStatusErrorReason::kNotFound:
+      return "not_found";
+  }
+
+  throw std::invalid_argument("subscription status error reason is invalid");
 }
 
 ClampedInt clampJsonInt(const nlohmann::json & value, const char * error_message)
@@ -172,6 +187,75 @@ SubscriptionTarget parseTarget(const nlohmann::json & entry)
   return {kind, std::move(name)};
 }
 
+nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & status)
+{
+  if (
+    status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
+  {
+    LogEvent(kLogger, "subscription_status_serialize_failed")
+      .field("kind", subscriptionTargetKindString(status.target.kind))
+      .field("name", status.target.name)
+      .field("delivery_kind", static_cast<int>(status.delivery_kind))
+      .error();
+    throw std::invalid_argument("subscription status delivery kind is invalid");
+  }
+
+  nlohmann::json body = {
+    {"kind", subscriptionTargetKindString(status.target.kind)},
+    {"name", status.target.name},
+    {"status", "active"},
+  };
+
+  if (!status.degraded_reason.empty()) {
+    body["degraded_reason"] = status.degraded_reason;
+  }
+  if (!status.interface_type.empty()) {
+    body["interface_type"] = status.interface_type;
+  }
+
+  nlohmann::json delivery = {
+    {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
+    {"track_name", status.track_name},
+  };
+  if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
+    // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
+    // LiveKit data track, so the content type is fixed by protocol rather than caller input.
+    delivery["content_type"] = protocol::kDataContentTypeCdr;
+    delivery["interval_ms"] = status.applied_interval_ms;
+  }
+
+  body["delivery"] = std::move(delivery);
+  return body;
+}
+
+nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionErrorStatus & status)
+{
+  const char * reason = nullptr;
+  try {
+    reason = subscriptionStatusErrorReasonString(status.reason);
+  } catch (const std::invalid_argument &) {
+    LogEvent(kLogger, "subscription_status_serialize_failed")
+      .field("kind", subscriptionTargetKindString(status.target.kind))
+      .field("name", status.target.name)
+      .field("error_reason", static_cast<int>(status.reason))
+      .error();
+    throw;
+  }
+
+  return {
+    {"kind", subscriptionTargetKindString(status.target.kind)},
+    {"name", status.target.name},
+    {"status", "error"},
+    {"error", {{"reason", reason}, {"message", status.message}}},
+  };
+}
+
+nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionReportedStatus & status)
+{
+  return std::visit(
+    [](const auto & entry) -> nlohmann::json { return serializeSubscriptionStatusEntry(entry); }, status);
+}
+
 }  // namespace
 
 SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
@@ -234,45 +318,35 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
   return heartbeat;
 }
 
-nlohmann::json serializeSubscriptionStatus(const SubscriptionStatus & status)
+nlohmann::json serializeSubscriptionStatuses(
+  const std::vector<SubscriptionReportedStatus> & statuses,
+  const std::optional<SubscriptionStatusLease> & lease,
+  std::chrono::steady_clock::time_point now)
 {
-  if (
-    status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
-  {
-    LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", subscriptionTargetKindString(status.target.kind))
-      .field("name", status.target.name)
-      .field("delivery_kind", static_cast<int>(status.delivery_kind))
-      .error();
-    throw std::invalid_argument("subscription status delivery kind is invalid");
+  nlohmann::json subscriptions = nlohmann::json::array();
+  for (const auto & status : statuses) {
+    subscriptions.push_back(serializeSubscriptionStatusEntry(status));
   }
 
   nlohmann::json body = {
-    {"kind", subscriptionTargetKindString(status.target.kind)},
-    {"name", status.target.name},
-    {"status", "active"},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kControlSubscriptionsStatus},
+    // The wire contract keeps the broad `subscriptions` array name even though each object is one
+    // reported subscription-status entry.
+    {"subscriptions", subscriptions},
   };
-
-  if (!status.degraded_reason.empty()) {
-    body["degraded_reason"] = status.degraded_reason;
-  }
-  if (!status.interface_type.empty()) {
-    body["interface_type"] = status.interface_type;
+  if (lease.has_value()) {
+    body["session_id"] = lease->session_id;
+    body["lease_expires_in_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(lease->expiry - now).count();
   }
 
-  nlohmann::json delivery = {
-    {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
-    {"track_name", status.track_name},
-  };
-  if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
-    // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
-    // LiveKit data track, so the content type is fixed by protocol rather than caller input.
-    delivery["content_type"] = protocol::kDataContentTypeCdr;
-    delivery["interval_ms"] = status.applied_interval_ms;
-  }
-
-  body["delivery"] = std::move(delivery);
   return body;
+}
+
+nlohmann::json serializeSubscriptionStatuses(
+  const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease)
+{
+  return serializeSubscriptionStatuses(statuses, lease, std::chrono::steady_clock::now());
 }
 }  // namespace stream_control_payloads
 

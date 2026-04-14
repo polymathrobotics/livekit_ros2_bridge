@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -58,6 +60,15 @@ SubscriptionStatus makeStatus(
   status.delivery_kind = delivery_kind;
   status.track_name = std::move(track_name);
   return status;
+}
+
+SubscriptionErrorStatus makeErrorStatus(
+  SubscriptionTargetKind target_kind,
+  std::string target_name,
+  SubscriptionStatusErrorReason reason,
+  std::string message)
+{
+  return {{target_kind, std::move(target_name)}, reason, std::move(message)};
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
@@ -266,66 +277,189 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
   EXPECT_EQ(heartbeat.subscriptions[3].target.name, "front_camera/");
 }
 
-TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesVideoDeliveriesAndOptionalFields)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnlyBody)
 {
-  auto topic_video = makeStatus(
-    SubscriptionTargetKind::Topic, "/camera/image", SubscriptionDeliveryKind::kVideo, "ros.video.camera.image");
-  topic_video.interface_type = "sensor_msgs/msg/Image";
-  topic_video.degraded_reason = "source warming up";
+  auto topic_data = makeStatus(
+    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "ros.data.lidar.points");
+  topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
+  topic_data.applied_interval_ms = 50;
 
   auto configured_source_video = makeStatus(
     SubscriptionTargetKind::ConfiguredSource,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
     "ros.video.configured_source.%2Fsources%2Ffront");
+  configured_source_video.degraded_reason = "source warming up";
+
+  nlohmann::json expected = {
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kControlSubscriptionsStatus},
+    {"subscriptions", nlohmann::json::array()},
+  };
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/lidar/points"},
+    {"status", "active"},
+    {"interface_type", "sensor_msgs/msg/PointCloud2"},
+    {"delivery",
+     {{"kind", "data"},
+      {"track_name", "ros.data.lidar.points"},
+      {"content_type", "application/x-ros-cdr"},
+      {"interval_ms", 50}}},
+  });
+  expected["subscriptions"].push_back({
+    {"kind", "configured_source"},
+    {"name", "/sources/front"},
+    {"status", "active"},
+    {"degraded_reason", "source warming up"},
+    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"}}},
+  });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatus(topic_video),
-    nlohmann::json(
-      {{"kind", "topic"},
-       {"name", "/camera/image"},
-       {"status", "active"},
-       {"degraded_reason", "source warming up"},
-       {"interface_type", "sensor_msgs/msg/Image"},
-       {"delivery", {{"kind", "video"}, {"track_name", "ros.video.camera.image"}}}}));
-
-  EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatus(configured_source_video),
-    nlohmann::json(
-      {{"kind", "configured_source"},
-       {"name", "/sources/front"},
-       {"status", "active"},
-       {"delivery", {{"kind", "video"}, {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"}}}}));
+    stream_control_payloads::serializeSubscriptionStatuses(
+      std::vector<SubscriptionReportedStatus>{topic_data, configured_source_video},
+      std::nullopt,
+      std::chrono::steady_clock::time_point{}),
+    expected);
 }
 
-TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusSerializesDataDeliveries)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyBody)
+{
+  nlohmann::json expected = {
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kControlSubscriptionsStatus},
+    {"subscriptions", nlohmann::json::array()},
+  };
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/battery_state"},
+    {"status", "error"},
+    {"error", {{"reason", "forbidden"}, {"message", "ROS topic '/battery_state' not permitted."}}},
+  });
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/camera/front"},
+    {"status", "error"},
+    {"error", {{"reason", "unavailable"}, {"message", "Video stream registry is unavailable."}}},
+  });
+  expected["subscriptions"].push_back({
+    {"kind", "configured_source"},
+    {"name", "/sources/missing"},
+    {"status", "error"},
+    {"error", {{"reason", "not_found"}, {"message", "Unknown configured video source '/sources/missing'."}}},
+  });
+
+  EXPECT_EQ(
+    stream_control_payloads::serializeSubscriptionStatuses(
+      std::vector<SubscriptionReportedStatus>{
+        makeErrorStatus(
+          SubscriptionTargetKind::Topic,
+          "/battery_state",
+          SubscriptionStatusErrorReason::kForbidden,
+          "ROS topic '/battery_state' not permitted."),
+        makeErrorStatus(
+          SubscriptionTargetKind::Topic,
+          "/camera/front",
+          SubscriptionStatusErrorReason::kUnavailable,
+          "Video stream registry is unavailable."),
+        makeErrorStatus(
+          SubscriptionTargetKind::ConfiguredSource,
+          "/sources/missing",
+          SubscriptionStatusErrorReason::kNotFound,
+          "Unknown configured video source '/sources/missing'."),
+      },
+      std::nullopt,
+      std::chrono::steady_clock::time_point{}),
+    expected);
+}
+
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMetadata)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "ros.data.lidar.points");
-  topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
-  topic_data.applied_interval_ms = 0;
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "ros.data.battery_state");
+  topic_data.interface_type = "sensor_msgs/msg/BatteryState";
+  topic_data.applied_interval_ms = 100;
+
+  const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
+  const auto lease = std::optional<stream_control_payloads::SubscriptionStatusLease>{
+    stream_control_payloads::SubscriptionStatusLease{"session-1", now + std::chrono::milliseconds(45000)}};
+
+  nlohmann::json expected = {
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kControlSubscriptionsStatus},
+    {"session_id", "session-1"},
+    {"lease_expires_in_ms", 45000},
+    {"subscriptions", nlohmann::json::array()},
+  };
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/battery_state"},
+    {"status", "active"},
+    {"interface_type", "sensor_msgs/msg/BatteryState"},
+    {"delivery",
+     {{"kind", "data"},
+      {"track_name", "ros.data.battery_state"},
+      {"content_type", "application/x-ros-cdr"},
+      {"interval_ms", 100}}},
+  });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatus(topic_data),
-    nlohmann::json(
-      {{"kind", "topic"},
-       {"name", "/lidar/points"},
-       {"status", "active"},
-       {"interface_type", "sensor_msgs/msg/PointCloud2"},
-       {"delivery",
-        {{"kind", "data"},
-         {"track_name", "ros.data.lidar.points"},
-         {"content_type", "application/x-ros-cdr"},
-         {"interval_ms", 0}}}}));
+    stream_control_payloads::serializeSubscriptionStatuses(
+      std::vector<SubscriptionReportedStatus>{topic_data}, lease, now),
+    expected);
 }
 
-TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusRejectsUnknownDeliveryKind)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
+{
+  auto configured_source_video = makeStatus(
+    SubscriptionTargetKind::ConfiguredSource,
+    "/sources/front",
+    SubscriptionDeliveryKind::kVideo,
+    "ros.video.configured_source.%2Fsources%2Ffront");
+
+  nlohmann::json expected = {
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kControlSubscriptionsStatus},
+    {"subscriptions", nlohmann::json::array()},
+  };
+  expected["subscriptions"].push_back({
+    {"kind", "configured_source"},
+    {"name", "/sources/front"},
+    {"status", "active"},
+    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"}}},
+  });
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/nonexistent_topic"},
+    {"status", "error"},
+    {"error", {{"reason", "not_found"}, {"message", "No ROS types found for topic '/nonexistent_topic'."}}},
+  });
+
+  EXPECT_EQ(
+    stream_control_payloads::serializeSubscriptionStatuses(
+      std::vector<SubscriptionReportedStatus>{
+        configured_source_video,
+        makeErrorStatus(
+          SubscriptionTargetKind::Topic,
+          "/nonexistent_topic",
+          SubscriptionStatusErrorReason::kNotFound,
+          "No ROS types found for topic '/nonexistent_topic'."),
+      },
+      std::nullopt,
+      std::chrono::steady_clock::time_point{}),
+    expected);
+}
+
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliveryKind)
 {
   SubscriptionStatus status;
   status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
   status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
-  EXPECT_THROW((void)stream_control_payloads::serializeSubscriptionStatus(status), std::invalid_argument);
+  EXPECT_THROW(
+    (void)stream_control_payloads::serializeSubscriptionStatuses(
+      std::vector<SubscriptionReportedStatus>{status}, std::nullopt, std::chrono::steady_clock::time_point{}),
+    std::invalid_argument);
 }
 
 }  // namespace
