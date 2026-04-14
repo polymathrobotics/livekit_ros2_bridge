@@ -130,15 +130,10 @@ bool Runtime::State::markReadyLocked()
   return true;
 }
 
-Runtime::Runtime(
-  rclcpp::Node & node,
-  std::unique_ptr<RoomConnection> connection,
-  RuntimeConfig config,
-  FailFastCallbacks fail_fast_callbacks)
+Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
 : node_(node)
-, room_connection_(std::move(connection))
 , config_(std::move(config))
-, fail_fast_callbacks_(std::move(fail_fast_callbacks))
+, room_connection_(std::move(connection))
 {
   if (room_connection_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit room connection");
@@ -160,18 +155,6 @@ Runtime::~Runtime()
 
 void Runtime::initFailFast()
 {
-  if (!fail_fast_callbacks_.shutdown_callback) {
-    fail_fast_callbacks_.shutdown_callback = []() {
-      if (rclcpp::ok()) {
-        rclcpp::shutdown();
-      }
-    };
-  }
-
-  if (!fail_fast_callbacks_.exit_callback) {
-    fail_fast_callbacks_.exit_callback = [](int exit_code) { std::_Exit(exit_code); };
-  }
-
   if (config_.health.fail_fast_enabled) {
     state_.armGraceDeadline(config_.health.fail_fast_disconnect_grace);
   }
@@ -367,9 +350,11 @@ void Runtime::checkFailFast()
     .error();
 
   // Give ROS shutdown and log flushing a brief head start before forcing process exit.
-  fail_fast_callbacks_.shutdown_callback();
+  if (rclcpp::ok()) {
+    rclcpp::shutdown();
+  }
   std::this_thread::sleep_for(kFailFastExitDelay);
-  fail_fast_callbacks_.exit_callback(EXIT_FAILURE);
+  std::_Exit(EXIT_FAILURE);
 }
 
 void Runtime::onConnectionReset()

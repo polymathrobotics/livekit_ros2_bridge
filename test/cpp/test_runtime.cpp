@@ -47,7 +47,10 @@ using test_support::waitForTopicType;
 using test_support::waitUntil;
 
 constexpr auto kHealthyConnectionObservationWindow = std::chrono::milliseconds(1200);
+constexpr auto kFailFastObservationWindow = std::chrono::seconds(2);
 constexpr auto kRuntimeTestPollInterval = std::chrono::milliseconds(20);
+constexpr int kRuntimeScenarioCompleted = EXIT_SUCCESS;
+constexpr int kRuntimeScenarioTimedOutWithoutFailFast = 64;
 
 std::string nextNodeName(const std::string & prefix)
 {
@@ -134,10 +137,7 @@ struct RuntimeHarness
 };
 
 template <typename ConfigureConnectionT>
-RuntimeHarness makeRuntimeHarness(
-  const rclcpp::NodeOptions & options,
-  ConfigureConnectionT configure_room_connection,
-  FailFastCallbacks fail_fast_callbacks = {})
+RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, ConfigureConnectionT configure_room_connection)
 {
   RuntimeHarness harness;
   harness.node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), options);
@@ -148,8 +148,7 @@ RuntimeHarness makeRuntimeHarness(
   configure_room_connection(*room_connection);
 
   RuntimeConfig config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
-  harness.runtime = std::make_unique<Runtime>(
-    *harness.node, std::move(room_connection), std::move(config), std::move(fail_fast_callbacks));
+  harness.runtime = std::make_unique<Runtime>(*harness.node, std::move(room_connection), std::move(config));
   return harness;
 }
 
@@ -158,45 +157,20 @@ RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options)
   return makeRuntimeHarness(options, [](FakeRoomConnection &) {});
 }
 
-RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, FailFastCallbacks fail_fast_callbacks)
+[[noreturn]] void runRuntimeScenario(
+  const rclcpp::NodeOptions & options,
+  const std::function<void(RuntimeHarness &)> & configure_runtime,
+  std::chrono::milliseconds observation_window,
+  int exit_code_after_observation)
 {
-  return makeRuntimeHarness(options, [](FakeRoomConnection &) {}, std::move(fail_fast_callbacks));
-}
+  ScopedRclcppInit rclcpp_init;
+  auto harness = makeRuntimeHarness(options);
+  configure_runtime(harness);
 
-struct FailFastExitCapture
-{
-  std::atomic<int> exit_call_count{0};
-  std::atomic<int> exit_code{-1};
-};
-
-FailFastCallbacks makeFailFastCallbacks(FailFastExitCapture & capture)
-{
-  FailFastCallbacks callbacks;
-  callbacks.shutdown_callback = []() {};
-  callbacks.exit_callback = [&capture](int exit_code) {
-    capture.exit_code.store(exit_code);
-    capture.exit_call_count.fetch_add(1);
-  };
-  return callbacks;
-}
-
-void expectFailFastExit(RuntimeHarness & harness, FailFastExitCapture & capture)
-{
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
-
-  EXPECT_TRUE(
-    spinUntil(executor, [&capture]() { return capture.exit_call_count.load() == 1; }, std::chrono::seconds(2)));
-  EXPECT_EQ(capture.exit_code.load(), EXIT_FAILURE);
-}
-
-void expectNoFailFastExit(RuntimeHarness & harness, FailFastExitCapture & capture)
-{
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  spinExecutorFor(executor, kHealthyConnectionObservationWindow);
-
-  EXPECT_EQ(capture.exit_call_count.load(), 0);
+  spinExecutorFor(executor, observation_window);
+  std::_Exit(exit_code_after_observation);
 }
 
 }  // namespace
@@ -226,74 +200,112 @@ TEST_F(RuntimeTest, RegistersRpcMethodsOnConnect)
 
 TEST_F(RuntimeTest, FailFastExitsWhenInitialConnectNeverSucceeds)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  expectFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      runRuntimeScenario(
+        options, [](RuntimeHarness &) {}, kFailFastObservationWindow, kRuntimeScenarioTimedOutWithoutFailFast);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
 }
 
 TEST_F(RuntimeTest, FailFastDoesNotExitAfterInitialConnectSucceeds)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  harness.fake_room_connection->emitConnected();
-
-  expectNoFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) { harness.fake_room_connection->emitConnected(); },
+        kHealthyConnectionObservationWindow,
+        kRuntimeScenarioCompleted);
+    },
+    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
+    ".*");
 }
 
 TEST_F(RuntimeTest, FailFastExitsWhenReconnectGraceExpires)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  harness.fake_room_connection->emitConnected();
-  harness.fake_room_connection->emitReconnectRequested("room_disconnected");
-
-  expectFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) {
+          harness.fake_room_connection->emitConnected();
+          harness.fake_room_connection->emitReconnectRequested("room_disconnected");
+        },
+        kFailFastObservationWindow,
+        kRuntimeScenarioTimedOutWithoutFailFast);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
 }
 
 TEST_F(RuntimeTest, FailFastClearsReconnectDeadlineAfterRecovery)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  harness.fake_room_connection->emitConnected();
-  harness.fake_room_connection->emitReconnectRequested("room_disconnected");
-  harness.fake_room_connection->emitConnected();
-
-  expectNoFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.3);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) {
+          harness.fake_room_connection->emitConnected();
+          harness.fake_room_connection->emitReconnectRequested("room_disconnected");
+          harness.fake_room_connection->emitConnected();
+        },
+        kHealthyConnectionObservationWindow,
+        kRuntimeScenarioCompleted);
+    },
+    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
+    ".*");
 }
 
 TEST_F(RuntimeTest, FailFastDisabledNeverExitsForDisconnectedConnection)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.enabled", false);
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  expectNoFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.enabled", false);
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      runRuntimeScenario(
+        options, [](RuntimeHarness &) {}, kHealthyConnectionObservationWindow, kRuntimeScenarioCompleted);
+    },
+    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
+    ".*");
 }
 
 TEST_F(RuntimeTest, ShutdownPreventsPendingFailFastExit)
 {
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
-  FailFastExitCapture capture;
-  auto harness = makeRuntimeHarness(options, makeFailFastCallbacks(capture));
-  harness.runtime.reset();
-
-  expectNoFailFastExit(harness, capture);
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.fail_fast.disconnect_grace_seconds", 0.0);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) { harness.runtime.reset(); },
+        kHealthyConnectionObservationWindow,
+        kRuntimeScenarioCompleted);
+    },
+    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
+    ".*");
 }
 
 TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)

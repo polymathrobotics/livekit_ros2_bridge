@@ -41,14 +41,6 @@ class RosTopicPublisher;
 class VideoStreamRegistry;
 class VideoProfilingRegistry;
 
-struct FailFastCallbacks
-{
-  // Optional test callback to override process-wide ROS shutdown during fail-fast.
-  std::function<void()> shutdown_callback;
-  // Optional test callback to override process exit during fail-fast.
-  std::function<void(int)> exit_callback;
-};
-
 // Wires one RoomConnection to the ROS-facing ingress helpers, publication owners,
 // RPC handlers, and in-process video streams for a node.
 // Construction performs eager startup; destruction shuts the room connection down before the ROS
@@ -56,11 +48,7 @@ struct FailFastCallbacks
 class Runtime final
 {
 public:
-  Runtime(
-    rclcpp::Node & node,
-    std::unique_ptr<RoomConnection> connection,
-    RuntimeConfig config,
-    FailFastCallbacks fail_fast_callbacks = {});
+  Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config);
   ~Runtime();
 
   // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
@@ -163,6 +151,7 @@ private:
   void submitToExecutor(std::function<void()> work);
 
   rclcpp::Node & node_;
+  RuntimeConfig config_;
 
   std::unique_ptr<RoomConnection> room_connection_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
@@ -175,8 +164,6 @@ private:
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<PacketRouter> packet_router_;
 
-  RuntimeConfig config_;
-  FailFastCallbacks fail_fast_callbacks_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr fail_fast_timer_;
   rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
