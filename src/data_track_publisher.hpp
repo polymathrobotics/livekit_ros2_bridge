@@ -32,7 +32,7 @@ namespace livekit_ros2_bridge
 
 class RoomConnection;
 
-// SubscriptionRegistry coordinates shared leases, DataStreamInstance owns each topic-level ROS
+// SubscriptionRegistry coordinates shared leases, DataStreamRegistry owns each topic-level ROS
 // data runtime, and DataTrackPublisher only owns the LiveKit data-track publications.
 class DataTrackPublisher final
 {

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "access_policy.hpp"
+#include "data_stream_registry.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -132,7 +133,8 @@ protected:
 
   void initRouter(const AccessPolicy & access_policy)
   {
-    subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *room_connection_, nullptr);
+    data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
+    subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *data_stream_registry_, nullptr);
     subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
       *subscription_registry_, *room_connection_, access_policy, node_->get_clock());
     ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
@@ -145,6 +147,7 @@ protected:
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<FakeRoomConnection> room_connection_;
+  std::unique_ptr<DataStreamRegistry> data_stream_registry_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;
   std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
@@ -256,7 +259,8 @@ TEST_F(PacketRouterTest, DropsUnsupportedTopicsWithoutDispatch)
 TEST_F(PacketRouterTest, ValidatesConstructorDependencies)
 {
   const AccessPolicy access_policy = makeAccessPolicy();
-  subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *room_connection_, nullptr);
+  data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
+  subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *data_stream_registry_, nullptr);
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_connection_, access_policy, node_->get_clock());
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);

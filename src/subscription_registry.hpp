@@ -18,25 +18,21 @@
 #include <chrono>
 #include <functional>
 #include <map>
-#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <variant>
 #include <vector>
 
 #include "core/subscriptions.hpp"
-#include "data_stream_instance.hpp"
+#include "data_stream_registry.hpp"
 #include "rclcpp/node.hpp"
-#include "subscription_qos.hpp"
-#include "utils/quiesce_gate.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-class RoomConnection;
 class VideoStreamRegistry;
 
 struct StreamUnavailableError : std::runtime_error
@@ -62,10 +58,9 @@ public:
 
   SubscriptionRegistry(
     rclcpp::Node & node,
-    RoomConnection & room_connection,
+    DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry * video_stream_registry,
-    const VideoStreamConfig * video_stream_config = nullptr,
-    const SubscriptionQosConfig * subscription_qos_config = nullptr);
+    const VideoStreamConfig * video_stream_config = nullptr);
 
   // Refreshes or creates the shared canonical subscription for this target. `demand.name` is
   // expected to already be canonical and non-empty. Multiple requesters for the same normalized
@@ -94,21 +89,11 @@ public:
   void pruneExpiredLeases();
   SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name);
   const SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name) const;
-  // Session-scoped teardown for room reconnects. Clears current subscriptions, advances lifetime
-  // generations, and then re-opens the callback gate for the next session.
+  // Session-scoped teardown for room reconnects. Clears current subscriptions and tears down the
+  // active data/video runtimes for the old room session.
   void resetSessionState();
-  // Terminal teardown. After shutdown the callback gate stays closed and later renewals fail with
-  // StreamUnavailableError.
+  // Terminal teardown. After shutdown later renewals fail with StreamUnavailableError.
   void shutdown();
-
-  // DataTrackPublisher completion path. The publish generation identifies the attempt that
-  // reserved the deterministic track name, so late callbacks from an older lifetime can be
-  // rejected instead of reviving a replacement subscription.
-  bool onDataTrackPublished(const std::string & track_name, std::size_t generation);
-  // Snapshot token for callers that need to tie later disconnect handling to the currently
-  // observed subscription set.
-  std::size_t generation() const;
-  void onDataTrackFailed(const std::string & track_name);
 
 private:
   struct Lease
@@ -117,7 +102,7 @@ private:
     Clock::time_point expiry;
   };
 
-  struct VideoRuntime
+  struct VideoStreamHandle
   {
     std::string track_name;
     VideoStreamSpec stream_spec;
@@ -129,39 +114,25 @@ private:
     std::string name;
     std::string interface_type;
     std::map<std::string, Lease> leases;
-    // Exactly one runtime exists per canonical target. Data targets keep their shared
-    // DataStreamInstance here; video targets keep the external video runtime state needed to stop
-    // or restart the publication without a DataStreamInstance.
-    std::variant<std::shared_ptr<DataStreamInstance>, VideoRuntime> runtime = std::shared_ptr<DataStreamInstance>{};
+    std::optional<VideoStreamHandle> video;
   };
 
   using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
   using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
-  static SubscriptionStatus statusFor(const SharedSubscription & subscription);
+  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
-  static DataStreamInstance * dataInstance(SharedSubscription & subscription);
-  static const DataStreamInstance * dataInstance(const SharedSubscription & subscription);
 
   rclcpp::Node & node_;
-  RoomConnection & room_connection_;
+  DataStreamRegistry & data_stream_registry_;
   // Optional non-owning dependency. Null means video subscriptions cannot be started.
   VideoStreamRegistry * video_stream_registry_;
   VideoStreamConfig default_video_stream_config_;
   // Non-owning pointer that always references either the caller-supplied config or the in-object
   // default above.
   const VideoStreamConfig * video_stream_config_;
-  const SubscriptionQosConfig * subscription_qos_config_;
 
-  // Subscriptions capture the gate's current generation in their message callback.
-  // Reset/shutdown quiesce and advance that generation before teardown so queued callbacks from
-  // the old session self-reject on entry.
-  QuiesceGate message_callback_gate_;
   std::atomic<bool> is_shutdown_{false};
-  // Advanced whenever a deterministic data-track identity could be reused by a replacement
-  // subscription or after a full registry reset. External lifecycle callbacks must match this
-  // snapshot before acting on remembered requester state.
-  std::atomic<std::size_t> registry_generation_{0};
   SubscriptionMap subscriptions_;
 
   // Requesters whose next confirmed heartbeat should force currently published data tracks
@@ -175,9 +146,7 @@ private:
     const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
   void removeLeasesIf(
     const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
-  SubscriptionMap::iterator findDataByTrackName(const std::string & track_name);
   void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
-  void clearSubscriptions();
 };
 
 }  // namespace livekit_ros2_bridge

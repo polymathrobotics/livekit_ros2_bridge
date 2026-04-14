@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include "data_stream_registry.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "rclcpp/serialization.hpp"
@@ -157,7 +158,8 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
 
   const auto first = registry.renewSubscription("alice", "  //battery/state/  ", 0, kFarFuture);
   const auto second = registry.renewSubscription("bob", topic, 0, kFarFuture);
@@ -182,7 +184,8 @@ TEST(SubscriptionRegistryTest, PushesRawCdrFramesForDataSubscriptions)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   const auto message = makeBatteryState();
@@ -207,7 +210,8 @@ TEST(SubscriptionRegistryTest, ClampsNegativeRequestedIntervalToZero)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, -25, kFarFuture);
 
   EXPECT_EQ(response.applied_interval_ms, 0);
@@ -226,7 +230,8 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecom
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto expired = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   registry.renewSubscription("alice", topic, 50, expired);
   const auto shared = registry.renewSubscription("bob", topic, 300, kFarFuture);
@@ -254,7 +259,8 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, session, &video_stream_registry, &video_stream_config);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry, &video_stream_config);
 
   const auto topic_response = registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
@@ -279,10 +285,11 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
-  registry.queueDataTrackRepublish("alice", registry.generation());
+  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
   registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
@@ -304,7 +311,8 @@ TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto first = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   const auto second = registry.renewSubscription("bob", topic, 250, kFarFuture);
   EXPECT_EQ(second.track_name, first.track_name);
@@ -328,9 +336,10 @@ TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscri
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto first = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  const auto stale_generation = registry.generation();
+  const auto stale_generation = data_stream_registry.generation();
 
   registry.revokeRequesterLeases("alice");
   ASSERT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
@@ -368,7 +377,8 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   ASSERT_TRUE(waitForTopicType(executor, node, shared_data_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(waitForTopicType(executor, node, shared_video_topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, session, &video_stream_registry);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry);
   const auto alice_only = registry.renewSubscription("alice", alice_only_topic, 50, kFarFuture);
   registry.renewSubscription("alice", shared_data_topic, 50, kFarFuture);
   registry.renewSubscription("bob", shared_data_topic, 250, kFarFuture);
@@ -396,11 +406,12 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequ
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   registry.renewSubscription("bob", topic, 1000, kFarFuture);
 
-  registry.queueDataTrackRepublish("alice", registry.generation());
+  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
   registry.revokeRequesterLeases("alice");
   registry.republishDataTracks("alice");
 
@@ -422,7 +433,8 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto past = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   const auto response = registry.renewSubscription("alice", topic, 0, past);
 
@@ -450,7 +462,8 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   ASSERT_TRUE(waitForTopicType(executor, node, data_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
-  SubscriptionRegistry registry(*node, session, &video_stream_registry);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry);
   const auto response = registry.renewSubscription("alice", data_topic, 0, kFarFuture);
   registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   ASSERT_TRUE(publishUntil(
@@ -460,7 +473,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 
   EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, data_topic) != nullptr);
   EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, video_topic) != nullptr);
-  EXPECT_FALSE(registry.onDataTrackPublished(response.track_name, registry.generation()));
+  EXPECT_FALSE(data_stream_registry.onTrackPublished(response.track_name, data_stream_registry.generation()));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
   EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
 }
@@ -492,7 +505,8 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
     return DataTrackPushResult::success();
   };
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   std::thread spin_thread([&executor]() { executor.spin(); });
@@ -534,7 +548,8 @@ TEST(SubscriptionRegistryTest, QueueFullPushLeavesSubscriptionActive)
     return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
   };
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return push_attempt_count.load() >= 1; }));
@@ -546,7 +561,8 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
   FakeRoomConnection session;
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
 
   expectInvalidArgumentMessage(
     [&registry]() { (void)registry.renewSubscription("", "/some/topic", 0, kFarFuture); },
@@ -570,7 +586,8 @@ TEST(SubscriptionRegistryTest, ShutdownRejectsNewSubscriptionsAndFurtherLifecycl
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, session, nullptr);
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   registry.shutdown();

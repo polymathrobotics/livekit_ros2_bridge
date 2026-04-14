@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "access_policy.hpp"
+#include "data_stream_registry.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -178,11 +179,13 @@ protected:
   SubscriptionRegistry makeRegistry(
     VideoStreamRegistry * video_stream_registry = nullptr, const VideoStreamConfig * video_stream_config = nullptr)
   {
-    return SubscriptionRegistry(*node_, *fake_room_connection_, video_stream_registry, video_stream_config);
+    data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *fake_room_connection_);
+    return SubscriptionRegistry(*node_, *data_stream_registry_, video_stream_registry, video_stream_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<FakeRoomConnection> fake_room_connection_;
+  std::unique_ptr<DataStreamRegistry> data_stream_registry_;
   std::shared_ptr<FakeRoomConnectionState> state_;
   AccessPolicy access_policy_;
 };

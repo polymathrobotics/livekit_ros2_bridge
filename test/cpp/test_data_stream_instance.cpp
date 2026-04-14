@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "data_stream_registry.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
@@ -116,7 +117,8 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, room_connection, nullptr);
+  DataStreamRegistry data_stream_registry(*node, room_connection);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   registry.renewSubscription("alice", topic, 150, kFarFuture);
   const auto message = makeBatteryState();
 
@@ -141,13 +143,14 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, room_connection, nullptr);
+  DataStreamRegistry data_stream_registry(*node, room_connection);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   registry.renewSubscription("alice", topic, 1000, kFarFuture);
   const auto message = makeBatteryState();
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
 
-  registry.queueDataTrackRepublish("alice", registry.generation());
+  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
   registry.republishDataTracks("alice");
   ASSERT_TRUE(
     publishUntilFrameCount(executor, publisher, message, room_connection, 2U, std::chrono::milliseconds(300)));
@@ -177,7 +180,8 @@ TEST(DataStreamInstanceTest, RecoversFromPublishFailureWithoutStartingSuppressio
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   };
 
-  SubscriptionRegistry registry(*node, room_connection, nullptr);
+  DataStreamRegistry data_stream_registry(*node, room_connection);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto failed_response = registry.renewSubscription("alice", topic, 500, kFarFuture);
   const auto message = makeBatteryState();
 
@@ -217,7 +221,8 @@ TEST(DataStreamInstanceTest, PendingPublishDoesNotStartSuppressionWindow)
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   };
 
-  SubscriptionRegistry registry(*node, room_connection, nullptr);
+  DataStreamRegistry data_stream_registry(*node, room_connection);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
   EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
@@ -239,7 +244,8 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  SubscriptionRegistry registry(*node, room_connection, nullptr);
+  DataStreamRegistry data_stream_registry(*node, room_connection);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
   const auto message = makeBatteryState();
 

@@ -34,13 +34,11 @@ namespace livekit_ros2_bridge
 {
 
 struct SubscriptionQosConfig;
+class DataStreamRegistry;
 class QuiesceGate;
 class RoomConnection;
-class SubscriptionRegistry;
 
-// todo: reword for clarity
-// SubscriptionRegistry owns the shared lease state for a topic and creates one DataStreamInstance
-// when that topic needs a data delivery runtime. Each DataStreamInstance owns the ROS
+// DataStreamRegistry owns one DataStreamInstance per canonical topic. Each instance owns the ROS
 // subscription plus one DataTrackPublisher for the matching LiveKit data track.
 class DataStreamInstance final : public std::enable_shared_from_this<DataStreamInstance>
 {
@@ -83,7 +81,7 @@ public:
   State state() const;
 
 private:
-  friend class SubscriptionRegistry;
+  friend class DataStreamRegistry;
 
   // todo: get this noisy stuff moved elsewhere
   // Owns the state-machine contract for one deterministic LiveKit data track name. The reserved
@@ -195,7 +193,7 @@ private:
     std::string interface_type,
     rclcpp::Node & node,
     RoomConnection & room_connection,
-    SubscriptionRegistry & registry,
+    DataStreamRegistry & registry,
     QuiesceGate & callback_gate,
     const SubscriptionQosConfig * qos_config);
 
@@ -207,14 +205,13 @@ private:
 
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
   DataTrackPublisher publisher_;
-  // todo: rename subscription_registry_
-  SubscriptionRegistry & registry_;
+  DataStreamRegistry & registry_;
 
   const SubscriptionQosConfig * qos_config_;
   SuppressionWindow suppression_window_;
   PublicationState publication_;
 
-  // Captured from SubscriptionRegistry's QuiesceGate when this instance is created. Every queued
+  // Captured from DataStreamRegistry's QuiesceGate when this instance is created. Every queued
   // ROS callback must present the same gate generation before touching this instance.
   std::size_t gate_generation_ = 0U;
   QuiesceGate & callback_gate_;

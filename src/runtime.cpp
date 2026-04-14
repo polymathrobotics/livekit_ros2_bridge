@@ -20,6 +20,7 @@
 #include <thread>
 #include <utility>
 
+#include "data_stream_registry.hpp"
 #include "packet_router.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
@@ -72,11 +73,13 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
 
   // Build the session-owned subscription and stream state on top of the room connection.
+  data_stream_registry_ = std::make_unique<DataStreamRegistry>(node_, *room_connection_, &config_.subscription_qos);
+
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
     node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
 
   subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_, *room_connection_, video_stream_registry_.get(), &config_.video_stream, &config_.subscription_qos);
+    node_, *data_stream_registry_, video_stream_registry_.get(), &config_.video_stream);
 
   subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
     *subscription_registry_, *room_connection_, config_.access_policy, node_.get_clock());
@@ -157,6 +160,10 @@ void Runtime::shutdown()
     subscription_registry_->shutdown();
   }
 
+  if (data_stream_registry_ != nullptr) {
+    data_stream_registry_->shutdown();
+  }
+
   if (video_stream_registry_ != nullptr) {
     video_stream_registry_->shutdown();
   }
@@ -218,7 +225,7 @@ void Runtime::onRoomIncomingPacket(const IncomingPacket & packet)
 
 void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)
 {
-  const std::size_t generation = subscription_registry_->generation();
+  const std::size_t generation = data_stream_registry_->generation();
   submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity), generation]() {
     // Keep leases alive across a browser refresh, but queue fresh data-track publications
     // because LiveKit binds them to the old participant_session.

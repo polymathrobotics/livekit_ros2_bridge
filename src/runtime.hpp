@@ -36,6 +36,7 @@ class PacketRouter;
 class SubscriptionHeartbeatProcessor;
 class RosExecutorQueue;
 class RosServiceCaller;
+class DataStreamRegistry;
 class SubscriptionRegistry;
 class RosTopicPublisher;
 class VideoStreamRegistry;
@@ -70,6 +71,7 @@ private:
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
   std::unique_ptr<RpcRouter> rpc_router_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
+  std::unique_ptr<DataStreamRegistry> data_stream_registry_;
   std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::unique_ptr<VideoProfilingRegistry> video_profiling_registry_;
   std::unique_ptr<SubscriptionRegistry> subscription_registry_;

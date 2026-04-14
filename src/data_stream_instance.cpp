@@ -19,12 +19,12 @@
 #include <memory>
 #include <utility>
 
+#include "data_stream_registry.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
-#include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
 #include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
@@ -59,7 +59,7 @@ DataStreamInstance::DataStreamInstance(
   std::string interface_type,
   rclcpp::Node & node,
   RoomConnection & room_connection,
-  SubscriptionRegistry & registry,
+  DataStreamRegistry & registry,
   QuiesceGate & callback_gate,
   const SubscriptionQosConfig * qos_config)
 : node_(node)
@@ -103,8 +103,8 @@ void DataStreamInstance::start(std::size_t generation)
   }
   publisher_.publish(
     generation,
-    [this](std::size_t generation) { return registry_.onDataTrackPublished(track_name_, generation); },
-    [this]() { registry_.onDataTrackFailed(track_name_); });
+    [this](std::size_t generation) { return registry_.onTrackPublished(track_name_, generation); },
+    [this]() { registry_.onTrackFailed(track_name_); });
 }
 
 void DataStreamInstance::republish(std::size_t generation)
@@ -122,8 +122,8 @@ void DataStreamInstance::republish(std::size_t generation)
   publication_.beginPublish(generation);
   publisher_.publish(
     generation,
-    [this](std::size_t generation) { return registry_.onDataTrackPublished(track_name_, generation); },
-    [this]() { registry_.onDataTrackFailed(track_name_); });
+    [this](std::size_t generation) { return registry_.onTrackPublished(track_name_, generation); },
+    [this]() { registry_.onTrackFailed(track_name_); });
 }
 
 bool DataStreamInstance::completePublish(std::size_t generation)
@@ -184,7 +184,7 @@ void DataStreamInstance::subscribe()
     .fieldIfNotEmpty("override_pattern", qos.override_pattern)
     .info();
 
-  // ROS may already have queued a callback when SubscriptionRegistry starts reset/shutdown.
+  // ROS may already have queued a callback when DataStreamRegistry starts reset/shutdown.
   // The gate rejects old-session callbacks before they touch shared state, and the weak pointer
   // keeps a late callback from extending the instance lifetime past teardown.
   const std::weak_ptr<DataStreamInstance> weak = weak_from_this();
