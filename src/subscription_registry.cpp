@@ -301,27 +301,6 @@ void SubscriptionRegistry::republishDataTracks(const std::string & requester_ide
   }
 }
 
-VideoStreamRegistry & SubscriptionRegistry::videoRegistry() const
-{
-  if (video_stream_registry_ == nullptr) {
-    throw StreamUnavailableError("Video stream registry is unavailable.");
-  }
-
-  return *video_stream_registry_;
-}
-
-DataStreamInstance * SubscriptionRegistry::dataInstance(SharedSubscription & subscription)
-{
-  auto * data = std::get_if<std::shared_ptr<DataStreamInstance>>(&subscription.runtime);
-  return data == nullptr ? nullptr : data->get();
-}
-
-const DataStreamInstance * SubscriptionRegistry::dataInstance(const SharedSubscription & subscription)
-{
-  const auto * data = std::get_if<std::shared_ptr<DataStreamInstance>>(&subscription.runtime);
-  return data == nullptr ? nullptr : data->get();
-}
-
 void SubscriptionRegistry::revokeRequesterLeases(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
@@ -399,6 +378,11 @@ bool SubscriptionRegistry::onDataTrackPublished(const std::string & track_name, 
   return false;
 }
 
+std::size_t SubscriptionRegistry::generation() const
+{
+  return registry_generation_.load();
+}
+
 void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
 {
   if (is_shutdown_.load()) {
@@ -411,6 +395,27 @@ void SubscriptionRegistry::onDataTrackFailed(const std::string & track_name)
   if (auto * data = dataInstance(it->second)) {
     data->failPublish();
   }
+}
+
+VideoStreamRegistry & SubscriptionRegistry::videoRegistry() const
+{
+  if (video_stream_registry_ == nullptr) {
+    throw StreamUnavailableError("Video stream registry is unavailable.");
+  }
+
+  return *video_stream_registry_;
+}
+
+DataStreamInstance * SubscriptionRegistry::dataInstance(SharedSubscription & subscription)
+{
+  auto * data = std::get_if<std::shared_ptr<DataStreamInstance>>(&subscription.runtime);
+  return data == nullptr ? nullptr : data->get();
+}
+
+const DataStreamInstance * SubscriptionRegistry::dataInstance(const SharedSubscription & subscription)
+{
+  const auto * data = std::get_if<std::shared_ptr<DataStreamInstance>>(&subscription.runtime);
+  return data == nullptr ? nullptr : data->get();
 }
 
 SubscriptionStatus SubscriptionRegistry::statusFor(const SharedSubscription & subscription)
@@ -548,11 +553,6 @@ SubscriptionRegistry::SubscriptionMap::iterator SubscriptionRegistry::findDataBy
     return it;
   }
   return subscriptions_.end();
-}
-
-std::size_t SubscriptionRegistry::generation() const
-{
-  return registry_generation_.load();
 }
 
 void SubscriptionRegistry::destroyRuntime(SharedSubscription & subscription, bool log_destroy)

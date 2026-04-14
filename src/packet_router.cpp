@@ -56,11 +56,6 @@ PacketRouter::PacketRouter(
   }
 }
 
-void PacketRouter::submitToExecutor(std::function<void()> work) const
-{
-  submit_to_executor_(std::move(work));
-}
-
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
   if (packet.topic == protocol::kControlTopicPublish) {
@@ -105,6 +100,11 @@ void PacketRouter::handle(const IncomingPacket & packet) const
       .fieldOr("requester_identity", packet.requester_identity)
       .warnThrottle(*clock_, kLogThrottle);
   }
+}
+
+void PacketRouter::submitToExecutor(std::function<void()> work) const
+{
+  submit_to_executor_(std::move(work));
 }
 
 }  // namespace livekit_ros2_bridge

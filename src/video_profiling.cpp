@@ -663,49 +663,6 @@ bool VideoStreamProfileSummary::hasActivity() const
          });
 }
 
-VideoStreamProfiler::StageTimer::StageTimer(
-  VideoStreamProfiler * profiler, VideoProfileStage stage, std::optional<std::int64_t> frame_timestamp_us)
-: profiler_(profiler)
-, stage_(stage)
-, frame_timestamp_us_(frame_timestamp_us)
-, start_time_(SteadyClock::now())
-{}
-
-VideoStreamProfiler::StageTimer::~StageTimer()
-{
-  if (profiler_ == nullptr) {
-    return;
-  }
-  const auto end_time = SteadyClock::now();
-  profiler_->recordStage(
-    stage_,
-    std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_),
-    frame_timestamp_us_,
-    start_time_);
-}
-
-VideoStreamProfiler::StageTimer::StageTimer(StageTimer && other) noexcept
-: profiler_(other.profiler_)
-, stage_(other.stage_)
-, frame_timestamp_us_(other.frame_timestamp_us_)
-, start_time_(other.start_time_)
-{
-  other.profiler_ = nullptr;
-}
-
-VideoStreamProfiler::StageTimer & VideoStreamProfiler::StageTimer::operator=(StageTimer && other) noexcept
-{
-  if (this == &other) {
-    return *this;
-  }
-  profiler_ = other.profiler_;
-  stage_ = other.stage_;
-  frame_timestamp_us_ = other.frame_timestamp_us_;
-  start_time_ = other.start_time_;
-  other.profiler_ = nullptr;
-  return *this;
-}
-
 VideoStreamProfiler::VideoStreamProfiler(VideoStreamSpec spec)
 : impl_(std::make_unique<Impl>(std::move(spec)))
 {}
@@ -956,6 +913,49 @@ std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
   impl_->track_unpublish_count = 0;
   impl_->source_timestamp_regression_count = 0;
   return summary;
+}
+
+VideoStreamProfiler::StageTimer::StageTimer(
+  VideoStreamProfiler * profiler, VideoProfileStage stage, std::optional<std::int64_t> frame_timestamp_us)
+: profiler_(profiler)
+, stage_(stage)
+, frame_timestamp_us_(frame_timestamp_us)
+, start_time_(SteadyClock::now())
+{}
+
+VideoStreamProfiler::StageTimer::~StageTimer()
+{
+  if (profiler_ == nullptr) {
+    return;
+  }
+  const auto end_time = SteadyClock::now();
+  profiler_->recordStage(
+    stage_,
+    std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_),
+    frame_timestamp_us_,
+    start_time_);
+}
+
+VideoStreamProfiler::StageTimer::StageTimer(StageTimer && other) noexcept
+: profiler_(other.profiler_)
+, stage_(other.stage_)
+, frame_timestamp_us_(other.frame_timestamp_us_)
+, start_time_(other.start_time_)
+{
+  other.profiler_ = nullptr;
+}
+
+VideoStreamProfiler::StageTimer & VideoStreamProfiler::StageTimer::operator=(StageTimer && other) noexcept
+{
+  if (this == &other) {
+    return *this;
+  }
+  profiler_ = other.profiler_;
+  stage_ = other.stage_;
+  frame_timestamp_us_ = other.frame_timestamp_us_;
+  start_time_ = other.start_time_;
+  other.profiler_ = nullptr;
+  return *this;
 }
 
 VideoProfilingRegistry::VideoProfilingRegistry(rclcpp::Logger logger, VideoProfilingConfig config)

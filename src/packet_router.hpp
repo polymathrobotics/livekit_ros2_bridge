@@ -41,6 +41,8 @@ public:
   void handle(const IncomingPacket & packet) const;
 
 private:
+  void submitToExecutor(std::function<void()> work) const;
+
   rclcpp::Clock::SharedPtr clock_;
 
   // RoomConnection may invoke packet callbacks from its own worker threads.
@@ -51,8 +53,6 @@ private:
   SubmitToExecutorFunction submit_to_executor_;
   SubscriptionHeartbeatProcessor & subscription_heartbeat_processor_;
   RosTopicPublisher & ros_topic_publisher_;
-
-  void submitToExecutor(std::function<void()> work) const;
 };
 
 }  // namespace livekit_ros2_bridge

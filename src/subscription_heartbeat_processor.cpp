@@ -52,6 +52,36 @@ SubscriptionHeartbeatProcessor::SubscriptionHeartbeatProcessor(
 , clock_(std::move(clock))
 {}
 
+void SubscriptionHeartbeatProcessor::process(
+  const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
+{
+  const auto lease = resolveLease(requester_identity, heartbeat.session_id);
+  if (!lease.has_value()) {
+    return;
+  }
+
+  const auto statuses = renewStatuses(*lease, heartbeat.subscriptions);
+
+  // A page refresh can reuse the requester identity before the old lease expires, but the
+  // rejoined participant still needs a fresh data-track publication because the previous one
+  // belonged to the disconnected participant_session.
+  subscription_registry_.republishDataTracks(lease->requester_identity);
+  publishStatuses(*lease, statuses);
+}
+
+void SubscriptionHeartbeatProcessor::pruneExpiredLeases()
+{
+  const auto now = std::chrono::steady_clock::now();
+  for (auto it = leases_.begin(); it != leases_.end();) {
+    if (now < it->second.expiry) {
+      ++it;
+      continue;
+    }
+
+    it = leases_.erase(it);
+  }
+}
+
 std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbeatProcessor::resolveLease(
   const std::string & requester_identity, const std::optional<std::string> & session_id)
 {
@@ -160,36 +190,6 @@ nlohmann::json SubscriptionHeartbeatProcessor::renewStatuses(
   }
 
   return statuses;
-}
-
-void SubscriptionHeartbeatProcessor::pruneExpiredLeases()
-{
-  const auto now = std::chrono::steady_clock::now();
-  for (auto it = leases_.begin(); it != leases_.end();) {
-    if (now < it->second.expiry) {
-      ++it;
-      continue;
-    }
-
-    it = leases_.erase(it);
-  }
-}
-
-void SubscriptionHeartbeatProcessor::process(
-  const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
-{
-  const auto lease = resolveLease(requester_identity, heartbeat.session_id);
-  if (!lease.has_value()) {
-    return;
-  }
-
-  const auto statuses = renewStatuses(*lease, heartbeat.subscriptions);
-
-  // A page refresh can reuse the requester identity before the old lease expires, but the
-  // rejoined participant still needs a fresh data-track publication because the previous one
-  // belonged to the disconnected participant_session.
-  subscription_registry_.republishDataTracks(lease->requester_identity);
-  publishStatuses(*lease, statuses);
 }
 
 void SubscriptionHeartbeatProcessor::publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses)

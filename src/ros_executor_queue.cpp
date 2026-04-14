@@ -193,30 +193,6 @@ RosExecutorQueue::~RosExecutorQueue()
   shutdown();
 }
 
-void RosExecutorQueue::wake()
-{
-  std::shared_ptr<DrainWaitable> waitable;
-
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    waitable = waitable_;
-  }
-
-  if (waitable == nullptr) {
-    return;
-  }
-
-  try {
-    waitable->wake();
-  } catch (...) {
-    LogEvent(kLogger, "executor_wake_failed")
-      .field("action", "shutdown")
-      .fieldException("error", std::current_exception())
-      .error();
-    shutdown();
-  }
-}
-
 void RosExecutorQueue::shutdown()
 {
   // Only the thread that flips shutdown_ tears down the waitable and cancels
@@ -302,6 +278,30 @@ void RosExecutorQueue::drain()
         .fieldException("error", std::current_exception())
         .error();
     }
+  }
+}
+
+void RosExecutorQueue::wake()
+{
+  std::shared_ptr<DrainWaitable> waitable;
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    waitable = waitable_;
+  }
+
+  if (waitable == nullptr) {
+    return;
+  }
+
+  try {
+    waitable->wake();
+  } catch (...) {
+    LogEvent(kLogger, "executor_wake_failed")
+      .field("action", "shutdown")
+      .fieldException("error", std::current_exception())
+      .error();
+    shutdown();
   }
 }
 

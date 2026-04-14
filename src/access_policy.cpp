@@ -45,39 +45,6 @@ const char * accessOperationName(AccessOperation operation)
 
 }  // namespace
 
-bool AccessPolicy::Rules::matches(std::string_view resource) const
-{
-  return matches_all || std::any_of(patterns.begin(), patterns.end(), [resource](const std::string & pattern) {
-           return rosResourceMatchesPattern(resource, pattern);
-         });
-}
-
-AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules)
-{
-  Rules rules;
-  for (const auto & raw_rule : raw_rules) {
-    const std::string rule = trim(raw_rule);
-    if (rule.empty()) {
-      continue;
-    }
-    if (rule == kMatchAllRule) {
-      // `"*"` means allow or deny the entire operation. Normalizing it into `/*` would narrow
-      // it to descendant matching instead of preserving the policy-wide override.
-      rules.matches_all = true;
-      continue;
-    }
-
-    const std::string pattern = normalizeRosResourceName(rule);
-    if (pattern.empty()) {
-      continue;
-    }
-
-    rules.patterns.insert(pattern);
-  }
-
-  return rules;
-}
-
 AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 : publish_allow_(Rules::parse(config.publish.allow))
 , publish_deny_(Rules::parse(config.publish.deny))
@@ -125,5 +92,38 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resour
   }
 
   return false;
+}
+
+AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules)
+{
+  Rules rules;
+  for (const auto & raw_rule : raw_rules) {
+    const std::string rule = trim(raw_rule);
+    if (rule.empty()) {
+      continue;
+    }
+    if (rule == kMatchAllRule) {
+      // `"*"` means allow or deny the entire operation. Normalizing it into `/*` would narrow
+      // it to descendant matching instead of preserving the policy-wide override.
+      rules.matches_all = true;
+      continue;
+    }
+
+    const std::string pattern = normalizeRosResourceName(rule);
+    if (pattern.empty()) {
+      continue;
+    }
+
+    rules.patterns.insert(pattern);
+  }
+
+  return rules;
+}
+
+bool AccessPolicy::Rules::matches(std::string_view resource) const
+{
+  return matches_all || std::any_of(patterns.begin(), patterns.end(), [resource](const std::string & pattern) {
+           return rosResourceMatchesPattern(resource, pattern);
+         });
 }
 }  // namespace livekit_ros2_bridge

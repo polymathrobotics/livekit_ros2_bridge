@@ -259,34 +259,6 @@ void VideoPipelineFrameSource::shutdown()
   teardown(handles.pipeline, handles.appsrc, handles.appsink);
 }
 
-GstFlowReturn VideoPipelineFrameSource::onSampleThunk(GstAppSink * sink, gpointer user_data)
-{
-  return static_cast<VideoPipelineFrameSource *>(user_data)->onSample(sink);
-}
-
-GstBusSyncReply VideoPipelineFrameSource::onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
-{
-  static_cast<VideoPipelineFrameSource *>(user_data)->onBusMessage(message);
-  return GST_BUS_PASS;
-}
-
-void VideoPipelineFrameSource::teardown(GstElementPtr & pipeline, GstAppSrcPtr & appsrc, GstAppSinkPtr & appsink)
-{
-  if (appsink != nullptr) {
-    GstAppSinkCallbacks callbacks{};
-    gst_app_sink_set_callbacks(appsink.get(), &callbacks, nullptr, nullptr);
-  }
-  if (pipeline != nullptr) {
-    GstBusPtr bus(gst_element_get_bus(pipeline.get()));
-    gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
-    gst_element_set_state(pipeline.get(), GST_STATE_NULL);
-  }
-
-  appsrc.reset();
-  appsink.reset();
-  pipeline.reset();
-}
-
 VideoPipelineFrameSource::PipelineHandles VideoPipelineFrameSource::takePipelineLocked()
 {
   resetLocked();
@@ -367,6 +339,28 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & descripti
 void VideoPipelineFrameSource::resetLocked()
 {}
 
+void VideoPipelineFrameSource::teardown(GstElementPtr & pipeline, GstAppSrcPtr & appsrc, GstAppSinkPtr & appsink)
+{
+  if (appsink != nullptr) {
+    GstAppSinkCallbacks callbacks{};
+    gst_app_sink_set_callbacks(appsink.get(), &callbacks, nullptr, nullptr);
+  }
+  if (pipeline != nullptr) {
+    GstBusPtr bus(gst_element_get_bus(pipeline.get()));
+    gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
+    gst_element_set_state(pipeline.get(), GST_STATE_NULL);
+  }
+
+  appsrc.reset();
+  appsink.reset();
+  pipeline.reset();
+}
+
+GstFlowReturn VideoPipelineFrameSource::onSampleThunk(GstAppSink * sink, gpointer user_data)
+{
+  return static_cast<VideoPipelineFrameSource *>(user_data)->onSample(sink);
+}
+
 GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
 {
   const auto start_time = VideoStreamProfiler::SteadyClock::now();
@@ -426,6 +420,12 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     observer_.onCaptureFailed(exc.what());
     return GST_FLOW_ERROR;
   }
+}
+
+GstBusSyncReply VideoPipelineFrameSource::onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
+{
+  static_cast<VideoPipelineFrameSource *>(user_data)->onBusMessage(message);
+  return GST_BUS_PASS;
 }
 
 void VideoPipelineFrameSource::onBusMessage(GstMessage * message)

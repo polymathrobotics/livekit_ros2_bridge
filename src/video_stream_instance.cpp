@@ -39,30 +39,7 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   const SubscriptionQosConfig * qos_config,
   VideoTrackPublisher & publisher,
   VideoStreamLifecycleObserver & observer,
-  const std::shared_ptr<VideoStreamProfiler> & profiler)
-{
-  if (spec.input_kind == VideoInputKind::ConfiguredSource) {
-    return std::make_shared<ConfiguredSourceVideoFrameSource>(spec, publisher, observer, profiler);
-  }
-  if (spec.input_kind == VideoInputKind::RosTopic) {
-    if (spec.ingest_mode == kRawImageIngestMode) {
-      return std::make_shared<RawRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
-    }
-    if (spec.ingest_mode == kCompressedImageIngestMode) {
-      return std::make_shared<CompressedRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
-    }
-  }
-
-  LogEvent(kLogger, "video_stream_start_failed")
-    .field("stream_key", spec.stream_key)
-    .field("input_kind", videoInputKindToString(spec.input_kind))
-    .field("ingest_mode", spec.ingest_mode)
-    .field("reason", "unsupported_input")
-    .warn();
-  throw std::runtime_error(
-    "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec.input_kind) + "/" +
-    spec.ingest_mode + "'.");
-}
+  const std::shared_ptr<VideoStreamProfiler> & profiler);
 
 }  // namespace
 
@@ -82,6 +59,57 @@ VideoStreamInstance::VideoStreamInstance(
 VideoStreamInstance::~VideoStreamInstance()
 {
   shutdown();
+}
+
+std::string VideoStreamInstance::start()
+{
+  std::shared_ptr<VideoFrameSource> source;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_shutdown_) {
+      LogEvent(kLogger, "video_stream_start_rejected")
+        .field("stream_key", spec_.stream_key)
+        .field("reason", "shutdown")
+        .warn();
+      throw std::runtime_error("Video stream is shut down.");
+    }
+
+    if (!source_) {
+      source_ = makeVideoFrameSource(node_, spec_, qos_config_, *publisher_, *this, profiler_);
+    }
+    // Hold a shared ref across the unlocked start() call so concurrent shutdown can
+    // detach source_ without destroying the source underneath this invocation.
+    source = source_;
+  }
+
+  source->start();
+  return spec_.track_name;
+}
+
+void VideoStreamInstance::shutdown()
+{
+  std::shared_ptr<VideoFrameSource> source;
+  std::unique_ptr<VideoTrackPublisher> publisher;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (is_shutdown_) {
+      return;
+    }
+
+    is_shutdown_ = true;
+    // Mark shutdown and drop owned runtime handles under mutex_ so their teardown runs
+    // after the lock is released.
+    source = std::move(source_);
+    publisher = std::move(publisher_);
+  }
+
+  // Stop ingress first so no new frames race into publisher teardown/unpublish.
+  if (source) {
+    source->shutdown();
+  }
+  if (publisher) {
+    publisher->shutdown();
+  }
 }
 
 void VideoStreamInstance::onTrackPublished(int width, int height, bool republished)
@@ -182,55 +210,40 @@ void VideoStreamInstance::onPushFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_push_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
-std::string VideoStreamInstance::start()
+namespace
 {
-  std::shared_ptr<VideoFrameSource> source;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
-      LogEvent(kLogger, "video_stream_start_rejected")
-        .field("stream_key", spec_.stream_key)
-        .field("reason", "shutdown")
-        .warn();
-      throw std::runtime_error("Video stream is shut down.");
-    }
 
-    if (!source_) {
-      source_ = makeVideoFrameSource(node_, spec_, qos_config_, *publisher_, *this, profiler_);
+std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
+  rclcpp::Node & node,
+  const VideoStreamSpec & spec,
+  const SubscriptionQosConfig * qos_config,
+  VideoTrackPublisher & publisher,
+  VideoStreamLifecycleObserver & observer,
+  const std::shared_ptr<VideoStreamProfiler> & profiler)
+{
+  if (spec.input_kind == VideoInputKind::ConfiguredSource) {
+    return std::make_shared<ConfiguredSourceVideoFrameSource>(spec, publisher, observer, profiler);
+  }
+  if (spec.input_kind == VideoInputKind::RosTopic) {
+    if (spec.ingest_mode == kRawImageIngestMode) {
+      return std::make_shared<RawRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
     }
-    // Hold a shared ref across the unlocked start() call so concurrent shutdown can
-    // detach source_ without destroying the source underneath this invocation.
-    source = source_;
+    if (spec.ingest_mode == kCompressedImageIngestMode) {
+      return std::make_shared<CompressedRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
+    }
   }
 
-  source->start();
-  return spec_.track_name;
+  LogEvent(kLogger, "video_stream_start_failed")
+    .field("stream_key", spec.stream_key)
+    .field("input_kind", videoInputKindToString(spec.input_kind))
+    .field("ingest_mode", spec.ingest_mode)
+    .field("reason", "unsupported_input")
+    .warn();
+  throw std::runtime_error(
+    "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec.input_kind) + "/" +
+    spec.ingest_mode + "'.");
 }
 
-void VideoStreamInstance::shutdown()
-{
-  std::shared_ptr<VideoFrameSource> source;
-  std::unique_ptr<VideoTrackPublisher> publisher;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
-      return;
-    }
-
-    is_shutdown_ = true;
-    // Mark shutdown and drop owned runtime handles under mutex_ so their teardown runs
-    // after the lock is released.
-    source = std::move(source_);
-    publisher = std::move(publisher_);
-  }
-
-  // Stop ingress first so no new frames race into publisher teardown/unpublish.
-  if (source) {
-    source->shutdown();
-  }
-  if (publisher) {
-    publisher->shutdown();
-  }
-}
+}  // namespace
 
 }  // namespace livekit_ros2_bridge

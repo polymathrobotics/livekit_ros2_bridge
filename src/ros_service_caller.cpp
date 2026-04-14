@@ -284,10 +284,6 @@ struct InflightKeyHash
 
 struct RosServiceCaller::Impl
 {
-  explicit Impl(rclcpp::Node & node)
-  : node(node)
-  {}
-
   struct InflightCall
   {
     std::string service;
@@ -330,6 +326,10 @@ struct RosServiceCaller::Impl
 
   using InflightMap = std::unordered_map<InflightKey, InflightCall, InflightKeyHash>;
   using InflightIter = InflightMap::iterator;
+
+  explicit Impl(rclcpp::Node & node)
+  : node(node)
+  {}
 
   CachedServiceClient::TypeSupport & getServiceTypeSupport(const std::string & interface_type);
   CachedServiceClient & getClient(const std::string & service, const std::string & interface_type);
@@ -409,6 +409,176 @@ struct RosServiceCaller::Impl
   bool shutdown_flag = false;
   EventThrottle late_response_throttle{kLogThrottle};
 };
+
+RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
+: impl_(std::make_unique<Impl>(node))
+{}
+
+RosServiceCaller::~RosServiceCaller()
+{
+  shutdown();
+}
+
+std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
+  const std::string & requester, const ServiceCallRequest & request)
+{
+  std::promise<ServiceCallResponse> promise;
+  auto future = promise.get_future();
+
+  std::string interface_type;
+
+  if (impl_->shutdown_flag) {
+    const std::runtime_error exc("Service caller is shut down.");
+    logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
+    promise.set_exception(std::make_exception_ptr(exc));
+    return future;
+  }
+
+  if (requester.empty()) {
+    const std::invalid_argument exc("requester_identity is required");
+    logServiceCallRejected(request, requester, interface_type, "missing_requester_identity", exc, false);
+    promise.set_exception(std::make_exception_ptr(exc));
+    return future;
+  }
+
+  try {
+    try {
+      interface_type =
+        request.interface_type.empty()
+          ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
+          : request.interface_type;
+    } catch (const std::exception & exc) {
+      logServiceCallRejected(request, requester, interface_type, "interface_type_resolution_failed", exc);
+      throw;
+    }
+    // Reserve quota before client lookup, request deserialization, or send.
+    // inflight_calls takes ownership only after the entry is inserted.
+    Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
+      try {
+        return Impl::InflightReservation(*impl_, requester);
+      } catch (const std::runtime_error & exc) {
+        logServiceCallRejected(request, requester, interface_type, "requester_inflight_limit_reached", exc, false);
+        throw;
+      }
+    }();
+    InflightKey key;
+    try {
+      CachedServiceClient * client = nullptr;
+      try {
+        client = &impl_->getClient(request.service, interface_type);
+      } catch (const std::exception & exc) {
+        throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
+      }
+
+      std::unique_ptr<MessageStorage> service_request;
+      try {
+        auto serialized = wrapSerializedPayload(request.request_payload);
+        service_request = std::make_unique<MessageStorage>(
+          client->type_support->request_type_support.message_members, rosidl_runtime_cpp::MessageInitialization::ZERO);
+        client->type_support->request_type_support.serializer.deserialize_message(&serialized, service_request->data());
+      } catch (const std::exception & exc) {
+        throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
+      }
+
+      std::int64_t sequence_number = 0;
+      const rcl_ret_t ret = rcl_send_request(&client->client, service_request->data(), &sequence_number);
+      if (ret != RCL_RET_OK) {
+        throw std::runtime_error("Failed to send service request.");
+      }
+
+      key = InflightKey{client, sequence_number};
+    } catch (const std::exception & exc) {
+      LogEvent(kLogger, "service_call_failed")
+        .field("reason", "start_failed")
+        .fieldOr("service", request.service)
+        .fieldIfNotEmpty("interface_type", interface_type)
+        .fieldOr("requester_identity", requester)
+        .field("error", exc.what())
+        .error();
+      throw;
+    }
+
+    if (impl_->inflight_calls.find(key) != impl_->inflight_calls.end()) {
+      LogEvent(kLogger, "service_call_failed")
+        .field("reason", "duplicate_pending_key")
+        .fieldOr("service", request.service)
+        .fieldIfNotEmpty("interface_type", interface_type)
+        .fieldOr("requester_identity", requester)
+        .error();
+      throw std::runtime_error("Duplicate pending service call key.");
+    }
+
+    const int timeout_ms =
+      request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
+    impl_->inflight_calls.emplace(
+      key,
+      Impl::InflightCall{
+        request.service,
+        interface_type,
+        requester,
+        std::move(promise),
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
+      });
+    // From here on every settle path goes through inflight_calls, so that entry
+    // owns releasing the requester's inflight quota.
+    inflight_reservation.transferToInflightCall();
+  } catch (const std::exception &) {
+    promise.set_exception(std::current_exception());
+    return future;
+  }
+
+  if (impl_->poll_timer == nullptr) {
+    auto * impl = impl_.get();
+    impl_->poll_timer = impl_->node.create_wall_timer(kPollInterval, [impl]() { impl->poll(); });
+  }
+  return future;
+}
+
+void RosServiceCaller::cancelCallsForRequester(const std::string & requester)
+{
+  if (requester.empty()) {
+    return;
+  }
+  impl_->failMatchingCalls(
+    [&requester](const Impl::InflightCall & call) { return call.requester == requester; },
+    "Requester identity disconnected.",
+    "requester_disconnected",
+    false,
+    requester.c_str());
+}
+
+void RosServiceCaller::resetSessionState()
+{
+  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "LiveKit session reset.", "session_reset");
+
+  impl_->clearCachedServiceState();
+}
+
+void RosServiceCaller::shutdown()
+{
+  impl_->shutdown_flag = true;
+  impl_->poll_gate.close();
+  impl_->poll_gate.awaitIdle();
+
+  impl_->poll_timer.reset();
+
+  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "Service caller shut down.", "shutdown");
+
+  impl_->clearCachedServiceState();
+}
+
+void RosServiceCaller::setPollCallbacksForTest(std::function<void()> on_poll_enter, std::function<void()> on_poll_exit)
+{
+  std::lock_guard<std::mutex> lock(impl_->poll_callback_mutex);
+  impl_->on_poll_enter = std::move(on_poll_enter);
+  impl_->on_poll_exit = std::move(on_poll_exit);
+}
+
+void RosServiceCaller::setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load)
+{
+  std::lock_guard<std::mutex> lock(impl_->type_support_load_callback_mutex);
+  impl_->on_type_support_load = std::move(on_type_support_load);
+}
 
 CachedServiceClient::TypeSupport & RosServiceCaller::Impl::getServiceTypeSupport(const std::string & interface_type)
 {
@@ -587,176 +757,6 @@ void RosServiceCaller::Impl::clearCachedServiceState()
   // must be destroyed before the backing type-support cache is cleared.
   cached_clients.clear();
   type_supports.clear();
-}
-
-RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
-: impl_(std::make_unique<Impl>(node))
-{}
-
-RosServiceCaller::~RosServiceCaller()
-{
-  shutdown();
-}
-
-std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
-  const std::string & requester, const ServiceCallRequest & request)
-{
-  std::promise<ServiceCallResponse> promise;
-  auto future = promise.get_future();
-
-  std::string interface_type;
-
-  if (impl_->shutdown_flag) {
-    const std::runtime_error exc("Service caller is shut down.");
-    logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
-    promise.set_exception(std::make_exception_ptr(exc));
-    return future;
-  }
-
-  if (requester.empty()) {
-    const std::invalid_argument exc("requester_identity is required");
-    logServiceCallRejected(request, requester, interface_type, "missing_requester_identity", exc, false);
-    promise.set_exception(std::make_exception_ptr(exc));
-    return future;
-  }
-
-  try {
-    try {
-      interface_type =
-        request.interface_type.empty()
-          ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
-          : request.interface_type;
-    } catch (const std::exception & exc) {
-      logServiceCallRejected(request, requester, interface_type, "interface_type_resolution_failed", exc);
-      throw;
-    }
-    // Reserve quota before client lookup, request deserialization, or send.
-    // inflight_calls takes ownership only after the entry is inserted.
-    Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
-      try {
-        return Impl::InflightReservation(*impl_, requester);
-      } catch (const std::runtime_error & exc) {
-        logServiceCallRejected(request, requester, interface_type, "requester_inflight_limit_reached", exc, false);
-        throw;
-      }
-    }();
-    InflightKey key;
-    try {
-      CachedServiceClient * client = nullptr;
-      try {
-        client = &impl_->getClient(request.service, interface_type);
-      } catch (const std::exception & exc) {
-        throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
-      }
-
-      std::unique_ptr<MessageStorage> service_request;
-      try {
-        auto serialized = wrapSerializedPayload(request.request_payload);
-        service_request = std::make_unique<MessageStorage>(
-          client->type_support->request_type_support.message_members, rosidl_runtime_cpp::MessageInitialization::ZERO);
-        client->type_support->request_type_support.serializer.deserialize_message(&serialized, service_request->data());
-      } catch (const std::exception & exc) {
-        throw std::runtime_error(std::string("Failed to build service request: ") + exc.what());
-      }
-
-      std::int64_t sequence_number = 0;
-      const rcl_ret_t ret = rcl_send_request(&client->client, service_request->data(), &sequence_number);
-      if (ret != RCL_RET_OK) {
-        throw std::runtime_error("Failed to send service request.");
-      }
-
-      key = InflightKey{client, sequence_number};
-    } catch (const std::exception & exc) {
-      LogEvent(kLogger, "service_call_failed")
-        .field("reason", "start_failed")
-        .fieldOr("service", request.service)
-        .fieldIfNotEmpty("interface_type", interface_type)
-        .fieldOr("requester_identity", requester)
-        .field("error", exc.what())
-        .error();
-      throw;
-    }
-
-    if (impl_->inflight_calls.find(key) != impl_->inflight_calls.end()) {
-      LogEvent(kLogger, "service_call_failed")
-        .field("reason", "duplicate_pending_key")
-        .fieldOr("service", request.service)
-        .fieldIfNotEmpty("interface_type", interface_type)
-        .fieldOr("requester_identity", requester)
-        .error();
-      throw std::runtime_error("Duplicate pending service call key.");
-    }
-
-    const int timeout_ms =
-      request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
-    impl_->inflight_calls.emplace(
-      key,
-      Impl::InflightCall{
-        request.service,
-        interface_type,
-        requester,
-        std::move(promise),
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
-      });
-    // From here on every settle path goes through inflight_calls, so that entry
-    // owns releasing the requester's inflight quota.
-    inflight_reservation.transferToInflightCall();
-  } catch (const std::exception &) {
-    promise.set_exception(std::current_exception());
-    return future;
-  }
-
-  if (impl_->poll_timer == nullptr) {
-    auto * impl = impl_.get();
-    impl_->poll_timer = impl_->node.create_wall_timer(kPollInterval, [impl]() { impl->poll(); });
-  }
-  return future;
-}
-
-void RosServiceCaller::cancelCallsForRequester(const std::string & requester)
-{
-  if (requester.empty()) {
-    return;
-  }
-  impl_->failMatchingCalls(
-    [&requester](const Impl::InflightCall & call) { return call.requester == requester; },
-    "Requester identity disconnected.",
-    "requester_disconnected",
-    false,
-    requester.c_str());
-}
-
-void RosServiceCaller::resetSessionState()
-{
-  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "LiveKit session reset.", "session_reset");
-
-  impl_->clearCachedServiceState();
-}
-
-void RosServiceCaller::shutdown()
-{
-  impl_->shutdown_flag = true;
-  impl_->poll_gate.close();
-  impl_->poll_gate.awaitIdle();
-
-  impl_->poll_timer.reset();
-
-  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "Service caller shut down.", "shutdown");
-
-  impl_->clearCachedServiceState();
-}
-
-void RosServiceCaller::setPollCallbacksForTest(std::function<void()> on_poll_enter, std::function<void()> on_poll_exit)
-{
-  std::lock_guard<std::mutex> lock(impl_->poll_callback_mutex);
-  impl_->on_poll_enter = std::move(on_poll_enter);
-  impl_->on_poll_exit = std::move(on_poll_exit);
-}
-
-void RosServiceCaller::setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load)
-{
-  std::lock_guard<std::mutex> lock(impl_->type_support_load_callback_mutex);
-  impl_->on_type_support_load = std::move(on_type_support_load);
 }
 
 }  // namespace livekit_ros2_bridge

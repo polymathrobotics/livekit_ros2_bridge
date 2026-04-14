@@ -78,21 +78,6 @@ DataStreamInstance::~DataStreamInstance()
   shutdown();
 }
 
-const std::string & DataStreamInstance::trackName() const
-{
-  return track_name_;
-}
-
-int DataStreamInstance::intervalMs() const
-{
-  return suppression_window_.intervalMs();
-}
-
-DataStreamInstance::State DataStreamInstance::state() const
-{
-  return publication_.current();
-}
-
 void DataStreamInstance::setIntervalMs(int interval_ms)
 {
   suppression_window_.setIntervalMs(interval_ms);
@@ -162,6 +147,21 @@ void DataStreamInstance::shutdown()
   publication_.reset();
   suppression_window_.reset();
   subscription_.reset();
+}
+
+const std::string & DataStreamInstance::trackName() const
+{
+  return track_name_;
+}
+
+int DataStreamInstance::intervalMs() const
+{
+  return suppression_window_.intervalMs();
+}
+
+DataStreamInstance::State DataStreamInstance::state() const
+{
+  return publication_.current();
 }
 
 void DataStreamInstance::subscribe()

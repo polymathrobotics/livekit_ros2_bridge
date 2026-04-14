@@ -40,52 +40,6 @@ VideoTrackPublisher::VideoTrackPublisher(
 , profiler_(std::move(profiler))
 {}
 
-void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us)
-{
-  VideoStreamProfiler::StageTimer ensure_track_timer(profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us);
-  if (source_ != nullptr && track_ != nullptr && width_ == width && height_ == height) {
-    return;
-  }
-
-  const bool republished = has_published_;
-  const char * stage = track_ != nullptr ? "republish_unpublish" : nullptr;
-  const auto logFailure = [&](std::exception_ptr exception = nullptr) {
-    LogEvent(kLogger, "video_track_publish_failed")
-      .field("track_name", spec_.track_name)
-      .field("width", width)
-      .field("height", height)
-      .fieldIfNotEmpty("stage", stage)
-      .fieldException("error", std::move(exception))
-      .warn();
-  };
-  try {
-    if (stage != nullptr) {
-      room_connection_.unpublishVideoTrack(track_);
-      stage = "republish_publish";
-    }
-    // Reset local publication state before publishing so a
-    // publishVideoTrack() failure forces the next frame to retry instead of
-    // reusing stale state.
-    source_.reset();
-    track_.reset();
-    width_ = 0;
-    height_ = 0;
-
-    auto source = std::make_shared<livekit::VideoSource>(width, height);
-    auto track = room_connection_.publishVideoTrack(spec_.track_name, source, spec_.publish_config);
-    source_ = std::move(source);
-    track_ = std::move(track);
-    width_ = width;
-    height_ = height;
-    has_published_ = true;
-    observer_.onTrackPublished(width, height, republished);
-    // todo: is there another pattern we can use for this?
-  } catch (...) {
-    logFailure(std::current_exception());
-    throw;
-  }
-}
-
 void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -141,6 +95,52 @@ void VideoTrackPublisher::shutdown()
       .field("track_name", spec_.track_name)
       .fieldException("error", std::current_exception())
       .warn();
+  }
+}
+
+void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us)
+{
+  VideoStreamProfiler::StageTimer ensure_track_timer(profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us);
+  if (source_ != nullptr && track_ != nullptr && width_ == width && height_ == height) {
+    return;
+  }
+
+  const bool republished = has_published_;
+  const char * stage = track_ != nullptr ? "republish_unpublish" : nullptr;
+  const auto logFailure = [&](std::exception_ptr exception = nullptr) {
+    LogEvent(kLogger, "video_track_publish_failed")
+      .field("track_name", spec_.track_name)
+      .field("width", width)
+      .field("height", height)
+      .fieldIfNotEmpty("stage", stage)
+      .fieldException("error", std::move(exception))
+      .warn();
+  };
+  try {
+    if (stage != nullptr) {
+      room_connection_.unpublishVideoTrack(track_);
+      stage = "republish_publish";
+    }
+    // Reset local publication state before publishing so a
+    // publishVideoTrack() failure forces the next frame to retry instead of
+    // reusing stale state.
+    source_.reset();
+    track_.reset();
+    width_ = 0;
+    height_ = 0;
+
+    auto source = std::make_shared<livekit::VideoSource>(width, height);
+    auto track = room_connection_.publishVideoTrack(spec_.track_name, source, spec_.publish_config);
+    source_ = std::move(source);
+    track_ = std::move(track);
+    width_ = width;
+    height_ = height;
+    has_published_ = true;
+    observer_.onTrackPublished(width, height, republished);
+    // todo: is there another pattern we can use for this?
+  } catch (...) {
+    logFailure(std::current_exception());
+    throw;
   }
 }
 

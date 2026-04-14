@@ -75,38 +75,6 @@ DataTrackPublisher::DataTrackPublisher(RoomConnection & connection, std::string 
 , log_clock_(std::move(clock))
 {}
 
-void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
-{
-  if (track_ == nullptr) {
-    return;
-  }
-
-  // Copy into an owning buffer before handing the payload to LiveKit; callers usually pass ROS
-  // serialization storage whose lifetime ends with the current subscription callback.
-  auto result = room_connection_.tryPushDataTrack(track_, std::vector<std::uint8_t>(cdr, cdr + size));
-  if (result) {
-    return;
-  }
-
-  const auto & error = result.error();
-  if (error.code == DataTrackPushErrorCode::kQueueFull) {
-    // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
-    // subscription callback non-blocking even when the participant is not draining the LiveKit
-    // queue.
-    LogEvent(kLogger, "data_track_delivery_dropped")
-      .field("track_name", name_)
-      .field("reason", "queue_full")
-      .warnThrottle(*log_clock_, kLogThrottle);
-    return;
-  }
-
-  LogEvent(kLogger, "data_track_push_failed")
-    .field("track_name", name_)
-    .field("reason", dataTrackPushReason(error.code))
-    .fieldOr("error", error.message)
-    .warnThrottle(*log_clock_, kLogThrottle);
-}
-
 void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
 {
   const char * stage = "room_publish";
@@ -142,6 +110,38 @@ void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & o
       .fieldException("error", exception)
       .warn();
   }
+}
+
+void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
+{
+  if (track_ == nullptr) {
+    return;
+  }
+
+  // Copy into an owning buffer before handing the payload to LiveKit; callers usually pass ROS
+  // serialization storage whose lifetime ends with the current subscription callback.
+  auto result = room_connection_.tryPushDataTrack(track_, std::vector<std::uint8_t>(cdr, cdr + size));
+  if (result) {
+    return;
+  }
+
+  const auto & error = result.error();
+  if (error.code == DataTrackPushErrorCode::kQueueFull) {
+    // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
+    // subscription callback non-blocking even when the participant is not draining the LiveKit
+    // queue.
+    LogEvent(kLogger, "data_track_delivery_dropped")
+      .field("track_name", name_)
+      .field("reason", "queue_full")
+      .warnThrottle(*log_clock_, kLogThrottle);
+    return;
+  }
+
+  LogEvent(kLogger, "data_track_push_failed")
+    .field("track_name", name_)
+    .field("reason", dataTrackPushReason(error.code))
+    .fieldOr("error", error.message)
+    .warnThrottle(*log_clock_, kLogThrottle);
 }
 
 void DataTrackPublisher::unpublish()

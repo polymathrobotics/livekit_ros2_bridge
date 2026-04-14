@@ -86,16 +86,16 @@ private:
   EventThrottle executor_unavailable_drop_{std::chrono::seconds(5)};
   EventThrottle executor_shutdown_execute_drop_{std::chrono::seconds(5)};
 
-  // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
-  // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
-  // if it reaches the queue before the executor is shut down.
-  void submitToExecutor(std::function<void()> work);
-
   void onRoomConnected();
   void onRoomIncomingPacket(const IncomingPacket & packet);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
   void onRoomReconnectRequested(const std::string & reason);
   void onRoomConnectionReset();
+
+  // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
+  // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
+  // if it reaches the queue before the executor is shut down.
+  void submitToExecutor(std::function<void()> work);
 
   void checkWatchdog();
 };

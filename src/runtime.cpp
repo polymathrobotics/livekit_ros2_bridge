@@ -125,6 +125,58 @@ Runtime::~Runtime()
   shutdown();
 }
 
+void Runtime::shutdown()
+{
+  if (shutting_down_.exchange(true)) {
+    return;
+  }
+
+  LogEvent(node_.get_logger(), "runtime_shutdown_start").fieldOr("room", config_.livekit.room, "<unset>").info();
+
+  // Disarm periodic work first so lease GC and watchdog evaluation stop racing a deliberate
+  // shutdown while the shared components below are being torn down.
+  subscription_lease_gc_timer_.reset();
+  watchdog_timer_.reset();
+  video_profile_summary_timer_.reset();
+
+  if (rpc_router_ != nullptr && room_connection_ != nullptr) {
+    rpc_router_->unregisterRpcs(*room_connection_);
+  }
+
+  // Stop the room connection before shutting down the executor queue so SDK callbacks can no longer
+  // enqueue fresh ROS work while already-running executor tasks finish.
+  if (room_connection_ != nullptr) {
+    room_connection_->stop();
+  }
+
+  if (ros_executor_queue_ != nullptr) {
+    ros_executor_queue_->shutdown();
+  }
+
+  if (subscription_registry_ != nullptr) {
+    subscription_registry_->shutdown();
+  }
+
+  if (video_stream_registry_ != nullptr) {
+    video_stream_registry_->shutdown();
+  }
+
+  if (ros_service_caller_ != nullptr) {
+    ros_service_caller_->shutdown();
+  }
+
+  if (ros_topic_publisher_ != nullptr) {
+    ros_topic_publisher_->shutdown();
+  }
+
+  if (video_profiling_registry_ != nullptr) {
+    video_profiling_registry_->logSummaries();
+    video_profiling_registry_->flushTrace();
+  }
+
+  LogEvent(node_.get_logger(), "runtime_shutdown_complete").fieldOr("room", config_.livekit.room, "<unset>").info();
+}
+
 void Runtime::onRoomConnected()
 {
   if (shutting_down_.load()) {
@@ -213,56 +265,46 @@ void Runtime::onRoomConnectionReset()
   });
 }
 
-void Runtime::shutdown()
+void Runtime::submitToExecutor(std::function<void()> work)
 {
-  if (shutting_down_.exchange(true)) {
+  if (shutting_down_.load()) {
+    if (const std::size_t count = executor_shutdown_enqueue_drop_.recordAndTakePendingCount(); count > 0U) {
+      LogEvent(node_.get_logger(), "executor_work_dropped")
+        .field("reason", "shutdown")
+        .field("stage", "enqueue")
+        .field("count", count)
+        .warn();
+    }
+
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start").fieldOr("room", config_.livekit.room, "<unset>").info();
-
-  // Disarm periodic work first so lease GC and watchdog evaluation stop racing a deliberate
-  // shutdown while the shared components below are being torn down.
-  subscription_lease_gc_timer_.reset();
-  watchdog_timer_.reset();
-  video_profile_summary_timer_.reset();
-
-  if (rpc_router_ != nullptr && room_connection_ != nullptr) {
-    rpc_router_->unregisterRpcs(*room_connection_);
-  }
-
-  // Stop the room connection before shutting down the executor queue so SDK callbacks can no longer
-  // enqueue fresh ROS work while already-running executor tasks finish.
-  if (room_connection_ != nullptr) {
-    room_connection_->stop();
-  }
-
   if (ros_executor_queue_ != nullptr) {
-    ros_executor_queue_->shutdown();
+    (void)ros_executor_queue_->submit([this, work = std::move(work)]() mutable {
+      // Work accepted before shutdown may still be draining through the queue.
+      if (shutting_down_.load()) {
+        if (const std::size_t count = executor_shutdown_execute_drop_.recordAndTakePendingCount(); count > 0U) {
+          LogEvent(node_.get_logger(), "executor_work_dropped")
+            .field("reason", "shutdown")
+            .field("stage", "execute")
+            .field("count", count)
+            .warn();
+        }
+        return;
+      }
+
+      work();
+    });
+    return;
   }
 
-  if (subscription_registry_ != nullptr) {
-    subscription_registry_->shutdown();
+  if (const std::size_t count = executor_unavailable_drop_.recordAndTakePendingCount(); count > 0U) {
+    LogEvent(node_.get_logger(), "executor_work_dropped")
+      .field("reason", "executor_unavailable")
+      .field("stage", "enqueue")
+      .field("count", count)
+      .warn();
   }
-
-  if (video_stream_registry_ != nullptr) {
-    video_stream_registry_->shutdown();
-  }
-
-  if (ros_service_caller_ != nullptr) {
-    ros_service_caller_->shutdown();
-  }
-
-  if (ros_topic_publisher_ != nullptr) {
-    ros_topic_publisher_->shutdown();
-  }
-
-  if (video_profiling_registry_ != nullptr) {
-    video_profiling_registry_->logSummaries();
-    video_profiling_registry_->flushTrace();
-  }
-
-  LogEvent(node_.get_logger(), "runtime_shutdown_complete").fieldOr("room", config_.livekit.room, "<unset>").info();
 }
 
 void Runtime::checkWatchdog()
@@ -299,49 +341,6 @@ void Runtime::checkWatchdog()
 
   std::this_thread::sleep_for(kShutdownExitDelay);
   std::_Exit(EXIT_FAILURE);
-}
-
-void Runtime::submitToExecutor(std::function<void()> work)
-{
-  if (shutting_down_.load()) {
-    if (const std::size_t count = executor_shutdown_enqueue_drop_.recordAndTakePendingCount(); count > 0U) {
-      LogEvent(node_.get_logger(), "executor_work_dropped")
-        .field("reason", "shutdown")
-        .field("stage", "enqueue")
-        .field("count", count)
-        .warn();
-    }
-
-    return;
-  }
-
-  if (ros_executor_queue_ == nullptr) {
-    if (const std::size_t count = executor_unavailable_drop_.recordAndTakePendingCount(); count > 0U) {
-      LogEvent(node_.get_logger(), "executor_work_dropped")
-        .field("reason", "executor_unavailable")
-        .field("stage", "enqueue")
-        .field("count", count)
-        .warn();
-    }
-
-    return;
-  }
-
-  (void)ros_executor_queue_->submit([this, work = std::move(work)]() mutable {
-    // Work accepted before shutdown may still be draining through the queue.
-    if (shutting_down_.load()) {
-      if (const std::size_t count = executor_shutdown_execute_drop_.recordAndTakePendingCount(); count > 0U) {
-        LogEvent(node_.get_logger(), "executor_work_dropped")
-          .field("reason", "shutdown")
-          .field("stage", "execute")
-          .field("count", count)
-          .warn();
-      }
-      return;
-    }
-
-    work();
-  });
 }
 
 }  // namespace livekit_ros2_bridge
