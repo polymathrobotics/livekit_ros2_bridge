@@ -309,15 +309,14 @@ TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAf
       std::make_tuple(4, 4, true),
     }));
   EXPECT_EQ(observer.unpublish_call_count, 1);
-
-  const auto expected_event_log = std::vector<std::string>{
-    "publish_video_track:ros.video.camera.lifecycle_observer",
-    "unpublish_video_track:ros.video.camera.lifecycle_observer",
-    "publish_video_track:ros.video.camera.lifecycle_observer",
-    "unpublish_video_track:ros.video.camera.lifecycle_observer",
-  };
-
-  EXPECT_EQ(connection.state->event_log, expected_event_log);
+  EXPECT_EQ(
+    connection.state->event_log,
+    (std::vector<std::string>{
+      "publish_video_track:ros.video.camera.lifecycle_observer",
+      "unpublish_video_track:ros.video.camera.lifecycle_observer",
+      "publish_video_track:ros.video.camera.lifecycle_observer",
+      "unpublish_video_track:ros.video.camera.lifecycle_observer",
+    }));
 }
 
 TEST(VideoTrackPublisherTest, ShutdownSwallowsVideoUnpublishFailureAndStaysClosed)
@@ -345,8 +344,8 @@ TEST(VideoTrackPublisherTest, PublishFailureOnFirstFrameCanRetryAndStillShutdown
     connection, makeVideoStreamSpec("stream:publish_retry", "ros.video.camera.publish_retry"), observer);
 
   EXPECT_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000), std::runtime_error);
-  EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 2000));
-  EXPECT_NO_THROW(publisher.shutdown());
+  publisher.write(2, 2, makeI420Frame(2, 2), 2000);
+  publisher.shutdown();
 
   EXPECT_EQ(
     connection.published_video_track_names,
@@ -370,10 +369,10 @@ TEST(VideoTrackPublisherTest, RepublishFailureLeavesPublisherReadyForRetryWithou
   VideoTrackPublisher publisher(
     connection, makeVideoStreamSpec("stream:republish_retry", "ros.video.camera.republish_retry"), observer);
 
-  EXPECT_NO_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000));
+  publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   EXPECT_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 2000), std::runtime_error);
-  EXPECT_NO_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 3000));
-  EXPECT_NO_THROW(publisher.shutdown());
+  publisher.write(4, 4, makeI420Frame(4, 4), 3000);
+  publisher.shutdown();
 
   EXPECT_EQ(
     connection.published_video_track_names,
@@ -414,9 +413,9 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
   connection.releasePublish();
 
   EXPECT_EQ(write_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_NO_THROW(write_future.get());
+  write_future.get();
   EXPECT_EQ(shutdown_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
-  EXPECT_NO_THROW(shutdown_future.get());
+  shutdown_future.get();
 
   EXPECT_EQ(
     observer.published_events,

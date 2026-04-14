@@ -197,29 +197,25 @@ TEST_F(PacketRouterTest, RoutesPublishPacketsViaRosTopicPublisher)
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
 }
 
-TEST_F(PacketRouterTest, RejectsMalformedHeartbeatPayloadsWithoutDispatch)
+TEST_F(PacketRouterTest, RejectsInvalidHeartbeatPayloadsWithoutDispatch)
 {
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", wire::protocol::kControlSubscriptionsHeartbeat)));
-  EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
-  EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
+  const auto expect_rejected_heartbeat = [this](const std::string & payload) {
+    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kControlSubscriptionsHeartbeat)));
+    EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
+    EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
+  };
+
+  expect_rejected_heartbeat("{");
+  expect_rejected_heartbeat(R"({})");
 }
 
-TEST_F(PacketRouterTest, RejectsStructurallyInvalidHeartbeatPayloadsWithoutDispatch)
-{
-  initRouter(makeAccessPolicy({}, {"/battery"}));
-
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(R"({})", wire::protocol::kControlSubscriptionsHeartbeat)));
-  EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
-  EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
-}
-
-TEST_F(PacketRouterTest, RejectsAnonymousPublishPacketsWithoutDispatch)
+TEST_F(PacketRouterTest, RejectsInvalidPublishPacketsWithoutDispatch)
 {
   initRouter(makeAccessPolicy({"/battery/cmd"}));
 
-  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("packet_router_anonymous_publish_observer"));
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("packet_router_invalid_publish_observer"));
   std::optional<sensor_msgs::msg::BatteryState> received_message;
   [[maybe_unused]] auto subscription = observer->create_subscription<sensor_msgs::msg::BatteryState>(
     "/battery/cmd", rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
@@ -231,17 +227,18 @@ TEST_F(PacketRouterTest, RejectsAnonymousPublishPacketsWithoutDispatch)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kControlTopicPublish, "")));
+  const auto expect_rejected_publish = [this, &executor, &received_message](
+                                         const std::string & payload,
+                                         const std::string & requester_identity = "participant-1") {
+    EXPECT_NO_THROW(
+      packet_router_->handle(makePacket(payload, wire::protocol::kControlTopicPublish, requester_identity)));
 
-  executor.spin_some();
-  EXPECT_FALSE(received_message.has_value());
-}
+    executor.spin_some();
+    EXPECT_FALSE(received_message.has_value());
+  };
 
-TEST_F(PacketRouterTest, RejectsInvalidPublishPayloadsWithoutDispatch)
-{
-  initRouter(makeAccessPolicy({"/battery/cmd"}));
-
-  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", wire::protocol::kControlTopicPublish)));
+  expect_rejected_publish("{");
+  expect_rejected_publish(publishPayload(), "");
 }
 
 TEST_F(PacketRouterTest, DropsUnsupportedTopicsWithoutDispatch)

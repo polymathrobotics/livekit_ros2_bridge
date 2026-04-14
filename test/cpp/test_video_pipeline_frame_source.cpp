@@ -48,7 +48,7 @@ public:
   {}
 };
 
-class RecordingLifecycleObserver final : public VideoStreamLifecycleObserver
+class NoOpLifecycleObserver final : public VideoStreamLifecycleObserver
 {
 public:
   void onTrackPublished(int, int, bool) override
@@ -57,36 +57,20 @@ public:
   void onTrackUnpublish() override
   {}
 
-  void onSampleUnpackFailed(const std::string & error) override
-  {
-    sample_unpack_failures.push_back(error);
-  }
+  void onSampleUnpackFailed(const std::string &) override
+  {}
 
-  void onCaptureFailed(const std::string & error) override
-  {
-    capture_failures.push_back(error);
-  }
+  void onCaptureFailed(const std::string &) override
+  {}
 
-  void onPipelineFailed(const std::string & reason) override
-  {
-    pipeline_failures.push_back(reason);
-  }
+  void onPipelineFailed(const std::string &) override
+  {}
 
-  void onRestartFailed(const std::string & error) override
-  {
-    restart_failures.push_back(error);
-  }
+  void onRestartFailed(const std::string &) override
+  {}
 
-  void onPushFailed(const std::string & error) override
-  {
-    push_failures.push_back(error);
-  }
-
-  std::vector<std::string> sample_unpack_failures;
-  std::vector<std::string> capture_failures;
-  std::vector<std::string> pipeline_failures;
-  std::vector<std::string> restart_failures;
-  std::vector<std::string> push_failures;
+  void onPushFailed(const std::string &) override
+  {}
 };
 
 class TestableVideoPipelineFrameSource final : public VideoPipelineFrameSource
@@ -114,6 +98,21 @@ public:
   }
 };
 
+void expectStartErrorContains(
+  const std::shared_ptr<TestableVideoPipelineFrameSource> & source,
+  const std::string & description,
+  bool require_appsrc,
+  const char * expected_error_fragment)
+{
+  try {
+    source->startPipeline(description, require_appsrc);
+    FAIL() << "Expected startPipeline to throw an error containing '" << expected_error_fragment << "'";
+  } catch (const std::runtime_error & error) {
+    EXPECT_NE(std::string(error.what()).find(expected_error_fragment), std::string::npos)
+      << "actual error: " << error.what();
+  }
+}
+
 class VideoPipelineFrameSourceTest : public ::testing::Test
 {
 protected:
@@ -123,32 +122,26 @@ protected:
   }
 
   NoOpFrameSink sink_;
-  RecordingLifecycleObserver observer_;
+  NoOpLifecycleObserver observer_;
 };
 
 TEST_F(VideoPipelineFrameSourceTest, StartRejectsNamedNonAppSink)
 {
   auto source = std::make_shared<TestableVideoPipelineFrameSource>(sink_, observer_);
 
-  try {
-    source->startPipeline("videotestsrc is-live=true ! fakesink name=bridge_video_sink", false);
-    FAIL() << "expected start to reject a non-appsink element";
-  } catch (const std::runtime_error & error) {
-    EXPECT_NE(std::string(error.what()).find("must be a GstAppSink"), std::string::npos);
-  }
+  expectStartErrorContains(
+    source, "videotestsrc is-live=true ! fakesink name=bridge_video_sink", false, "must be a GstAppSink");
 }
 
 TEST_F(VideoPipelineFrameSourceTest, StartRejectsNamedNonAppSrcWhenRequired)
 {
   auto source = std::make_shared<TestableVideoPipelineFrameSource>(sink_, observer_);
 
-  try {
-    source->startPipeline(
-      "videotestsrc is-live=true ! identity name=bridge_video_src ! appsink name=bridge_video_sink", true);
-    FAIL() << "expected start to reject a non-appsrc element";
-  } catch (const std::runtime_error & error) {
-    EXPECT_NE(std::string(error.what()).find("must be a GstAppSrc"), std::string::npos);
-  }
+  expectStartErrorContains(
+    source,
+    "videotestsrc is-live=true ! identity name=bridge_video_src ! appsink name=bridge_video_sink",
+    true,
+    "must be a GstAppSrc");
 }
 
 TEST_F(VideoPipelineFrameSourceTest, StartCapturesRequiredAppSrcHandle)

@@ -64,18 +64,18 @@ TEST(EventThrottleTest, LateFlushRebasesThrottleWindowFromActualFireTime)
 {
   ManualSteadyClock clock;
   EventThrottle throttle(kThrottleInterval, [&clock]() { return clock.now(); });
+  const auto late_flush_skew = std::chrono::milliseconds(7);
 
   ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
 
-  clock.advance(kThrottleInterval * 5);
+  clock.advance(kThrottleInterval * 5 + late_flush_skew);
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
 
   clock.advance(kThrottleInterval - std::chrono::milliseconds(1));
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
 
   clock.advance(std::chrono::milliseconds(1));
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 3U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 2U);
 }
 
 TEST(EventThrottleTest, ZeroIntervalFiresOnEveryCall)

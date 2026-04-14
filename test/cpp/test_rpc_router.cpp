@@ -258,28 +258,7 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
     wire::protocol::kRpcErrorInternal);
 }
 
-TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
-{
-  test_support::ScopedRclcppInit init;
-  RpcRouterHarness harness;
-
-  const auto response = harness.invokeRpc(
-    wire::protocol::kRpcInterfacesGet,
-    RpcInvocation{
-      "participant-1",
-      R"({"interface_types":["std_msgs/msg/String"]})",
-    });
-
-  ASSERT_TRUE(response.has_value());
-  const auto body = nlohmann::json::parse(*response);
-  ASSERT_EQ(body["interfaces"].size(), 1U);
-  const auto & interface_definition = body["interfaces"][0];
-  EXPECT_EQ(interface_definition["interface_type"].get<std::string>(), "std_msgs/msg/String");
-  EXPECT_EQ(interface_definition["format"].get<std::string>(), "ros2msg");
-  EXPECT_FALSE(interface_definition["definition"].get<std::string>().empty());
-}
-
-TEST(RpcRouterTest, InterfacesGetRpcDeduplicatesRepeatedRequestedTypes)
+TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicatesRepeatedRequests)
 {
   test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
@@ -294,7 +273,10 @@ TEST(RpcRouterTest, InterfacesGetRpcDeduplicatesRepeatedRequestedTypes)
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["interfaces"].size(), 1U);
-  EXPECT_EQ(body["interfaces"][0]["interface_type"].get<std::string>(), "std_msgs/msg/String");
+  const auto & interface_definition = body["interfaces"][0];
+  EXPECT_EQ(interface_definition["interface_type"].get<std::string>(), "std_msgs/msg/String");
+  EXPECT_EQ(interface_definition["format"].get<std::string>(), "ros2msg");
+  EXPECT_FALSE(interface_definition["definition"].get<std::string>().empty());
 }
 
 TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)

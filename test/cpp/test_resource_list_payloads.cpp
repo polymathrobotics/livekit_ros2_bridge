@@ -62,26 +62,14 @@ TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
   EXPECT_EQ(request.limit, std::optional<std::size_t>(25u));
 }
 
-TEST(ResourceListPayloadsTest, RejectsInvalidQueryAndLimitFields)
-{
-  EXPECT_THROW(wire::resources::parse(R"({"query":123})"), std::invalid_argument);
-  EXPECT_THROW(wire::resources::parse(R"({"limit":-1})"), std::invalid_argument);
-  EXPECT_THROW(wire::resources::parse(R"({"limit":0})"), std::invalid_argument);
-  EXPECT_THROW(wire::resources::parse(R"({"limit":1.5})"), std::invalid_argument);
-}
-
-TEST(ResourceListPayloadsTest, RejectsMalformedJsonAndNonObjectPayloads)
-{
-  EXPECT_THROW(wire::resources::parse("{"), std::invalid_argument);
-  EXPECT_THROW(wire::resources::parse(R"([])"), std::invalid_argument);
-}
-
-TEST(ResourceListPayloadsTest, ReportsRejectedRequestFieldForValidationFailures)
+TEST(ResourceListPayloadsTest, RejectsInvalidRequestsWithFieldContext)
 {
   expectInvalidRequestField("{", "payload", "Invalid JSON in list request");
   expectInvalidRequestField(R"([])", "payload", "List request must be a JSON object");
   expectInvalidRequestField(R"({"query":123})", "query", "query must be a string");
+  expectInvalidRequestField(R"({"limit":-1})", "limit", "limit must be a positive integer");
   expectInvalidRequestField(R"({"limit":0})", "limit", "limit must be a positive integer");
+  expectInvalidRequestField(R"({"limit":1.5})", "limit", "limit must be a positive integer");
 
   const std::invalid_argument unrelated_error("other_validation_error");
   EXPECT_EQ(wire::resources::invalidRequestField(unrelated_error), std::nullopt);

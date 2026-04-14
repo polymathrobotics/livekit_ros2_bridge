@@ -330,35 +330,28 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   EXPECT_TRUE(state->rpc_handlers.empty());
 }
 
-TEST_F(RuntimeTest, ShutdownRunsSingleOrderedTeardownAcrossDestructionAndExplicitCalls)
+TEST_F(RuntimeTest, DestructionRunsSingleOrderedTeardown)
+{
+  auto harness = makeRuntimeHarness(makeStaticTokenOptions());
+
+  harness.runtime.reset();
+
+  EXPECT_EQ(harness.state->event_log, expectedShutdownEventLog());
+}
+
+TEST_F(RuntimeTest, ExplicitShutdownIsIdempotentAcrossRepeatedCallsAndDestruction)
 {
   const auto expected_event_log = expectedShutdownEventLog();
+  auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
-  {
-    SCOPED_TRACE("destruction");
-    auto harness = makeRuntimeHarness(makeStaticTokenOptions());
+  harness.runtime->shutdown();
 
-    harness.runtime.reset();
+  EXPECT_EQ(harness.state->event_log, expected_event_log);
 
-    EXPECT_EQ(harness.state->event_log, expected_event_log);
-    EXPECT_TRUE(harness.state->stopped);
-    EXPECT_EQ(harness.state->unregistered_rpc_methods, expectedRpcMethods());
-  }
+  harness.runtime->shutdown();
+  harness.runtime.reset();
 
-  {
-    SCOPED_TRACE("explicit shutdown");
-    auto harness = makeRuntimeHarness(makeStaticTokenOptions());
-
-    harness.runtime->shutdown();
-
-    EXPECT_EQ(harness.state->event_log, expected_event_log);
-
-    harness.runtime->shutdown();
-    harness.runtime.reset();
-
-    EXPECT_EQ(harness.state->event_log, expected_event_log);
-    EXPECT_EQ(harness.state->unregistered_rpc_methods, expectedRpcMethods());
-  }
+  EXPECT_EQ(harness.state->event_log, expected_event_log);
 }
 
 TEST_F(RuntimeTest, IncomingPacketPublishesAfterExecutorDispatch)

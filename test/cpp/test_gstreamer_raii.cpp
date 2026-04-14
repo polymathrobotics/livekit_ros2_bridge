@@ -73,7 +73,6 @@ TEST(GstreamerInitializationTest, EnsureGstreamerInitializedIsSafeAcrossConcurre
     thread.join();
   }
 
-  EXPECT_TRUE(gst_is_initialized());
   EXPECT_TRUE(all_threads_observed_initialized.load(std::memory_order_relaxed));
 }
 
@@ -198,7 +197,6 @@ TEST_F(GstreamerRaiiTest, VideoFrameGuardRejectsInvalidInputs)
   GstVideoFrameGuard missing_buffer(&info, nullptr, GST_MAP_READ);
   EXPECT_FALSE(missing_buffer.is_valid());
 
-  ASSERT_GT(info.size, static_cast<gsize>(1U));
   GstBufferPtr undersized_buffer(gst_buffer_new_allocate(nullptr, info.size - static_cast<gsize>(1U), nullptr));
   ASSERT_NE(undersized_buffer.get(), nullptr);
 

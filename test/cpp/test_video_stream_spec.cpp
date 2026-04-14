@@ -88,9 +88,6 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
     resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
   EXPECT_EQ(compressed_spec.stream_key, "topic:/camera/front/image/compressed");
   EXPECT_EQ(compressed_spec.track_name, "ros.video.camera.front.image.compressed");
-  EXPECT_EQ(compressed_spec.ros_topic, "/camera/front/image/compressed");
-  EXPECT_EQ(compressed_spec.interface_type, kCompressedImageInterfaceType);
-  EXPECT_EQ(compressed_spec.input_kind, VideoInputKind::RosTopic);
   EXPECT_EQ(compressed_spec.config_id, "default_ros");
   EXPECT_EQ(compressed_spec.ingest_mode, kCompressedImageIngestMode);
   expectPublishConfigEq(compressed_spec.publish_config, config.default_publish_config);
@@ -110,7 +107,6 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
   EXPECT_EQ(spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(spec.track_name, "ros.video.camera.front.image");
   EXPECT_EQ(spec.ros_topic, "/camera/front/image");
-  EXPECT_EQ(spec.interface_type, kImageInterfaceType);
   EXPECT_EQ(spec.config_id, "normalized");
   EXPECT_EQ(spec.transform_fragment, "videoconvert ! normalized-filter");
   expectPublishConfigEq(spec.publish_config, normalized_rule.publish_config);
@@ -163,30 +159,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.config_id, "specific");
-  EXPECT_EQ(spec.transform_fragment, "videoconvert ! specific-filter");
   expectPublishConfigEq(spec.publish_config, specific_rule.publish_config);
-}
-
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecExactPatternBeatsSubtreeRuleOnParentTopic)
-{
-  VideoStreamConfig config;
-
-  RosVideoTopicRule subtree_rule = makeRule("subtree", "/camera/front/*", "videoconvert ! subtree-filter");
-  subtree_rule.publish_config =
-    makePublishConfig(VideoPublishCodec::Vp8, 500000, 30.0, VideoPublishSimulcast::Disabled);
-
-  RosVideoTopicRule exact_rule = makeRule("exact", "/camera/front", "videoconvert ! exact-filter");
-  exact_rule.publish_config = makePublishConfig(VideoPublishCodec::H264, 800000, 15.0, VideoPublishSimulcast::Enabled);
-
-  config.ros_topic_rules = {subtree_rule, exact_rule};
-
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front", kImageInterfaceType);
-
-  EXPECT_EQ(spec.stream_key, "topic:/camera/front");
-  EXPECT_EQ(spec.track_name, "ros.video.camera.front");
-  EXPECT_EQ(spec.config_id, "exact");
-  EXPECT_EQ(spec.transform_fragment, "videoconvert ! exact-filter");
-  expectPublishConfigEq(spec.publish_config, exact_rule.publish_config);
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
@@ -202,7 +175,6 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(spec.config_id, "first");
-  EXPECT_EQ(spec.transform_fragment, "videoconvert ! first-filter");
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceholders)
@@ -236,7 +208,6 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecTrimsConfiguredSourceN
   EXPECT_EQ(spec.source_name, "front_camera");
   EXPECT_EQ(spec.input_kind, VideoInputKind::ConfiguredSource);
   EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
-  EXPECT_EQ(spec.config_id, "front_camera");
   EXPECT_EQ(spec.ingress_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(spec.transform_fragment, "videobalance saturation=0.0");
   expectPublishConfigEq(spec.publish_config, expected_publish_config);

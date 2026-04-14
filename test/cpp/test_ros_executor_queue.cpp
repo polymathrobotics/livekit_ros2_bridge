@@ -34,7 +34,7 @@ namespace
 template <typename FutureT>
 void expectRuntimeError(FutureT & future, const char * expected_message)
 {
-  ASSERT_EQ(future.wait_for(std::chrono::seconds(0)), std::future_status::ready);
+  ASSERT_EQ(future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   try {
     (void)future.get();
     FAIL() << "Expected std::runtime_error";
@@ -132,7 +132,6 @@ TEST(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWorkAndRejectsQueuedOrLate
   });
 
   EXPECT_EQ(shutdown_finished.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
-  ASSERT_EQ(queued_task.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   expectRuntimeError(queued_task, "ROS executor queue is shut down.");
   EXPECT_FALSE(queued_task_ran.load());
 

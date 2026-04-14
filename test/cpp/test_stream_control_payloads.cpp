@@ -84,13 +84,6 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
   expectDemand(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"kind":"topic","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
-    SubscriptionTargetKind::Topic,
-    "/battery",
-    125);
-
-  expectDemand(
-    nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
@@ -186,77 +179,60 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)
 {
-  const auto body = nlohmann::json::parse(
-    R"({"subscriptions":[
+  expectDemand(
+    nlohmann::json::parse(
+      R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":25}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
-    ]})");
-  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
-
-  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
-  EXPECT_EQ(heartbeat.subscriptions[0].name, "/battery");
-  EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
+    ]})"),
+    SubscriptionTargetKind::Topic,
+    "/battery",
+    25);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSourcesUsingTrimmedName)
 {
-  const auto body = nlohmann::json::parse(
-    R"({"subscriptions":[
+  expectDemand(
+    nlohmann::json::parse(
+      R"({"subscriptions":[
       {"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
       {"kind":" configured_source ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
-    ]})");
-  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
-
-  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
-  EXPECT_EQ(heartbeat.subscriptions[0].kind, SubscriptionTargetKind::ConfiguredSource);
-  EXPECT_EQ(heartbeat.subscriptions[0].name, "front_camera");
-  EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
+    ]})"),
+    SubscriptionTargetKind::ConfiguredSource,
+    "front_camera",
+    25);
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDuringCoalescing)
 {
-  const auto zero_then_non_zero = wire::subscriptions::parseHeartbeat(
-    nlohmann::json::parse(
-      R"({"subscriptions":[
+  const auto expectPreferredInterval = [](const char * body) {
+    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, "/battery", 125);
+  };
+
+  expectPreferredInterval(R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":0}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
-    ]})"));
-  ASSERT_EQ(zero_then_non_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(zero_then_non_zero.subscriptions[0].name, "/battery");
-  EXPECT_EQ(zero_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
-
-  const auto non_zero_then_zero = wire::subscriptions::parseHeartbeat(
-    nlohmann::json::parse(
-      R"({"subscriptions":[
+    ]})");
+  expectPreferredInterval(R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":0}}
-    ]})"));
-  ASSERT_EQ(non_zero_then_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(non_zero_then_zero.subscriptions[0].name, "/battery");
-  EXPECT_EQ(non_zero_then_zero.subscriptions[0].preferred_interval_ms, 125);
+    ]})");
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoPreferenceDuringCoalescing)
 {
-  const auto empty_then_non_zero = wire::subscriptions::parseHeartbeat(
-    nlohmann::json::parse(
-      R"({"subscriptions":[
+  const auto expectPreferredInterval = [](const char * body) {
+    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, "/battery", 125);
+  };
+
+  expectPreferredInterval(R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
-    ]})"));
-  ASSERT_EQ(empty_then_non_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(empty_then_non_zero.subscriptions[0].name, "/battery");
-  EXPECT_EQ(empty_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
-
-  const auto non_zero_then_empty = wire::subscriptions::parseHeartbeat(
-    nlohmann::json::parse(
-      R"({"subscriptions":[
+    ]})");
+  expectPreferredInterval(R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{}}
-    ]})"));
-  ASSERT_EQ(non_zero_then_empty.subscriptions.size(), 1U);
-  EXPECT_EQ(non_zero_then_empty.subscriptions[0].name, "/battery");
-  EXPECT_EQ(non_zero_then_empty.subscriptions[0].preferred_interval_ms, 125);
+    ]})");
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSeparate)

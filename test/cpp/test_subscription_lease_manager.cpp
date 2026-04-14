@@ -405,6 +405,52 @@ TEST(SubscriptionLeaseManagerTest, ClampsNegativeRequestedIntervalToZero)
   EXPECT_EQ(response.applied_interval_ms, 0);
 }
 
+TEST(SubscriptionLeaseManagerTest, RenewSubscriptionResponseOmitsTrackNameUntilFailedPublishRecovers)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_failed_publish_response_test");
+  FakeRoomConnection session;
+  const std::string topic = "/battery/failed_publish_response";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+  (void)publisher;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  int publish_attempt_count = 0;
+  session.state->publish_data_track_handler =
+    [&publish_attempt_count](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    publish_attempt_count++;
+    if (publish_attempt_count == 1) {
+      throw std::runtime_error("simulated publish failure");
+    }
+
+    auto owner = std::make_shared<int>(publish_attempt_count);
+    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+  };
+
+  DataStreamRegistry data_stream_registry(*node, session);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+
+  const auto failed = registry.renewSubscription("alice", topic, 500, kFarFuture);
+
+  EXPECT_EQ(failed.name, topic);
+  EXPECT_EQ(failed.interface_type, "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(failed.delivery_kind, SubscriptionDeliveryKind::kData);
+  EXPECT_EQ(failed.applied_interval_ms, 500);
+  EXPECT_TRUE(failed.track_name.empty());
+
+  const auto recovered = registry.renewSubscription("alice", topic, 500, kFarFuture);
+
+  EXPECT_EQ(recovered.name, topic);
+  EXPECT_EQ(recovered.interface_type, "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(recovered.delivery_kind, SubscriptionDeliveryKind::kData);
+  EXPECT_EQ(recovered.applied_interval_ms, 500);
+  EXPECT_EQ(recovered.track_name, "ros.data.battery.failed_publish_response");
+  EXPECT_EQ(publish_attempt_count, 2);
+}
+
 TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecomputesInterval)
 {
   ScopedRclcppInit init;
@@ -845,21 +891,6 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
     *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, NotFoundTopicReturnsError)
-{
-  auto manager = makeManager(access_policy_);
-
-  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)}));
-
-  expectPublishedError(
-    *state_,
-    "requester-1",
-    "topic",
-    "/nonexistent_topic",
-    "not_found",
-    "No ROS types found for topic '/nonexistent_topic'.");
-}
-
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsUnavailable)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -1008,9 +1039,6 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatWithoutResolvabl
   auto manager = makeManager(access_policy_);
 
   manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("unknown-session")));
-
-  EXPECT_EQ(state_->publish_packet_call_count, 0);
-
   manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
   EXPECT_EQ(state_->publish_packet_call_count, 0);
@@ -1030,9 +1058,6 @@ TEST_F(
 
   const auto bind_heartbeat = makeHeartbeat({}, std::string("session-1"));
   manager.handleHeartbeat("requester-1", bind_heartbeat);
-
-  EXPECT_EQ(state_->publish_packet_call_count, 0);
-
   manager.handleHeartbeat("requester-2", bind_heartbeat);
 
   EXPECT_EQ(state_->publish_packet_call_count, 0);

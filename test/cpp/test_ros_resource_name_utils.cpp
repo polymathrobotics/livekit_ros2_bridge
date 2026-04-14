@@ -47,9 +47,12 @@ TEST(RosResourceMatchesPatternTest, ExactPatternsMatchOnlyIdenticalNames)
 TEST(RosResourceMatchesPatternTest, SubtreePatternMatchesDescendantsButNotPrefixNeighbors)
 {
   EXPECT_FALSE(rosResourceMatchesPattern("/camera", "/camera/*"));
-  EXPECT_TRUE(rosResourceMatchesPattern("/camera/image", "/camera/*"));
   EXPECT_TRUE(rosResourceMatchesPattern("/camera/front/image", "/camera/*"));
   EXPECT_FALSE(rosResourceMatchesPattern("/camera_front/image", "/camera/*"));
+}
+
+TEST(RosResourceMatchesPatternTest, RootSubtreeWildcardMatchesRootAndDescendants)
+{
   EXPECT_TRUE(rosResourceMatchesPattern("/", "/*"));
   EXPECT_TRUE(rosResourceMatchesPattern("/camera", "/*"));
 }

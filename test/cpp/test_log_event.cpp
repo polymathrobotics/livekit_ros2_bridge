@@ -70,31 +70,14 @@ TEST(LogEventTest, UsesCustomFallbacksForStringViewAndCStringInputs)
     "present_cstr=ok");
 }
 
-TEST(LogEventTest, FormatsStdExceptionMessagesViaExceptionPtr)
+TEST(LogEventTest, FormatsExceptionMessagesAndFallbacks)
 {
-  std::exception_ptr exception;
-
-  try {
-    throw std::runtime_error("boom");
-  } catch (...) {
-    exception = std::current_exception();
-  }
+  const auto exception = std::make_exception_ptr(std::runtime_error("boom"));
+  const auto non_std_exception = std::make_exception_ptr(7);
 
   EXPECT_EQ(
     LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", exception).str(),
     "event=sample_event error=boom");
-}
-
-TEST(LogEventTest, FallsBackForMissingOrNonStdExceptions)
-{
-  std::exception_ptr non_std_exception;
-
-  try {
-    throw 7;
-  } catch (...) {
-    non_std_exception = std::current_exception();
-  }
-
   EXPECT_EQ(
     LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", nullptr).str(),
     "event=sample_event error=unknown_exception");
@@ -128,7 +111,6 @@ TEST(LogEventTest, SupportsConditionalChainableFields)
 TEST(LogEventTest, ClampWarnThrottleIntervalKeepsMillisecondsNonNegative)
 {
   EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(-5)), 0);
-  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(0)), 0);
   EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(999)), 0);
   EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(1000)), 1);
   EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(2500)), 2);

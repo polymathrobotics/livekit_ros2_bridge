@@ -56,25 +56,29 @@ TEST(ReentrantQuiesceGateTest, AwaitIdleIsReentrantForOwnerButBlocksOtherThreads
     gate.leave();
   });
 
-  const auto owner_entered_status = owner_entered_future.wait_for(kQuiesceReadyTimeout);
-  EXPECT_EQ(owner_entered_status, std::future_status::ready);
-  if (owner_entered_status != std::future_status::ready) {
-    gate.leave();
+  auto release_owner_and_join = [&]() {
     release_owner_promise.set_value();
     ASSERT_EQ(owner_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
     owner_future.get();
-    return;
+  };
+
+  if (owner_entered_future.wait_for(kQuiesceReadyTimeout) != std::future_status::ready) {
+    gate.leave();
+    release_owner_and_join();
+    FAIL() << "Owner thread did not enter the gate in time.";
   }
 
   auto other_thread_idle_future = std::async(std::launch::async, [&]() { gate.awaitIdle(); });
 
   EXPECT_EQ(other_thread_idle_future.wait_for(kQuiesceStillBlockedWindow), std::future_status::timeout);
 
-  const auto owner_await_idle_status = owner_await_idle_returned_future.wait_for(kQuiesceReadyTimeout);
-  if (owner_await_idle_status != std::future_status::ready) {
+  if (owner_await_idle_returned_future.wait_for(kQuiesceReadyTimeout) != std::future_status::ready) {
     gate.leave();
+    release_owner_and_join();
+    ASSERT_EQ(other_thread_idle_future.wait_for(kQuiesceReadyTimeout), std::future_status::ready);
+    other_thread_idle_future.get();
+    FAIL() << "Owning thread should not block when it reenters awaitIdle().";
   }
-  EXPECT_EQ(owner_await_idle_status, std::future_status::ready);
 
   release_owner_promise.set_value();
 

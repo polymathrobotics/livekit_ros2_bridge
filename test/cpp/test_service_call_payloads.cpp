@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -28,29 +29,18 @@ namespace
 {
 
 template <typename Fn>
-void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
+void expectInvalidArgument(Fn && fn, const char * expected_message, const char * expected_field = nullptr)
 {
   try {
     fn();
     FAIL() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     EXPECT_EQ(error.what(), std::string(expected_message));
-  }
-}
+    if (expected_field == nullptr) {
+      return;
+    }
 
-void expectParseError(const nlohmann::json & body, const char * expected_message)
-{
-  expectInvalidArgumentMessage([&body]() { (void)wire::services::parse(body.dump()); }, expected_message);
-}
-
-template <typename Fn>
-void expectInvalidRequestField(Fn && fn, const char * expected_field)
-{
-  try {
-    fn();
-    FAIL() << "Expected std::invalid_argument";
-  } catch (const std::invalid_argument & error) {
-    ASSERT_EQ(wire::services::invalidRequestField(error), std::string_view(expected_field));
+    ASSERT_EQ(wire::services::invalidRequestField(error), std::optional<std::string_view>(expected_field));
   }
 }
 
@@ -74,8 +64,7 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
   EXPECT_EQ(request.request_payload, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
-  ASSERT_TRUE(request.timeout_ms.has_value());
-  EXPECT_EQ(*request.timeout_ms, 500);
+  EXPECT_EQ(request.timeout_ms, std::optional<int>(500));
 }
 
 TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPresence)
@@ -101,91 +90,52 @@ TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPres
   EXPECT_EQ(negative_timeout_request.timeout_ms, std::optional<int>(-1));
 }
 
-TEST(ServiceCallPayloadsTest, RejectsInvalidJson)
+TEST(ServiceCallPayloadsTest, RejectsMalformedPayloadsWithFieldContext)
 {
-  expectInvalidArgumentMessage([]() { (void)wire::services::parse("{"); }, "Invalid JSON in service call request");
+  expectInvalidArgument([]() { (void)wire::services::parse("{"); }, "Invalid JSON in service call request", "payload");
+  expectInvalidArgument(
+    []() { (void)wire::services::parse(R"([1,2,3])"); }, "Service call request must be a JSON object", "payload");
 }
 
-TEST(ServiceCallPayloadsTest, RejectsNonObjectRoot)
-{
-  expectInvalidArgumentMessage(
-    []() { (void)wire::services::parse(R"([1,2,3])"); }, "Service call request must be a JSON object");
-}
-
-TEST(ServiceCallPayloadsTest, ReportsInvalidRequestFieldForRejectedPayloads)
-{
-  expectInvalidRequestField([]() { (void)wire::services::parse("{"); }, "payload");
-
-  auto body = makeRequestBody();
-  body.erase("service");
-  expectInvalidRequestField([&body]() { (void)wire::services::parse(body.dump()); }, "service");
-
-  body = makeRequestBody();
-  body["interface_type"] = 123;
-  expectInvalidRequestField([&body]() { (void)wire::services::parse(body.dump()); }, "interface_type");
-
-  body = makeRequestBody();
-  body["request"] = wire::cdr::serialize(std::vector<std::uint8_t>{});
-  expectInvalidRequestField([&body]() { (void)wire::services::parse(body.dump()); }, "request");
-
-  body = makeRequestBody();
-  body["timeout_ms"] = "500";
-  expectInvalidRequestField([&body]() { (void)wire::services::parse(body.dump()); }, "timeout_ms");
-}
-
-TEST(ServiceCallPayloadsTest, RejectsMissingServiceAndEmptyRequestPayload)
+TEST(ServiceCallPayloadsTest, RejectsInvalidRequestFieldsWithFieldContext)
 {
   auto body = makeRequestBody();
   body.erase("service");
-  expectParseError(body, "service is required");
+  expectInvalidArgument([&body]() { (void)wire::services::parse(body.dump()); }, "service is required", "service");
 
   body = makeRequestBody();
   body["service"] = "   ";
-  expectParseError(body, "service is required");
+  expectInvalidArgument([&body]() { (void)wire::services::parse(body.dump()); }, "service is required", "service");
+
+  body = makeRequestBody();
+  body["interface_type"] = 123;
+  expectInvalidArgument(
+    [&body]() { (void)wire::services::parse(body.dump()); }, "interface_type must be a string", "interface_type");
 
   body = makeRequestBody();
   body["request"] = wire::cdr::serialize(std::vector<std::uint8_t>{});
-  expectParseError(body, "request.payload_base64 must not be empty");
-}
+  expectInvalidArgument(
+    [&body]() { (void)wire::services::parse(body.dump()); }, "request.payload_base64 must not be empty", "request");
 
-TEST(ServiceCallPayloadsTest, RejectsMistypedOptionalFields)
-{
-  expectParseError(
-    nlohmann::json{
-      {"service", "/foo"},
-      {"timeout_ms", "500"},
-      {"request", wire::cdr::serialize(std::vector<std::uint8_t>{0x01})},
-    },
-    "timeout_ms must be an integer");
-
-  expectParseError(
-    nlohmann::json{
-      {"service", "/foo"},
-      {"interface_type", 123},
-      {"request", wire::cdr::serialize(std::vector<std::uint8_t>{0x01})},
-    },
-    "interface_type must be a string");
-
-  expectParseError(
-    nlohmann::json{
-      {"service", "/foo"},
-      {"timeout_ms", nullptr},
-      {"request", wire::cdr::serialize(std::vector<std::uint8_t>{0x01})},
-    },
-    "timeout_ms must be an integer");
+  body = makeRequestBody();
+  body["timeout_ms"] = nullptr;
+  expectInvalidArgument(
+    [&body]() { (void)wire::services::parse(body.dump()); }, "timeout_ms must be an integer", "timeout_ms");
 }
 
 TEST(ServiceCallPayloadsTest, SerializesResponse)
 {
   const auto payload =
     wire::services::serialize("/set_bool", "std_srvs/srv/SetBool", std::vector<std::uint8_t>{0x01, 0x02}, 42);
-  const auto body = nlohmann::json::parse(payload);
 
-  EXPECT_TRUE(body["ok"].get<bool>());
-  EXPECT_EQ(body["service"]["name"].get<std::string>(), "/set_bool");
-  EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
-  EXPECT_EQ(wire::cdr::parse(body, "response"), (std::vector<std::uint8_t>{0x01, 0x02}));
-  EXPECT_EQ(body["elapsed_ms"].get<int>(), 42);
+  EXPECT_EQ(
+    nlohmann::json::parse(payload),
+    nlohmann::json({
+      {"ok", true},
+      {"service", {{"name", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}}},
+      {"response", wire::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02})},
+      {"elapsed_ms", 42},
+    }));
 }
 
 }  // namespace

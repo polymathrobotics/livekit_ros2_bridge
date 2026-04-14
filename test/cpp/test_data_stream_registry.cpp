@@ -103,13 +103,8 @@ TEST(DataStreamRegistryTest, StopAdvancesGenerationAndAllowsRecreate)
 
   registry.create(topic, "sensor_msgs/msg/BatteryState");
   registry.start(topic);
-  const auto * replacement = registry.find(topic);
-  ASSERT_NE(replacement, nullptr);
-
-  EXPECT_EQ(replacement->trackName(), first_track_name);
   EXPECT_EQ(
-    room_connection.state->published_data_track_names,
-    (std::vector<std::string>{first_track_name, replacement->trackName()}));
+    room_connection.state->published_data_track_names, (std::vector<std::string>{first_track_name, first_track_name}));
 }
 
 TEST(DataStreamRegistryTest, ResetSessionStateRejectsLatePublishCompletionAndAllowsRecreate)
@@ -140,13 +135,8 @@ TEST(DataStreamRegistryTest, ResetSessionStateRejectsLatePublishCompletionAndAll
 
   registry.create(topic, "sensor_msgs/msg/BatteryState");
   registry.start(topic);
-  const auto * replacement = registry.find(topic);
-  ASSERT_NE(replacement, nullptr);
-
-  EXPECT_EQ(replacement->trackName(), first_track_name);
   EXPECT_EQ(
-    room_connection.state->published_data_track_names,
-    (std::vector<std::string>{first_track_name, replacement->trackName()}));
+    room_connection.state->published_data_track_names, (std::vector<std::string>{first_track_name, first_track_name}));
 }
 
 TEST(DataStreamRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)

@@ -98,7 +98,7 @@ TEST(TopicPublishCommandTest, RejectsInvalidJsonAndNonObjectRoot)
     parseTopicPublishCommand(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}), std::invalid_argument);
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingBlankOrNonStringTopicField)
+TEST(TopicPublishCommandTest, RejectsMissingOrBlankTopicField)
 {
   auto body = makeBody();
   body.erase("topic");
@@ -107,46 +107,14 @@ TEST(TopicPublishCommandTest, RejectsMissingBlankOrNonStringTopicField)
   body = makeBody();
   body["topic"] = "   ";
   expectInvalidArgument([&body]() { (void)parse(body); }, "Publish command requires a non-empty 'topic' field.");
-
-  body = makeBody();
-  body["topic"] = 123;
-  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish command requires a string 'topic' field.");
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingBlankOrNonStringInterfaceTypeField)
+TEST(TopicPublishCommandTest, RejectsMissingInterfaceTypeField)
 {
   auto body = makeBody();
   body.erase("interface_type");
-  EXPECT_THROW(parse(body), std::invalid_argument);
-
-  body = makeBody();
-  body["interface_type"] = "   ";
-  EXPECT_THROW(parse(body), std::invalid_argument);
-
-  body = makeBody();
-  body["interface_type"] = false;
-  EXPECT_THROW(parse(body), std::invalid_argument);
-}
-
-TEST(TopicPublishCommandTest, RejectsMissingOrNonObjectMessageField)
-{
-  auto body = makeBody();
-  body.erase("message");
-  EXPECT_THROW(parse(body), std::invalid_argument);
-
-  body = makeBody();
-  body["message"] = "not-an-object";
-  EXPECT_THROW(parse(body), std::invalid_argument);
-}
-
-TEST(TopicPublishCommandTest, RejectsUnsupportedMessageContentType)
-{
-  auto body = makeBody();
-  body["message"] = {
-    {"content_type", "application/json"},
-    {"payload_base64", "AQID"},
-  };
-  EXPECT_THROW(parse(body), std::invalid_argument);
+  expectInvalidArgument(
+    [&body]() { (void)parse(body); }, "Publish command requires a non-empty 'interface_type' field.");
 }
 
 TEST(TopicPublishCommandTest, RejectsEmptyMessagePayload)

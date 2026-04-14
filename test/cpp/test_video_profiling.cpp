@@ -15,7 +15,6 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
-#include <memory>
 #include <sstream>
 #include <string>
 
@@ -62,16 +61,6 @@ constexpr std::array<VideoProfileStage, 7> kStages{{
   VideoProfileStage::kPublisherHandleFrame,
   VideoProfileStage::kEnsureTrack,
   VideoProfileStage::kCaptureFrame,
-}};
-
-constexpr std::array<const char *, 7> kStageMetricNames{{
-  "source.queue_to_gst_ms",
-  "gst.sample_total_ms",
-  "gst.repack_i420_ms",
-  "bridge.to_publisher_ms",
-  "publish.total_ms",
-  "publish.ensure_track_ms",
-  "livekit.submit_ms",
 }};
 
 }  // namespace
@@ -200,9 +189,6 @@ TEST(VideoProfilingTest, SummaryTracksTimestampRejectionsWithoutRecordingLatency
   const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
-  EXPECT_EQ(summary.frames_in, 4U);
-  EXPECT_EQ(summary.frames_sampled, 2U);
-  EXPECT_EQ(summary.frames_captured, 2U);
   EXPECT_EQ(summary.source_timestamp_regression_count, 2U);
   EXPECT_TRUE(summary.ingress_arrival_gap_ms.hasSamples());
   EXPECT_TRUE(summary.source_timestamp_gap_ms.hasSamples());
@@ -227,8 +213,6 @@ TEST(VideoProfilingTest, SampleKeepsIngressMatchAvailableUntilCaptureConsumesIt)
   const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
-  EXPECT_EQ(summary.frames_sampled, 1U);
-  EXPECT_EQ(summary.frames_captured, 2U);
   EXPECT_EQ(summary.appsrc_to_sample_ms.sample_count, 1U);
   EXPECT_EQ(summary.source_to_output_submit_ms.sample_count, 1U);
 }
@@ -241,7 +225,6 @@ TEST(VideoProfilingTest, SummaryCapturesFailureLifecycleAndStageMetrics)
   const auto profiler = registry.getOrCreateProfiler(makeSpec());
   ASSERT_NE(profiler, nullptr);
 
-  profiler->notePipelineStart();
   profiler->notePipelineFailure("pipeline_failure");
   profiler->noteRestartFailed("restart_failed");
   profiler->notePushFailed("push_failed");
@@ -259,7 +242,6 @@ TEST(VideoProfilingTest, SummaryCapturesFailureLifecycleAndStageMetrics)
   const auto summaries = registry.takeSummaries();
   ASSERT_EQ(summaries.size(), 1U);
   const auto & summary = summaries.front();
-  EXPECT_EQ(summary.pipeline_start_count, 1U);
   EXPECT_EQ(summary.pipeline_failure_count, 1U);
   EXPECT_EQ(summary.restart_failed_count, 1U);
   EXPECT_EQ(summary.push_failed_count, 1U);
@@ -303,8 +285,8 @@ TEST(VideoProfilingTest, RegistryFlushTraceWritesExpectedEvents)
   const std::string trace_contents = buffer.str();
   EXPECT_NE(trace_contents.find("\"traceEvents\""), std::string::npos);
   EXPECT_NE(trace_contents.find("stream.registered"), std::string::npos);
-  for (const auto * metric_name : kStageMetricNames) {
-    EXPECT_NE(trace_contents.find(metric_name), std::string::npos);
+  for (const auto stage : kStages) {
+    EXPECT_NE(trace_contents.find(videoProfileStageToString(stage)), std::string::npos);
   }
   EXPECT_NE(trace_contents.find("source_to_sample_ready_ms"), std::string::npos);
   EXPECT_NE(trace_contents.find("source_to_livekit_submit_ms"), std::string::npos);

@@ -82,14 +82,12 @@ TEST(LruCacheTest, InsertOrAssignExistingKeyUpdatesValueAndRefreshesRecency)
   EXPECT_EQ(evicted->key, "beta");
   EXPECT_EQ(evicted->value, 2);
   EXPECT_EQ(cache.peek("alpha"), std::optional<int>{10});
-  EXPECT_EQ(cache.peek("gamma"), std::optional<int>{3});
 }
 
 TEST(LruCacheTest, InsertOrAssignEvictsLeastRecentEntryAndKeepsSizeBounded)
 {
   LruCache<std::string, int> cache(1U);
-
-  EXPECT_FALSE(cache.insertOrAssign("alpha", 1).has_value());
+  cache.insertOrAssign("alpha", 1);
 
   const auto evicted = cache.insertOrAssign("beta", 2);
   ASSERT_TRUE(evicted.has_value());

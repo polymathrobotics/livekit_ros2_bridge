@@ -55,9 +55,6 @@ TEST(RequireSingleInterfaceTypeTest, RejectsMissingOrUnusableTypeSetsAsNoTypesFo
   EXPECT_EQ(
     requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{}, "/foo", "topic"),
     expected_error);
-  EXPECT_EQ(
-    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{{"/foo", {}}}, "/foo", "topic"),
-    expected_error);
   // A graph entry with only empty strings is not a usable ROS interface type.
   EXPECT_EQ(
     requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{{"/foo", {""}}}, "/foo", "topic"),

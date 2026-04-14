@@ -111,13 +111,43 @@ TEST(PayloadHelpersTest, ParseCdrRoundTripsEmptyAndBinaryPayloads)
   EXPECT_EQ(wire::cdr::parse(binary_body, "message"), payload);
 }
 
-TEST(PayloadHelpersTest, ParseCdrUsesSameEnvelopeContractAcrossOuterFields)
+TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldName)
 {
   const std::vector<std::uint8_t> payload = {0x01, 0x02, 0x03};
   const auto envelope = wire::cdr::serialize(payload);
 
   EXPECT_EQ(wire::cdr::parse(nlohmann::json{{"request", envelope}}, "request"), payload);
-  EXPECT_EQ(wire::cdr::parse(nlohmann::json{{"response", envelope}}, "response"), payload);
+}
+
+TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldNameInOuterEnvelopeErrors)
+{
+  expectInvalidArgumentMessage(
+    []() {
+      (void)wire::cdr::parse(
+        nlohmann::json{
+          {"message",
+           {
+             {"content_type", "application/x-ros-cdr"},
+             {"payload_base64", "AQID"},
+           }},
+        },
+        "request");
+    },
+    "request must be an object.");
+
+  expectInvalidArgumentMessage(
+    []() {
+      (void)wire::cdr::parse(
+        nlohmann::json{
+          {"request",
+           {
+             {"content_type", "application/json"},
+             {"payload_base64", "AQID"},
+           }},
+        },
+        "request");
+    },
+    "request.content_type must be application/x-ros-cdr.");
 }
 
 TEST(PayloadHelpersTest, ParseOptionalTrimmedStringFieldHandlesAbsentAndInvalidValues)
@@ -182,21 +212,6 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
     [&missing]() {
       (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         missing,
-        "interface_types",
-        "field must be an array",
-        "entries must be strings",
-        "entries must not be empty",
-        "field must not be empty");
-    },
-    "field must be an array");
-
-  const nlohmann::json wrong_type = {
-    {"interface_types", 42},
-  };
-  expectInvalidArgumentMessage(
-    [&wrong_type]() {
-      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
-        wrong_type,
         "interface_types",
         "field must be an array",
         "entries must be strings",
@@ -294,12 +309,6 @@ TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrMistypedNestedFields)
   expectInvalidArgumentMessage(
     [&mistyped_payload_base64]() { (void)wire::cdr::parse(mistyped_payload_base64, "message"); },
     "payload_base64 must be a string.");
-
-  auto mistyped_content_type = makeMessageBody();
-  mistyped_content_type["message"]["content_type"] = 42;
-  expectInvalidArgumentMessage(
-    [&mistyped_content_type]() { (void)wire::cdr::parse(mistyped_content_type, "message"); },
-    "content_type must be a string.");
 
   auto missing_payload_base64 = makeMessageBody();
   missing_payload_base64["message"].erase("payload_base64");

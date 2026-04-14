@@ -492,7 +492,7 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesCompressedRosStreamActivity)
   EXPECT_TRUE(summary.push_to_appsrc_ms.hasSamples());
 }
 
-TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnpublishesIt)
+TEST_F(VideoStreamRegistryTest, ConfiguredSourceStartIsIdempotentAndStopUnpublishesPublishedTrack)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source"));
   FakeRoomConnection room_connection;
@@ -501,29 +501,15 @@ TEST_F(VideoStreamRegistryTest, ConfiguredSourcePipelinePublishesTrackAndStopUnp
   const auto spec = makeConfiguredSourceSpec("/sources/front", "configured_source.front");
 
   registry.start(spec);
-
-  ASSERT_TRUE(
-    waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
-
-  registry.stop(spec.stream_key);
-
-  EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{spec.track_name}));
-}
-
-TEST_F(VideoStreamRegistryTest, ConfiguredSourceStartIsIdempotent)
-{
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source_shared"));
-  FakeRoomConnection room_connection;
-  VideoStreamRegistry registry(*node, room_connection);
-
-  const auto spec = makeConfiguredSourceSpec("/sources/shared", "configured_source.shared");
-
-  registry.start(spec);
   registry.start(spec);
 
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(room_connection.state->published_video_track_names, (std::vector<std::string>{spec.track_name}));
+
+  registry.stop(spec.stream_key);
+
+  EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{spec.track_name}));
 }
 
 TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
@@ -552,7 +538,6 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
     return false;
   });
   ASSERT_TRUE(summary_ready);
-  ASSERT_TRUE(captured_summaries.has_value());
   ASSERT_EQ(captured_summaries->size(), 1U);
   const auto & summary = captured_summaries->front();
   EXPECT_GT(summary.frames_in, 0U);
@@ -561,30 +546,13 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
   EXPECT_TRUE(summary.sample_callback_ms.hasSamples());
 }
 
-TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracks)
+TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndIsIdempotent)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown"));
   FakeRoomConnection room_connection;
   VideoStreamRegistry registry(*node, room_connection);
 
   const auto spec = makeConfiguredSourceSpec("/sources/shutdown", "configured_source.shutdown");
-  registry.start(spec);
-
-  ASSERT_TRUE(
-    waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
-
-  registry.shutdown();
-
-  EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{spec.track_name}));
-}
-
-TEST_F(VideoStreamRegistryTest, ShutdownIsIdempotent)
-{
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown_idempotent"));
-  FakeRoomConnection room_connection;
-  VideoStreamRegistry registry(*node, room_connection);
-
-  const auto spec = makeConfiguredSourceSpec("/sources/shutdown_idempotent", "configured_source.shutdown_idempotent");
   registry.start(spec);
 
   ASSERT_TRUE(

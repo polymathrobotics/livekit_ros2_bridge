@@ -17,6 +17,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "data_track_publisher.hpp"
@@ -30,6 +31,29 @@ namespace
 {
 
 using test_support::ScopedRclcppInit;
+
+template <typename TryPushHandler>
+void expectWriteFailureKeepsTrackPublishedUntilUnpublish(
+  const char * node_name, const std::string & track_name, TryPushHandler && try_push_handler)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>(node_name);
+  FakeRoomConnection room_connection;
+  room_connection.state->try_push_data_track_handler = std::forward<TryPushHandler>(try_push_handler);
+
+  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
+  publisher.publish(5, [](std::size_t) { return true; }, []() {});
+
+  const std::array<std::uint8_t, 3> payload{0x01U, 0x02U, 0x03U};
+  publisher.write(payload.data(), payload.size());
+
+  EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
+  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
+
+  publisher.unpublish();
+
+  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+}
 
 TEST(DataTrackPublisherTest, PublishFailureInvokesFailureCallbackWithoutRetainingTrack)
 {
@@ -116,7 +140,6 @@ TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndRe
     [&publish_failed]() { publish_failed = true; }));
 
   EXPECT_TRUE(publish_failed);
-  EXPECT_EQ(room_connection.state->published_data_track_names, std::vector<std::string>{track_name});
   EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 
   publisher.unpublish();
@@ -125,51 +148,21 @@ TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndRe
 
 TEST(DataTrackPublisherTest, QueueFullWriteDropsFrameAndKeepsTrackPublishedUntilUnpublish)
 {
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("data_track_publisher_queue_full_test");
-  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.queue_full";
-  room_connection.state->try_push_data_track_handler = [](const std::string &, const std::vector<std::uint8_t> &) {
-    return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
-  };
-
-  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
-  publisher.publish(5, [](std::size_t) { return true; }, []() {});
-
-  const std::array<std::uint8_t, 3> payload{0x01U, 0x02U, 0x03U};
-  publisher.write(payload.data(), payload.size());
-
-  EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
-  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
-
-  publisher.unpublish();
-
-  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  expectWriteFailureKeepsTrackPublishedUntilUnpublish(
+    "data_track_publisher_queue_full_test", track_name, [](const std::string &, const std::vector<std::uint8_t> &) {
+      return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
+    });
 }
 
 TEST(DataTrackPublisherTest, WriteFailureStaysBestEffortAndKeepsTrackPublishedUntilUnpublish)
 {
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("data_track_publisher_push_failure_test");
-  FakeRoomConnection room_connection;
   const std::string track_name = "ros.data.battery.push_failure";
-  room_connection.state->try_push_data_track_handler = [](const std::string &, const std::vector<std::uint8_t> &) {
-    return DataTrackPushResult::failure(
-      DataTrackPushError{DataTrackPushErrorCode::kTrackUnpublished, "track unpublished"});
-  };
-
-  DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
-  publisher.publish(31, [](std::size_t) { return true; }, []() {});
-
-  const std::array<std::uint8_t, 3> payload{0x0BU, 0x0CU, 0x0DU};
-  publisher.write(payload.data(), payload.size());
-
-  EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
-  EXPECT_TRUE(room_connection.state->unpublish_attempted_data_track_names.empty());
-
-  publisher.unpublish();
-
-  EXPECT_EQ(room_connection.state->unpublish_attempted_data_track_names, std::vector<std::string>{track_name});
+  expectWriteFailureKeepsTrackPublishedUntilUnpublish(
+    "data_track_publisher_push_failure_test", track_name, [](const std::string &, const std::vector<std::uint8_t> &) {
+      return DataTrackPushResult::failure(
+        DataTrackPushError{DataTrackPushErrorCode::kTrackUnpublished, "track unpublished"});
+    });
 }
 
 TEST(DataTrackPublisherTest, UnpublishClearsActiveTrackAndIsIdempotent)

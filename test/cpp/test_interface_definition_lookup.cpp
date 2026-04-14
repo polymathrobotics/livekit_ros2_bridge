@@ -149,9 +149,8 @@ TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesI
   EXPECT_EQ(definitions[4].interface_type, "sensor_msgs/msg/RegionOfInterest");
 }
 
-TEST(InterfaceDefinitionLookupTest, RejectsMalformedType)
+TEST(InterfaceDefinitionLookupTest, RejectsMalformedTypeShapeAndKind)
 {
-  EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("BatteryState")); }(), std::invalid_argument);
   EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/msg/")); }(), std::invalid_argument);
   EXPECT_THROW(
     []() { static_cast<void>(lookupInterfaceDefinitions("std_msgs/msg/String/Extra")); }(), std::invalid_argument);

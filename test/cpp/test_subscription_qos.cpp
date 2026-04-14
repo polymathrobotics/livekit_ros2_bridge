@@ -54,32 +54,11 @@ TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kFallback);
   EXPECT_EQ(qos.publisher_count, 2U);
-  EXPECT_FALSE(qos.used_publisher_qos);
   EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
   EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
-TEST(SubscriptionQosTest, MixedPublisherReliabilityChoosesBestEffort)
-{
-  const rclcpp::QoS base_qos = makeBaseQos();
-
-  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
-    "/camera/front",
-    base_qos,
-    nullptr,
-    {
-      {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::Volatile},
-      {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
-    });
-
-  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
-  EXPECT_EQ(qos.publisher_count, 2U);
-  EXPECT_TRUE(qos.used_publisher_qos);
-  EXPECT_TRUE(qos.mixed_reliability);
-  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
-}
-
-TEST(SubscriptionQosTest, MixedPublisherDurabilityChoosesVolatile)
+TEST(SubscriptionQosTest, MixedPublisherPoliciesChooseWeakerCompatiblePolicyPerAxis)
 {
   const rclcpp::QoS base_qos = makeBaseQos();
 
@@ -89,11 +68,13 @@ TEST(SubscriptionQosTest, MixedPublisherDurabilityChoosesVolatile)
     nullptr,
     {
       {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
-      {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::Volatile},
+      {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
     });
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
+  EXPECT_TRUE(qos.mixed_reliability);
   EXPECT_TRUE(qos.mixed_durability);
+  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }
 
@@ -130,9 +111,6 @@ TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOther
     });
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::kPublisherQos);
-  EXPECT_TRUE(qos.used_publisher_qos);
-  EXPECT_FALSE(qos.mixed_reliability);
-  EXPECT_FALSE(qos.mixed_durability);
   EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
 }

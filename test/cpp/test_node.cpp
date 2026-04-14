@@ -48,6 +48,8 @@ TEST_F(NodeTest, FailsWhenUrlMissing)
   options.append_parameter_override("livekit.room", "robot-room");
   options.append_parameter_override("livekit.token", "test-token");
 
+  // Keep one node-boundary failure check here because generate_parameter_library rejects missing
+  // required parameters during Node instantiation, before RuntimeConfig is ever constructed.
   std::string message;
   try {
     (void)std::make_shared<Node>(options);
