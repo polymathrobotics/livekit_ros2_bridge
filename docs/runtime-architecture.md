@@ -21,7 +21,7 @@ The important boundary is simple:
 
 ## Event flow
 
-Most LiveKit-originated events enter through `RoomConnectionCallbacks`.
+Most LiveKit-originated events enter through `RoomEventCallbacks`.
 
 The flow looks like this:
 

@@ -139,9 +139,17 @@ private:
   std::optional<DataTrackPushError> error_;
 };
 
-struct RoomConnectionCallbacks
+struct RoomEventCallbacks
 {
   std::function<void()> on_connected;
+
+  // Delivers one incoming packet on a connection-managed background thread; callbacks must
+  // hand off ROS work instead of assuming executor-thread affinity.
+  std::function<void(const IncomingPacket &)> on_incoming_packet_received;
+
+  // Called when a remote participant disconnects outside reconnect handling. During reconnect, the
+  // connection suppresses transient participant disconnects so leases can survive browser refreshes.
+  std::function<void(const std::string &)> on_remote_participant_disconnected;
 
   // Called once when the current room connection begins a reconnect episode. The reason is a
   // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
@@ -150,14 +158,6 @@ struct RoomConnectionCallbacks
   // Called after a connected room connection has been torn down and any per-connection state
   // should be rebuilt on the next connect. Final stop() does not fire this callback.
   std::function<void()> on_connection_reset;
-
-  // Called when a requester identity disconnects outside reconnect handling. During reconnect, the
-  // connection suppresses transient participant disconnects so leases can survive browser refreshes.
-  std::function<void(const std::string &)> on_participant_disconnected;
-
-  // Delivers one incoming packet on a connection-managed background thread; callbacks must
-  // hand off ROS work instead of assuming executor-thread affinity.
-  std::function<void(const IncomingPacket &)> on_incoming_packet_received;
 };
 
 // Thread-safe transport facade around a reconnecting room connection. Implementations own background
@@ -169,7 +169,7 @@ public:
 
   // Starts the background connection and reconnect loop using the supplied immutable LiveKit
   // startup config. Repeated calls after a successful start are ignored until stop() returns.
-  virtual void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) = 0;
+  virtual void start(LiveKitConfig config, RoomEventCallbacks callbacks) = 0;
 
   // Stops the reconnect loop and waits for any connection-owned background thread to exit.
   virtual void stop() = 0;

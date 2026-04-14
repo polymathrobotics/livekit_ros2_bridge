@@ -64,7 +64,7 @@ public:
 class ThrowingUnpublishRoomConnection final : public RoomConnection
 {
 public:
-  void start(LiveKitConfig, RoomConnectionCallbacks) override
+  void start(LiveKitConfig, RoomEventCallbacks) override
   {}
 
   void stop() override
@@ -125,7 +125,7 @@ public:
   : fail_on_attempt_(fail_on_attempt)
   {}
 
-  void start(LiveKitConfig, RoomConnectionCallbacks) override
+  void start(LiveKitConfig, RoomEventCallbacks) override
   {}
 
   void stop() override
@@ -195,7 +195,7 @@ public:
   , release_publish_future_(release_publish_promise_.get_future().share())
   {}
 
-  void start(LiveKitConfig, RoomConnectionCallbacks) override
+  void start(LiveKitConfig, RoomEventCallbacks) override
   {}
 
   void stop() override

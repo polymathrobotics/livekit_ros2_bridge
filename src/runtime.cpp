@@ -52,13 +52,13 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   }
   LogEvent(node_.get_logger(), "runtime_startup_begin").fieldOr("room", config_.livekit.room, "<unset>").info();
 
-  // Step 1: arm watchdog monitoring before startup begins.
+  // Preflight: arm shutdown watchdog monitoring before transport startup begins.
   if (config_.health.watchdog_enabled) {
     watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
   }
   watchdog_timer_ = node_.create_wall_timer(kWatchdogEvaluationInterval, [this]() { checkWatchdog(); });
 
-  // Step 2: configure optional video profiling before any stream state is created.
+  // Preflight: configure optional video profiling before any stream state is created.
   if (config_.video_profiling.enabled) {
     video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.video_profiling);
     video_profiling_registry_->logConfig();
@@ -66,12 +66,12 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
       video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
   }
 
-  // Step 3: create the ROS-facing execution and publication helpers.
+  // Bring up the core ROS-facing helpers first. Later handlers and session state depend on these.
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, config_.access_policy);
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
 
-  // Step 4: build subscription and stream state on top of the room connection.
+  // Build the session-owned subscription and stream state on top of the room connection.
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
     node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
 
@@ -88,18 +88,17 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     });
   });
 
-  // Step 5: wire ingress packet routing back onto the ROS executor.
+  // Build ingress and control-plane handlers before the room starts delivering callbacks.
   packet_router_ = std::make_unique<PacketRouter>(
     node_.get_clock(),
     [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
     *subscription_heartbeat_processor_,
     *ros_topic_publisher_);
 
-  // Step 6: register required RPCs before starting transport callbacks. RoomConnection retains
-  // these handlers and reapplies them after reconnects, so startup readiness can now be driven
-  // solely by the first successful connect.
   rpc_router_ = std::make_unique<RpcRouter>(node_, config_.access_policy, *ros_executor_queue_, *ros_service_caller_);
 
+  // Finish transport startup last: register required RPCs before `start()`, then expose the room
+  // callbacks only after every ingress path above is ready.
   if (!rpc_router_->registerRpcs(*room_connection_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
       .fieldOr("room", config_.livekit.room, "<unset>")
@@ -109,14 +108,15 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     throw std::runtime_error("Failed to register required RPC methods");
   }
 
+  // Expose the full LiveKit room callback surface only after every ingress path above is ready.
   room_connection_->start(
     config_.livekit,
-    RoomConnectionCallbacks{
-      std::bind(&Runtime::onConnected, this),
-      std::bind(&Runtime::onReconnectRequested, this, std::placeholders::_1),
-      std::bind(&Runtime::onConnectionReset, this),
-      std::bind(&Runtime::onParticipantDisconnected, this, std::placeholders::_1),
-      std::bind(&Runtime::onIncomingPacket, this, std::placeholders::_1),
+    RoomEventCallbacks{
+      std::bind(&Runtime::onRoomConnected, this),
+      std::bind(&Runtime::onRoomIncomingPacket, this, std::placeholders::_1),
+      std::bind(&Runtime::onRoomRemoteParticipantDisconnected, this, std::placeholders::_1),
+      std::bind(&Runtime::onRoomReconnectRequested, this, std::placeholders::_1),
+      std::bind(&Runtime::onRoomConnectionReset, this),
     });
 }
 
@@ -125,7 +125,7 @@ Runtime::~Runtime()
   shutdown();
 }
 
-void Runtime::onConnected()
+void Runtime::onRoomConnected()
 {
   if (shutting_down_.load()) {
     return;
@@ -139,7 +139,43 @@ void Runtime::onConnected()
   LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.livekit.room, "<unset>").info();
 }
 
-void Runtime::onReconnectRequested(const std::string & reason)
+void Runtime::onRoomIncomingPacket(const IncomingPacket & packet)
+{
+  if (shutting_down_.load()) {
+    LogEvent(node_.get_logger(), "packet_dropped")
+      .field("reason", "shutdown")
+      .field("topic", packet.topic)
+      .fieldOr("requester_identity", packet.requester_identity)
+      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
+
+    return;
+  }
+
+  if (packet_router_ == nullptr) {
+    LogEvent(node_.get_logger(), "packet_dropped")
+      .field("reason", "router_unavailable")
+      .field("topic", packet.topic)
+      .fieldOr("requester_identity", packet.requester_identity)
+      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
+
+    return;
+  }
+
+  packet_router_->handle(packet);
+}
+
+void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)
+{
+  const std::size_t generation = subscription_registry_->generation();
+  submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity), generation]() {
+    // Keep leases alive across a browser refresh, but queue fresh data-track publications
+    // because LiveKit binds them to the old participant_session.
+    subscription_registry_->queueDataTrackRepublish(remote_participant_identity, generation);
+    ros_service_caller_->cancelCallsForRequester(remote_participant_identity);
+  });
+}
+
+void Runtime::onRoomReconnectRequested(const std::string & reason)
 {
   if (shutting_down_.load()) {
     return;
@@ -165,6 +201,16 @@ void Runtime::onReconnectRequested(const std::string & reason)
 
   log.field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
   log.warn();
+}
+
+void Runtime::onRoomConnectionReset()
+{
+  submitToExecutor([this]() {
+    // Reset session-owned state on the ROS executor so cleanup stays ordered with any
+    // in-flight heartbeat or RPC work targeting the old connection generation.
+    subscription_registry_->resetSessionState();
+    ros_service_caller_->resetSessionState();
+  });
 }
 
 void Runtime::shutdown()
@@ -253,52 +299,6 @@ void Runtime::checkWatchdog()
 
   std::this_thread::sleep_for(kShutdownExitDelay);
   std::_Exit(EXIT_FAILURE);
-}
-
-void Runtime::onConnectionReset()
-{
-  submitToExecutor([this]() {
-    // Reset session-owned state on the ROS executor so cleanup stays ordered with any
-    // in-flight heartbeat or RPC work targeting the old connection generation.
-    subscription_registry_->resetSessionState();
-    ros_service_caller_->resetSessionState();
-  });
-}
-
-void Runtime::onParticipantDisconnected(std::string requester_identity)
-{
-  const std::size_t generation = subscription_registry_->generation();
-  submitToExecutor([this, requester_identity = std::move(requester_identity), generation]() {
-    // Keep leases alive across a browser refresh, but queue fresh data-track publications
-    // because LiveKit binds them to the old participant_session.
-    subscription_registry_->queueDataTrackRepublish(requester_identity, generation);
-    ros_service_caller_->cancelCallsForRequester(requester_identity);
-  });
-}
-
-void Runtime::onIncomingPacket(const IncomingPacket & packet)
-{
-  if (shutting_down_.load()) {
-    LogEvent(node_.get_logger(), "packet_dropped")
-      .field("reason", "shutdown")
-      .field("topic", packet.topic)
-      .fieldOr("requester_identity", packet.requester_identity)
-      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
-
-    return;
-  }
-
-  if (packet_router_ == nullptr) {
-    LogEvent(node_.get_logger(), "packet_dropped")
-      .field("reason", "router_unavailable")
-      .field("topic", packet.topic)
-      .fieldOr("requester_identity", packet.requester_identity)
-      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
-
-    return;
-  }
-
-  packet_router_->handle(packet);
 }
 
 void Runtime::submitToExecutor(std::function<void()> work)

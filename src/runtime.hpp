@@ -63,11 +63,11 @@ private:
   std::optional<SteadyClock::time_point> watchdog_deadline_;
 
   void checkWatchdog();
-  void onConnectionReset();
-  void onIncomingPacket(const IncomingPacket & packet);
-  void onParticipantDisconnected(std::string requester_identity);
-  void onReconnectRequested(const std::string & reason);
-  void onConnected();
+  void onRoomConnected();
+  void onRoomIncomingPacket(const IncomingPacket & packet);
+  void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
+  void onRoomReconnectRequested(const std::string & reason);
+  void onRoomConnectionReset();
 
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute

@@ -39,7 +39,7 @@ struct PushedDataTrackFrame
 
 struct FakeRoomConnectionState
 {
-  RoomConnectionCallbacks callbacks;
+  RoomEventCallbacks callbacks;
   bool started = false;
   bool stopped = false;
   std::string access_token;
@@ -61,7 +61,7 @@ struct FakeRoomConnectionState
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
 
-  std::function<void(const RoomConnectionCallbacks & callbacks)> stop_hook;
+  std::function<void(const RoomEventCallbacks & callbacks)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
@@ -77,7 +77,7 @@ public:
   : state(std::make_shared<FakeRoomConnectionState>())
   {}
 
-  void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) override
+  void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
     state->started = true;
     state->access_token = std::move(config.access_token);
@@ -210,8 +210,8 @@ public:
 
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
-    if (state->callbacks.on_participant_disconnected) {
-      state->callbacks.on_participant_disconnected(requester_identity);
+    if (state->callbacks.on_remote_participant_disconnected) {
+      state->callbacks.on_remote_participant_disconnected(requester_identity);
     }
   }
 

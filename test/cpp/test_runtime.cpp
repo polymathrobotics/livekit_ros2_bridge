@@ -194,7 +194,7 @@ TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_participant_disconnected));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_remote_participant_disconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_packet_received));
 }
 
@@ -548,13 +548,13 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
-    room_connection.state->stop_hook = [heartbeat](const RoomConnectionCallbacks & callbacks) {
+    room_connection.state->stop_hook = [heartbeat](const RoomEventCallbacks & callbacks) {
       if (callbacks.on_connection_reset) {
         callbacks.on_connection_reset();
       }
 
-      if (callbacks.on_participant_disconnected) {
-        callbacks.on_participant_disconnected("participant-1");
+      if (callbacks.on_remote_participant_disconnected) {
+        callbacks.on_remote_participant_disconnected("participant-1");
       }
 
       if (callbacks.on_incoming_packet_received) {

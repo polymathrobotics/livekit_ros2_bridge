@@ -122,7 +122,7 @@ public:
     stop();
   }
 
-  void start(LiveKitConfig config, RoomConnectionCallbacks callbacks) override
+  void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (thread_started_) {
@@ -367,7 +367,7 @@ public:
       if (!participant_disconnects_enabled_) {
         return;
       }
-      on_disconnect = callbacks_.on_participant_disconnected;
+      on_disconnect = callbacks_.on_remote_participant_disconnected;
     }
 
     if (!on_disconnect) {
@@ -739,7 +739,7 @@ private:
 
   std::shared_ptr<livekit::Room> room_;
   LiveKitConfig config_;
-  RoomConnectionCallbacks callbacks_;
+  RoomEventCallbacks callbacks_;
 
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
   // Indexed by the address of the opaque VideoTrackHandle shared with callers. The room generation

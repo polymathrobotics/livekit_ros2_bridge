@@ -77,6 +77,7 @@ protocol. For external payloads and field names, see [protocol.md](./protocol.md
 
 - `data` vs `video`: Describe the media type on the LiveKit side.
 - `callbacks` / `handlers`: Prefer `on*` for methods. Prefer `*Handler` for types and standalone callable values. Avoid bare nouns or bare verbs for callback slots.
+- `callbacks` vs `handlers`: Use `callbacks` for caller-supplied functions invoked later, and `handlers` for code that owns the handling behavior.
 - `config` vs `spec`: Use `config` for declared parameters and `spec` for resolved runtime data.
 - `namespace-scope names`: Keep the domain word in free functions and other namespace-scope APIs. Prefer `loadRuntimeConfig`, `createRoomConnection`, and `lookupInterfaceDefinitions` over `load`, `createConnection`, and `lookupDefinitions`.
 - `cdr` vs `track` vs `stream`: `cdr` is encoding, `track` is LiveKit transport, and `stream` is the bridge's end-to-end runtime.
