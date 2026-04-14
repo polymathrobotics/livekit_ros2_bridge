@@ -37,16 +37,7 @@ class VideoProfilingRegistry;
 struct VideoStreamSpec;
 class VideoStreamInstance;
 
-// Subscription-facing inputs used to resolve one shared video runtime.
-// ROS topics require `interface_type`; configured sources ignore it.
-struct VideoStreamRequest
-{
-  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
-  std::string name;
-  std::string interface_type;
-};
-
-// Stable video metadata derived from one resolved request and surfaced back to callers for
+// Stable video metadata derived from one resolved subscription target and surfaced back to callers for
 // status and logging.
 struct VideoStreamInfo
 {
@@ -71,23 +62,26 @@ public:
     const VideoStreamConfig * video_stream_config = nullptr);
   ~VideoStreamRegistry();
 
-  // Resolves one subscription-facing request into the stable shared runtime identity used for
+  // Resolves one subscription-facing target into the stable shared runtime identity used for
   // starts, status, and teardown.
-  VideoStreamInfo resolve(const VideoStreamRequest & request) const;
+  VideoStreamInfo resolve(
+    SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type = "") const;
   // Returns metadata only while the resolved stream currently has a live registry entry.
-  std::optional<VideoStreamInfo> find(const VideoStreamRequest & request) const;
-  // Starts or reuses the shared runtime addressed by `request`.
-  void start(const VideoStreamRequest & request);
-  // Detaches the current runtime selected by `request` if present. A later `start()` creates a
-  // fresh instance instead of reusing one that is already shutting down.
-  void stop(const VideoStreamRequest & request);
+  std::optional<VideoStreamInfo> find(
+    SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type = "") const;
+  // Starts or reuses the shared runtime addressed by these subscription-facing fields.
+  void start(SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type = "");
+  // Detaches the current runtime selected by these fields if present. A later `start()` creates
+  // a fresh instance instead of reusing one that is already shutting down.
+  void stop(SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type = "");
   // Idempotent terminal teardown. Instances are detached under the mutex and shut down after
   // unlocking because teardown touches external ROS and LiveKit state.
   void shutdown();
 
 private:
   static VideoStreamInfo makeInfo(const VideoStreamSpec & spec);
-  VideoStreamSpec resolveSpec(const VideoStreamRequest & request) const;
+  VideoStreamSpec resolveSpec(
+    SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
   std::optional<VideoStreamInfo> findResolved(const VideoStreamSpec & spec) const;
   void startResolved(const VideoStreamSpec & spec);
   void stopResolved(const std::string & stream_key);

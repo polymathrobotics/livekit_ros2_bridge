@@ -56,24 +56,28 @@ VideoStreamRegistry::~VideoStreamRegistry()
   shutdown();
 }
 
-VideoStreamInfo VideoStreamRegistry::resolve(const VideoStreamRequest & request) const
+VideoStreamInfo VideoStreamRegistry::resolve(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
-  return makeInfo(resolveSpec(request));
+  return makeInfo(resolveSpec(kind, name, interface_type));
 }
 
-std::optional<VideoStreamInfo> VideoStreamRegistry::find(const VideoStreamRequest & request) const
+std::optional<VideoStreamInfo> VideoStreamRegistry::find(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
-  return findResolved(resolveSpec(request));
+  return findResolved(resolveSpec(kind, name, interface_type));
 }
 
-void VideoStreamRegistry::start(const VideoStreamRequest & request)
+void VideoStreamRegistry::start(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
 {
-  startResolved(resolveSpec(request));
+  startResolved(resolveSpec(kind, name, interface_type));
 }
 
-void VideoStreamRegistry::stop(const VideoStreamRequest & request)
+void VideoStreamRegistry::stop(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
 {
-  stopResolved(resolveSpec(request).stream_key);
+  stopResolved(resolveSpec(kind, name, interface_type).stream_key);
 }
 
 VideoStreamInfo VideoStreamRegistry::makeInfo(const VideoStreamSpec & spec)
@@ -81,13 +85,14 @@ VideoStreamInfo VideoStreamRegistry::makeInfo(const VideoStreamSpec & spec)
   return {spec.stream_key, spec.track_name, spec.degraded_reason.value_or("")};
 }
 
-VideoStreamSpec VideoStreamRegistry::resolveSpec(const VideoStreamRequest & request) const
+VideoStreamSpec VideoStreamRegistry::resolveSpec(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
-  switch (request.kind) {
+  switch (kind) {
     case SubscriptionTargetKind::Topic:
-      return resolveRosVideoTopicSpec(*video_stream_config_, request.name, request.interface_type);
+      return resolveRosVideoTopicSpec(*video_stream_config_, name, interface_type);
     case SubscriptionTargetKind::ConfiguredSource:
-      return resolveConfiguredVideoSourceSpec(*video_stream_config_, request.name);
+      return resolveConfiguredVideoSourceSpec(*video_stream_config_, name);
   }
 
   throw std::invalid_argument("video stream request kind is invalid");

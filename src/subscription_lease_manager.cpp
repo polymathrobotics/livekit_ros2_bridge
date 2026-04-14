@@ -213,8 +213,7 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     subscription.leases[requester_identity] = lease;
 
     if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
-      const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-      video_stream_registry_.start(request);
+      video_stream_registry_.start(subscription.target_kind, subscription.name, subscription.interface_type);
       return status(subscription);
     }
 
@@ -257,10 +256,10 @@ SubscriptionStatus SubscriptionLeaseManager::create(
 {
   bool is_video = demand.kind == SubscriptionTargetKind::ConfiguredSource;
   std::string interface_type;
-  std::optional<std::string> stream_key;
   Subscription subscription;
   subscription.target_kind = demand.kind;
   subscription.name = demand.name;
+
   try {
     if (!is_video) {
       interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), demand.name, "topic");
@@ -271,12 +270,11 @@ SubscriptionStatus SubscriptionLeaseManager::create(
 
     if (is_video) {
       subscription.delivery_kind = SubscriptionDeliveryKind::kVideo;
-      const VideoStreamRequest request{demand.kind, demand.name, interface_type};
-      stream_key = video_stream_registry_.resolve(request).stream_key;
-      video_stream_registry_.start(request);
+      video_stream_registry_.start(demand.kind, demand.name, interface_type);
     } else {
       data_stream_registry_.create(demand.name, interface_type);
       data_stream_registry_.setIntervalMs(demand.name, appliedIntervalMs(subscription.leases));
+      data_stream_registry_.start(demand.name);
     }
   } catch (...) {
     LogEvent(kLogger, "subscription_renew_failed")
@@ -288,36 +286,20 @@ SubscriptionStatus SubscriptionLeaseManager::create(
     throw;
   }
 
-  const std::string & resource = subscription.name;
-  const SubscriptionTargetKind target_kind = subscription.target_kind;
-  // Make the subscription visible before starting a data-track publish: completion
-  // callbacks reconcile against DataStreamRegistry by deterministic track name.
-  auto [subscription_it, inserted] = subscriptions_.emplace(
-    std::string(wire::subscriptions::targetKindString(demand.kind)) + ":" + demand.name, std::move(subscription));
-  (void)inserted;
-
-  if (subscription_it->second.delivery_kind != SubscriptionDeliveryKind::kVideo) {
-    data_stream_registry_.start(subscription_it->second.name);
-  }
+  auto subscription_it =
+    subscriptions_
+      .emplace(
+        std::string(wire::subscriptions::targetKindString(demand.kind)) + ":" + demand.name, std::move(subscription))
+      .first;
 
   SubscriptionStatus result = status(subscription_it->second);
-  LogEvent event(kLogger, "subscription_created");
-  event.field("resource", resource)
-    .field("kind", wire::subscriptions::targetKindString(target_kind))
+  LogEvent(kLogger, "subscription_created")
+    .field("resource", demand.name)
+    .field("kind", wire::subscriptions::targetKindString(demand.kind))
     .field("delivery", wire::subscriptions::deliveryKindString(result.delivery_kind))
-    .field("requester_identity", requester_identity);
-  if (subscription_it->second.delivery_kind == SubscriptionDeliveryKind::kVideo) {
-    const VideoStreamRequest request{
-      subscription_it->second.target_kind, subscription_it->second.name, subscription_it->second.interface_type};
-    const auto video = video_stream_registry_.find(request);
-    if (!video.has_value()) {
-      throw std::logic_error("video subscription invariant violated: video stream is required");
-    }
-    event.field("stream_key", video->stream_key).field("track_name", video->track_name);
-  } else if (const auto * data = data_stream_registry_.find(subscription_it->second.name)) {
-    event.field("track_name", data->trackName());
-  }
-  event.info();
+    .field("requester_identity", requester_identity)
+    .info();
+
   return result;
 }
 
@@ -492,8 +474,8 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
     return status;
   }
 
-  const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-  const auto video = video_stream_registry_.find(request);
+  const auto video =
+    video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
   if (!video.has_value()) {
     throw std::logic_error("video subscription invariant violated: video stream is required");
   }
@@ -570,8 +552,8 @@ void SubscriptionLeaseManager::removeIf(const LeasePredicate & should_remove, Cl
           .field("track_name", data->trackName());
         event.info();
       } else {
-        const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-        const auto video = video_stream_registry_.find(request);
+        const auto video =
+          video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
         if (!video.has_value()) {
           throw std::logic_error("video subscription invariant violated: video stream is required");
         }
@@ -614,8 +596,8 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
     return;
   }
 
-  const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-  const auto video = video_stream_registry_.find(request);
+  const auto video =
+    video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
   if (!video.has_value()) {
     throw std::logic_error("video subscription invariant violated: video stream is required");
   }
@@ -627,7 +609,7 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
       .field("track_name", video->track_name);
     event.info();
   }
-  video_stream_registry_.stop(request);
+  video_stream_registry_.stop(subscription.target_kind, subscription.name, subscription.interface_type);
 }
 
 void SubscriptionLeaseManager::shutdown()
