@@ -25,7 +25,6 @@
 #include "room_connection.hpp"
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
-#include "utils/ros_resource_name_utils.hpp"
 #include "video_stream_registry.hpp"
 #include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
@@ -37,7 +36,6 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("subscription_lease_manager");
-constexpr auto kHeartbeatLeaseDuration = std::chrono::seconds(45);
 
 }  // namespace
 
@@ -48,7 +46,8 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   rclcpp::Clock::SharedPtr clock,
   DataStreamRegistry & data_stream_registry,
   VideoStreamRegistry * video_stream_registry,
-  const VideoStreamConfig * video_stream_config)
+  const VideoStreamConfig * video_stream_config,
+  Clock::duration heartbeat_lease_duration)
 : node_(node)
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
@@ -56,6 +55,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
 , data_stream_registry_(data_stream_registry)
 , video_stream_registry_(video_stream_registry)
 , default_video_stream_config_(makeDefaultVideoStreamConfig())
+, heartbeat_lease_duration_(heartbeat_lease_duration)
 , video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
 {}
 
@@ -85,7 +85,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
 std::optional<SubscriptionLeaseManager::ResolvedLease> SubscriptionLeaseManager::resolveLease(
   const std::string & requester_identity, const std::optional<std::string> & session_id)
 {
-  const auto expiry = Clock::now() + kHeartbeatLeaseDuration;
+  const auto expiry = Clock::now() + heartbeat_lease_duration_;
   if (requester_identity.empty()) {
     // LiveKit should normally attach the requester identity to user-data packets. If it does not, a
     // known wire session_id is enough to treat the heartbeat as belonging to the same authenticated
@@ -192,19 +192,6 @@ void SubscriptionLeaseManager::publishStatuses(
       .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
   }
-}
-
-SubscriptionStatus SubscriptionLeaseManager::renewSubscription(
-  const std::string & requester_identity,
-  const std::string & topic,
-  int preferred_interval_ms,
-  Clock::time_point expiry)
-{
-  const std::string canonical_topic = normalizeRosResourceName(topic);
-  return renewSubscription(
-    requester_identity,
-    SubscriptionDemand{SubscriptionTargetKind::Topic, canonical_topic, preferred_interval_ms},
-    expiry);
 }
 
 SubscriptionStatus SubscriptionLeaseManager::renewSubscription(
@@ -438,23 +425,6 @@ void SubscriptionLeaseManager::republishDataTracks(const std::string & requester
   }
 }
 
-void SubscriptionLeaseManager::revokeRequesterLeases(const std::string & requester_identity)
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
-  }
-
-  removeLeasesIf(
-    [&requester_identity](const std::string & candidate_requester_identity, const Lease &) {
-      return candidate_requester_identity == requester_identity;
-    },
-    LeaseRemovalReason::kParticipantDisconnected,
-    Clock::now());
-}
-
 void SubscriptionLeaseManager::pruneExpiredLeases()
 {
   if (is_shutdown_.load()) {
@@ -471,10 +441,7 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
     it = session_leases_.erase(it);
   }
 
-  removeLeasesIf(
-    [now](const std::string &, const Lease & lease) { return now >= lease.expiry; },
-    LeaseRemovalReason::kLeaseExpired,
-    now);
+  removeLeasesIf([now](const std::string &, const Lease & lease) { return now >= lease.expiry; }, now);
 }
 
 SubscriptionLeaseManager::SharedSubscription * SubscriptionLeaseManager::findSubscription(
@@ -581,18 +548,9 @@ int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Leas
   return applied_interval_ms;
 }
 
-void SubscriptionLeaseManager::removeLeasesIf(
-  const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time)
+void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remove, Clock::time_point reference_time)
 {
-  const char * removal_reason = "unknown";
-  switch (reason) {
-    case LeaseRemovalReason::kParticipantDisconnected:
-      removal_reason = "participant_disconnected";
-      break;
-    case LeaseRemovalReason::kLeaseExpired:
-      removal_reason = "lease_expired";
-      break;
-  }
+  constexpr const char * kRemovalReason = "lease_expired";
 
   for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
     auto & subscription = it->second;
@@ -614,10 +572,9 @@ void SubscriptionLeaseManager::removeLeasesIf(
           .field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
           .field("requester_identity", requester_identity)
-          .field("reason", removal_reason)
+          .field("reason", kRemovalReason)
           .field("remaining_requesters", remaining_requesters)
-          .fieldIf(reason == LeaseRemovalReason::kLeaseExpired, "expired_by_ms", static_cast<long>(-delta_ms))
-          .fieldIf(reason != LeaseRemovalReason::kLeaseExpired, "expires_in_ms", static_cast<long>(delta_ms))
+          .field("expired_by_ms", static_cast<long>(-delta_ms))
           .info();
       }
 
@@ -640,7 +597,7 @@ void SubscriptionLeaseManager::removeLeasesIf(
         LogEvent event(kLogger, "subscription_pruned");
         event.field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-          .field("reason", removal_reason)
+          .field("reason", kRemovalReason)
           .field("track_name", data->trackName());
         event.info();
       } else {
@@ -648,7 +605,7 @@ void SubscriptionLeaseManager::removeLeasesIf(
         LogEvent event(kLogger, "subscription_pruned");
         event.field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-          .field("reason", removal_reason)
+          .field("reason", kRemovalReason)
           .field("stream_key", video.stream_spec.stream_key)
           .field("track_name", video.track_name);
         event.info();

@@ -16,9 +16,11 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "data_stream_registry.hpp"
@@ -35,8 +37,6 @@ namespace
 
 using test_support::ScopedRclcppInit;
 using test_support::waitForTopicType;
-
-const auto kFarFuture = std::chrono::steady_clock::now() + std::chrono::hours(1);
 
 sensor_msgs::msg::BatteryState makeBatteryState()
 {
@@ -58,8 +58,31 @@ sensor_msgs::msg::BatteryState makeBatteryState()
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node, FakeRoomConnection & room_connection, DataStreamRegistry & data_stream_registry)
 {
+  AccessPolicyConfig access_policy_config;
+  access_policy_config.subscribe.allow = {"*"};
   return SubscriptionLeaseManager(
-    node, room_connection, AccessPolicy(AccessPolicyConfig{}), node.get_clock(), data_stream_registry, nullptr);
+    node, room_connection, AccessPolicy(access_policy_config), node.get_clock(), data_stream_registry, nullptr);
+}
+
+SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+{
+  return SubscriptionDemand{SubscriptionTargetKind::Topic, name, interval_ms};
+}
+
+SubscriptionHeartbeat makeHeartbeat(std::vector<SubscriptionDemand> demands)
+{
+  SubscriptionHeartbeat heartbeat;
+  heartbeat.subscriptions = std::move(demands);
+  return heartbeat;
+}
+
+void renewViaHeartbeat(
+  SubscriptionLeaseManager & manager,
+  const std::string & requester_identity,
+  const std::string & topic,
+  std::optional<int> interval_ms = std::nullopt)
+{
+  manager.handleHeartbeat(requester_identity, makeHeartbeat({makeTopicDemand(topic, interval_ms)}));
 }
 
 template <typename PublisherT, typename MessageT>
@@ -126,7 +149,7 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
   auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
-  registry.renewSubscription("alice", topic, 150, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 150);
   const auto message = makeBatteryState();
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
@@ -152,13 +175,13 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
   auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
-  registry.renewSubscription("alice", topic, 1000, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 1000);
   const auto message = makeBatteryState();
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
 
   registry.onRemoteParticipantDisconnected("alice");
-  registry.republishDataTracks("alice");
+  renewViaHeartbeat(registry, "alice", topic, 1000);
   ASSERT_TRUE(
     publishUntilFrameCount(executor, publisher, message, room_connection, 2U, std::chrono::milliseconds(300)));
 }
@@ -189,13 +212,13 @@ TEST(DataStreamInstanceTest, RecoversFromPublishFailureWithoutStartingSuppressio
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
   auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
-  registry.renewSubscription("alice", topic, 500, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 500);
   const auto message = makeBatteryState();
 
   publishAndDrain(executor, publisher, message, std::chrono::milliseconds(40));
   EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
 
-  registry.renewSubscription("alice", topic, 500, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 500);
 
   ASSERT_TRUE(
     publishUntilFrameCount(executor, publisher, message, room_connection, 1U, std::chrono::milliseconds(120)));
@@ -227,7 +250,7 @@ TEST(DataStreamInstanceTest, PendingPublishDoesNotStartSuppressionWindow)
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
   auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
-  registry.renewSubscription("alice", topic, 1000, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 1000);
 
   EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
 
@@ -249,7 +272,8 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
   auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
-  const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
+  renewViaHeartbeat(registry, "alice", topic, 0);
+  const std::string track_name = room_connection.state->published_data_track_names.back();
   const auto message = makeBatteryState();
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
@@ -257,7 +281,7 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
   registry.shutdown();
 
   EXPECT_EQ(registry.findSubscription(SubscriptionTargetKind::Topic, topic), nullptr);
-  EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
+  EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 
   publishAndDrain(executor, publisher, message, std::chrono::milliseconds(60));
   EXPECT_EQ(room_connection.state->pushed_data_track_frames.size(), 1U);
