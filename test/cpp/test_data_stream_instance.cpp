@@ -26,7 +26,7 @@
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
-#include "subscription_registry.hpp"
+#include "subscription_lease_manager.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -53,6 +53,13 @@ sensor_msgs::msg::BatteryState makeBatteryState()
   message.power_supply_status = sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING;
   message.cell_voltage = {4.1F, 4.0F};
   return message;
+}
+
+SubscriptionLeaseManager makeLeaseManager(
+  rclcpp::Node & node, FakeRoomConnection & room_connection, DataStreamRegistry & data_stream_registry)
+{
+  return SubscriptionLeaseManager(
+    node, room_connection, AccessPolicy(AccessPolicyConfig{}), node.get_clock(), data_stream_registry, nullptr);
 }
 
 template <typename PublisherT, typename MessageT>
@@ -118,7 +125,7 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
   registry.renewSubscription("alice", topic, 150, kFarFuture);
   const auto message = makeBatteryState();
 
@@ -144,7 +151,7 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
   registry.renewSubscription("alice", topic, 1000, kFarFuture);
   const auto message = makeBatteryState();
 
@@ -181,7 +188,7 @@ TEST(DataStreamInstanceTest, RecoversFromPublishFailureWithoutStartingSuppressio
   };
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
   const auto failed_response = registry.renewSubscription("alice", topic, 500, kFarFuture);
   const auto message = makeBatteryState();
 
@@ -222,7 +229,7 @@ TEST(DataStreamInstanceTest, PendingPublishDoesNotStartSuppressionWindow)
   };
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
   EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
@@ -245,7 +252,7 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
   const auto message = makeBatteryState();
 

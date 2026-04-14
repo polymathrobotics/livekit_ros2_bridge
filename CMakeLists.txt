@@ -60,9 +60,8 @@ add_library(${PROJECT_NAME} SHARED
   src/rpc_router.cpp
   src/runtime_config.cpp
   src/runtime.cpp
-  src/subscription_heartbeat_processor.cpp
+  src/subscription_lease_manager.cpp
   src/subscription_qos.cpp
-  src/subscription_registry.cpp
   src/topic_publish_command.cpp
   src/video_frame_source/configured_source_video_frame_source.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
@@ -133,8 +132,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_packet_router test/cpp/test_packet_router.cpp)
   target_link_libraries(test_packet_router ${PROJECT_NAME} ${sensor_msgs_TARGETS})
 
-  ament_add_gtest(test_subscription_heartbeat_processor test/cpp/test_subscription_heartbeat_processor.cpp)
-  target_link_libraries(test_subscription_heartbeat_processor ${PROJECT_NAME} ${sensor_msgs_TARGETS})
+  ament_add_gtest(test_subscription_lease_manager test/cpp/test_subscription_lease_manager.cpp)
+  target_link_libraries(test_subscription_lease_manager ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
 
   ament_add_gtest(test_interface_definition_lookup test/cpp/test_interface_definition_lookup.cpp)
   target_link_libraries(test_interface_definition_lookup ${PROJECT_NAME})
@@ -201,9 +200,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_subscription_qos test/cpp/test_subscription_qos.cpp)
   target_link_libraries(test_subscription_qos ${PROJECT_NAME})
 
-  ament_add_gtest(test_subscription_registry test/cpp/test_subscription_registry.cpp)
-  target_link_libraries(test_subscription_registry ${PROJECT_NAME} ${test_msgs_TARGETS} ${sensor_msgs_TARGETS})
-
   ament_add_gtest(test_topic_publish_command test/cpp/test_topic_publish_command.cpp)
   target_link_libraries(test_topic_publish_command ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
@@ -259,9 +255,8 @@ if(BUILD_TESTING)
     test_scope_exit
     test_service_call_payloads
     test_stream_control_payloads
-    test_subscription_heartbeat_processor
+    test_subscription_lease_manager
     test_subscription_qos
-    test_subscription_registry
     test_topic_publish_command
     test_video_pipeline_frame_source
     test_video_profiling

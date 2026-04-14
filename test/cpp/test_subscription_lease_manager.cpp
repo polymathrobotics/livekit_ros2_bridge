@@ -19,20 +19,24 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "access_policy.hpp"
 #include "data_stream_registry.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
+#include "nlohmann/json.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "subscription_registry.hpp"
+#include "subscription_lease_manager.hpp"
 #include "video_stream_registry.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -131,6 +135,190 @@ VideoStreamConfig makeConfiguredVideoStreamConfig()
   return stream_config;
 }
 
+SubscriptionLeaseManager makeLeaseManager(
+  rclcpp::Node & node,
+  FakeRoomConnection & session,
+  DataStreamRegistry & data_stream_registry,
+  VideoStreamRegistry * video_stream_registry = nullptr,
+  const VideoStreamConfig * video_stream_config = nullptr)
+{
+  return SubscriptionLeaseManager(
+    node,
+    session,
+    AccessPolicy(AccessPolicyConfig{}),
+    node.get_clock(),
+    data_stream_registry,
+    video_stream_registry,
+    video_stream_config);
+}
+
+SubscriptionLeaseManager makeLeaseManager(
+  rclcpp::Node & node,
+  FakeRoomConnection & session,
+  DataStreamRegistry & data_stream_registry,
+  AccessPolicy access_policy,
+  VideoStreamRegistry * video_stream_registry = nullptr,
+  const VideoStreamConfig * video_stream_config = nullptr)
+{
+  return SubscriptionLeaseManager(
+    node,
+    session,
+    std::move(access_policy),
+    node.get_clock(),
+    data_stream_registry,
+    video_stream_registry,
+    video_stream_config);
+}
+
+SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+{
+  return SubscriptionDemand{SubscriptionTargetKind::Topic, name, interval_ms};
+}
+
+SubscriptionDemand makeConfiguredSourceDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+{
+  return SubscriptionDemand{SubscriptionTargetKind::ConfiguredSource, name, interval_ms};
+}
+
+SubscriptionHeartbeat makeHeartbeat(
+  std::vector<SubscriptionDemand> demands, std::optional<std::string> session_id = std::nullopt)
+{
+  SubscriptionHeartbeat heartbeat;
+  heartbeat.session_id = std::move(session_id);
+  heartbeat.subscriptions = std::move(demands);
+  return heartbeat;
+}
+
+AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
+{
+  AccessPolicyConfig config;
+  config.subscribe.allow = std::move(allow);
+  config.subscribe.deny = std::move(deny);
+  return AccessPolicy(config);
+}
+
+template <typename MessageT>
+std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<rclcpp::Node> & node,
+  const std::string & topic,
+  const std::string & interface_type)
+{
+  auto publisher = node->create_publisher<MessageT>(topic, 1);
+  EXPECT_TRUE(waitForTopicType(executor, node, topic, interface_type));
+  return publisher;
+}
+
+nlohmann::json extractPublishedStatusEnvelope(
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
+{
+  if (state.published_outgoing_packets.size() != 1U) {
+    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_packets.size();
+    return nlohmann::json::object();
+  }
+
+  const auto & packet = state.published_outgoing_packets.front();
+  EXPECT_EQ(packet.topic, wire::protocol::kControlSubscriptionsStatus);
+
+  if (packet.recipient_identities.size() != 1U) {
+    ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
+    return nlohmann::json::object();
+  }
+
+  EXPECT_EQ(packet.recipient_identities.front(), requester_identity);
+  return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
+}
+
+nlohmann::json extractStatusEntry(const nlohmann::json & envelope)
+{
+  if (!envelope.contains("subscriptions") || envelope["subscriptions"].size() != 1U) {
+    ADD_FAILURE() << "Expected one subscription status object in status response";
+    return nlohmann::json::object();
+  }
+
+  return envelope["subscriptions"].front();
+}
+
+nlohmann::json extractPublishedStatusEntry(
+  const FakeRoomConnectionState & state, const std::string & requester_identity)
+{
+  return extractStatusEntry(extractPublishedStatusEnvelope(state, requester_identity));
+}
+
+std::optional<nlohmann::json> findStatusEntry(const nlohmann::json & envelope, const char * kind, const char * name)
+{
+  if (!envelope.contains("subscriptions") || !envelope["subscriptions"].is_array()) {
+    return std::nullopt;
+  }
+
+  for (const auto & status : envelope["subscriptions"]) {
+    if (status.value("kind", std::string()) == kind && status.value("name", std::string()) == name) {
+      return std::optional<nlohmann::json>{status};
+    }
+  }
+
+  return std::nullopt;
+}
+
+void expectStatusEntry(const nlohmann::json & status, const char * kind, const char * name, const char * value)
+{
+  EXPECT_EQ(status["kind"], kind);
+  EXPECT_EQ(status["name"], name);
+  EXPECT_EQ(status["status"], value);
+}
+
+void expectPublishedError(
+  const FakeRoomConnectionState & state,
+  const std::string & requester_identity,
+  const char * kind,
+  const char * name,
+  const char * reason,
+  const char * message)
+{
+  const auto status = extractPublishedStatusEntry(state, requester_identity);
+  expectStatusEntry(status, kind, name, "error");
+  EXPECT_EQ(status["error"]["reason"], reason);
+  EXPECT_EQ(status["error"]["message"], message);
+}
+
+class SubscriptionLeaseManagerHeartbeatTest : public ::testing::Test
+{
+protected:
+  static void SetUpTestSuite()
+  {
+    static ScopedRclcppInit rclcpp_init;
+  }
+
+  void SetUp() override
+  {
+    node_ = std::make_shared<rclcpp::Node>("test_hb_node");
+    fake_room_connection_ = std::make_unique<FakeRoomConnection>();
+    state_ = fake_room_connection_->state;
+    access_policy_ = makeSubscribePolicy({"*"});
+  }
+
+  SubscriptionLeaseManager makeManager(
+    AccessPolicy access_policy,
+    VideoStreamRegistry * video_stream_registry = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr)
+  {
+    data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *fake_room_connection_);
+    return makeLeaseManager(
+      *node_,
+      *fake_room_connection_,
+      *data_stream_registry_,
+      std::move(access_policy),
+      video_stream_registry,
+      video_stream_config);
+  }
+
+  std::shared_ptr<rclcpp::Node> node_;
+  std::unique_ptr<FakeRoomConnection> fake_room_connection_;
+  std::unique_ptr<DataStreamRegistry> data_stream_registry_;
+  std::shared_ptr<FakeRoomConnectionState> state_;
+  AccessPolicy access_policy_;
+};
+
 void expectInvalidArgumentMessage(const std::function<void()> & fn, const char * expected_message)
 {
   try {
@@ -145,7 +333,7 @@ void expectInvalidArgumentMessage(const std::function<void()> & fn, const char *
   }
 }
 
-TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackForNonVideoTopics)
+TEST(SubscriptionLeaseManagerTest, RenewSubscriptionReturnsDeterministicDataTrackForNonVideoTopics)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_data_track_test");
@@ -159,7 +347,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
 
   const auto first = registry.renewSubscription("alice", "  //battery/state/  ", 0, kFarFuture);
   const auto second = registry.renewSubscription("bob", topic, 0, kFarFuture);
@@ -172,7 +360,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
   EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{first.track_name});
 }
 
-TEST(SubscriptionRegistryTest, PushesRawCdrFramesForDataSubscriptions)
+TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_cdr_delivery_test");
@@ -185,7 +373,7 @@ TEST(SubscriptionRegistryTest, PushesRawCdrFramesForDataSubscriptions)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   const auto message = makeBatteryState();
@@ -197,7 +385,7 @@ TEST(SubscriptionRegistryTest, PushesRawCdrFramesForDataSubscriptions)
     deserializeMessage<sensor_msgs::msg::BatteryState>(session.state->pushed_data_track_frames[0].payload), message);
 }
 
-TEST(SubscriptionRegistryTest, ClampsNegativeRequestedIntervalToZero)
+TEST(SubscriptionLeaseManagerTest, ClampsNegativeRequestedIntervalToZero)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_interval_clamp_test");
@@ -211,13 +399,13 @@ TEST(SubscriptionRegistryTest, ClampsNegativeRequestedIntervalToZero)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, -25, kFarFuture);
 
   EXPECT_EQ(response.applied_interval_ms, 0);
 }
 
-TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecomputesInterval)
+TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecomputesInterval)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_prune_shared_interval_test");
@@ -231,7 +419,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecom
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto expired = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   registry.renewSubscription("alice", topic, 50, expired);
   const auto shared = registry.renewSubscription("bob", topic, 300, kFarFuture);
@@ -244,7 +432,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecom
   EXPECT_EQ(registry.renewSubscription("bob", topic, 300, kFarFuture).applied_interval_ms, 300);
 }
 
-TEST(SubscriptionRegistryTest, OmittedRequesterTargetExpiresWhileRenewedSiblingTargetStaysActive)
+TEST(SubscriptionLeaseManagerTest, OmittedRequesterTargetExpiresWhileRenewedSiblingTargetStaysActive)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_omitted_target_expiry_test");
@@ -262,7 +450,7 @@ TEST(SubscriptionRegistryTest, OmittedRequesterTargetExpiresWhileRenewedSiblingT
   ASSERT_TRUE(waitForTopicType(executor, node, topic_b, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
 
   const auto initial_expiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
   registry.renewSubscription("alice", topic_a, 0, initial_expiry);
@@ -280,7 +468,7 @@ TEST(SubscriptionRegistryTest, OmittedRequesterTargetExpiresWhileRenewedSiblingT
   EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_b) != nullptr);
 }
 
-TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfiguredSources)
+TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfiguredSources)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
@@ -296,7 +484,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry, &video_stream_config);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, &video_stream_registry, &video_stream_config);
 
   const auto topic_response = registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
@@ -308,7 +496,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
   EXPECT_FALSE(source_response.track_name.empty());
 }
 
-TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)
+TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_republish_test");
@@ -322,7 +510,7 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
   registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
@@ -334,7 +522,7 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
     session.state->published_data_track_names, (std::vector<std::string>{response.track_name, response.track_name}));
 }
 
-TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
+TEST(SubscriptionLeaseManagerTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_test");
@@ -348,7 +536,7 @@ TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto first = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   const auto second = registry.renewSubscription("bob", topic, 250, kFarFuture);
   EXPECT_EQ(second.track_name, first.track_name);
@@ -359,7 +547,7 @@ TEST(SubscriptionRegistryTest, NewRequesterRepublishesAlreadyPublishedDataTrack)
   EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{first.track_name, first.track_name}));
 }
 
-TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscription)
+TEST(SubscriptionLeaseManagerTest, StaleGenerationDoesNotRepublishReplacementSubscription)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_stale_republish_generation_test");
@@ -373,7 +561,7 @@ TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscri
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto first = registry.renewSubscription("alice", topic, 0, kFarFuture);
   const auto stale_generation = data_stream_registry.generation();
 
@@ -391,7 +579,7 @@ TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscri
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{first.track_name});
 }
 
-TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptionsOwnedByOthers)
+TEST(SubscriptionLeaseManagerTest, RevokeRequesterLeasesPreservesSharedSubscriptionsOwnedByOthers)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_revoke_shared_test");
@@ -414,7 +602,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   ASSERT_TRUE(waitForTopicType(executor, node, shared_video_topic, "sensor_msgs/msg/Image"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, &video_stream_registry);
   const auto alice_only = registry.renewSubscription("alice", alice_only_topic, 50, kFarFuture);
   registry.renewSubscription("alice", shared_data_topic, 50, kFarFuture);
   registry.renewSubscription("bob", shared_data_topic, 250, kFarFuture);
@@ -429,7 +617,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{alice_only.track_name});
 }
 
-TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequester)
+TEST(SubscriptionLeaseManagerTest, RevokeRequesterLeasesClearsQueuedRepublishForRequester)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_revoke_clears_republish_test");
@@ -443,7 +631,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequ
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   registry.renewSubscription("bob", topic, 1000, kFarFuture);
 
@@ -456,7 +644,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequ
   EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{response.track_name});
 }
 
-TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
+TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_prune_unpublish_test");
@@ -470,7 +658,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto past = std::chrono::steady_clock::now() - std::chrono::seconds(1);
   const auto response = registry.renewSubscription("alice", topic, 0, past);
 
@@ -480,7 +668,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
 }
 
-TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
+TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_reset_test");
@@ -499,7 +687,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, &video_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, &video_stream_registry);
   const auto response = registry.renewSubscription("alice", data_topic, 0, kFarFuture);
   registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   ASSERT_TRUE(publishUntil(
@@ -514,7 +702,7 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
   EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
 }
 
-TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
+TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallback)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_quiesce_test");
@@ -542,7 +730,7 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
   };
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   std::thread spin_thread([&executor]() { executor.spin(); });
@@ -565,7 +753,7 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
   spin_thread.join();
 }
 
-TEST(SubscriptionRegistryTest, QueueFullPushLeavesSubscriptionActive)
+TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_queue_full_test");
@@ -585,20 +773,20 @@ TEST(SubscriptionRegistryTest, QueueFullPushLeavesSubscriptionActive)
   };
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return push_attempt_count.load() >= 1; }));
   EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
 }
 
-TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)
+TEST(SubscriptionLeaseManagerTest, RequesterSpecificMethodsRejectEmptyIdentity)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
   FakeRoomConnection session;
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
 
   expectInvalidArgumentMessage(
     [&registry]() { (void)registry.renewSubscription("", "/some/topic", 0, kFarFuture); },
@@ -609,7 +797,7 @@ TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)
   expectInvalidArgumentMessage([&registry]() { registry.revokeRequesterLeases(""); }, "requester_identity is required");
 }
 
-TEST(SubscriptionRegistryTest, ShutdownRejectsNewSubscriptionsAndFurtherLifecycleCallsAreNoOps)
+TEST(SubscriptionLeaseManagerTest, ShutdownRejectsNewSubscriptionsAndFurtherLifecycleCallsAreNoOps)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_rejection_test");
@@ -623,7 +811,7 @@ TEST(SubscriptionRegistryTest, ShutdownRejectsNewSubscriptionsAndFurtherLifecycl
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   registry.shutdown();
@@ -643,6 +831,277 @@ TEST(SubscriptionRegistryTest, ShutdownRejectsNewSubscriptionsAndFurtherLifecycl
   registry.resetSessionState();
 
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
+{
+  const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
+
+  auto manager = makeManager(deny_all);
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
+
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, NotFoundTopicReturnsError)
+{
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)}));
+
+  expectPublishedError(
+    *state_,
+    "requester-1",
+    "topic",
+    "/nonexistent_topic",
+    "not_found",
+    "No ROS types found for topic '/nonexistent_topic'.");
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsUnavailable)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher = advertiseTopic<sensor_msgs::msg::Image>(executor, node_, "/camera/front", "sensor_msgs/msg/Image");
+
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
+
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/camera/front", "unavailable", "Video stream registry is unavailable.");
+  (void)publisher;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
+{
+  const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
+  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
+
+  auto manager = makeManager(deny_all, &video_stream_registry, &video_stream_config);
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
+
+  const auto status = extractPublishedStatusEntry(*state_, "requester-1");
+  expectStatusEntry(status, "configured_source", "/sources/front", "active");
+  const auto & delivery = status["delivery"];
+  EXPECT_EQ(delivery["kind"], "video");
+  EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
+{
+  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
+
+  auto manager = makeManager(access_policy_, &video_stream_registry, &video_stream_config);
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
+
+  expectPublishedError(
+    *state_,
+    "requester-1",
+    "configured_source",
+    "/sources/missing",
+    "not_found",
+    "Unknown configured video source '/sources/missing'.");
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat(
+    "requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["v"], wire::protocol::kProtocolVersion);
+  EXPECT_EQ(envelope["type"], wire::protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(envelope["session_id"], "session-1");
+  ASSERT_TRUE(envelope["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(envelope["lease_expires_in_ms"].get<std::int64_t>(), 0);
+
+  const auto status = extractStatusEntry(envelope);
+  const auto & delivery = status["delivery"];
+  expectStatusEntry(status, "topic", "/battery_state", "active");
+  EXPECT_EQ(status["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(delivery["track_name"], "ros.data.battery_state");
+  EXPECT_EQ(delivery["interval_ms"], 100);
+  (void)publisher;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, OmittedHeartbeatTargetRemainsActiveUntilItsOriginalLeaseExpires)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto battery_a =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_a", "sensor_msgs/msg/BatteryState");
+  auto battery_b =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_b", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat(
+    "requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100), makeTopicDemand("/battery_b", 200)}));
+
+  ASSERT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  ASSERT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+
+  state_->published_outgoing_packets.clear();
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100)}));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  ASSERT_TRUE(envelope.contains("subscriptions"));
+  ASSERT_EQ(envelope["subscriptions"].size(), 1U);
+
+  const auto battery_a_status = findStatusEntry(envelope, "topic", "/battery_a");
+  ASSERT_TRUE(battery_a_status.has_value());
+  expectStatusEntry(*battery_a_status, "topic", "/battery_a", "active");
+  EXPECT_FALSE(findStatusEntry(envelope, "topic", "/battery_b").has_value());
+
+  EXPECT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  EXPECT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+  EXPECT_TRUE(state_->unpublished_data_track_names.empty());
+
+  (void)battery_a;
+  (void)battery_b;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatRenewsKnownClientSession)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+
+  const auto heartbeat = makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1"));
+  manager.handleHeartbeat("requester-1", heartbeat);
+  state_->published_outgoing_packets.clear();
+
+  manager.handleHeartbeat("", heartbeat);
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["session_id"], "session-1");
+
+  const auto status = extractStatusEntry(envelope);
+  expectStatusEntry(status, "topic", "/battery_state", "active");
+  (void)publisher;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatWithoutResolvableClientSessionIsDropped)
+{
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("unknown-session")));
+
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
+
+  manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
+
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
+}
+
+TEST_F(
+  SubscriptionLeaseManagerHeartbeatTest,
+  EmptyHeartbeatBindsClientSessionLeaseThatAnonymousHeartbeatCanStillUseAfterConflict)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+
+  const auto bind_heartbeat = makeHeartbeat({}, std::string("session-1"));
+  manager.handleHeartbeat("requester-1", bind_heartbeat);
+
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
+
+  manager.handleHeartbeat("requester-2", bind_heartbeat);
+
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
+
+  manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["session_id"], "session-1");
+
+  const auto status = extractStatusEntry(envelope);
+  expectStatusEntry(status, "topic", "/battery_state", "active");
+  (void)publisher;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, CopiesAccessPolicyAtConstruction)
+{
+  AccessPolicy policy = makeSubscribePolicy({}, {"*"});
+
+  auto manager = makeManager(policy);
+
+  policy = makeSubscribePolicy({"*"});
+
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
+
+  expectPublishedError(
+    *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, PublishControlPacketFailureIsHandledGracefully)
+{
+  state_->throw_on_publish_packet = true;
+
+  auto manager = makeManager(access_policy_);
+
+  EXPECT_NO_THROW(manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)})));
+  EXPECT_EQ(state_->publish_packet_call_count, 1);
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MixedSubscriptionResultsArePublishedInOneEnvelope)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+
+  manager.handleHeartbeat(
+    "requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100), makeTopicDemand("/nonexistent_topic", 100)}));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  ASSERT_TRUE(envelope.contains("subscriptions"));
+  ASSERT_EQ(envelope["subscriptions"].size(), 2U);
+
+  const auto active_status = findStatusEntry(envelope, "topic", "/battery_state");
+  ASSERT_TRUE(active_status.has_value());
+  expectStatusEntry(*active_status, "topic", "/battery_state", "active");
+
+  const auto missing_status = findStatusEntry(envelope, "topic", "/nonexistent_topic");
+  ASSERT_TRUE(missing_status.has_value());
+  EXPECT_EQ(
+    *missing_status,
+    nlohmann::json(
+      {{"kind", "topic"},
+       {"name", "/nonexistent_topic"},
+       {"status", "error"},
+       {"error", {{"reason", "not_found"}, {"message", "No ROS types found for topic '/nonexistent_topic'."}}}}));
+  (void)publisher;
 }
 
 }  // namespace

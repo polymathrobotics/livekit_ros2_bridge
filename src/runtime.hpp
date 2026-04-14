@@ -33,11 +33,10 @@ namespace livekit_ros2_bridge
 
 class RpcRouter;
 class PacketRouter;
-class SubscriptionHeartbeatProcessor;
 class RosExecutorQueue;
 class RosServiceCaller;
 class DataStreamRegistry;
-class SubscriptionRegistry;
+class SubscriptionLeaseManager;
 class RosTopicPublisher;
 class VideoStreamRegistry;
 class VideoProfilingRegistry;
@@ -74,8 +73,7 @@ private:
   std::unique_ptr<DataStreamRegistry> data_stream_registry_;
   std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::unique_ptr<VideoProfilingRegistry> video_profiling_registry_;
-  std::unique_ptr<SubscriptionRegistry> subscription_registry_;
-  std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
+  std::unique_ptr<SubscriptionLeaseManager> subscription_lease_manager_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<PacketRouter> packet_router_;
 

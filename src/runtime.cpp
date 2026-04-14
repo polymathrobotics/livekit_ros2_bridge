@@ -26,8 +26,7 @@
 #include "ros_service_caller.hpp"
 #include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
-#include "subscription_heartbeat_processor.hpp"
-#include "subscription_registry.hpp"
+#include "subscription_lease_manager.hpp"
 #include "topic_publish_command.hpp"
 #include "utils/log_event.hpp"
 #include "video_stream_registry.hpp"
@@ -78,24 +77,23 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
     node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
 
-  subscription_registry_ = std::make_unique<SubscriptionRegistry>(
-    node_, *data_stream_registry_, video_stream_registry_.get(), &config_.video_stream);
+  subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
+    node_,
+    *room_connection_,
+    config_.access_policy,
+    node_.get_clock(),
+    *data_stream_registry_,
+    video_stream_registry_.get(),
+    &config_.video_stream);
 
-  subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-    *subscription_registry_, *room_connection_, config_.access_policy, node_.get_clock());
-
-  subscription_lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
-    submitToExecutor([this]() {
-      subscription_heartbeat_processor_->pruneExpiredSessionLeases();
-      subscription_registry_->pruneExpiredLeases();
-    });
-  });
+  subscription_lease_gc_timer_ = node_.create_wall_timer(
+    kLeaseGcInterval, [this]() { submitToExecutor([this]() { subscription_lease_manager_->pruneExpiredLeases(); }); });
 
   // Build ingress and control-plane handlers before the room starts delivering callbacks.
   packet_router_ = std::make_unique<PacketRouter>(
     node_.get_clock(),
     [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
-    *subscription_heartbeat_processor_,
+    *subscription_lease_manager_,
     *ros_topic_publisher_);
 
   rpc_router_ = std::make_unique<RpcRouter>(node_, config_.access_policy, *ros_executor_queue_, *ros_service_caller_);
@@ -156,8 +154,8 @@ void Runtime::shutdown()
     ros_executor_queue_->shutdown();
   }
 
-  if (subscription_registry_ != nullptr) {
-    subscription_registry_->shutdown();
+  if (subscription_lease_manager_ != nullptr) {
+    subscription_lease_manager_->shutdown();
   }
 
   if (data_stream_registry_ != nullptr) {
@@ -229,7 +227,7 @@ void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant
   submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity), generation]() {
     // Keep leases alive across a browser refresh, but queue fresh data-track publications
     // because LiveKit binds them to the old participant_session.
-    subscription_registry_->queueDataTrackRepublish(remote_participant_identity, generation);
+    subscription_lease_manager_->queueDataTrackRepublish(remote_participant_identity, generation);
     ros_service_caller_->cancelCallsForRequester(remote_participant_identity);
   });
 }
@@ -267,7 +265,7 @@ void Runtime::onRoomConnectionReset()
   submitToExecutor([this]() {
     // Reset session-owned state on the ROS executor so cleanup stays ordered with any
     // in-flight heartbeat or RPC work targeting the old connection generation.
-    subscription_registry_->resetSessionState();
+    subscription_lease_manager_->resetSessionState();
     ros_service_caller_->resetSessionState();
   });
 }

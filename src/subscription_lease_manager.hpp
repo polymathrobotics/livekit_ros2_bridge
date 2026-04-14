@@ -25,14 +25,18 @@
 #include <unordered_set>
 #include <vector>
 
+#include "access_policy.hpp"
 #include "core/subscriptions.hpp"
 #include "data_stream_registry.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/node.hpp"
+#include "utils/event_throttle.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
 
+class RoomConnection;
 class VideoStreamRegistry;
 
 struct StreamUnavailableError : std::runtime_error
@@ -46,21 +50,26 @@ enum class LeaseRemovalReason
   kLeaseExpired
 };
 
-// Owns requester leases and shared subscription coordination across data and video. Multiple
-// heartbeat demands for one canonical target collapse into one shared runtime and one applied
-// delivery state.
-class SubscriptionRegistry final
+// Owns heartbeat session recovery plus requester leases and shared subscription coordination
+// across data and video. Multiple heartbeat demands for one canonical target collapse into one
+// shared runtime and one applied delivery state.
+class SubscriptionLeaseManager final
 {
   struct SharedSubscription;
 
 public:
   using Clock = std::chrono::steady_clock;
 
-  SubscriptionRegistry(
+  SubscriptionLeaseManager(
     rclcpp::Node & node,
+    RoomConnection & room_connection,
+    AccessPolicy access_policy,
+    rclcpp::Clock::SharedPtr clock,
     DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry * video_stream_registry,
     const VideoStreamConfig * video_stream_config = nullptr);
+
+  void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
 
   // Refreshes or creates the shared canonical subscription for this target. `demand.name` is
   // expected to already be canonical and non-empty. Multiple requesters for the same normalized
@@ -84,8 +93,9 @@ public:
   // Removes one requester's lease from every shared subscription. Targets still owned by other
   // requesters stay alive; any queued data-track republish hint for this requester is cleared.
   void revokeRequesterLeases(const std::string & requester_identity);
-  // Sweeps leases whose expiry has passed. Shared subscriptions survive while at least one requester
-  // remains, and data targets recompute their merged delivery interval from the survivors.
+  // Sweeps session and target leases whose expiry has passed. Shared subscriptions survive while
+  // at least one requester remains, and data targets recompute their merged delivery interval from
+  // the survivors.
   void pruneExpiredLeases();
   SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name);
   const SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name) const;
@@ -96,6 +106,19 @@ public:
   void shutdown();
 
 private:
+  struct SessionLease
+  {
+    std::string requester_identity;
+    Clock::time_point expiry;
+  };
+
+  struct ResolvedLease
+  {
+    std::string requester_identity;
+    std::optional<std::string> session_id;
+    Clock::time_point expiry;
+  };
+
   struct Lease
   {
     int preferred_interval_ms = 0;
@@ -117,13 +140,22 @@ private:
     std::optional<VideoStreamHandle> video;
   };
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
   using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
+  std::optional<ResolvedLease> resolveLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id);
+  SubscriptionReportedStatus renewHeartbeatSubscription(const ResolvedLease & lease, const SubscriptionDemand & demand);
+  void publishStatuses(const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses);
   SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
 
   rclcpp::Node & node_;
+  RoomConnection & room_connection_;
+  AccessPolicy access_policy_;
+  rclcpp::Clock::SharedPtr clock_;
   DataStreamRegistry & data_stream_registry_;
   // Optional non-owning dependency. Null means video subscriptions cannot be started.
   VideoStreamRegistry * video_stream_registry_;
@@ -133,11 +165,13 @@ private:
   const VideoStreamConfig * video_stream_config_;
 
   std::atomic<bool> is_shutdown_{false};
+  std::unordered_map<std::string, SessionLease> session_leases_;
   SubscriptionMap subscriptions_;
 
   // Requesters whose next confirmed heartbeat should force currently published data tracks
   // through an unpublish/publish cycle so the rejoined participant session sees them again.
   std::unordered_set<std::string> republish_requesters_;
+  EventThrottle conflict_throttle_{kLogThrottle};
 
   VideoStreamRegistry & videoRegistry() const;
   SubscriptionStatus renewExistingSubscription(

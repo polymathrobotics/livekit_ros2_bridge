@@ -22,7 +22,7 @@
 #include "nlohmann/json.hpp"
 #include "rclcpp/logging.hpp"
 #include "ros_topic_publisher.hpp"
-#include "subscription_heartbeat_processor.hpp"
+#include "subscription_lease_manager.hpp"
 #include "utils/log_event.hpp"
 #include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
@@ -40,11 +40,11 @@ const auto kLogger = rclcpp::get_logger("packet_router");
 PacketRouter::PacketRouter(
   rclcpp::Clock::SharedPtr clock,
   SubmitToExecutorFunction submit_to_executor,
-  SubscriptionHeartbeatProcessor & subscription_heartbeat_processor,
+  SubscriptionLeaseManager & subscription_lease_manager,
   RosTopicPublisher & ros_topic_publisher)
 : clock_(std::move(clock))
 , submit_to_executor_(std::move(submit_to_executor))
-, subscription_heartbeat_processor_(subscription_heartbeat_processor)
+, subscription_lease_manager_(subscription_lease_manager)
 , ros_topic_publisher_(ros_topic_publisher)
 {
   if (clock_ == nullptr) {
@@ -84,7 +84,7 @@ void PacketRouter::handle(const IncomingPacket & packet) const
       auto heartbeat = wire::subscriptions::parseHeartbeat(body);
       submitToExecutor(
         [this, requester_identity = packet.requester_identity, heartbeat = std::move(heartbeat)]() mutable {
-          subscription_heartbeat_processor_.process(requester_identity, heartbeat);
+          subscription_lease_manager_.handleHeartbeat(requester_identity, heartbeat);
         });
     } catch (const std::exception & exc) {
       LogEvent(kLogger, "packet_rejected")

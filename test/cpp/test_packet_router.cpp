@@ -30,8 +30,7 @@
 #include "ros_test_support.hpp"
 #include "ros_topic_publisher.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
-#include "subscription_heartbeat_processor.hpp"
-#include "subscription_registry.hpp"
+#include "subscription_lease_manager.hpp"
 #include "wire/cdr.hpp"
 #include "wire/protocol.hpp"
 
@@ -134,27 +133,25 @@ protected:
   void initRouter(const AccessPolicy & access_policy)
   {
     data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
-    subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *data_stream_registry_, nullptr);
-    subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-      *subscription_registry_, *room_connection_, access_policy, node_->get_clock());
+    subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
+      *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, nullptr);
     ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
     packet_router_ = std::make_unique<PacketRouter>(
       node_->get_clock(),
       [](std::function<void()> work) { work(); },
-      *subscription_heartbeat_processor_,
+      *subscription_lease_manager_,
       *ros_topic_publisher_);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<FakeRoomConnection> room_connection_;
   std::unique_ptr<DataStreamRegistry> data_stream_registry_;
-  std::unique_ptr<SubscriptionRegistry> subscription_registry_;
-  std::unique_ptr<SubscriptionHeartbeatProcessor> subscription_heartbeat_processor_;
+  std::unique_ptr<SubscriptionLeaseManager> subscription_lease_manager_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
   std::unique_ptr<PacketRouter> packet_router_;
 };
 
-TEST_F(PacketRouterTest, RoutesHeartbeatPacketsViaSubscriptionHeartbeatProcessor)
+TEST_F(PacketRouterTest, RoutesHeartbeatPacketsViaSubscriptionLeaseManager)
 {
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
@@ -260,18 +257,16 @@ TEST_F(PacketRouterTest, ValidatesConstructorDependencies)
 {
   const AccessPolicy access_policy = makeAccessPolicy();
   data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
-  subscription_registry_ = std::make_unique<SubscriptionRegistry>(*node_, *data_stream_registry_, nullptr);
-  subscription_heartbeat_processor_ = std::make_unique<SubscriptionHeartbeatProcessor>(
-    *subscription_registry_, *room_connection_, access_policy, node_->get_clock());
+  subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
+    *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, nullptr);
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
 
   EXPECT_THROW(
     PacketRouter(
-      {}, [](std::function<void()> work) { work(); }, *subscription_heartbeat_processor_, *ros_topic_publisher_),
+      {}, [](std::function<void()> work) { work(); }, *subscription_lease_manager_, *ros_topic_publisher_),
     std::invalid_argument);
   EXPECT_THROW(
-    PacketRouter(makeTestClock(), {}, *subscription_heartbeat_processor_, *ros_topic_publisher_),
-    std::invalid_argument);
+    PacketRouter(makeTestClock(), {}, *subscription_lease_manager_, *ros_topic_publisher_), std::invalid_argument);
 }
 
 }  // namespace

@@ -23,7 +23,7 @@ namespace livekit_ros2_bridge
 {
 
 class RosTopicPublisher;
-class SubscriptionHeartbeatProcessor;
+class SubscriptionLeaseManager;
 
 // Parses incoming room packets and dispatches the supported packet topics through the ROS-facing
 // runtime helpers.
@@ -35,7 +35,7 @@ public:
   PacketRouter(
     rclcpp::Clock::SharedPtr clock,
     SubmitToExecutorFunction submit_to_executor,
-    SubscriptionHeartbeatProcessor & subscription_heartbeat_processor,
+    SubscriptionLeaseManager & subscription_lease_manager,
     RosTopicPublisher & ros_topic_publisher);
 
   void handle(const IncomingPacket & packet) const;
@@ -51,7 +51,7 @@ private:
   // serialized with shutdown and other session-state mutations on the executor
   // queue.
   SubmitToExecutorFunction submit_to_executor_;
-  SubscriptionHeartbeatProcessor & subscription_heartbeat_processor_;
+  SubscriptionLeaseManager & subscription_lease_manager_;
   RosTopicPublisher & ros_topic_publisher_;
 };
 
