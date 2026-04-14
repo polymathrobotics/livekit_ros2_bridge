@@ -162,7 +162,7 @@ TEST(SubscriptionRegistryTest, RenewSubscriptionReturnsDeterministicDataTrackFor
   const auto first = registry.renewSubscription("alice", "  //battery/state/  ", 0, kFarFuture);
   const auto second = registry.renewSubscription("bob", topic, 0, kFarFuture);
 
-  EXPECT_EQ(first.target.name, topic);
+  EXPECT_EQ(first.name, topic);
   EXPECT_EQ(first.interface_type, "sensor_msgs/msg/BatteryState");
   EXPECT_EQ(first.delivery_kind, SubscriptionDeliveryKind::kData);
   EXPECT_EQ(first.track_name, "ros.data.battery.state");
@@ -234,7 +234,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecom
 
   registry.pruneExpiredLeases();
 
-  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
   EXPECT_EQ(registry.renewSubscription("bob", topic, 300, kFarFuture).applied_interval_ms, 300);
 }
@@ -258,7 +258,7 @@ TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfigure
 
   const auto topic_response = registry.renewSubscription("alice", video_topic, 0, kFarFuture);
   const auto source_response = registry.renewSubscription(
-    "bob", SubscriptionDemand{{SubscriptionTargetKind::ConfiguredSource, "/sources/front"}, std::nullopt}, kFarFuture);
+    "bob", SubscriptionDemand{SubscriptionTargetKind::ConfiguredSource, "/sources/front", std::nullopt}, kFarFuture);
 
   EXPECT_EQ(topic_response.delivery_kind, SubscriptionDeliveryKind::kVideo);
   EXPECT_EQ(topic_response.track_name, "ros.video.camera.front");
@@ -285,7 +285,7 @@ TEST(SubscriptionRegistryTest, ParticipantRefreshRepublishesPublishedDataTrackWi
   registry.queueDataTrackRepublish("alice", registry.generation());
   registry.republishDataTracks("alice");
 
-  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
   EXPECT_EQ(
     session.state->published_data_track_names, (std::vector<std::string>{response.track_name, response.track_name}));
@@ -333,14 +333,14 @@ TEST(SubscriptionRegistryTest, StaleGenerationDoesNotRepublishReplacementSubscri
   const auto stale_generation = registry.generation();
 
   registry.revokeRequesterLeases("alice");
-  ASSERT_FALSE(registry.hasSubscription(topic));
+  ASSERT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
 
   const auto replacement = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   registry.queueDataTrackRepublish("alice", stale_generation);
   registry.republishDataTracks("alice");
 
-  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(
     session.state->published_data_track_names, (std::vector<std::string>{first.track_name, replacement.track_name}));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{first.track_name});
@@ -377,9 +377,9 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesPreservesSharedSubscriptions
 
   registry.revokeRequesterLeases("alice");
 
-  EXPECT_FALSE(registry.hasSubscription(alice_only_topic));
-  EXPECT_TRUE(registry.hasSubscription(shared_data_topic));
-  EXPECT_TRUE(registry.hasSubscription(shared_video_topic));
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, alice_only_topic) != nullptr);
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, shared_data_topic) != nullptr);
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, shared_video_topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{alice_only.track_name});
 }
 
@@ -404,7 +404,7 @@ TEST(SubscriptionRegistryTest, RevokeRequesterLeasesClearsQueuedRepublishForRequ
   registry.revokeRequesterLeases("alice");
   registry.republishDataTracks("alice");
 
-  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
   EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{response.track_name});
 }
@@ -428,7 +428,7 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesUnpublishesPublishedTrack)
 
   registry.pruneExpiredLeases();
 
-  EXPECT_FALSE(registry.hasSubscription(topic));
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
 }
 
@@ -458,8 +458,8 @@ TEST(SubscriptionRegistryTest, ResetSessionStateClearsDataAndVideoSubscriptions)
 
   registry.resetSessionState();
 
-  EXPECT_FALSE(registry.hasSubscription(data_topic));
-  EXPECT_FALSE(registry.hasSubscription(video_topic));
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, data_topic) != nullptr);
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, video_topic) != nullptr);
   EXPECT_FALSE(registry.onDataTrackPublished(response.track_name, registry.generation()));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
   EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
@@ -507,7 +507,7 @@ TEST(SubscriptionRegistryTest, ShutdownWaitsForActiveSerializedMessageCallback)
 
   EXPECT_EQ(shutdown_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   shutdown_future.get();
-  EXPECT_FALSE(registry.hasSubscription(topic));
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(push_call_count.load(), 1);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{"ros.data.battery.shutdown_quiesce"});
 
@@ -538,7 +538,7 @@ TEST(SubscriptionRegistryTest, QueueFullPushLeavesSubscriptionActive)
   registry.renewSubscription("alice", topic, 0, kFarFuture);
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return push_attempt_count.load() >= 1; }));
-  EXPECT_TRUE(registry.hasSubscription(topic));
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
 }
 
 TEST(SubscriptionRegistryTest, RequesterSpecificMethodsRejectEmptyIdentity)

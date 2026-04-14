@@ -247,7 +247,7 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
 
   registry.shutdown();
 
-  EXPECT_FALSE(registry.hasSubscription(topic));
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(room_connection.state->unpublished_data_track_names, std::vector<std::string>{response.track_name});
 
   publishAndDrain(executor, publisher, message, std::chrono::milliseconds(60));

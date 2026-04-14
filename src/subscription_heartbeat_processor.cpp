@@ -141,15 +141,14 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
 SubscriptionReportedStatus SubscriptionHeartbeatProcessor::renewSubscription(
   const ResolvedLease & lease, const SubscriptionDemand & demand)
 {
-  const auto & target = demand.target;
-
   // `configured_source` targets name bridge-owned config entries rather than ROS graph
   // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
-  if (target.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, target.name)) {
+  if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name)) {
     return SubscriptionErrorStatus{
-      target,
+      demand.kind,
+      demand.name,
       SubscriptionStatusErrorReason::kForbidden,
-      "ROS topic '" + target.name + "' not permitted.",
+      "ROS topic '" + demand.name + "' not permitted.",
     };
   }
 
@@ -157,13 +156,15 @@ SubscriptionReportedStatus SubscriptionHeartbeatProcessor::renewSubscription(
     return subscription_registry_.renewSubscription(lease.requester_identity, demand, lease.expiry);
   } catch (const StreamUnavailableError & exc) {
     return SubscriptionErrorStatus{
-      target,
+      demand.kind,
+      demand.name,
       SubscriptionStatusErrorReason::kUnavailable,
       exc.what(),
     };
   } catch (const std::exception & exc) {
     return SubscriptionErrorStatus{
-      target,
+      demand.kind,
+      demand.name,
       SubscriptionStatusErrorReason::kNotFound,
       exc.what(),
     };

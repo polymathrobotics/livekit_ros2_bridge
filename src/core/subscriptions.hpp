@@ -29,17 +29,11 @@ enum class SubscriptionTargetKind
   ConfiguredSource,
 };
 
-// A canonical subscription identifier shared by heartbeat parsing and subscription-status serialization.
-struct SubscriptionTarget
-{
-  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
-  std::string name;
-};
-
 // A single lease-backed subscription demand plus any non-zero delivery preference overrides.
 struct SubscriptionDemand
 {
-  SubscriptionTarget target;
+  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
+  std::string name;
   std::optional<int> preferred_interval_ms;
 };
 
@@ -64,7 +58,8 @@ enum class SubscriptionDeliveryKind
 // Active control-path subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionStatus
 {
-  SubscriptionTarget target;
+  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
+  std::string name;
 
   // Omitted from the payload when empty.
   std::string degraded_reason;
@@ -88,7 +83,8 @@ enum class SubscriptionStatusErrorReason
 // Error control-path subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionErrorStatus
 {
-  SubscriptionTarget target;
+  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
+  std::string name;
   SubscriptionStatusErrorReason reason = SubscriptionStatusErrorReason::kNotFound;
   std::string message;
 };

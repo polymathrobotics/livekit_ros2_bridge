@@ -50,12 +50,12 @@ VideoStreamConfig makeConfiguredVideoStreamConfig()
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return SubscriptionDemand{{SubscriptionTargetKind::Topic, name}, interval_ms};
+  return SubscriptionDemand{SubscriptionTargetKind::Topic, name, interval_ms};
 }
 
 SubscriptionDemand makeConfiguredSourceDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return SubscriptionDemand{{SubscriptionTargetKind::ConfiguredSource, name}, interval_ms};
+  return SubscriptionDemand{SubscriptionTargetKind::ConfiguredSource, name, interval_ms};
 }
 
 SubscriptionHeartbeat makeHeartbeat(

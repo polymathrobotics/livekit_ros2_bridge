@@ -55,6 +55,8 @@ enum class LeaseRemovalReason
 // delivery state.
 class SubscriptionRegistry final
 {
+  struct SharedSubscription;
+
 public:
   using Clock = std::chrono::steady_clock;
 
@@ -65,9 +67,10 @@ public:
     const VideoStreamConfig * video_stream_config = nullptr,
     const SubscriptionQosConfig * subscription_qos_config = nullptr);
 
-  // Refreshes or creates the shared canonical subscription for this target. Multiple requesters
-  // for the same normalized target collapse into one runtime; renewing updates only that
-  // requester's lease state and may restart a failed publication.
+  // Refreshes or creates the shared canonical subscription for this target. `demand.name` is
+  // expected to already be canonical and non-empty. Multiple requesters for the same normalized
+  // target collapse into one runtime; renewing updates only that requester's lease state and may
+  // restart a failed publication.
   SubscriptionStatus renewSubscription(
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   SubscriptionStatus renewSubscription(
@@ -89,8 +92,8 @@ public:
   // Sweeps leases whose expiry has passed. Shared subscriptions survive while at least one requester
   // remains, and data targets recompute their merged delivery interval from the survivors.
   void pruneExpiredLeases();
-  bool hasSubscription(
-    const std::string & resource, SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic) const;
+  SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name);
+  const SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name) const;
   // Session-scoped teardown for room reconnects. Clears current subscriptions, advances lifetime
   // generations, and then re-opens the callback gate for the next session.
   void resetSessionState();
@@ -137,7 +140,6 @@ private:
 
   static SubscriptionStatus statusFor(const SharedSubscription & subscription);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
-  static std::string keyFor(SubscriptionTargetKind target_kind, const std::string & resource);
   static DataStreamInstance * dataInstance(SharedSubscription & subscription);
   static const DataStreamInstance * dataInstance(const SharedSubscription & subscription);
 
@@ -167,6 +169,10 @@ private:
   std::unordered_set<std::string> republish_requesters_;
 
   VideoStreamRegistry & videoRegistry() const;
+  SubscriptionStatus renewExistingSubscription(
+    SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);
+  SubscriptionStatus createSubscription(
+    const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
   void removeLeasesIf(
     const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
   SubscriptionMap::iterator findDataByTrackName(const std::string & track_name);

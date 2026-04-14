@@ -184,7 +184,7 @@ ParsedInterval parseIntervalMs(const nlohmann::json & entry)
   return {interval.value, interval.boundary};
 }
 
-SubscriptionTarget parseTarget(const nlohmann::json & entry)
+void parseDemandTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
 {
   const auto kind_it = entry.find("kind");
   if (kind_it == entry.end() || !kind_it->is_string()) {
@@ -196,28 +196,25 @@ SubscriptionTarget parseTarget(const nlohmann::json & entry)
     throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
   }
 
-  const SubscriptionTargetKind kind = *parsed_kind;
+  demand.kind = *parsed_kind;
   const auto name_it = entry.find("name");
   if (name_it == entry.end() || !name_it->is_string()) {
     throw std::invalid_argument("heartbeat subscription 'name' must be a string");
   }
 
   const auto & raw_name = name_it->get_ref<const std::string &>();
-  if (kind == SubscriptionTargetKind::Topic) {
-    std::string name = normalizeRosResourceName(raw_name);
-    if (name.empty()) {
+  if (demand.kind == SubscriptionTargetKind::Topic) {
+    demand.name = normalizeRosResourceName(raw_name);
+    if (demand.name.empty()) {
       throw std::invalid_argument("heartbeat subscription topic name must normalize to a non-empty name");
     }
-
-    return {kind, std::move(name)};
+    return;
   }
 
-  std::string name = trim(raw_name);
-  if (name.empty()) {
+  demand.name = trim(raw_name);
+  if (demand.name.empty()) {
     throw std::invalid_argument("heartbeat subscription configured_source name must trim to a non-empty name");
   }
-
-  return {kind, std::move(name)};
 }
 
 nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & status)
@@ -226,16 +223,16 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
     status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
   {
     LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", targetKindString(status.target.kind))
-      .field("name", status.target.name)
+      .field("kind", targetKindString(status.kind))
+      .field("name", status.name)
       .field("delivery_kind", static_cast<int>(status.delivery_kind))
       .error();
     throw std::invalid_argument("subscription status delivery kind is invalid");
   }
 
   nlohmann::json body = {
-    {"kind", targetKindString(status.target.kind)},
-    {"name", status.target.name},
+    {"kind", targetKindString(status.kind)},
+    {"name", status.name},
     {"status", "active"},
   };
 
@@ -268,16 +265,16 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionErrorStatus & 
     reason = statusErrorReasonString(status.reason);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", targetKindString(status.target.kind))
-      .field("name", status.target.name)
+      .field("kind", targetKindString(status.kind))
+      .field("name", status.name)
       .field("error_reason", static_cast<int>(status.reason))
       .error();
     throw;
   }
 
   return {
-    {"kind", targetKindString(status.target.kind)},
-    {"name", status.target.name},
+    {"kind", targetKindString(status.kind)},
+    {"name", status.name},
     {"status", "error"},
     {"error", {{"reason", reason}, {"message", status.message}}},
   };
@@ -313,13 +310,13 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
     }
 
     SubscriptionDemand demand;
-    demand.target = parseTarget(entry);
+    parseDemandTarget(entry, demand);
     const auto interval = parseIntervalMs(entry);
     demand.preferred_interval_ms = interval.interval_ms;
     if (interval.boundary != ClampBoundary::kNone) {
       LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
-        .field("kind", targetKindString(demand.target.kind))
-        .field("name", demand.target.name)
+        .field("kind", targetKindString(demand.kind))
+        .field("name", demand.name)
         .field("boundary", clampBoundaryString(interval.boundary))
         .warnThrottle(logClock(), kLogThrottle);
     }
@@ -328,7 +325,7 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
     // configured_source identifiers may share the same text, so name alone would alias
     // distinct protocol targets.
     const auto [it, inserted] = index_by_target.emplace(
-      std::string(targetKindString(demand.target.kind)) + ":" + demand.target.name, heartbeat.subscriptions.size());
+      std::string(targetKindString(demand.kind)) + ":" + demand.name, heartbeat.subscriptions.size());
     if (inserted) {
       heartbeat.subscriptions.push_back(std::move(demand));
       continue;

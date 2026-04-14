@@ -40,8 +40,8 @@ void expectDemand(
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
 
   const SubscriptionDemand & demand = heartbeat.subscriptions[0];
-  EXPECT_EQ(demand.target.kind, expected_kind);
-  EXPECT_EQ(demand.target.name, expected_name);
+  EXPECT_EQ(demand.kind, expected_kind);
+  EXPECT_EQ(demand.name, expected_name);
   EXPECT_EQ(demand.preferred_interval_ms, expected_interval_ms);
 }
 
@@ -57,7 +57,8 @@ SubscriptionStatus makeStatus(
   std::string track_name)
 {
   SubscriptionStatus status;
-  status.target = {target_kind, std::move(target_name)};
+  status.kind = target_kind;
+  status.name = std::move(target_name);
   status.delivery_kind = delivery_kind;
   status.track_name = std::move(track_name);
   return status;
@@ -69,7 +70,7 @@ SubscriptionErrorStatus makeErrorStatus(
   SubscriptionStatusErrorReason reason,
   std::string message)
 {
-  return {{target_kind, std::move(target_name)}, reason, std::move(message)};
+  return {target_kind, std::move(target_name), reason, std::move(message)};
 }
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
@@ -193,7 +194,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
   const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
-  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(heartbeat.subscriptions[0].name, "/battery");
   EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
 }
 
@@ -207,8 +208,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
   const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
-  EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::ConfiguredSource);
-  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "front_camera");
+  EXPECT_EQ(heartbeat.subscriptions[0].kind, SubscriptionTargetKind::ConfiguredSource);
+  EXPECT_EQ(heartbeat.subscriptions[0].name, "front_camera");
   EXPECT_EQ(heartbeat.subscriptions[0].preferred_interval_ms, 25);
 }
 
@@ -221,7 +222,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})"));
   ASSERT_EQ(zero_then_non_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(zero_then_non_zero.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(zero_then_non_zero.subscriptions[0].name, "/battery");
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
   const auto non_zero_then_zero = wire::subscriptions::parseHeartbeat(
@@ -231,7 +232,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":0}}
     ]})"));
   ASSERT_EQ(non_zero_then_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(non_zero_then_zero.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(non_zero_then_zero.subscriptions[0].name, "/battery");
   EXPECT_EQ(non_zero_then_zero.subscriptions[0].preferred_interval_ms, 125);
 }
 
@@ -244,7 +245,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNo
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})"));
   ASSERT_EQ(empty_then_non_zero.subscriptions.size(), 1U);
-  EXPECT_EQ(empty_then_non_zero.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(empty_then_non_zero.subscriptions[0].name, "/battery");
   EXPECT_EQ(empty_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
   const auto non_zero_then_empty = wire::subscriptions::parseHeartbeat(
@@ -254,7 +255,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNo
       {"kind":"topic","name":" /battery ","delivery_preferences":{}}
     ]})"));
   ASSERT_EQ(non_zero_then_empty.subscriptions.size(), 1U);
-  EXPECT_EQ(non_zero_then_empty.subscriptions[0].target.name, "/battery");
+  EXPECT_EQ(non_zero_then_empty.subscriptions[0].name, "/battery");
   EXPECT_EQ(non_zero_then_empty.subscriptions[0].preferred_interval_ms, 125);
 }
 
@@ -270,12 +271,12 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
   const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
-  EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/camera/front");
-  EXPECT_EQ(heartbeat.subscriptions[1].target.kind, SubscriptionTargetKind::ConfiguredSource);
-  EXPECT_EQ(heartbeat.subscriptions[1].target.name, "/camera/front");
-  EXPECT_EQ(heartbeat.subscriptions[2].target.name, "front_camera");
-  EXPECT_EQ(heartbeat.subscriptions[3].target.name, "front_camera/");
+  EXPECT_EQ(heartbeat.subscriptions[0].kind, SubscriptionTargetKind::Topic);
+  EXPECT_EQ(heartbeat.subscriptions[0].name, "/camera/front");
+  EXPECT_EQ(heartbeat.subscriptions[1].kind, SubscriptionTargetKind::ConfiguredSource);
+  EXPECT_EQ(heartbeat.subscriptions[1].name, "/camera/front");
+  EXPECT_EQ(heartbeat.subscriptions[2].name, "front_camera");
+  EXPECT_EQ(heartbeat.subscriptions[3].name, "front_camera/");
 }
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnlyBody)
@@ -491,7 +492,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliveryKind)
 {
   SubscriptionStatus status;
-  status.target = {SubscriptionTargetKind::Topic, "/camera/image"};
+  status.kind = SubscriptionTargetKind::Topic;
+  status.name = "/camera/image";
   status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
   EXPECT_THROW(
