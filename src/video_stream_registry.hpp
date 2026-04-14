@@ -79,12 +79,8 @@ public:
   void shutdown();
 
 private:
-  static VideoStreamInfo makeInfo(const VideoStreamSpec & spec);
   VideoStreamSpec resolveSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
-  std::optional<VideoStreamInfo> findResolved(const VideoStreamSpec & spec) const;
-  void startResolved(const VideoStreamSpec & spec);
-  void stopResolved(const std::string & stream_key);
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;

@@ -45,35 +45,22 @@ public:
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
-  // Thread-safe with shutdown(). The first successful frame lazily publishes the
-  // track, and a resolution change tears down and recreates that publication.
-  // Consumes the supplied I420 buffer because LiveKit takes ownership of the
-  // frame payload during capture. Frames that arrive after shutdown() are
-  // dropped.
   void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override;
-
-  // Idempotent. Marks the publisher closed, waits for any in-flight write() to
-  // leave the critical section, then unpublishes the current track if present.
   void shutdown();
 
 private:
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
+
   // Callbacks run inline on whichever thread calls write()/shutdown(). write()
   // notifies only after the new publication state is committed under mutex_;
   // shutdown() notifies after closed state is visible and after releasing it.
   VideoStreamLifecycleObserver & observer_;
+
   std::shared_ptr<VideoStreamProfiler> profiler_;
-  // Guards shutdown/publication state. write() intentionally holds this across
-  // publish/replace and captureFrame() so shutdown() cannot tear down the
-  // current LiveKit source while a frame handoff is in flight.
   std::mutex mutex_;
   bool is_closed_ = false;
-  // Sticky across replacement-publish failures so a later successful
-  // replacement still reports republished=true.
   bool has_published_ = false;
-  // One active LiveKit publication; width/height are meaningful only while
-  // both source and track are set.
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<VideoTrackHandle> track_;
   int width_ = 0;

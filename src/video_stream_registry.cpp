@@ -59,57 +59,28 @@ VideoStreamRegistry::~VideoStreamRegistry()
 VideoStreamInfo VideoStreamRegistry::resolve(
   SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
-  return makeInfo(resolveSpec(kind, name, interface_type));
+  const auto spec = resolveSpec(kind, name, interface_type);
+  return {spec.stream_key, spec.track_name, spec.degraded_reason.value_or("")};
 }
 
 std::optional<VideoStreamInfo> VideoStreamRegistry::find(
   SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
-  return findResolved(resolveSpec(kind, name, interface_type));
-}
+  const auto spec = resolveSpec(kind, name, interface_type);
 
-void VideoStreamRegistry::start(
-  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
-{
-  startResolved(resolveSpec(kind, name, interface_type));
-}
-
-void VideoStreamRegistry::stop(
-  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
-{
-  stopResolved(resolveSpec(kind, name, interface_type).stream_key);
-}
-
-VideoStreamInfo VideoStreamRegistry::makeInfo(const VideoStreamSpec & spec)
-{
-  return {spec.stream_key, spec.track_name, spec.degraded_reason.value_or("")};
-}
-
-VideoStreamSpec VideoStreamRegistry::resolveSpec(
-  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
-{
-  switch (kind) {
-    case SubscriptionTargetKind::Topic:
-      return resolveRosVideoTopicSpec(*video_stream_config_, name, interface_type);
-    case SubscriptionTargetKind::ConfiguredSource:
-      return resolveConfiguredVideoSourceSpec(*video_stream_config_, name);
-  }
-
-  throw std::invalid_argument("video stream request kind is invalid");
-}
-
-std::optional<VideoStreamInfo> VideoStreamRegistry::findResolved(const VideoStreamSpec & spec) const
-{
   std::lock_guard<std::mutex> lock(mutex_);
   if (instances_.find(spec.stream_key) == instances_.end()) {
     return std::nullopt;
   }
 
-  return makeInfo(spec);
+  return VideoStreamInfo{spec.stream_key, spec.track_name, spec.degraded_reason.value_or("")};
 }
 
-void VideoStreamRegistry::startResolved(const VideoStreamSpec & spec)
+void VideoStreamRegistry::start(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
 {
+  const auto spec = resolveSpec(kind, name, interface_type);
+
   std::shared_ptr<VideoStreamInstance> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -136,8 +107,11 @@ void VideoStreamRegistry::startResolved(const VideoStreamSpec & spec)
   (void)instance->start();
 }
 
-void VideoStreamRegistry::stopResolved(const std::string & stream_key)
+void VideoStreamRegistry::stop(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type)
 {
+  const auto stream_key = resolveSpec(kind, name, interface_type).stream_key;
+
   std::shared_ptr<VideoStreamInstance> instance;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -152,6 +126,19 @@ void VideoStreamRegistry::stopResolved(const std::string & stream_key)
   // Erase first so a concurrent restart gets a fresh registry entry. The detached shared_ptr keeps
   // the instance alive through teardown.
   instance->shutdown();
+}
+
+VideoStreamSpec VideoStreamRegistry::resolveSpec(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
+{
+  switch (kind) {
+    case SubscriptionTargetKind::Topic:
+      return resolveRosVideoTopicSpec(*video_stream_config_, name, interface_type);
+    case SubscriptionTargetKind::ConfiguredSource:
+      return resolveConfiguredVideoSourceSpec(*video_stream_config_, name);
+  }
+
+  throw std::invalid_argument("video stream request kind is invalid");
 }
 
 void VideoStreamRegistry::shutdown()

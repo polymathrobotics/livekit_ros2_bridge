@@ -126,53 +126,13 @@ bool publishUntil(
   return predicate();
 }
 
-VideoStreamInfo resolveRos(
-  const VideoStreamRegistry & registry,
-  const std::string & topic,
-  const std::string & interface_type = kImageInterfaceType)
-{
-  return registry.resolve(SubscriptionTargetKind::Topic, topic, interface_type);
-}
-
-void startRos(
-  VideoStreamRegistry & registry, const std::string & topic, const std::string & interface_type = kImageInterfaceType)
-{
-  registry.start(SubscriptionTargetKind::Topic, topic, interface_type);
-}
-
-void stopRos(
-  VideoStreamRegistry & registry, const std::string & topic, const std::string & interface_type = kImageInterfaceType)
-{
-  registry.stop(SubscriptionTargetKind::Topic, topic, interface_type);
-}
-
-VideoStreamInfo resolveConfiguredSource(const VideoStreamRegistry & registry, const std::string & source_name)
-{
-  return registry.resolve(SubscriptionTargetKind::ConfiguredSource, source_name);
-}
-
-void startConfiguredSource(VideoStreamRegistry & registry, const std::string & source_name)
-{
-  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
-}
-
-void stopConfiguredSource(VideoStreamRegistry & registry, const std::string & source_name)
-{
-  registry.stop(SubscriptionTargetKind::ConfiguredSource, source_name);
-}
-
-ConfiguredVideoStreamSource makeConfiguredSourceDefinition()
-{
-  ConfiguredVideoStreamSource source;
-  source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  return source;
-}
-
 VideoStreamConfig makeConfiguredSourceConfig(std::initializer_list<const char *> source_names)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
   for (const char * source_name : source_names) {
-    config.configured_sources.emplace(source_name, makeConfiguredSourceDefinition());
+    ConfiguredVideoStreamSource source;
+    source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+    config.configured_sources.emplace(source_name, std::move(source));
   }
   return config;
 }
@@ -203,14 +163,14 @@ TEST_F(VideoStreamRegistryTest, SharedRosStreamUsesSingleSubscriptionAndSinglePu
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/shared";
-  const auto info = resolveRos(registry, topic);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic);
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage();
@@ -228,7 +188,7 @@ TEST_F(VideoStreamRegistryTest, ConcurrentStartSharesSingleRosSubscriptionAndTra
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/concurrent_shared";
-  const auto info = resolveRos(registry, topic);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -245,7 +205,7 @@ TEST_F(VideoStreamRegistryTest, ConcurrentStartSharesSingleRosSubscriptionAndTra
   auto start_stream = [&registry, &topic, release](std::promise<void> started_promise) mutable {
     started_promise.set_value();
     release.wait();
-    startRos(registry, topic);
+    registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   };
 
   auto first_start = std::async(std::launch::async, start_stream, std::move(first_started_promise));
@@ -276,13 +236,13 @@ TEST_F(VideoStreamRegistryTest, StopUnpublishesRosTrackAndRemovesSubscription)
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/stop";
-  const auto info = resolveRos(registry, topic);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage();
@@ -290,7 +250,7 @@ TEST_F(VideoStreamRegistryTest, StopUnpublishesRosTrackAndRemovesSubscription)
     return room_connection.state->published_video_track_names.size() == 1U;
   }));
 
-  stopRos(registry, topic);
+  registry.stop(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
 
   EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{info.track_name}));
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 0U; }));
@@ -303,21 +263,21 @@ TEST_F(VideoStreamRegistryTest, StopBeforeFirstFrameRemovesRosSubscriptionAndAll
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/restart";
-  const auto info = resolveRos(registry, topic);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
-  stopRos(registry, topic);
+  registry.stop(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
 
   EXPECT_TRUE(room_connection.state->unpublished_video_track_names.empty());
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 0U; }));
 
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeRgbImage(), [&room_connection]() {
@@ -334,16 +294,16 @@ TEST_F(VideoStreamRegistryTest, StopLeavesOtherRosStreamsRunning)
 
   const std::string first_topic = "/camera/stop_one/first";
   const std::string second_topic = "/camera/stop_one/second";
-  const auto first_info = resolveRos(registry, first_topic);
-  const auto second_info = resolveRos(registry, second_topic);
+  const auto first_info = registry.resolve(SubscriptionTargetKind::Topic, first_topic, kImageInterfaceType);
+  const auto second_info = registry.resolve(SubscriptionTargetKind::Topic, second_topic, kImageInterfaceType);
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, first_topic);
-  startRos(registry, second_topic);
+  registry.start(SubscriptionTargetKind::Topic, first_topic, kImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, second_topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 
@@ -354,7 +314,7 @@ TEST_F(VideoStreamRegistryTest, StopLeavesOtherRosStreamsRunning)
     return room_connection.state->published_video_track_names.size() == 2U;
   }));
 
-  stopRos(registry, first_topic);
+  registry.stop(SubscriptionTargetKind::Topic, first_topic, kImageInterfaceType);
 
   EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{first_info.track_name}));
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 0U; }));
@@ -368,13 +328,13 @@ TEST_F(VideoStreamRegistryTest, ReliableRawRosPublisherAcceptsOddSizedFrames)
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/reliable_odd_dimensions";
-  const auto info = resolveRos(registry, topic);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(1).reliable());
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage(3, 5);
@@ -392,13 +352,13 @@ TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsImageTransportStyle
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/compressed";
-  const auto info = resolveRos(registry, topic, kCompressedImageInterfaceType);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kCompressedImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::CompressedImage>(topic, rclcpp::QoS(1).reliable());
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic, kCompressedImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, topic, kCompressedImageInterfaceType);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -420,13 +380,13 @@ TEST_F(VideoStreamRegistryTest, CompressedRosPublisherAcceptsUppercasePrimaryJpe
   VideoStreamRegistry registry(*node, room_connection);
 
   const std::string topic = "/camera/compressed_primary_jpeg";
-  const auto info = resolveRos(registry, topic, kCompressedImageInterfaceType);
+  const auto info = registry.resolve(SubscriptionTargetKind::Topic, topic, kCompressedImageInterfaceType);
   auto publisher = node->create_publisher<sensor_msgs::msg::CompressedImage>(topic, rclcpp::QoS(1).reliable());
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic, kCompressedImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, topic, kCompressedImageInterfaceType);
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
@@ -455,7 +415,7 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesRawRosStreamActivity)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic);
+  registry.start(SubscriptionTargetKind::Topic, topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeRgbImage();
@@ -490,7 +450,7 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesCompressedRosStreamActivity)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, topic, kCompressedImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, topic, kCompressedImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   const auto image = makeTransportStyleJpegImage();
@@ -518,16 +478,16 @@ TEST_F(VideoStreamRegistryTest, ConfiguredSourceStartIsIdempotentAndStopUnpublis
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
   const std::string source_name = "/sources/front";
-  const auto info = resolveConfiguredSource(registry, source_name);
+  const auto info = registry.resolve(SubscriptionTargetKind::ConfiguredSource, source_name);
 
-  startConfiguredSource(registry, source_name);
-  startConfiguredSource(registry, source_name);
+  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
+  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
 
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(room_connection.state->published_video_track_names, (std::vector<std::string>{info.track_name}));
 
-  stopConfiguredSource(registry, source_name);
+  registry.stop(SubscriptionTargetKind::ConfiguredSource, source_name);
 
   EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{info.track_name}));
 }
@@ -542,7 +502,7 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
 
   const std::string source_name = "/sources/profiled_front";
 
-  startConfiguredSource(registry, source_name);
+  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
 
@@ -575,8 +535,8 @@ TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndIsIdempotent)
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
   const std::string source_name = "/sources/shutdown";
-  const auto info = resolveConfiguredSource(registry, source_name);
-  startConfiguredSource(registry, source_name);
+  const auto info = registry.resolve(SubscriptionTargetKind::ConfiguredSource, source_name);
+  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
 
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
@@ -613,7 +573,7 @@ TEST_F(VideoStreamRegistryTest, StartRejectsNewStreamsAfterShutdown)
   registry.shutdown();
 
   try {
-    startConfiguredSource(registry, source_name);
+    registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Video stream registry is shut down.");
@@ -636,8 +596,8 @@ TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTr
      {VideoPublishCodec::Vp9, 250000, 12.0, VideoPublishSimulcast::Disabled}});
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
-  const auto first_info = resolveRos(registry, first_topic);
-  const auto second_info = resolveRos(registry, second_topic);
+  const auto first_info = registry.resolve(SubscriptionTargetKind::Topic, first_topic, kImageInterfaceType);
+  const auto second_info = registry.resolve(SubscriptionTargetKind::Topic, second_topic, kImageInterfaceType);
 
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
@@ -645,8 +605,8 @@ TEST_F(VideoStreamRegistryTest, PerStreamPublishConfigIsAppliedToEachPublishedTr
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  startRos(registry, first_topic);
-  startRos(registry, second_topic);
+  registry.start(SubscriptionTargetKind::Topic, first_topic, kImageInterfaceType);
+  registry.start(SubscriptionTargetKind::Topic, second_topic, kImageInterfaceType);
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 
