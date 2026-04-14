@@ -824,7 +824,7 @@ TEST(SubscriptionLeaseManagerTest, OnRemoteParticipantDisconnectedRejectsEmptyId
     [&registry]() { registry.onRemoteParticipantDisconnected(""); }, "requester_identity is required");
 }
 
-TEST(SubscriptionLeaseManagerTest, ShutdownReportsUnavailableSubscriptionsAndFurtherLifecycleCallsAreNoOps)
+TEST(SubscriptionLeaseManagerTest, ShutdownReportsNotFoundSubscriptionsAndFurtherLifecycleCallsAreNoOps)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_rejection_test");
@@ -848,7 +848,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownReportsUnavailableSubscriptionsAndFur
   const auto unavailable =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   expectStatusEntry(unavailable, "topic", topic.c_str(), "error");
-  EXPECT_EQ(unavailable["error"]["reason"], "unavailable");
+  EXPECT_EQ(unavailable["error"]["reason"], "not_found");
   EXPECT_EQ(unavailable["error"]["message"], "Subscription registry is shut down.");
 
   registry.pruneExpiredLeases();
@@ -870,7 +870,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
     *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsUnavailable)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsNotFound)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
@@ -882,7 +882,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsU
   manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
 
   expectPublishedError(
-    *state_, "requester-1", "topic", "/camera/front", "unavailable", "Video stream registry is unavailable.");
+    *state_, "requester-1", "topic", "/camera/front", "not_found", "Video stream registry is unavailable.");
   (void)publisher;
 }
 

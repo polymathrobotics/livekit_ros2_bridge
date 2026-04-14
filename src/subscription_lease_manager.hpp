@@ -39,11 +39,6 @@ namespace livekit_ros2_bridge
 class RoomConnection;
 class VideoStreamRegistry;
 
-struct StreamUnavailableError : std::runtime_error
-{
-  using std::runtime_error::runtime_error;
-};
-
 // Maps heartbeat-driven subscription demands onto shared data/video runtimes, tracks requester
 // leases, and publishes subscription status back to the requester.
 class SubscriptionLeaseManager final
@@ -79,13 +74,6 @@ private:
   struct SessionLease
   {
     std::string requester_identity;
-    Clock::time_point expiry;
-  };
-
-  struct ResolvedLease
-  {
-    std::string requester_identity;
-    std::optional<std::string> session_id;
     Clock::time_point expiry;
   };
 
@@ -132,15 +120,21 @@ private:
   std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
 
-  std::optional<ResolvedLease> resolveLease(
+  std::optional<std::string> resolveRequesterIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
-  SubscriptionReportedStatus renewHeartbeatSubscription(const ResolvedLease & lease, const SubscriptionDemand & demand);
-  void publishStatuses(const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses);
+  void renewSessionLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id, Clock::time_point expiry);
+  SubscriptionReportedStatus renewHeartbeatSubscription(
+    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
+  void publishStatuses(
+    const std::string & requester_identity,
+    const std::optional<std::string> & session_id,
+    Clock::time_point expiry,
+    const std::vector<SubscriptionReportedStatus> & statuses);
   SubscriptionStatus renewSubscription(
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   void republishDataTracks(const std::string & requester_identity);
   SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
-  VideoStreamRegistry & videoRegistry() const;
   SubscriptionStatus renewExistingSubscription(
     SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus createSubscription(
