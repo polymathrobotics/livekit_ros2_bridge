@@ -22,6 +22,7 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
+#include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
@@ -35,7 +36,7 @@ void expectDemand(
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
 
   const SubscriptionDemand & demand = heartbeat.subscriptions[0];
@@ -46,7 +47,7 @@ void expectDemand(
 
 void expectParseError(const nlohmann::json & body)
 {
-  EXPECT_THROW((void)wire::subscriptions::parseSubscriptionHeartbeat(body), std::invalid_argument);
+  EXPECT_THROW((void)wire::subscriptions::parseHeartbeat(body), std::invalid_argument);
 }
 
 SubscriptionStatus makeStatus(
@@ -103,24 +104,24 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
 {
-  const auto trimmed = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto trimmed = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
       "session_id":"  session-1  ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
   ASSERT_TRUE(trimmed.session_id.has_value());
   EXPECT_EQ(*trimmed.session_id, "session-1");
 
-  const auto missing = wire::subscriptions::parseSubscriptionHeartbeat(
+  const auto missing = wire::subscriptions::parseHeartbeat(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})"));
   EXPECT_EQ(missing.session_id, std::nullopt);
 
-  const auto blank = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto blank = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
       "session_id":"   ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
   EXPECT_EQ(blank.session_id, std::nullopt);
 
-  const auto null_id = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto null_id = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
       "session_id":null,
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
@@ -189,7 +190,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":25}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/battery");
@@ -203,7 +204,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
       {"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
       {"kind":" configured_source ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
     ]})");
-  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::ConfiguredSource);
@@ -213,7 +214,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDuringCoalescing)
 {
-  const auto zero_then_non_zero = wire::subscriptions::parseSubscriptionHeartbeat(
+  const auto zero_then_non_zero = wire::subscriptions::parseHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":0}},
@@ -223,7 +224,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
-  const auto non_zero_then_zero = wire::subscriptions::parseSubscriptionHeartbeat(
+  const auto non_zero_then_zero = wire::subscriptions::parseHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
@@ -236,7 +237,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoPreferenceDuringCoalescing)
 {
-  const auto empty_then_non_zero = wire::subscriptions::parseSubscriptionHeartbeat(
+  const auto empty_then_non_zero = wire::subscriptions::parseHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{}},
@@ -246,7 +247,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNo
   EXPECT_EQ(empty_then_non_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(empty_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
-  const auto non_zero_then_empty = wire::subscriptions::parseSubscriptionHeartbeat(
+  const auto non_zero_then_empty = wire::subscriptions::parseHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
@@ -266,7 +267,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
       {"kind":"configured_source","name":"front_camera","delivery_preferences":{"interval_ms":25}},
       {"kind":"configured_source","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
@@ -316,7 +317,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{topic_data, configured_source_video},
       std::nullopt,
       std::chrono::steady_clock::time_point{}),
@@ -350,7 +351,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
@@ -404,8 +405,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMeta
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeSubscriptionStatuses(std::vector<SubscriptionReportedStatus>{topic_data}, lease, now),
-    expected);
+    wire::subscriptions::serializeStatuses(std::vector<SubscriptionReportedStatus>{topic_data}, lease, now), expected);
 }
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
@@ -435,7 +435,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{
         configured_source_video,
         makeErrorStatus(
@@ -456,7 +456,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliv
   status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
   EXPECT_THROW(
-    (void)wire::subscriptions::serializeSubscriptionStatuses(
+    (void)wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{status}, std::nullopt, std::chrono::steady_clock::time_point{}),
     std::invalid_argument);
 }

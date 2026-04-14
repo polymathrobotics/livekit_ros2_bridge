@@ -25,6 +25,7 @@
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_registry.hpp"
+#include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -38,7 +39,7 @@ const auto kLogger = rclcpp::get_logger("subscription_registry");
 template <typename EventT>
 EventT && addTargetFields(EventT && event, const std::string & resource, SubscriptionTargetKind target_kind)
 {
-  event.field("resource", resource).field("kind", subscriptionTargetKindString(target_kind));
+  event.field("resource", resource).field("kind", wire::subscriptions::targetKindString(target_kind));
   return std::forward<EventT>(event);
 }
 
@@ -203,7 +204,7 @@ SubscriptionStatus SubscriptionRegistry::renewSubscription(
   SubscriptionStatus status = statusFor(subscription_it->second);
   LogEvent event(kLogger, "subscription_created");
   addTargetFields(event, resource, target_kind)
-    .field("delivery", subscriptionDeliveryKindString(status.delivery_kind))
+    .field("delivery", wire::subscriptions::deliveryKindString(status.delivery_kind))
     .field("requester_identity", requester_identity);
   if (const auto * video = std::get_if<VideoRuntime>(&subscription_it->second.runtime)) {
     event.field("stream_key", video->stream_spec.stream_key).field("track_name", video->track_name);
@@ -456,7 +457,7 @@ int SubscriptionRegistry::appliedIntervalMs(const std::map<std::string, Lease> &
 
 std::string SubscriptionRegistry::keyFor(SubscriptionTargetKind target_kind, const std::string & resource)
 {
-  return std::string(subscriptionTargetKindString(target_kind)) + ":" + resource;
+  return std::string(wire::subscriptions::targetKindString(target_kind)) + ":" + resource;
 }
 
 void SubscriptionRegistry::removeLeasesIf(

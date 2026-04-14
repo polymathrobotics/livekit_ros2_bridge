@@ -26,10 +26,10 @@
 #include <variant>
 #include <vector>
 
+#include "core/subscriptions.hpp"
 #include "data_stream_instance.hpp"
 #include "rclcpp/node.hpp"
 #include "subscription_qos.hpp"
-#include "subscription_types.hpp"
 #include "utils/quiesce_gate.hpp"
 #include "video_stream_spec.hpp"
 

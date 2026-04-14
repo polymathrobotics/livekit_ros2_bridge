@@ -81,7 +81,7 @@ void PacketRouter::handle(const IncomingPacket & packet) const
   } else if (packet.topic == wire::protocol::kControlSubscriptionsHeartbeat) {
     try {
       nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-      auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
+      auto heartbeat = wire::subscriptions::parseHeartbeat(body);
       submitToExecutor(
         [this, requester_identity = packet.requester_identity, heartbeat = std::move(heartbeat)]() mutable {
           subscription_heartbeat_processor_.process(requester_identity, heartbeat);

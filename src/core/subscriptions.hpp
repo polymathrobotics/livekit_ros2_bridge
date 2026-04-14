@@ -15,13 +15,9 @@
 #pragma once
 
 #include <optional>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
-
-#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -32,30 +28,6 @@ enum class SubscriptionTargetKind
   Topic,
   ConfiguredSource,
 };
-
-inline const char * subscriptionTargetKindString(SubscriptionTargetKind kind)
-{
-  switch (kind) {
-    case SubscriptionTargetKind::Topic:
-      return "topic";
-    case SubscriptionTargetKind::ConfiguredSource:
-      return "configured_source";
-  }
-
-  throw std::invalid_argument("subscription target kind is invalid");
-}
-
-inline std::optional<SubscriptionTargetKind> subscriptionTargetKindFromString(std::string_view kind)
-{
-  if (kind == "topic") {
-    return SubscriptionTargetKind::Topic;
-  }
-  if (kind == "configured_source") {
-    return SubscriptionTargetKind::ConfiguredSource;
-  }
-
-  return std::nullopt;
-}
 
 // A canonical subscription identifier shared by heartbeat parsing and subscription-status serialization.
 struct SubscriptionTarget
@@ -88,18 +60,6 @@ enum class SubscriptionDeliveryKind
   kData,
   kVideo,
 };
-
-inline const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind delivery_kind)
-{
-  switch (delivery_kind) {
-    case SubscriptionDeliveryKind::kData:
-      return wire::protocol::kDeliveryKindData;
-    case SubscriptionDeliveryKind::kVideo:
-      return wire::protocol::kDeliveryKindVideo;
-  }
-
-  throw std::invalid_argument("subscription delivery kind is invalid");
-}
 
 // Active control-path subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionStatus

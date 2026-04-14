@@ -28,6 +28,7 @@
 #include "room_connection.hpp"
 #include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
+#include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
@@ -180,7 +181,7 @@ void SubscriptionHeartbeatProcessor::publishStatuses(
     lease_metadata = wire::subscriptions::SubscriptionStatusLease{*lease.session_id, lease.expiry};
   }
 
-  const std::string body = wire::subscriptions::serializeSubscriptionStatuses(statuses, lease_metadata).dump();
+  const std::string body = wire::subscriptions::serializeStatuses(statuses, lease_metadata).dump();
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {lease.requester_identity};

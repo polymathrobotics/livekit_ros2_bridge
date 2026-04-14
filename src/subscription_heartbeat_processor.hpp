@@ -21,8 +21,8 @@
 #include <vector>
 
 #include "access_policy.hpp"
+#include "core/subscriptions.hpp"
 #include "rclcpp/clock.hpp"
-#include "subscription_types.hpp"
 #include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge

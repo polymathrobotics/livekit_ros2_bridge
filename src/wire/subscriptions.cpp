@@ -35,6 +35,42 @@
 namespace livekit_ros2_bridge::wire::subscriptions
 {
 
+const char * targetKindString(SubscriptionTargetKind kind)
+{
+  switch (kind) {
+    case SubscriptionTargetKind::Topic:
+      return "topic";
+    case SubscriptionTargetKind::ConfiguredSource:
+      return "configured_source";
+  }
+
+  throw std::invalid_argument("subscription target kind is invalid");
+}
+
+std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind)
+{
+  if (kind == "topic") {
+    return SubscriptionTargetKind::Topic;
+  }
+  if (kind == "configured_source") {
+    return SubscriptionTargetKind::ConfiguredSource;
+  }
+
+  return std::nullopt;
+}
+
+const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind)
+{
+  switch (delivery_kind) {
+    case SubscriptionDeliveryKind::kData:
+      return wire::protocol::kDeliveryKindData;
+    case SubscriptionDeliveryKind::kVideo:
+      return wire::protocol::kDeliveryKindVideo;
+  }
+
+  throw std::invalid_argument("subscription delivery kind is invalid");
+}
+
 namespace
 {
 
@@ -80,7 +116,7 @@ const char * clampBoundaryString(ClampBoundary boundary)
   return "unknown";
 }
 
-const char * subscriptionStatusErrorReasonString(SubscriptionStatusErrorReason reason)
+const char * statusErrorReasonString(SubscriptionStatusErrorReason reason)
 {
   switch (reason) {
     case SubscriptionStatusErrorReason::kForbidden:
@@ -155,7 +191,7 @@ SubscriptionTarget parseTarget(const nlohmann::json & entry)
     throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
   }
 
-  const auto parsed_kind = subscriptionTargetKindFromString(trim(kind_it->get_ref<const std::string &>()));
+  const auto parsed_kind = targetKindFromString(trim(kind_it->get_ref<const std::string &>()));
   if (!parsed_kind.has_value()) {
     throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
   }
@@ -190,7 +226,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
     status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
   {
     LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", subscriptionTargetKindString(status.target.kind))
+      .field("kind", targetKindString(status.target.kind))
       .field("name", status.target.name)
       .field("delivery_kind", static_cast<int>(status.delivery_kind))
       .error();
@@ -198,7 +234,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
   }
 
   nlohmann::json body = {
-    {"kind", subscriptionTargetKindString(status.target.kind)},
+    {"kind", targetKindString(status.target.kind)},
     {"name", status.target.name},
     {"status", "active"},
   };
@@ -211,7 +247,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
   }
 
   nlohmann::json delivery = {
-    {"kind", subscriptionDeliveryKindString(status.delivery_kind)},
+    {"kind", deliveryKindString(status.delivery_kind)},
     {"track_name", status.track_name},
   };
   if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
@@ -229,10 +265,10 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionErrorStatus & 
 {
   const char * reason = nullptr;
   try {
-    reason = subscriptionStatusErrorReasonString(status.reason);
+    reason = statusErrorReasonString(status.reason);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", subscriptionTargetKindString(status.target.kind))
+      .field("kind", targetKindString(status.target.kind))
       .field("name", status.target.name)
       .field("error_reason", static_cast<int>(status.reason))
       .error();
@@ -240,7 +276,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionErrorStatus & 
   }
 
   return {
-    {"kind", subscriptionTargetKindString(status.target.kind)},
+    {"kind", targetKindString(status.target.kind)},
     {"name", status.target.name},
     {"status", "error"},
     {"error", {{"reason", reason}, {"message", status.message}}},
@@ -255,7 +291,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionReportedStatus
 
 }  // namespace
 
-SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
+SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_target;
@@ -282,7 +318,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
     demand.preferred_interval_ms = interval.interval_ms;
     if (interval.boundary != ClampBoundary::kNone) {
       LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
-        .field("kind", subscriptionTargetKindString(demand.target.kind))
+        .field("kind", targetKindString(demand.target.kind))
         .field("name", demand.target.name)
         .field("boundary", clampBoundaryString(interval.boundary))
         .warnThrottle(logClock(), kLogThrottle);
@@ -292,8 +328,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
     // configured_source identifiers may share the same text, so name alone would alias
     // distinct protocol targets.
     const auto [it, inserted] = index_by_target.emplace(
-      std::string(subscriptionTargetKindString(demand.target.kind)) + ":" + demand.target.name,
-      heartbeat.subscriptions.size());
+      std::string(targetKindString(demand.target.kind)) + ":" + demand.target.name, heartbeat.subscriptions.size());
     if (inserted) {
       heartbeat.subscriptions.push_back(std::move(demand));
       continue;
@@ -315,7 +350,7 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
   return heartbeat;
 }
 
-nlohmann::json serializeSubscriptionStatuses(
+nlohmann::json serializeStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses,
   const std::optional<SubscriptionStatusLease> & lease,
   std::chrono::steady_clock::time_point now)
@@ -340,9 +375,9 @@ nlohmann::json serializeSubscriptionStatuses(
   return body;
 }
 
-nlohmann::json serializeSubscriptionStatuses(
+nlohmann::json serializeStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease)
 {
-  return serializeSubscriptionStatuses(statuses, lease, std::chrono::steady_clock::now());
+  return serializeStatuses(statuses, lease, std::chrono::steady_clock::now());
 }
 }  // namespace livekit_ros2_bridge::wire::subscriptions
