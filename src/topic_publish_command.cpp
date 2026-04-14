@@ -59,7 +59,7 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
   std::string topic;
   try {
     topic = normalizeRosResourceName(
-      parseRequiredNonEmptyTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
+      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected").field("reason", "invalid_topic").debug();
     throw;
@@ -67,7 +67,7 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
 
   std::string interface_type;
   try {
-    interface_type = parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError);
+    interface_type = wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected")
       .field("reason", "invalid_interface_type")
@@ -78,7 +78,7 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
 
   std::vector<std::uint8_t> cdr;
   try {
-    cdr = cdr_payload::parse(body, "message");
+    cdr = wire::cdr::parse(body, "message");
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected")
       .field("reason", "invalid_message")

@@ -35,7 +35,7 @@ void expectDemand(
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
 
   const SubscriptionDemand & demand = heartbeat.subscriptions[0];
@@ -46,7 +46,7 @@ void expectDemand(
 
 void expectParseError(const nlohmann::json & body)
 {
-  EXPECT_THROW((void)stream_control_payloads::parseSubscriptionHeartbeat(body), std::invalid_argument);
+  EXPECT_THROW((void)wire::subscriptions::parseSubscriptionHeartbeat(body), std::invalid_argument);
 }
 
 SubscriptionStatus makeStatus(
@@ -103,24 +103,24 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
 {
-  const auto trimmed = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto trimmed = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":"  session-1  ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
   ASSERT_TRUE(trimmed.session_id.has_value());
   EXPECT_EQ(*trimmed.session_id, "session-1");
 
-  const auto missing = stream_control_payloads::parseSubscriptionHeartbeat(
+  const auto missing = wire::subscriptions::parseSubscriptionHeartbeat(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})"));
   EXPECT_EQ(missing.session_id, std::nullopt);
 
-  const auto blank = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto blank = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":"   ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
   EXPECT_EQ(blank.session_id, std::nullopt);
 
-  const auto null_id = stream_control_payloads::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
+  const auto null_id = wire::subscriptions::parseSubscriptionHeartbeat(nlohmann::json::parse(R"({
       "session_id":null,
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })"));
@@ -189,7 +189,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":25}},
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.name, "/battery");
@@ -203,7 +203,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
       {"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
       {"kind":" configured_source ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
     ]})");
-  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::ConfiguredSource);
@@ -213,7 +213,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDuringCoalescing)
 {
-  const auto zero_then_non_zero = stream_control_payloads::parseSubscriptionHeartbeat(
+  const auto zero_then_non_zero = wire::subscriptions::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":0}},
@@ -223,7 +223,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(zero_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
-  const auto non_zero_then_zero = stream_control_payloads::parseSubscriptionHeartbeat(
+  const auto non_zero_then_zero = wire::subscriptions::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
@@ -236,7 +236,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDu
 
 TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoPreferenceDuringCoalescing)
 {
-  const auto empty_then_non_zero = stream_control_payloads::parseSubscriptionHeartbeat(
+  const auto empty_then_non_zero = wire::subscriptions::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{}},
@@ -246,7 +246,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNo
   EXPECT_EQ(empty_then_non_zero.subscriptions[0].target.name, "/battery");
   EXPECT_EQ(empty_then_non_zero.subscriptions[0].preferred_interval_ms, 125);
 
-  const auto non_zero_then_empty = stream_control_payloads::parseSubscriptionHeartbeat(
+  const auto non_zero_then_empty = wire::subscriptions::parseSubscriptionHeartbeat(
     nlohmann::json::parse(
       R"({"subscriptions":[
       {"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}},
@@ -266,7 +266,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
       {"kind":"configured_source","name":"front_camera","delivery_preferences":{"interval_ms":25}},
       {"kind":"configured_source","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+  const auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
 
   ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
   EXPECT_EQ(heartbeat.subscriptions[0].target.kind, SubscriptionTargetKind::Topic);
@@ -292,8 +292,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
   configured_source_video.degraded_reason = "source warming up";
 
   nlohmann::json expected = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -316,7 +316,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
   });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeSubscriptionStatuses(
       std::vector<SubscriptionReportedStatus>{topic_data, configured_source_video},
       std::nullopt,
       std::chrono::steady_clock::time_point{}),
@@ -326,8 +326,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyBody)
 {
   nlohmann::json expected = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -350,7 +350,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
   });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeSubscriptionStatuses(
       std::vector<SubscriptionReportedStatus>{
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
@@ -381,12 +381,12 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMeta
   topic_data.applied_interval_ms = 100;
 
   const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
-  const auto lease = std::optional<stream_control_payloads::SubscriptionStatusLease>{
-    stream_control_payloads::SubscriptionStatusLease{"session-1", now + std::chrono::milliseconds(45000)}};
+  const auto lease = std::optional<wire::subscriptions::SubscriptionStatusLease>{
+    wire::subscriptions::SubscriptionStatusLease{"session-1", now + std::chrono::milliseconds(45000)}};
 
   nlohmann::json expected = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
     {"session_id", "session-1"},
     {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
@@ -404,8 +404,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMeta
   });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatuses(
-      std::vector<SubscriptionReportedStatus>{topic_data}, lease, now),
+    wire::subscriptions::serializeSubscriptionStatuses(std::vector<SubscriptionReportedStatus>{topic_data}, lease, now),
     expected);
 }
 
@@ -418,8 +417,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
     "ros.video.configured_source.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -436,7 +435,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
   });
 
   EXPECT_EQ(
-    stream_control_payloads::serializeSubscriptionStatuses(
+    wire::subscriptions::serializeSubscriptionStatuses(
       std::vector<SubscriptionReportedStatus>{
         configured_source_video,
         makeErrorStatus(
@@ -457,7 +456,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliv
   status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
 
   EXPECT_THROW(
-    (void)stream_control_payloads::serializeSubscriptionStatuses(
+    (void)wire::subscriptions::serializeSubscriptionStatuses(
       std::vector<SubscriptionReportedStatus>{status}, std::nullopt, std::chrono::steady_clock::time_point{}),
     std::invalid_argument);
 }

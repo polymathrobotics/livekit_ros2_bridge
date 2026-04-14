@@ -28,7 +28,7 @@ namespace livekit_ros2_bridge
 
 using Json = nlohmann::json;
 
-namespace service_call_payloads
+namespace wire::services
 {
 
 namespace
@@ -57,8 +57,8 @@ ServiceCallRequest parse(const std::string & payload)
 {
   Json body;
   try {
-    body =
-      parseJsonObject(payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
+    body = wire::detail::parseJsonObject(
+      payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("payload", exc.what());
   }
@@ -67,8 +67,8 @@ ServiceCallRequest parse(const std::string & payload)
   // Canonicalize at the protocol boundary so policy checks and downstream caches do not have to
   // reason about multiple spellings of the same ROS service name.
   try {
-    request.service =
-      normalizeRosResourceName(parseRequiredNonEmptyTrimmedStringField(body, "service", "service is required"));
+    request.service = normalizeRosResourceName(
+      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "service", "service is required"));
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("service", exc.what());
   }
@@ -77,7 +77,8 @@ ServiceCallRequest parse(const std::string & payload)
     // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
     // than "use an empty interface type".
     request.interface_type =
-      parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string").value_or("");
+      wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "interface_type", "interface_type must be a string")
+        .value_or("");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("interface_type", exc.what());
   }
@@ -85,7 +86,7 @@ ServiceCallRequest parse(const std::string & payload)
   // Service calls always forward a concrete serialized request message; an empty payload is
   // treated as malformed rather than as a typed default instance.
   try {
-    request.request_payload = cdr_payload::parse(body, "request");
+    request.request_payload = cdr::parse(body, "request");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("request", exc.what());
   }
@@ -124,12 +125,12 @@ std::string serialize(
   return Json{
     {"ok", true},
     {"service", Json{{"name", service}, {"interface_type", interface_type}}},
-    {"response", cdr_payload::serialize(response)},
+    {"response", cdr::serialize(response)},
     {"elapsed_ms", elapsed_ms},
   }
     .dump();
 }
 
-}  // namespace service_call_payloads
+}  // namespace wire::services
 
 }  // namespace livekit_ros2_bridge

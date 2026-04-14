@@ -58,7 +58,7 @@ PacketRouter::PacketRouter(
 
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
-  if (packet.topic == protocol::kControlTopicPublish) {
+  if (packet.topic == wire::protocol::kControlTopicPublish) {
     bool missing_requester_identity = false;
     try {
       // Unlike heartbeats, publish commands have no session-based requester recovery path
@@ -78,10 +78,10 @@ void PacketRouter::handle(const IncomingPacket & packet) const
         .fieldIf(!missing_requester_identity, "error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-  } else if (packet.topic == protocol::kControlSubscriptionsHeartbeat) {
+  } else if (packet.topic == wire::protocol::kControlSubscriptionsHeartbeat) {
     try {
       nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-      auto heartbeat = stream_control_payloads::parseSubscriptionHeartbeat(body);
+      auto heartbeat = wire::subscriptions::parseSubscriptionHeartbeat(body);
       submitToExecutor(
         [this, requester_identity = packet.requester_identity, heartbeat = std::move(heartbeat)]() mutable {
           subscription_heartbeat_processor_.process(requester_identity, heartbeat);

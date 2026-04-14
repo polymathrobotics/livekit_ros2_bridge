@@ -50,7 +50,7 @@ nlohmann::json makeBody()
   return nlohmann::json{
     {"topic", "/chatter"},
     {"interface_type", "std_msgs/msg/String"},
-    {"message", cdr_payload::serialize(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
+    {"message", wire::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
   };
 }
 
@@ -83,7 +83,7 @@ TEST(TopicPublishCommandTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayl
 
   auto body = makeBody();
   body["topic"] = "  battery/cmd  ";
-  body["message"] = cdr_payload::serialize(cdr);
+  body["message"] = wire::cdr::serialize(cdr);
 
   const auto command = parse(body);
 
@@ -152,7 +152,7 @@ TEST(TopicPublishCommandTest, RejectsUnsupportedMessageContentType)
 TEST(TopicPublishCommandTest, RejectsEmptyMessagePayload)
 {
   auto body = makeBody();
-  body["message"] = cdr_payload::serialize(std::vector<std::uint8_t>{});
+  body["message"] = wire::cdr::serialize(std::vector<std::uint8_t>{});
   expectInvalidArgument(
     [&body]() { (void)parse(body); }, "Publish command requires a non-empty message.payload_base64 field.");
 }

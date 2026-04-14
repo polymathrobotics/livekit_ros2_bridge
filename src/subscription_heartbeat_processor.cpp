@@ -175,16 +175,16 @@ void SubscriptionHeartbeatProcessor::publishStatuses(
     return;
   }
 
-  std::optional<stream_control_payloads::SubscriptionStatusLease> lease_metadata;
+  std::optional<wire::subscriptions::SubscriptionStatusLease> lease_metadata;
   if (lease.session_id.has_value()) {
-    lease_metadata = stream_control_payloads::SubscriptionStatusLease{*lease.session_id, lease.expiry};
+    lease_metadata = wire::subscriptions::SubscriptionStatusLease{*lease.session_id, lease.expiry};
   }
 
-  const std::string body = stream_control_payloads::serializeSubscriptionStatuses(statuses, lease_metadata).dump();
+  const std::string body = wire::subscriptions::serializeSubscriptionStatuses(statuses, lease_metadata).dump();
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {lease.requester_identity};
-  packet.topic = protocol::kControlSubscriptionsStatus;
+  packet.topic = wire::protocol::kControlSubscriptionsStatus;
 
   try {
     room_connection_.publishPacket(packet);

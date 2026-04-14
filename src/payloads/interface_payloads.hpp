@@ -22,10 +22,7 @@
 
 #include "interface_definition_lookup.hpp"
 
-namespace livekit_ros2_bridge
-{
-
-namespace interface_payloads
+namespace livekit_ros2_bridge::wire::interfaces
 {
 
 /// Parse an interfaces-get request body of the form
@@ -45,6 +42,4 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 /// while preserving the input order used by the caller to express dependency/result ordering.
 std::string serialize(const std::vector<InterfaceDefinition> & definitions);
 
-}  // namespace interface_payloads
-
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::interfaces

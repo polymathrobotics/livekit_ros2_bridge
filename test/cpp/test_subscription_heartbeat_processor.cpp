@@ -96,7 +96,7 @@ nlohmann::json extractPublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(packet.topic, wire::protocol::kControlSubscriptionsStatus);
 
   if (packet.recipient_identities.size() != 1U) {
     ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
@@ -284,8 +284,8 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
   processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
   const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
-  EXPECT_EQ(envelope["v"], protocol::kProtocolVersion);
-  EXPECT_EQ(envelope["type"], protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(envelope["v"], wire::protocol::kProtocolVersion);
+  EXPECT_EQ(envelope["type"], wire::protocol::kControlSubscriptionsStatus);
   EXPECT_EQ(envelope["session_id"], "session-1");
   ASSERT_TRUE(envelope["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(envelope["lease_expires_in_ms"].get<std::int64_t>(), 0);

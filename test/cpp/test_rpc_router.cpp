@@ -115,7 +115,7 @@ std::string makeServiceCallRequestPayload(
   auto body = nlohmann::json{
     {"service", service},
     {"interface_type", interface_type},
-    {"request", cdr_payload::serialize(request_payload)},
+    {"request", wire::cdr::serialize(request_payload)},
   };
   if (timeout_ms.has_value()) {
     body["timeout_ms"] = *timeout_ms;
@@ -197,13 +197,13 @@ TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
             R"({not-json})",
           });
       },
-      protocol::kRpcErrorUnauthorized);
+      wire::protocol::kRpcErrorUnauthorized);
   };
 
-  expectUnauthorized(protocol::kRpcServiceCall);
-  expectUnauthorized(protocol::kRpcInterfacesGet);
-  expectUnauthorized(protocol::kRpcServicesList);
-  expectUnauthorized(protocol::kRpcTopicsList);
+  expectUnauthorized(wire::protocol::kRpcServiceCall);
+  expectUnauthorized(wire::protocol::kRpcInterfacesGet);
+  expectUnauthorized(wire::protocol::kRpcServicesList);
+  expectUnauthorized(wire::protocol::kRpcTopicsList);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
@@ -214,13 +214,13 @@ TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        protocol::kRpcServiceCall,
+        wire::protocol::kRpcServiceCall,
         RpcInvocation{
           "participant-1",
           R"({"service":"/rpc_router/set_bool"})",
         });
     },
-    protocol::kRpcErrorInvalidRequest);
+    wire::protocol::kRpcErrorInvalidRequest);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
@@ -231,13 +231,13 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        protocol::kRpcServiceCall,
+        wire::protocol::kRpcServiceCall,
         RpcInvocation{
           "participant-1",
           makeSetBoolRequestPayload("/denied_service"),
         });
     },
-    protocol::kRpcErrorForbidden,
+    wire::protocol::kRpcErrorForbidden,
     "ROS service '/denied_service' not permitted.");
 }
 
@@ -249,13 +249,13 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        protocol::kRpcInterfacesGet,
+        wire::protocol::kRpcInterfacesGet,
         RpcInvocation{
           "participant-1",
           R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
         });
     },
-    protocol::kRpcErrorInternal);
+    wire::protocol::kRpcErrorInternal);
 }
 
 TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
@@ -264,7 +264,7 @@ TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownType)
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
-    protocol::kRpcInterfacesGet,
+    wire::protocol::kRpcInterfacesGet,
     RpcInvocation{
       "participant-1",
       R"({"interface_types":["std_msgs/msg/String"]})",
@@ -285,7 +285,7 @@ TEST(RpcRouterTest, InterfacesGetRpcDeduplicatesRepeatedRequestedTypes)
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
-    protocol::kRpcInterfacesGet,
+    wire::protocol::kRpcInterfacesGet,
     RpcInvocation{
       "participant-1",
       R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})",
@@ -312,12 +312,12 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
             R"({"limit":0})",
           });
       },
-      protocol::kRpcErrorInvalidRequest,
+      wire::protocol::kRpcErrorInvalidRequest,
       "limit must be a positive integer");
   };
 
-  expectInvalidLimit(protocol::kRpcServicesList);
-  expectInvalidLimit(protocol::kRpcTopicsList);
+  expectInvalidLimit(wire::protocol::kRpcServicesList);
+  expectInvalidLimit(wire::protocol::kRpcTopicsList);
 }
 
 TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
@@ -327,7 +327,7 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   RosExecutorQueue queue(*node);
   RosServiceCaller caller(*node);
   FakeRoomConnection connection;
-  connection.state->rejected_rpc_methods = {protocol::kRpcServicesList};
+  connection.state->rejected_rpc_methods = {wire::protocol::kRpcServicesList};
 
   {
     RpcRouter router(*node, AccessPolicy(), queue, caller);
@@ -335,16 +335,16 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
     EXPECT_FALSE(router.registerRpcs(connection));
 
     const std::vector<std::string> expected_methods = {
-      protocol::kRpcServiceCall,
-      protocol::kRpcInterfacesGet,
-      protocol::kRpcServicesList,
-      protocol::kRpcTopicsList,
+      wire::protocol::kRpcServiceCall,
+      wire::protocol::kRpcInterfacesGet,
+      wire::protocol::kRpcServicesList,
+      wire::protocol::kRpcTopicsList,
     };
     EXPECT_EQ(connection.state->registered_rpc_methods, expected_methods);
-    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kRpcServiceCall), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kRpcInterfacesGet), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kRpcServicesList), 0U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kRpcTopicsList), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceCall), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcInterfacesGet), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServicesList), 0U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcTopicsList), 1U);
 
     router.unregisterRpcs(connection);
 
@@ -378,7 +378,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      protocol::kRpcServiceCall,
+      wire::protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
         makeSetBoolRequestPayload("/rpc_router/set_bool", true),
@@ -395,7 +395,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_EQ(body["service"]["name"].get<std::string>(), "/rpc_router/set_bool");
   EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
 
-  const auto response_payload = cdr_payload::parse(body, "response");
+  const auto response_payload = wire::cdr::parse(body, "response");
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(response_payload);
   EXPECT_TRUE(response_message.success);
   EXPECT_EQ(response_message.message, "enabled");
@@ -411,7 +411,7 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      protocol::kRpcServiceCall,
+      wire::protocol::kRpcServiceCall,
       RpcInvocation{
         "participant-1",
         makeSetBoolRequestPayload("/no_such_service", true, 200),
@@ -420,7 +420,7 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 
   ASSERT_TRUE(waitForFutureReady(executor, handler_future));
 
-  expectRpcHandlerError([&]() { handler_future.get(); }, protocol::kRpcErrorInternal, "Service call timed out.");
+  expectRpcHandlerError([&]() { handler_future.get(); }, wire::protocol::kRpcErrorInternal, "Service call timed out.");
 }
 
 TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
@@ -448,7 +448,7 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      protocol::kRpcServicesList,
+      wire::protocol::kRpcServicesList,
       RpcInvocation{
         "participant-1",
         R"({"query":"rpc_router"})",
@@ -484,7 +484,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      protocol::kRpcTopicsList,
+      wire::protocol::kRpcTopicsList,
       RpcInvocation{
         "participant-1",
         R"({"query":"BatteryState","limit":1})",

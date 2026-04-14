@@ -39,7 +39,7 @@ struct ServiceCallRequest
   std::optional<int> timeout_ms;
 };
 
-namespace service_call_payloads
+namespace wire::services
 {
 
 /// Parse a JSON object request body with required `service` and `request` fields, plus optional
@@ -65,6 +65,6 @@ std::string serialize(
   const std::vector<std::uint8_t> & response,
   int elapsed_ms);
 
-}  // namespace service_call_payloads
+}  // namespace wire::services
 
 }  // namespace livekit_ros2_bridge

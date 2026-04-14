@@ -723,7 +723,7 @@ private:
               .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
               .fieldException("error", std::current_exception())
               .error();
-            throw livekit::RpcError(protocol::kRpcErrorInternal, "Internal error handling RPC method");
+            throw livekit::RpcError(wire::protocol::kRpcErrorInternal, "Internal error handling RPC method");
           }
         });
     } catch (const std::exception & exc) {

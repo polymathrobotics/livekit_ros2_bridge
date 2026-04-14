@@ -53,28 +53,31 @@ nlohmann::json makeMessageBody()
 TEST(PayloadHelpersTest, ParseJsonObjectRejectsInvalidJsonAndNonObjectRoot)
 {
   expectInvalidArgumentMessage(
-    []() { (void)parseJsonObject("{", "payload JSON is invalid", "payload must be a JSON object"); },
+    []() { (void)wire::detail::parseJsonObject("{", "payload JSON is invalid", "payload must be a JSON object"); },
     "payload JSON is invalid");
   expectInvalidArgumentMessage(
-    []() { (void)parseJsonObject("[1,2,3]", "payload JSON is invalid", "payload must be a JSON object"); },
+    []() {
+      (void)wire::detail::parseJsonObject("[1,2,3]", "payload JSON is invalid", "payload must be a JSON object");
+    },
     "payload must be a JSON object");
 }
 
 TEST(PayloadHelpersTest, ParseRequiredNonEmptyTrimmedStringTrimsValidValueAndRejectsInvalidInputs)
 {
   EXPECT_EQ(
-    parseRequiredNonEmptyTrimmedString(
+    wire::detail::parseRequiredNonEmptyTrimmedString(
       nlohmann::json("  std_msgs/msg/String  "), "field must be a string", "field must not be empty"),
     "std_msgs/msg/String");
 
   expectInvalidArgumentMessage(
     []() {
-      (void)parseRequiredNonEmptyTrimmedString(nlohmann::json(42), "field must be a string", "field must not be empty");
+      (void)wire::detail::parseRequiredNonEmptyTrimmedString(
+        nlohmann::json(42), "field must be a string", "field must not be empty");
     },
     "field must be a string");
   expectInvalidArgumentMessage(
     []() {
-      (void)parseRequiredNonEmptyTrimmedString(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedString(
         nlohmann::json("   "), "field must be a string", "field must not be empty");
     },
     "field must not be empty");
@@ -86,34 +89,35 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringFieldReadsPresentFieldAndReje
     {"trimmed", "  /camera/image  "},
   };
 
-  EXPECT_EQ(parseRequiredNonEmptyTrimmedStringField(body, "trimmed", "field is required"), "/camera/image");
+  EXPECT_EQ(
+    wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "trimmed", "field is required"), "/camera/image");
 
   expectInvalidArgumentMessage(
-    [&body]() { (void)parseRequiredNonEmptyTrimmedStringField(body, "missing", "field is required"); },
+    [&body]() { (void)wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "missing", "field is required"); },
     "field is required");
 }
 
 TEST(PayloadHelpersTest, ParseCdrRoundTripsEmptyAndBinaryPayloads)
 {
   const nlohmann::json empty_body = {
-    {"message", cdr_payload::serialize(std::vector<std::uint8_t>{})},
+    {"message", wire::cdr::serialize(std::vector<std::uint8_t>{})},
   };
-  EXPECT_TRUE(cdr_payload::parse(empty_body, "message").empty());
+  EXPECT_TRUE(wire::cdr::parse(empty_body, "message").empty());
 
   const std::vector<std::uint8_t> payload = {0x00, 0x01, 0x7f, 0x80, 0xff};
   const nlohmann::json binary_body = {
-    {"message", cdr_payload::serialize(payload)},
+    {"message", wire::cdr::serialize(payload)},
   };
-  EXPECT_EQ(cdr_payload::parse(binary_body, "message"), payload);
+  EXPECT_EQ(wire::cdr::parse(binary_body, "message"), payload);
 }
 
 TEST(PayloadHelpersTest, ParseCdrUsesSameEnvelopeContractAcrossOuterFields)
 {
   const std::vector<std::uint8_t> payload = {0x01, 0x02, 0x03};
-  const auto envelope = cdr_payload::serialize(payload);
+  const auto envelope = wire::cdr::serialize(payload);
 
-  EXPECT_EQ(cdr_payload::parse(nlohmann::json{{"request", envelope}}, "request"), payload);
-  EXPECT_EQ(cdr_payload::parse(nlohmann::json{{"response", envelope}}, "response"), payload);
+  EXPECT_EQ(wire::cdr::parse(nlohmann::json{{"request", envelope}}, "request"), payload);
+  EXPECT_EQ(wire::cdr::parse(nlohmann::json{{"response", envelope}}, "response"), payload);
 }
 
 TEST(PayloadHelpersTest, ParseOptionalTrimmedStringFieldHandlesAbsentAndInvalidValues)
@@ -125,18 +129,26 @@ TEST(PayloadHelpersTest, ParseOptionalTrimmedStringFieldHandlesAbsentAndInvalidV
     {"wrong_type", 125},
   };
 
-  EXPECT_EQ(parseOptionalNonEmptyTrimmedStringField(body, "missing", "field must be a string"), std::nullopt);
-  EXPECT_EQ(parseOptionalNonEmptyTrimmedStringField(body, "blank", "field must be a string"), std::nullopt);
-  EXPECT_EQ(parseOptionalNonEmptyTrimmedStringField(body, "null_value", "field must be a string", true), std::nullopt);
   EXPECT_EQ(
-    parseOptionalNonEmptyTrimmedStringField(body, "trimmed", "field must be a string"),
+    wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "missing", "field must be a string"), std::nullopt);
+  EXPECT_EQ(
+    wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "blank", "field must be a string"), std::nullopt);
+  EXPECT_EQ(
+    wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "null_value", "field must be a string", true),
+    std::nullopt);
+  EXPECT_EQ(
+    wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "trimmed", "field must be a string"),
     std::optional<std::string>("/camera/image"));
 
   expectInvalidArgumentMessage(
-    [&body]() { (void)parseOptionalNonEmptyTrimmedStringField(body, "null_value", "field must be a string"); },
+    [&body]() {
+      (void)wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "null_value", "field must be a string");
+    },
     "field must be a string");
   expectInvalidArgumentMessage(
-    [&body]() { (void)parseOptionalNonEmptyTrimmedStringField(body, "wrong_type", "field must be a string"); },
+    [&body]() {
+      (void)wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "wrong_type", "field must be a string");
+    },
     "field must be a string");
 }
 
@@ -147,7 +159,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldTrimsEntriesAndPres
   };
 
   EXPECT_EQ(
-    parseRequiredNonEmptyTrimmedStringArrayField(
+    wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
       body,
       "interface_types",
       "field must be an array",
@@ -168,7 +180,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
   };
   expectInvalidArgumentMessage(
     [&missing]() {
-      (void)parseRequiredNonEmptyTrimmedStringArrayField(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         missing,
         "interface_types",
         "field must be an array",
@@ -183,7 +195,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
   };
   expectInvalidArgumentMessage(
     [&wrong_type]() {
-      (void)parseRequiredNonEmptyTrimmedStringArrayField(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         wrong_type,
         "interface_types",
         "field must be an array",
@@ -198,7 +210,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
   };
   expectInvalidArgumentMessage(
     [&empty_array]() {
-      (void)parseRequiredNonEmptyTrimmedStringArrayField(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         empty_array,
         "interface_types",
         "field must be an array",
@@ -213,7 +225,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
   };
   expectInvalidArgumentMessage(
     [&blank_entry]() {
-      (void)parseRequiredNonEmptyTrimmedStringArrayField(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         blank_entry,
         "interface_types",
         "field must be an array",
@@ -228,7 +240,7 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
   };
   expectInvalidArgumentMessage(
     [&wrong_entry_type]() {
-      (void)parseRequiredNonEmptyTrimmedStringArrayField(
+      (void)wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
         wrong_entry_type,
         "interface_types",
         "field must be an array",
@@ -242,14 +254,14 @@ TEST(PayloadHelpersTest, ParseRequiredTrimmedStringArrayFieldRejectsMissingMisty
 TEST(PayloadHelpersTest, SerializeCdrEmitsCanonicalEnvelopeForEmptyAndPaddedPayloads)
 {
   EXPECT_EQ(
-    cdr_payload::serialize({}),
+    wire::cdr::serialize({}),
     (nlohmann::json{
       {"content_type", "application/x-ros-cdr"},
       {"payload_base64", ""},
     }));
 
   EXPECT_EQ(
-    cdr_payload::serialize({0x01, 0x02}),
+    wire::cdr::serialize({0x01, 0x02}),
     (nlohmann::json{
       {"content_type", "application/x-ros-cdr"},
       {"payload_base64", "AQI="},
@@ -261,12 +273,12 @@ TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrNonObjectEnvelope)
   auto missing_message = makeMessageBody();
   missing_message.erase("message");
   expectInvalidArgumentMessage(
-    [&missing_message]() { (void)cdr_payload::parse(missing_message, "message"); }, "message must be an object.");
+    [&missing_message]() { (void)wire::cdr::parse(missing_message, "message"); }, "message must be an object.");
 
   auto non_object_message = makeMessageBody();
   non_object_message["message"] = nlohmann::json::array({1, 2});
   expectInvalidArgumentMessage(
-    [&non_object_message]() { (void)cdr_payload::parse(non_object_message, "message"); }, "message must be an object.");
+    [&non_object_message]() { (void)wire::cdr::parse(non_object_message, "message"); }, "message must be an object.");
 }
 
 TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrMistypedNestedFields)
@@ -274,25 +286,25 @@ TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrMistypedNestedFields)
   auto missing_content_type = makeMessageBody();
   missing_content_type["message"].erase("content_type");
   expectInvalidArgumentMessage(
-    [&missing_content_type]() { (void)cdr_payload::parse(missing_content_type, "message"); },
+    [&missing_content_type]() { (void)wire::cdr::parse(missing_content_type, "message"); },
     "content_type must be a string.");
 
   auto mistyped_payload_base64 = makeMessageBody();
   mistyped_payload_base64["message"]["payload_base64"] = false;
   expectInvalidArgumentMessage(
-    [&mistyped_payload_base64]() { (void)cdr_payload::parse(mistyped_payload_base64, "message"); },
+    [&mistyped_payload_base64]() { (void)wire::cdr::parse(mistyped_payload_base64, "message"); },
     "payload_base64 must be a string.");
 
   auto mistyped_content_type = makeMessageBody();
   mistyped_content_type["message"]["content_type"] = 42;
   expectInvalidArgumentMessage(
-    [&mistyped_content_type]() { (void)cdr_payload::parse(mistyped_content_type, "message"); },
+    [&mistyped_content_type]() { (void)wire::cdr::parse(mistyped_content_type, "message"); },
     "content_type must be a string.");
 
   auto missing_payload_base64 = makeMessageBody();
   missing_payload_base64["message"].erase("payload_base64");
   expectInvalidArgumentMessage(
-    [&missing_payload_base64]() { (void)cdr_payload::parse(missing_payload_base64, "message"); },
+    [&missing_payload_base64]() { (void)wire::cdr::parse(missing_payload_base64, "message"); },
     "payload_base64 must be a string.");
 }
 
@@ -301,19 +313,19 @@ TEST(PayloadHelpersTest, ParseCdrRejectsWrongContentTypeAndInvalidBase64Encoding
   auto wrong_content_type = makeMessageBody();
   wrong_content_type["message"]["content_type"] = "application/json";
   expectInvalidArgumentMessage(
-    [&wrong_content_type]() { (void)cdr_payload::parse(wrong_content_type, "message"); },
+    [&wrong_content_type]() { (void)wire::cdr::parse(wrong_content_type, "message"); },
     "message.content_type must be application/x-ros-cdr.");
 
   auto missing_padding = makeMessageBody();
   missing_padding["message"]["payload_base64"] = "AQI";
   expectInvalidArgumentMessage(
-    [&missing_padding]() { (void)cdr_payload::parse(missing_padding, "message"); },
+    [&missing_padding]() { (void)wire::cdr::parse(missing_padding, "message"); },
     "payload_base64 must be padded standard base64.");
 
   auto invalid_encoding = makeMessageBody();
   invalid_encoding["message"]["payload_base64"] = "AQI?";
   expectInvalidArgumentMessage(
-    [&invalid_encoding]() { (void)cdr_payload::parse(invalid_encoding, "message"); },
+    [&invalid_encoding]() { (void)wire::cdr::parse(invalid_encoding, "message"); },
     "payload_base64 is not valid base64.");
 }
 

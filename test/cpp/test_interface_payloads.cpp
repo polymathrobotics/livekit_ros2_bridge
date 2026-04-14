@@ -39,7 +39,7 @@ void expectInvalidArgumentMessage(Fn && fn, const char * expected_message)
 
 TEST(InterfacePayloadsTest, ParsesTrimmedInterfaceTypesWithoutDroppingOrderOrDuplicates)
 {
-  const auto interface_types = interface_payloads::parse(
+  const auto interface_types = wire::interfaces::parse(
     nlohmann::json{
       {"interface_types", {" sensor_msgs/msg/BatteryState ", "std_msgs/msg/String", "sensor_msgs/msg/BatteryState "}},
       {"request_id", "ignored-by-parser"},
@@ -57,19 +57,19 @@ TEST(InterfacePayloadsTest, ParsesTrimmedInterfaceTypesWithoutDroppingOrderOrDup
 
 TEST(InterfacePayloadsTest, RejectsInvalidInterfaceTypeCollections)
 {
-  expectInvalidArgumentMessage([]() { (void)interface_payloads::parse(R"({})"); }, "interface_types must be an array");
+  expectInvalidArgumentMessage([]() { (void)wire::interfaces::parse(R"({})"); }, "interface_types must be an array");
   expectInvalidArgumentMessage(
-    []() { (void)interface_payloads::parse(R"({"interface_types":"not_an_array"})"); },
+    []() { (void)wire::interfaces::parse(R"({"interface_types":"not_an_array"})"); },
     "interface_types must be an array");
   expectInvalidArgumentMessage(
-    []() { (void)interface_payloads::parse(R"({"interface_types":[]})"); }, "interface_types must not be empty");
+    []() { (void)wire::interfaces::parse(R"({"interface_types":[]})"); }, "interface_types must not be empty");
 }
 
 TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidArray)
 {
   expectInvalidArgumentMessage(
     []() {
-      (void)interface_payloads::parse(
+      (void)wire::interfaces::parse(
         nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", "   ", "std_msgs/msg/String"}}}.dump());
     },
     "interface_types entries must not be empty");
@@ -77,21 +77,20 @@ TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidAr
 
 TEST(InterfacePayloadsTest, RejectsInvalidJsonAndNonObjectRequests)
 {
+  expectInvalidArgumentMessage([]() { (void)wire::interfaces::parse("{"); }, "Invalid JSON in interfaces get request");
   expectInvalidArgumentMessage(
-    []() { (void)interface_payloads::parse("{"); }, "Invalid JSON in interfaces get request");
-  expectInvalidArgumentMessage(
-    []() { (void)interface_payloads::parse(R"(["sensor_msgs/msg/BatteryState"])"); },
+    []() { (void)wire::interfaces::parse(R"(["sensor_msgs/msg/BatteryState"])"); },
     "Interfaces get request must be a JSON object");
 }
 
 TEST(InterfacePayloadsTest, ReportsPayloadAsInvalidRequestFieldForMalformedJson)
 {
   try {
-    (void)interface_payloads::parse("{");
+    (void)wire::interfaces::parse("{");
     FAIL() << "Expected std::invalid_argument";
   } catch (const std::exception & exc) {
-    ASSERT_TRUE(interface_payloads::invalidRequestField(exc).has_value());
-    EXPECT_EQ(*interface_payloads::invalidRequestField(exc), "payload");
+    ASSERT_TRUE(wire::interfaces::invalidRequestField(exc).has_value());
+    EXPECT_EQ(*wire::interfaces::invalidRequestField(exc), "payload");
   }
 }
 
@@ -99,7 +98,7 @@ TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)
 {
   expectInvalidArgumentMessage(
     []() {
-      (void)interface_payloads::parse(nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", 42}}}.dump());
+      (void)wire::interfaces::parse(nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", 42}}}.dump());
     },
     "interface_types entries must be strings");
 }
@@ -107,11 +106,11 @@ TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)
 TEST(InterfacePayloadsTest, ReportsInterfaceTypesAsInvalidRequestFieldForArrayValidationFailures)
 {
   try {
-    (void)interface_payloads::parse(nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", 42}}}.dump());
+    (void)wire::interfaces::parse(nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", 42}}}.dump());
     FAIL() << "Expected std::invalid_argument";
   } catch (const std::exception & exc) {
-    ASSERT_TRUE(interface_payloads::invalidRequestField(exc).has_value());
-    EXPECT_EQ(*interface_payloads::invalidRequestField(exc), "interface_types");
+    ASSERT_TRUE(wire::interfaces::invalidRequestField(exc).has_value());
+    EXPECT_EQ(*wire::interfaces::invalidRequestField(exc), "interface_types");
   }
 }
 
@@ -122,7 +121,7 @@ TEST(InterfacePayloadsTest, SerializesInterfacesByDirectFieldMappingInCallerOrde
     {"sensor_msgs/msg/BatteryState", "ros2msg", "float32 voltage\n"},
   };
 
-  const auto serialized = interface_payloads::serialize(definitions);
+  const auto serialized = wire::interfaces::serialize(definitions);
   const auto expected = nlohmann::json{
     {"interfaces",
      {
@@ -148,7 +147,7 @@ TEST(InterfacePayloadsTest, SerializesDuplicateInterfaceDefinitionsWithoutDedupi
     {"std_msgs/msg/Header", "ros2msg", "builtin_interfaces/Time stamp\nstring frame_id\n"},
   };
 
-  const auto serialized = interface_payloads::serialize(definitions);
+  const auto serialized = wire::interfaces::serialize(definitions);
   const auto expected = nlohmann::json{
     {"interfaces",
      {
@@ -171,7 +170,7 @@ TEST(InterfacePayloadsTest, SerializesEmptyInterfaces)
 {
   std::vector<InterfaceDefinition> definitions;
 
-  const auto serialized = interface_payloads::serialize(definitions);
+  const auto serialized = wire::interfaces::serialize(definitions);
   const auto expected = nlohmann::json{{"interfaces", nlohmann::json::array()}};
 
   EXPECT_EQ(nlohmann::json::parse(serialized), expected);

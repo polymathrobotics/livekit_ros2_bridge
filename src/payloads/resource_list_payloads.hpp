@@ -41,7 +41,7 @@ struct ResourceEntry
   std::string interface_type;
 };
 
-namespace resource_list_payloads
+namespace wire::resources
 {
 
 /// Parse a resource-list request object.
@@ -64,6 +64,6 @@ std::string serializeServices(const std::vector<ResourceEntry> & entries);
 /// the single `interface_type` wire shape before calling this helper.
 std::string serializeTopics(const std::vector<ResourceEntry> & entries);
 
-}  // namespace resource_list_payloads
+}  // namespace wire::resources
 
 }  // namespace livekit_ros2_bridge

@@ -51,16 +51,16 @@ struct RpcMethod
 };
 
 constexpr RpcMethod kServiceCallRpc{
-  protocol::kRpcServiceCall,
+  wire::protocol::kRpcServiceCall,
 };
 constexpr RpcMethod kInterfacesGetRpc{
-  protocol::kRpcInterfacesGet,
+  wire::protocol::kRpcInterfacesGet,
 };
 constexpr RpcMethod kServicesListRpc{
-  protocol::kRpcServicesList,
+  wire::protocol::kRpcServicesList,
 };
 constexpr RpcMethod kTopicsListRpc{
-  protocol::kRpcTopicsList,
+  wire::protocol::kRpcTopicsList,
 };
 constexpr std::array<const char *, 4> kRpcNames{
   kServiceCallRpc.name,
@@ -92,21 +92,21 @@ std::uint32_t errorCodeFor(const std::exception & exc)
     dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
     dynamic_cast<const std::out_of_range *>(&exc) != nullptr)
   {
-    return protocol::kRpcErrorInvalidRequest;
+    return wire::protocol::kRpcErrorInvalidRequest;
   }
-  return protocol::kRpcErrorInternal;
+  return wire::protocol::kRpcErrorInternal;
 }
 
 const char * errorReason(std::uint32_t code)
 {
   switch (code) {
-    case protocol::kRpcErrorInvalidRequest:
+    case wire::protocol::kRpcErrorInvalidRequest:
       return "invalid_request";
-    case protocol::kRpcErrorUnauthorized:
+    case wire::protocol::kRpcErrorUnauthorized:
       return "unauthorized";
-    case protocol::kRpcErrorForbidden:
+    case wire::protocol::kRpcErrorForbidden:
       return "forbidden";
-    case protocol::kRpcErrorInternal:
+    case wire::protocol::kRpcErrorInternal:
     default:
       return "internal";
   }
@@ -123,13 +123,13 @@ const char * errorReason(std::uint32_t code)
   // method-specific codes and messages survive unchanged.
   const auto code = errorCodeFor(exc);
   const char * reason = errorReason(code);
-  LogEvent event(kLogger, code == protocol::kRpcErrorInternal ? "rpc_request_failed" : "rpc_request_rejected");
+  LogEvent event(kLogger, code == wire::protocol::kRpcErrorInternal ? "rpc_request_failed" : "rpc_request_rejected");
   addLogFields(event, rpc, invocation).field("reason", reason);
-  if (const auto request_field = interface_payloads::invalidRequestField(exc)) {
+  if (const auto request_field = wire::interfaces::invalidRequestField(exc)) {
     event.field("request_field", *request_field);
-  } else if (const auto request_field = service_call_payloads::invalidRequestField(exc)) {
+  } else if (const auto request_field = wire::services::invalidRequestField(exc)) {
     event.field("request_field", *request_field);
-  } else if (const auto request_field = resource_list_payloads::invalidRequestField(exc)) {
+  } else if (const auto request_field = wire::resources::invalidRequestField(exc)) {
     event.field("request_field", *request_field);
   }
 
@@ -138,7 +138,7 @@ const char * errorReason(std::uint32_t code)
   }
   event.field("error", exc.what());
 
-  if (code == protocol::kRpcErrorInternal) {
+  if (code == wire::protocol::kRpcErrorInternal) {
     event.error();
   } else {
     event.warn();
@@ -197,7 +197,7 @@ std::optional<std::string> withCallerIdentity(
       .field("reason", "unauthorized")
       .field("error", "caller_identity_required")
       .warn();
-    throw RpcHandlerError(protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
+    throw RpcHandlerError(wire::protocol::kRpcErrorUnauthorized, "caller_identity is required for this RPC");
   }
 
   try {
@@ -254,7 +254,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
     // Keep the parsed request alive across the dispatch try/catch so failures
     // after authorization can still log the target service name.
     try {
-      request = service_call_payloads::parse(invocation.payload);
+      request = wire::services::parse(invocation.payload);
     } catch (const std::exception & exc) {
       throwLoggedError(kServiceCallRpc, invocation, exc);
     }
@@ -265,7 +265,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
         .field("service", request.service)
         .field("error", "service_not_permitted")
         .warn();
-      throw RpcHandlerError(protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
+      throw RpcHandlerError(wire::protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
     }
 
     try {
@@ -281,7 +281,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
       auto response = result_future.get();
       const int elapsed_ms = static_cast<int>(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
-      return service_call_payloads::serialize(response.service, response.interface_type, response.response, elapsed_ms);
+      return wire::services::serialize(response.service, response.interface_type, response.response, elapsed_ms);
     } catch (const std::exception & exc) {
       throwLoggedError(kServiceCallRpc, invocation, exc, std::string_view(request.service));
     }
@@ -292,7 +292,7 @@ std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invoca
 {
   return withCallerIdentity(kInterfacesGetRpc, invocation, [&invocation]() {
     try {
-      auto interface_types = interface_payloads::parse(invocation.payload);
+      auto interface_types = wire::interfaces::parse(invocation.payload);
 
       // Repeated requested types and shared nested dependencies can both return
       // the same definition; keep the first-seen wire order while deduplicating.
@@ -307,7 +307,7 @@ std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invoca
           definitions.push_back(std::move(definition));
         }
       }
-      return interface_payloads::serialize(definitions);
+      return wire::interfaces::serialize(definitions);
     } catch (const std::exception & exc) {
       throwLoggedError(kInterfacesGetRpc, invocation, exc);
     }
@@ -318,12 +318,12 @@ std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocat
 {
   return withCallerIdentity(kServicesListRpc, invocation, [this, &invocation]() {
     try {
-      auto request = resource_list_payloads::parse(invocation.payload);
+      auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
         return filterResourceEntries(
           node_.get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
       });
-      return resource_list_payloads::serializeServices(future.get());
+      return wire::resources::serializeServices(future.get());
     } catch (const std::exception & exc) {
       throwLoggedError(kServicesListRpc, invocation, exc);
     }
@@ -334,12 +334,12 @@ std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocatio
 {
   return withCallerIdentity(kTopicsListRpc, invocation, [this, &invocation]() {
     try {
-      auto request = resource_list_payloads::parse(invocation.payload);
+      auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
         return filterResourceEntries(
           node_.get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
       });
-      return resource_list_payloads::serializeTopics(future.get());
+      return wire::resources::serializeTopics(future.get());
     } catch (const std::exception & exc) {
       throwLoggedError(kTopicsListRpc, invocation, exc);
     }

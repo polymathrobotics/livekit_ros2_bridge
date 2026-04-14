@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-namespace livekit_ros2_bridge::protocol
+namespace livekit_ros2_bridge::wire::protocol
 {
 
 // Stable control topics and RPC names used on the LiveKit data channel.
@@ -44,4 +44,4 @@ inline constexpr std::uint32_t kRpcErrorUnauthorized = 2401;
 inline constexpr std::uint32_t kRpcErrorForbidden = 2403;
 inline constexpr std::uint32_t kRpcErrorInternal = 2500;
 
-}  // namespace livekit_ros2_bridge::protocol
+}  // namespace livekit_ros2_bridge::wire::protocol

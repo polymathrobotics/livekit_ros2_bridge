@@ -24,10 +24,7 @@
 #include "payloads/cdr_base64.hpp"
 #include "protocol.hpp"
 
-namespace livekit_ros2_bridge
-{
-
-namespace cdr_payload
+namespace livekit_ros2_bridge::wire::cdr
 {
 
 namespace
@@ -77,7 +74,7 @@ std::vector<std::uint8_t> decodePayload(const std::string & base64)
 std::vector<std::uint8_t> parse(const nlohmann::json & body, const char * field)
 {
   const auto & envelope = requireObject(body, field);
-  if (requireString(envelope, kContentTypeField) != protocol::kDataContentTypeCdr) {
+  if (requireString(envelope, kContentTypeField) != wire::protocol::kDataContentTypeCdr) {
     throw std::invalid_argument(std::string(field) + "." + kContentTypeField + " must be application/x-ros-cdr.");
   }
 
@@ -87,11 +84,9 @@ std::vector<std::uint8_t> parse(const nlohmann::json & body, const char * field)
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)
 {
   return {
-    {kContentTypeField, protocol::kDataContentTypeCdr},
+    {kContentTypeField, wire::protocol::kDataContentTypeCdr},
     {kPayloadBase64Field, encodeBase64(bytes.data(), bytes.size())},
   };
 }
 
-}  // namespace cdr_payload
-
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::cdr

@@ -29,17 +29,17 @@ void expectInvalidRequestField(
   const std::string & payload, std::string_view expected_field, const char * expected_message)
 {
   try {
-    (void)resource_list_payloads::parse(payload);
+    (void)wire::resources::parse(payload);
     FAIL() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     EXPECT_EQ(std::string(error.what()), std::string(expected_message));
-    EXPECT_EQ(resource_list_payloads::invalidRequestField(error), std::optional<std::string_view>(expected_field));
+    EXPECT_EQ(wire::resources::invalidRequestField(error), std::optional<std::string_view>(expected_field));
   }
 }
 
 TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
-  const auto request = resource_list_payloads::parse(R"({
+  const auto request = wire::resources::parse(R"({
     "extra":"ignored",
     "query":"   ",
     "limit":null
@@ -48,7 +48,7 @@ TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbse
   EXPECT_EQ(request.query, std::nullopt);
   EXPECT_EQ(request.limit, std::nullopt);
 
-  const auto null_request = resource_list_payloads::parse(R"({"query":null})");
+  const auto null_request = wire::resources::parse(R"({"query":null})");
 
   EXPECT_EQ(null_request.query, std::nullopt);
   EXPECT_EQ(null_request.limit, std::nullopt);
@@ -56,7 +56,7 @@ TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbse
 
 TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
 {
-  const auto request = resource_list_payloads::parse(R"({"query":" /cortex/modify ","limit":25})");
+  const auto request = wire::resources::parse(R"({"query":" /cortex/modify ","limit":25})");
 
   EXPECT_EQ(request.query, std::optional<std::string>("/cortex/modify"));
   EXPECT_EQ(request.limit, std::optional<std::size_t>(25u));
@@ -64,16 +64,16 @@ TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
 
 TEST(ResourceListPayloadsTest, RejectsInvalidQueryAndLimitFields)
 {
-  EXPECT_THROW(resource_list_payloads::parse(R"({"query":123})"), std::invalid_argument);
-  EXPECT_THROW(resource_list_payloads::parse(R"({"limit":-1})"), std::invalid_argument);
-  EXPECT_THROW(resource_list_payloads::parse(R"({"limit":0})"), std::invalid_argument);
-  EXPECT_THROW(resource_list_payloads::parse(R"({"limit":1.5})"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse(R"({"query":123})"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse(R"({"limit":-1})"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse(R"({"limit":0})"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse(R"({"limit":1.5})"), std::invalid_argument);
 }
 
 TEST(ResourceListPayloadsTest, RejectsMalformedJsonAndNonObjectPayloads)
 {
-  EXPECT_THROW(resource_list_payloads::parse("{"), std::invalid_argument);
-  EXPECT_THROW(resource_list_payloads::parse(R"([])"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse("{"), std::invalid_argument);
+  EXPECT_THROW(wire::resources::parse(R"([])"), std::invalid_argument);
 }
 
 TEST(ResourceListPayloadsTest, ReportsRejectedRequestFieldForValidationFailures)
@@ -84,13 +84,13 @@ TEST(ResourceListPayloadsTest, ReportsRejectedRequestFieldForValidationFailures)
   expectInvalidRequestField(R"({"limit":0})", "limit", "limit must be a positive integer");
 
   const std::invalid_argument unrelated_error("other_validation_error");
-  EXPECT_EQ(resource_list_payloads::invalidRequestField(unrelated_error), std::nullopt);
+  EXPECT_EQ(wire::resources::invalidRequestField(unrelated_error), std::nullopt);
 }
 
 TEST(ResourceListPayloadsTest, SerializesServices)
 {
   const auto body = nlohmann::json::parse(
-    resource_list_payloads::serializeServices({
+    wire::resources::serializeServices({
       {"/set_bool", "std_srvs/srv/SetBool"},
       {"/trigger", "std_srvs/srv/Trigger"},
     }));
@@ -106,7 +106,7 @@ TEST(ResourceListPayloadsTest, SerializesServices)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(resource_list_payloads::serializeServices({})),
+    nlohmann::json::parse(wire::resources::serializeServices({})),
     nlohmann::json({{"services", nlohmann::json::array()}}));
 }
 
@@ -114,7 +114,7 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
 {
   EXPECT_EQ(
     nlohmann::json::parse(
-      resource_list_payloads::serializeTopics({
+      wire::resources::serializeTopics({
         {"/camera/image_raw", "sensor_msgs/msg/Image"},
       })),
     nlohmann::json({
@@ -125,8 +125,7 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(resource_list_payloads::serializeTopics({})),
-    nlohmann::json({{"topics", nlohmann::json::array()}}));
+    nlohmann::json::parse(wire::resources::serializeTopics({})), nlohmann::json({{"topics", nlohmann::json::array()}}));
 }
 
 }  // namespace

@@ -28,7 +28,7 @@ namespace livekit_ros2_bridge
 
 using Json = nlohmann::json;
 
-namespace interface_payloads
+namespace wire::interfaces
 {
 
 namespace
@@ -57,14 +57,14 @@ std::vector<std::string> parse(const std::string & payload)
 {
   Json body;
   try {
-    body = parseJsonObject(
+    body = wire::detail::parseJsonObject(
       payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("payload", exc.what());
   }
 
   try {
-    return parseRequiredNonEmptyTrimmedStringArrayField(
+    return wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
       body,
       "interface_types",
       "interface_types must be an array",
@@ -102,6 +102,6 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
   return Json{{"interfaces", std::move(interfaces)}}.dump();
 }
 
-}  // namespace interface_payloads
+}  // namespace wire::interfaces
 
 }  // namespace livekit_ros2_bridge

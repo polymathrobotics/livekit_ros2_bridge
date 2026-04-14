@@ -22,7 +22,7 @@
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::wire::cdr
 {
 
 namespace
@@ -139,4 +139,4 @@ Base64DecodeResult decodeBase64(std::string_view text)
   return {std::move(bytes), Base64Status::kOk};
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::cdr

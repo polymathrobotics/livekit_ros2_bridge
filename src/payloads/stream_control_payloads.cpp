@@ -32,10 +32,7 @@
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
 
-namespace livekit_ros2_bridge
-{
-
-namespace stream_control_payloads
+namespace livekit_ros2_bridge::wire::subscriptions
 {
 
 namespace
@@ -220,7 +217,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
   if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
     // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
     // LiveKit data track, so the content type is fixed by protocol rather than caller input.
-    delivery["content_type"] = protocol::kDataContentTypeCdr;
+    delivery["content_type"] = wire::protocol::kDataContentTypeCdr;
     delivery["interval_ms"] = status.applied_interval_ms;
   }
 
@@ -262,8 +259,8 @@ SubscriptionHeartbeat parseSubscriptionHeartbeat(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_target;
-  heartbeat.session_id =
-    parseOptionalNonEmptyTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
+  heartbeat.session_id = wire::detail::parseOptionalNonEmptyTrimmedStringField(
+    body, "session_id", "heartbeat session_id must be a string", true);
 
   const auto subscriptions_it = body.find("subscriptions");
   if (subscriptions_it == body.end()) {
@@ -329,8 +326,8 @@ nlohmann::json serializeSubscriptionStatuses(
   }
 
   nlohmann::json body = {
-    {"v", protocol::kProtocolVersion},
-    {"type", protocol::kControlSubscriptionsStatus},
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
     // The wire contract keeps the broad `subscriptions` array name even though each object is one
     // reported subscription-status entry.
     {"subscriptions", subscriptions},
@@ -348,6 +345,4 @@ nlohmann::json serializeSubscriptionStatuses(
 {
   return serializeSubscriptionStatuses(statuses, lease, std::chrono::steady_clock::now());
 }
-}  // namespace stream_control_payloads
-
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::subscriptions

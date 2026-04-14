@@ -19,10 +19,7 @@
 
 #include "nlohmann/json_fwd.hpp"
 
-namespace livekit_ros2_bridge
-{
-
-namespace cdr_payload
+namespace livekit_ros2_bridge::wire::cdr
 {
 
 /// Parse the shared CDR envelope stored at `body[field]`.
@@ -41,6 +38,4 @@ std::vector<std::uint8_t> parse(const nlohmann::json & body, const char * field)
 /// lossless even when the caller handles "must not be empty" as a separate policy decision.
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes);
 
-}  // namespace cdr_payload
-
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::cdr

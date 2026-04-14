@@ -22,7 +22,7 @@
 #include "nlohmann/json.hpp"
 #include "utils/trim.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::wire::detail
 {
 
 /// Parse a JSON string value, trim surrounding whitespace, and return `std::nullopt` when the
@@ -139,4 +139,4 @@ inline std::vector<std::string> parseRequiredNonEmptyTrimmedStringArrayField(
   return values;
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::detail

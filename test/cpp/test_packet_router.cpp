@@ -97,7 +97,7 @@ std::string publishPayload()
   return nlohmann::json{
     {"topic", "/battery/cmd"},
     {"interface_type", "sensor_msgs/msg/BatteryState"},
-    {"message", cdr_payload::serialize(serializeMessage(message))},
+    {"message", wire::cdr::serialize(serializeMessage(message))},
   }
     .dump();
 }
@@ -111,7 +111,7 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(packet.topic, wire::protocol::kControlSubscriptionsStatus);
   EXPECT_EQ(packet.recipient_identities, (std::vector<std::string>{requester_identity}));
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
@@ -164,7 +164,8 @@ TEST_F(PacketRouterTest, RoutesHeartbeatPacketsViaSubscriptionHeartbeatProcessor
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(heartbeatPayload(), protocol::kControlSubscriptionsHeartbeat)));
+  EXPECT_NO_THROW(
+    packet_router_->handle(makePacket(heartbeatPayload(), wire::protocol::kControlSubscriptionsHeartbeat)));
 
   ASSERT_EQ(room_connection_->state->published_data_track_names.size(), 1U);
   const auto envelope = extractSinglePublishedStatusEnvelope(*room_connection_->state, "participant-1");
@@ -189,7 +190,7 @@ TEST_F(PacketRouterTest, RoutesPublishPacketsViaRosTopicPublisher)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), protocol::kControlTopicPublish)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kControlTopicPublish)));
 
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -200,7 +201,7 @@ TEST_F(PacketRouterTest, RejectsMalformedHeartbeatPayloadsWithoutDispatch)
 {
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", protocol::kControlSubscriptionsHeartbeat)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", wire::protocol::kControlSubscriptionsHeartbeat)));
   EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
   EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
 }
@@ -209,7 +210,7 @@ TEST_F(PacketRouterTest, RejectsStructurallyInvalidHeartbeatPayloadsWithoutDispa
 {
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(R"({})", protocol::kControlSubscriptionsHeartbeat)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(R"({})", wire::protocol::kControlSubscriptionsHeartbeat)));
   EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
   EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
 }
@@ -230,7 +231,7 @@ TEST_F(PacketRouterTest, RejectsAnonymousPublishPacketsWithoutDispatch)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), protocol::kControlTopicPublish, "")));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kControlTopicPublish, "")));
 
   executor.spin_some();
   EXPECT_FALSE(received_message.has_value());
@@ -240,7 +241,7 @@ TEST_F(PacketRouterTest, RejectsInvalidPublishPayloadsWithoutDispatch)
 {
   initRouter(makeAccessPolicy({"/battery/cmd"}));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", protocol::kControlTopicPublish)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket("{", wire::protocol::kControlTopicPublish)));
 }
 
 TEST_F(PacketRouterTest, DropsUnsupportedTopicsWithoutDispatch)

@@ -20,13 +20,9 @@
 #include "nlohmann/json_fwd.hpp"
 #include "subscription_types.hpp"
 
-namespace livekit_ros2_bridge
-{
-
 // Control-path subscription heartbeats carry lease-backed demands and report status. RPC
 // request/response naming stays separate for RPC payloads such as service calls.
-
-namespace stream_control_payloads
+namespace livekit_ros2_bridge::wire::subscriptions
 {
 
 /// Parse one control heartbeat body from `ros.subscriptions.request`.
@@ -57,6 +53,4 @@ nlohmann::json serializeSubscriptionStatuses(
 nlohmann::json serializeSubscriptionStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease);
 
-}  // namespace stream_control_payloads
-
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::subscriptions

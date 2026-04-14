@@ -20,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::wire::cdr
 {
 
 // These helpers sit on a protocol boundary. They intentionally reject lenient base64
@@ -58,4 +58,4 @@ std::string encodeBase64(const std::uint8_t * bytes, std::size_t size);
 /// basic validation so higher-level payload parsers can surface a more specific error.
 Base64DecodeResult decodeBase64(std::string_view text);
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::wire::cdr

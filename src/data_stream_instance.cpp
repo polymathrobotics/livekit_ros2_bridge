@@ -171,7 +171,7 @@ void DataStreamInstance::subscribe()
 
   LogEvent(kLogger, "subscription_qos_resolved")
     .field("resource", topic_)
-    .field("delivery", protocol::kDeliveryKindData)
+    .field("delivery", wire::protocol::kDeliveryKindData)
     .field("interface_type", interface_type_)
     .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))

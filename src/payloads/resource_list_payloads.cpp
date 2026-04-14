@@ -71,14 +71,14 @@ std::optional<std::size_t> parseLimit(const Json & body)
 
 }  // namespace
 
-namespace resource_list_payloads
+namespace wire::resources
 {
 
 ResourceListRequest parse(const std::string & payload)
 {
   Json body;
   try {
-    body = parseJsonObject(payload, "Invalid JSON in list request", "List request must be a JSON object");
+    body = wire::detail::parseJsonObject(payload, "Invalid JSON in list request", "List request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidRequest("payload", exc.what());
   }
@@ -86,7 +86,7 @@ ResourceListRequest parse(const std::string & payload)
   std::optional<std::string> query;
   // Normalize blank and null queries to "no filter".
   try {
-    query = parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
+    query = wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
   } catch (const std::invalid_argument & exc) {
     throw InvalidRequest("query", exc.what());
   }
@@ -123,6 +123,6 @@ std::string serializeTopics(const std::vector<ResourceEntry> & entries)
   return Json{{"topics", std::move(topics)}}.dump();
 }
 
-}  // namespace resource_list_payloads
+}  // namespace wire::resources
 
 }  // namespace livekit_ros2_bridge

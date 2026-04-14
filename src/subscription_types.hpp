@@ -93,9 +93,9 @@ inline const char * subscriptionDeliveryKindString(SubscriptionDeliveryKind deli
 {
   switch (delivery_kind) {
     case SubscriptionDeliveryKind::kData:
-      return protocol::kDeliveryKindData;
+      return wire::protocol::kDeliveryKindData;
     case SubscriptionDeliveryKind::kVideo:
-      return protocol::kDeliveryKindVideo;
+      return wire::protocol::kDeliveryKindVideo;
   }
 
   throw std::invalid_argument("subscription delivery kind is invalid");
