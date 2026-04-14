@@ -359,63 +359,67 @@ void Runtime::onParticipantDisconnected(std::string requester_identity)
 void Runtime::onIncomingPacket(const IncomingPacket & packet)
 {
   if (state_.shutting_down.load()) {
-    logPacketDrop(packet, "shutdown", diagnostics_.packet_shutdown_drop);
+    LogEvent(node_.get_logger(), "packet_dropped")
+      .field("reason", "shutdown")
+      .field("topic", packet.topic)
+      .fieldOr("requester_identity", packet.requester_identity)
+      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
+
     return;
   }
+
   if (packet_router_ == nullptr) {
-    logPacketDrop(packet, "router_unavailable", diagnostics_.packet_router_unavailable_drop);
+    LogEvent(node_.get_logger(), "packet_dropped")
+      .field("reason", "router_unavailable")
+      .field("topic", packet.topic)
+      .fieldOr("requester_identity", packet.requester_identity)
+      .warnThrottle(*node_.get_clock(), std::chrono::seconds(5));
+
     return;
   }
+
   packet_router_->handle(packet);
-}
-
-void Runtime::logPacketDrop(const IncomingPacket & packet, const char * reason, EventThrottle & throttle) const
-{
-  const std::size_t count = throttle.recordAndTakePendingCount();
-  if (count == 0U) {
-    return;
-  }
-
-  LogEvent(node_.get_logger(), "packet_dropped")
-    .field("reason", reason)
-    .field("topic", packet.topic)
-    .fieldOr("requester_identity", packet.requester_identity)
-    .field("count", count)
-    .warn();
-}
-
-void Runtime::logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle)
-{
-  const std::size_t count = throttle.recordAndTakePendingCount();
-  if (count == 0U) {
-    return;
-  }
-
-  LogEvent(node_.get_logger(), "executor_work_dropped")
-    .field("reason", reason)
-    .field("stage", stage)
-    .field("count", count)
-    .warn();
 }
 
 void Runtime::submitToExecutor(std::function<void()> work)
 {
   if (state_.shutting_down.load()) {
-    logExecutorWorkDrop("shutdown", "enqueue", diagnostics_.executor_shutdown_enqueue_drop);
+    if (const std::size_t count = executor_shutdown_enqueue_drop_.recordAndTakePendingCount(); count > 0U) {
+      LogEvent(node_.get_logger(), "executor_work_dropped")
+        .field("reason", "shutdown")
+        .field("stage", "enqueue")
+        .field("count", count)
+        .warn();
+    }
+
     return;
   }
 
   if (ros_executor_queue_ == nullptr) {
-    logExecutorWorkDrop("executor_unavailable", "enqueue", diagnostics_.executor_unavailable_drop);
+    if (const std::size_t count = executor_unavailable_drop_.recordAndTakePendingCount(); count > 0U) {
+      LogEvent(node_.get_logger(), "executor_work_dropped")
+        .field("reason", "executor_unavailable")
+        .field("stage", "enqueue")
+        .field("count", count)
+        .warn();
+    }
+
     return;
   }
 
   (void)ros_executor_queue_->submit([this, work = std::move(work)]() mutable {
     // Work accepted before shutdown may still be draining through the queue.
     if (state_.shutting_down.load()) {
-      logExecutorWorkDrop("shutdown", "execute", diagnostics_.executor_shutdown_execute_drop);
+      if (const std::size_t count = executor_shutdown_execute_drop_.recordAndTakePendingCount(); count > 0U) {
+        LogEvent(node_.get_logger(), "executor_work_dropped")
+          .field("reason", "shutdown")
+          .field("stage", "execute")
+          .field("count", count)
+          .warn();
+      }
       return;
     }
+
     work();
   });
 }

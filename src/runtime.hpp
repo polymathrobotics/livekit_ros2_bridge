@@ -119,25 +119,12 @@ private:
     std::string reason;
   };
 
-  struct Diagnostics
-  {
-    static constexpr auto kLogThrottle = std::chrono::seconds(5);
-
-    EventThrottle executor_shutdown_enqueue_drop{kLogThrottle};
-    EventThrottle executor_unavailable_drop{kLogThrottle};
-    EventThrottle executor_shutdown_execute_drop{kLogThrottle};
-    mutable EventThrottle packet_shutdown_drop{kLogThrottle};
-    mutable EventThrottle packet_router_unavailable_drop{kLogThrottle};
-  };
-
   void checkFailFast();
   void onConnectionReset();
   void onIncomingPacket(const IncomingPacket & packet);
   void onParticipantDisconnected(std::string requester_identity);
   void onReconnectRequested(const std::string & reason);
   void onConnected();
-  void logPacketDrop(const IncomingPacket & packet, const char * reason, EventThrottle & throttle) const;
-  void logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle);
 
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
@@ -161,8 +148,13 @@ private:
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr fail_fast_timer_;
   rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
+
+  // Throttle repeated drop logs so disconnect and shutdown bursts stay readable.
+  EventThrottle executor_shutdown_enqueue_drop_{std::chrono::seconds(5)};
+  EventThrottle executor_unavailable_drop_{std::chrono::seconds(5)};
+  EventThrottle executor_shutdown_execute_drop_{std::chrono::seconds(5)};
+
   State state_;
-  Diagnostics diagnostics_;
 };
 
 }  // namespace livekit_ros2_bridge
