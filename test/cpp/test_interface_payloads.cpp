@@ -17,7 +17,7 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/interface_payloads.hpp"
+#include "wire/interfaces.hpp"
 
 namespace livekit_ros2_bridge
 {

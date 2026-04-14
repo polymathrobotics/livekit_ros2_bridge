@@ -18,8 +18,8 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/cdr_payload.hpp"
-#include "payloads/service_call_payloads.hpp"
+#include "wire/cdr.hpp"
+#include "wire/services.hpp"
 
 namespace livekit_ros2_bridge
 {

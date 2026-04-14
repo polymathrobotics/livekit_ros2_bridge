@@ -25,10 +25,10 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "payloads/service_call_payloads.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
+#include "wire/services.hpp"
 
 #define private public
 #include "ros_service_caller.hpp"

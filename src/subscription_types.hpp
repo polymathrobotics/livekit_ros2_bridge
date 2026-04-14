@@ -21,7 +21,7 @@
 #include <variant>
 #include <vector>
 
-#include "protocol.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

@@ -29,7 +29,6 @@
 #include <utility>
 #include <vector>
 
-#include "payloads/service_call_payloads.hpp"
 #include "rcl/client.h"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
@@ -48,6 +47,7 @@
 #include "utils/reentrant_quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
 #include "utils/serialized_message.hpp"
+#include "wire/services.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
 #if !RCLCPP_VERSION_GTE(28, 0, 0)

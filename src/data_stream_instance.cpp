@@ -19,7 +19,6 @@
 #include <memory>
 #include <utility>
 
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/qos.hpp"
@@ -29,6 +28,7 @@
 #include "utils/log_event.hpp"
 #include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

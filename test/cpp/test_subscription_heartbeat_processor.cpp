@@ -23,13 +23,13 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "protocol.hpp"
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "subscription_registry.hpp"
 #include "video_stream_registry.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

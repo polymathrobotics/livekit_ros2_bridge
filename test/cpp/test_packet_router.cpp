@@ -25,14 +25,14 @@
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "packet_router.hpp"
-#include "payloads/cdr_payload.hpp"
-#include "protocol.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "ros_topic_publisher.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "subscription_registry.hpp"
+#include "wire/cdr.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

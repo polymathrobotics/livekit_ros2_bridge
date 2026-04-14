@@ -20,12 +20,11 @@
 #include <string_view>
 #include <vector>
 
-namespace livekit_ros2_bridge::wire::cdr
+namespace livekit_ros2_bridge::wire::detail
 {
 
-// These helpers sit on a protocol boundary. They intentionally reject lenient base64
-// variants that some decoders normalize, because the bridge treats canonical padded
-// RFC 4648 base64 as part of the wire contract.
+// Internal wire helpers for canonical padded RFC 4648 base64 used by the CDR envelope.
+// They intentionally reject lenient variants that some decoders normalize.
 enum class Base64Status
 {
   kOk,
@@ -58,4 +57,4 @@ std::string encodeBase64(const std::uint8_t * bytes, std::size_t size);
 /// basic validation so higher-level payload parsers can surface a more specific error.
 Base64DecodeResult decodeBase64(std::string_view text);
 
-}  // namespace livekit_ros2_bridge::wire::cdr
+}  // namespace livekit_ros2_bridge::wire::detail

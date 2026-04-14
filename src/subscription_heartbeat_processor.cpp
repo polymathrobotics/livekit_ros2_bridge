@@ -24,11 +24,11 @@
 
 #include "access_policy.hpp"
 #include "nlohmann/json.hpp"
-#include "payloads/stream_control_payloads.hpp"
 #include "rclcpp/logging.hpp"
 #include "room_connection.hpp"
 #include "subscription_registry.hpp"
 #include "utils/log_event.hpp"
+#include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
 {

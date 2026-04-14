@@ -22,7 +22,7 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/stream_control_payloads.hpp"
+#include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
 {

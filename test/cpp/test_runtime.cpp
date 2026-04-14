@@ -27,14 +27,14 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/cdr_payload.hpp"
-#include "protocol.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "runtime.hpp"
 #include "runtime_config.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "wire/cdr.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

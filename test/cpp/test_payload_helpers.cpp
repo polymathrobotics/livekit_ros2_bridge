@@ -19,8 +19,8 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/cdr_payload.hpp"
-#include "payloads/json_object_parser.hpp"
+#include "wire/cdr.hpp"
+#include "wire/detail/json_object_parser.hpp"
 
 namespace livekit_ros2_bridge
 {

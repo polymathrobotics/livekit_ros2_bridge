@@ -29,8 +29,6 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "payloads/cdr_payload.hpp"
-#include "protocol.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_executor_queue.hpp"
@@ -39,6 +37,8 @@
 #include "rpc_router.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_srvs/srv/set_bool.hpp"
+#include "wire/cdr.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "payloads/resource_list_payloads.hpp"
+#include "wire/resources.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 
 #include "nlohmann/json.hpp"
-#include "payloads/json_object_parser.hpp"
+#include "wire/detail/json_object_parser.hpp"
 
 namespace livekit_ros2_bridge
 {

@@ -27,14 +27,14 @@
 #include <vector>
 
 #include "interface_definition_lookup.hpp"
-#include "payloads/interface_payloads.hpp"
-#include "payloads/resource_list_payloads.hpp"
-#include "payloads/service_call_payloads.hpp"
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
 #include "utils/log_event.hpp"
+#include "wire/interfaces.hpp"
+#include "wire/protocol.hpp"
+#include "wire/resources.hpp"
+#include "wire/services.hpp"
 
 namespace livekit_ros2_bridge
 {

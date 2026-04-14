@@ -36,9 +36,9 @@
 #include "livekit/room_delegate.h"
 #include "livekit/rpc_error.h"
 #include "livekit/video_source.h"
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "payloads/cdr_payload.hpp"
+#include "wire/cdr.hpp"
 
 #include <cstdint>
 #include <stdexcept>
@@ -21,8 +21,8 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
-#include "payloads/cdr_base64.hpp"
-#include "protocol.hpp"
+#include "wire/detail/base64.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge::wire::cdr
 {
@@ -57,12 +57,12 @@ std::vector<std::uint8_t> decodePayload(const std::string & base64)
 {
   // The bridge treats padded standard base64 as part of the wire contract so malformed payloads
   // fail here instead of reaching downstream ROS deserialization with ambiguous byte contents.
-  auto decoded = decodeBase64(base64);
-  if (decoded.status == Base64Status::kOk) {
+  auto decoded = detail::decodeBase64(base64);
+  if (decoded.status == detail::Base64Status::kOk) {
     return std::move(decoded.bytes);
   }
 
-  if (decoded.status == Base64Status::kMissingPadding) {
+  if (decoded.status == detail::Base64Status::kMissingPadding) {
     throw std::invalid_argument("payload_base64 must be padded standard base64.");
   }
 
@@ -85,7 +85,7 @@ nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)
 {
   return {
     {kContentTypeField, wire::protocol::kDataContentTypeCdr},
-    {kPayloadBase64Field, encodeBase64(bytes.data(), bytes.size())},
+    {kPayloadBase64Field, detail::encodeBase64(bytes.data(), bytes.size())},
   };
 }
 

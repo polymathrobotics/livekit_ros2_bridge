@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "payloads/cdr_base64.hpp"
+#include "wire/detail/base64.hpp"
 
 #include <openssl/evp.h>
 
@@ -22,13 +22,13 @@
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 
-namespace livekit_ros2_bridge::wire::cdr
+namespace livekit_ros2_bridge::wire::detail
 {
 
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("cdr_base64");
+const auto kLogger = rclcpp::get_logger("wire_base64");
 
 // `EVP_DecodeBlock` accepts some non-canonical inputs, so we keep a local alphabet map
 // to validate pad placement and trailing pad bits before handing data to OpenSSL.
@@ -139,4 +139,4 @@ Base64DecodeResult decodeBase64(std::string_view text)
   return {std::move(bytes), Base64Status::kOk};
 }
 
-}  // namespace livekit_ros2_bridge::wire::cdr
+}  // namespace livekit_ros2_bridge::wire::detail

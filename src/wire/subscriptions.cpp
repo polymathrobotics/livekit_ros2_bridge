@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "payloads/stream_control_payloads.hpp"
+#include "wire/subscriptions.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -24,13 +24,13 @@
 #include <variant>
 
 #include "nlohmann/json.hpp"
-#include "payloads/json_object_parser.hpp"
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
+#include "wire/detail/json_object_parser.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge::wire::subscriptions
 {
@@ -39,7 +39,7 @@ namespace
 {
 
 constexpr auto kLogThrottle = std::chrono::seconds(5);
-const auto kLogger = rclcpp::get_logger("stream_control_payloads");
+const auto kLogger = rclcpp::get_logger("wire_subscriptions");
 
 enum class ClampBoundary
 {

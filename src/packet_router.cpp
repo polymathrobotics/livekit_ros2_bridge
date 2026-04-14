@@ -20,12 +20,12 @@
 #include <utility>
 
 #include "nlohmann/json.hpp"
-#include "payloads/stream_control_payloads.hpp"
-#include "protocol.hpp"
 #include "rclcpp/logging.hpp"
 #include "ros_topic_publisher.hpp"
 #include "subscription_heartbeat_processor.hpp"
 #include "utils/log_event.hpp"
+#include "wire/protocol.hpp"
+#include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
 {
