@@ -492,7 +492,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
   EXPECT_EQ(publish_attempt_count, 2);
 }
 
-TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecomputesInterval)
+TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSubscriptionAndRecomputesInterval)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_prune_shared_interval_test");
@@ -520,7 +520,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSharedSubscriptionAndR
 
   registry.pruneExpiredLeases();
 
-  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, unpublished_before_prune);
 
   const auto renewed =
@@ -553,8 +553,8 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   sendHeartbeat(
     registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic_a, 0), makeTopicDemand(topic_b, 0)}));
 
-  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_a) != nullptr);
-  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_b) != nullptr);
+  ASSERT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic_a) != nullptr);
+  ASSERT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic_b) != nullptr);
 
   const auto renew_delay = kShortHeartbeatLeaseDuration / 2;
   std::this_thread::sleep_for(renew_delay);
@@ -572,8 +572,8 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   std::this_thread::sleep_for(renew_delay + kLeaseWaitBuffer);
   registry.pruneExpiredLeases();
 
-  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_a) != nullptr);
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_b) != nullptr);
+  EXPECT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic_a) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic_b) != nullptr);
 }
 
 TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfiguredSources)
@@ -629,7 +629,7 @@ TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTra
   const auto renewed =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 1000)}));
 
-  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(renewed["delivery"]["track_name"], track_name);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
   EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{track_name, track_name}));
@@ -686,7 +686,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   std::this_thread::sleep_for(kShortHeartbeatLeaseDuration + kLeaseWaitBuffer);
   registry.pruneExpiredLeases();
 
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 }
 
@@ -719,8 +719,8 @@ TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscripti
 
   registry.resetSessionState();
 
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, data_topic) != nullptr);
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, video_topic) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, data_topic) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, video_topic) != nullptr);
   EXPECT_FALSE(data_stream_registry.onTrackPublished(data_track_name, data_stream_registry.generation()));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{data_track_name});
   EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
@@ -772,7 +772,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
 
   EXPECT_EQ(shutdown_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
   shutdown_future.get();
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(push_call_count.load(), 1);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 
@@ -805,7 +805,7 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
   sendHeartbeat(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return push_attempt_count.load() >= 1; }));
-  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_TRUE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
 }
 
 TEST(SubscriptionLeaseManagerTest, OnRemoteParticipantDisconnectedRejectsEmptyIdentity)
@@ -852,7 +852,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownReportsNotFoundSubscriptionsAndFurthe
   registry.pruneExpiredLeases();
   registry.resetSessionState();
 
-  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
+  EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic) != nullptr);
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
 }
 
@@ -945,8 +945,8 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OmittedHeartbeatTargetRemainsActiv
   manager.handleHeartbeat(
     "requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100), makeTopicDemand("/battery_b", 200)}));
 
-  ASSERT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
-  ASSERT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+  ASSERT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  ASSERT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
 
   state_->published_outgoing_packets.clear();
 
@@ -961,8 +961,8 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OmittedHeartbeatTargetRemainsActiv
   expectStatusEntry(*battery_a_status, "topic", "/battery_a", "active");
   EXPECT_FALSE(findStatusEntry(envelope, "topic", "/battery_b").has_value());
 
-  EXPECT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
-  EXPECT_TRUE(manager.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+  EXPECT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  EXPECT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
   EXPECT_TRUE(state_->unpublished_data_track_names.empty());
 
   (void)battery_a;

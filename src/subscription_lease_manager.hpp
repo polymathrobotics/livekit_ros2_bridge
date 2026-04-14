@@ -41,7 +41,7 @@ class VideoStreamRegistry;
 // leases, and publishes subscription status back to the requester.
 class SubscriptionLeaseManager final
 {
-  struct SharedSubscription;
+  struct Subscription;
 
 public:
   using Clock = std::chrono::steady_clock;
@@ -61,8 +61,8 @@ public:
   // republish on the next heartbeat-confirmed reconnect.
   void onRemoteParticipantDisconnected(const std::string & requester_identity);
   void pruneExpiredLeases();
-  SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name);
-  const SharedSubscription * findSubscription(SubscriptionTargetKind kind, const std::string & name) const;
+  Subscription * find(SubscriptionTargetKind kind, const std::string & name);
+  const Subscription * find(SubscriptionTargetKind kind, const std::string & name) const;
   void resetSessionState();
   void shutdown();
 
@@ -79,7 +79,7 @@ private:
     Clock::time_point expiry;
   };
 
-  struct SharedSubscription
+  struct Subscription
   {
     SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
     std::string name;
@@ -88,7 +88,7 @@ private:
     std::map<std::string, Lease> leases;
   };
 
-  using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
+  using SubscriptionMap = std::unordered_map<std::string, Subscription>;
   using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
@@ -107,19 +107,18 @@ private:
   std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
 
-  std::optional<std::string> resolveRequesterIdentity(
+  std::optional<std::string> resolveIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
-  SubscriptionStatus createSubscription(
+  SubscriptionStatus create(
     const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
-  SubscriptionStatus renewExistingSubscription(
-    SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);
-  SubscriptionStatus renewSubscription(
+  SubscriptionStatus renew(Subscription & subscription, const std::string & requester_identity, const Lease & lease);
+  SubscriptionStatus ensure(
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
-  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
+  SubscriptionStatus status(const Subscription & subscription) const;
 
-  void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
-  void removeLeasesIf(const LeasePredicate & should_remove, Clock::time_point reference_time);
-  void republishDataTracks(const std::string & requester_identity);
+  void destroy(Subscription & subscription, bool log_destroy = true);
+  void removeIf(const LeasePredicate & should_remove, Clock::time_point reference_time);
+  void republishTracks(const std::string & requester_identity);
 };
 
 }  // namespace livekit_ros2_bridge

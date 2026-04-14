@@ -59,7 +59,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
 void SubscriptionLeaseManager::handleHeartbeat(
   const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
 {
-  const auto resolved_requester_identity = resolveRequesterIdentity(requester_identity, heartbeat.session_id);
+  const auto resolved_requester_identity = resolveIdentity(requester_identity, heartbeat.session_id);
   if (!resolved_requester_identity.has_value()) {
     return;
   }
@@ -94,7 +94,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
     }
 
     try {
-      statuses.emplace_back(renewSubscription(resolved_identity, demand, expiry));
+      statuses.emplace_back(ensure(resolved_identity, demand, expiry));
     } catch (const std::exception & exc) {
       statuses.emplace_back(
         SubscriptionErrorStatus{
@@ -109,7 +109,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
   // A page refresh can reuse the requester identity before the old lease expires, but the
   // rejoined participant still needs a fresh data-track publication because the previous one
   // belonged to the disconnected participant_session.
-  republishDataTracks(resolved_identity);
+  republishTracks(resolved_identity);
 
   // A heartbeat may exist only to bind or renew the client-session lease. In that case the wire
   // contract does not send an empty status envelope back.
@@ -136,7 +136,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
   }
 }
 
-std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
+std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
   const std::string & requester_identity, const std::optional<std::string> & session_id)
 {
   if (requester_identity.empty()) {
@@ -182,7 +182,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
   return requester_identity;
 }
 
-SubscriptionStatus SubscriptionLeaseManager::renewSubscription(
+SubscriptionStatus SubscriptionLeaseManager::ensure(
   const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry)
 {
   if (is_shutdown_.load()) {
@@ -198,15 +198,15 @@ SubscriptionStatus SubscriptionLeaseManager::renewSubscription(
   const int preferred_interval_ms = std::max(demand.preferred_interval_ms.value_or(0), 0);
   const Lease lease{preferred_interval_ms, expiry};
 
-  if (auto * existing_subscription = findSubscription(demand.kind, demand.name)) {
-    return renewExistingSubscription(*existing_subscription, requester_identity, lease);
+  if (auto * subscription = find(demand.kind, demand.name)) {
+    return renew(*subscription, requester_identity, lease);
   }
 
-  return createSubscription(demand, requester_identity, lease);
+  return create(demand, requester_identity, lease);
 }
 
-SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
-  SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease)
+SubscriptionStatus SubscriptionLeaseManager::renew(
+  Subscription & subscription, const std::string & requester_identity, const Lease & lease)
 {
   try {
     const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
@@ -215,7 +215,7 @@ SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
     if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
       const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
       video_stream_registry_.start(request);
-      return statusFor(subscription);
+      return status(subscription);
     }
 
     const auto * data = data_stream_registry_.find(subscription.name);
@@ -249,16 +249,16 @@ SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
     throw;
   }
 
-  return statusFor(subscription);
+  return status(subscription);
 }
 
-SubscriptionStatus SubscriptionLeaseManager::createSubscription(
+SubscriptionStatus SubscriptionLeaseManager::create(
   const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease)
 {
   bool is_video = demand.kind == SubscriptionTargetKind::ConfiguredSource;
   std::string interface_type;
   std::optional<std::string> stream_key;
-  SharedSubscription subscription;
+  Subscription subscription;
   subscription.target_kind = demand.kind;
   subscription.name = demand.name;
   try {
@@ -290,7 +290,7 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
 
   const std::string & resource = subscription.name;
   const SubscriptionTargetKind target_kind = subscription.target_kind;
-  // Make the shared subscription visible before starting a data-track publish: completion
+  // Make the subscription visible before starting a data-track publish: completion
   // callbacks reconcile against DataStreamRegistry by deterministic track name.
   auto [subscription_it, inserted] = subscriptions_.emplace(
     std::string(wire::subscriptions::targetKindString(demand.kind)) + ":" + demand.name, std::move(subscription));
@@ -300,11 +300,11 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
     data_stream_registry_.start(subscription_it->second.name);
   }
 
-  SubscriptionStatus status = statusFor(subscription_it->second);
+  SubscriptionStatus result = status(subscription_it->second);
   LogEvent event(kLogger, "subscription_created");
   event.field("resource", resource)
     .field("kind", wire::subscriptions::targetKindString(target_kind))
-    .field("delivery", wire::subscriptions::deliveryKindString(status.delivery_kind))
+    .field("delivery", wire::subscriptions::deliveryKindString(result.delivery_kind))
     .field("requester_identity", requester_identity);
   if (subscription_it->second.delivery_kind == SubscriptionDeliveryKind::kVideo) {
     const VideoStreamRequest request{
@@ -318,7 +318,7 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
     event.field("track_name", data->trackName());
   }
   event.info();
-  return status;
+  return result;
 }
 
 void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string & requester_identity)
@@ -348,7 +348,7 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
     }
 
     // The republish queue is keyed only by requester. Once any currently published data track
-    // proves this requester still owns a live lease, republishDataTracks() will sweep the rest.
+    // proves this requester still owns a live lease, republishTracks() will sweep the rest.
     if (republish_requesters_.insert(requester_identity).second) {
       LogEvent(kLogger, "data_track_republish_queued")
         .field("resource", subscription.name)
@@ -361,7 +361,7 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
   }
 }
 
-void SubscriptionLeaseManager::republishDataTracks(const std::string & requester_identity)
+void SubscriptionLeaseManager::republishTracks(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
     return;
@@ -415,17 +415,17 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
     it = session_leases_.erase(it);
   }
 
-  removeLeasesIf([now](const std::string &, const Lease & lease) { return now >= lease.expiry; }, now);
+  removeIf([now](const std::string &, const Lease & lease) { return now >= lease.expiry; }, now);
 }
 
-SubscriptionLeaseManager::SharedSubscription * SubscriptionLeaseManager::findSubscription(
+SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
   SubscriptionTargetKind kind, const std::string & name)
 {
   auto it = subscriptions_.find(std::string(wire::subscriptions::targetKindString(kind)) + ":" + name);
   return it == subscriptions_.end() ? nullptr : &it->second;
 }
 
-const SubscriptionLeaseManager::SharedSubscription * SubscriptionLeaseManager::findSubscription(
+const SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
   SubscriptionTargetKind kind, const std::string & name) const
 {
   const auto it = subscriptions_.find(std::string(wire::subscriptions::targetKindString(kind)) + ":" + name);
@@ -467,11 +467,11 @@ void SubscriptionLeaseManager::resetSessionState()
     if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       continue;
     }
-    destroyRuntime(subscription);
+    destroy(subscription);
   }
 }
 
-SubscriptionStatus SubscriptionLeaseManager::statusFor(const SharedSubscription & subscription) const
+SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscription) const
 {
   SubscriptionStatus status;
   status.kind = subscription.target_kind;
@@ -517,7 +517,7 @@ int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Leas
   return applied_interval_ms;
 }
 
-void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remove, Clock::time_point reference_time)
+void SubscriptionLeaseManager::removeIf(const LeasePredicate & should_remove, Clock::time_point reference_time)
 {
   constexpr const char * kRemovalReason = "lease_expired";
 
@@ -584,7 +584,7 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
         event.info();
       }
       // `subscription_pruned` already captures this lease-driven teardown boundary.
-      destroyRuntime(subscription, false);
+      destroy(subscription, false);
       it = subscriptions_.erase(it);
       continue;
     }
@@ -596,7 +596,7 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
   }
 }
 
-void SubscriptionLeaseManager::destroyRuntime(SharedSubscription & subscription, bool log_destroy)
+void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_destroy)
 {
   if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
     const auto * data = data_stream_registry_.find(subscription.name);
@@ -666,7 +666,7 @@ void SubscriptionLeaseManager::shutdown()
     if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       continue;
     }
-    destroyRuntime(subscription);
+    destroy(subscription);
   }
 }
 
