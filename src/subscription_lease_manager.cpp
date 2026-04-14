@@ -331,14 +331,8 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
 
     // The republish queue is keyed only by requester. Once any currently published data track
     // proves this requester still owns a live lease, republishTracks() will sweep the rest.
-    if (republish_requesters_.insert(requester_identity).second) {
-      LogEvent(kLogger, "data_track_republish_queued")
-        .field("resource", subscription.name)
-        .field("track_name", data->trackName())
-        .field("requester_identity", requester_identity)
-        .field("reason", "participant_disconnected")
-        .info();
-    }
+    republish_requesters_.insert(requester_identity);
+
     return;
   }
 }
@@ -435,11 +429,11 @@ void SubscriptionLeaseManager::resetSessionState()
       throw std::logic_error("data subscription invariant violated: data stream is required");
     }
 
-    LogEvent event(kLogger, "subscription_destroyed");
-    event.field("resource", subscription.name)
+    LogEvent(kLogger, "subscription_destroyed")
+      .field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-      .field("track_name", data->trackName());
-    event.info();
+      .field("track_name", data->trackName())
+      .info();
   }
 
   data_stream_registry_.resetSessionState();
@@ -545,25 +539,25 @@ void SubscriptionLeaseManager::removeIf(const LeasePredicate & should_remove, Cl
         if (data == nullptr) {
           throw std::logic_error("data subscription invariant violated: data stream is required");
         }
-        LogEvent event(kLogger, "subscription_pruned");
-        event.field("resource", subscription.name)
+        LogEvent(kLogger, "subscription_pruned")
+          .field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
           .field("reason", kRemovalReason)
-          .field("track_name", data->trackName());
-        event.info();
+          .field("track_name", data->trackName())
+          .info();
       } else {
         const auto video =
           video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
         if (!video.has_value()) {
           throw std::logic_error("video subscription invariant violated: video stream is required");
         }
-        LogEvent event(kLogger, "subscription_pruned");
-        event.field("resource", subscription.name)
+        LogEvent(kLogger, "subscription_pruned")
+          .field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
           .field("reason", kRemovalReason)
           .field("stream_key", video->stream_key)
-          .field("track_name", video->track_name);
-        event.info();
+          .field("track_name", video->track_name)
+          .info();
       }
       // `subscription_pruned` already captures this lease-driven teardown boundary.
       destroy(subscription, false);
@@ -586,11 +580,11 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
       throw std::logic_error("data subscription invariant violated: data stream is required");
     }
     if (log_destroy) {
-      LogEvent event(kLogger, "subscription_destroyed");
-      event.field("resource", subscription.name)
+      LogEvent(kLogger, "subscription_destroyed")
+        .field("resource", subscription.name)
         .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-        .field("track_name", data->trackName());
-      event.info();
+        .field("track_name", data->trackName())
+        .info();
     }
     data_stream_registry_.stop(subscription.name);
     return;
@@ -602,12 +596,12 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
     throw std::logic_error("video subscription invariant violated: video stream is required");
   }
   if (log_destroy) {
-    LogEvent event(kLogger, "subscription_destroyed");
-    event.field("resource", subscription.name)
+    LogEvent(kLogger, "subscription_destroyed")
+      .field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
       .field("stream_key", video->stream_key)
-      .field("track_name", video->track_name);
-    event.info();
+      .field("track_name", video->track_name)
+      .info();
   }
   video_stream_registry_.stop(subscription.target_kind, subscription.name, subscription.interface_type);
 }
@@ -634,11 +628,11 @@ void SubscriptionLeaseManager::shutdown()
       throw std::logic_error("data subscription invariant violated: data stream is required");
     }
 
-    LogEvent event(kLogger, "subscription_destroyed");
-    event.field("resource", subscription.name)
+    LogEvent(kLogger, "subscription_destroyed")
+      .field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-      .field("track_name", data->trackName());
-    event.info();
+      .field("track_name", data->trackName())
+      .info();
   }
 
   data_stream_registry_.shutdown();
