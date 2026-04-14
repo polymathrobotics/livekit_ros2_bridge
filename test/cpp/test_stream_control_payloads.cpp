@@ -320,6 +320,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
     wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{topic_data, configured_source_video},
       std::nullopt,
+      std::nullopt,
       std::chrono::steady_clock::time_point{}),
     expected);
 }
@@ -370,11 +371,12 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
           "Unknown configured video source '/sources/missing'."),
       },
       std::nullopt,
+      std::nullopt,
       std::chrono::steady_clock::time_point{}),
     expected);
 }
 
-TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMetadata)
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAndExpiryMetadata)
 {
   auto topic_data = makeStatus(
     SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "ros.data.battery_state");
@@ -382,8 +384,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMeta
   topic_data.applied_interval_ms = 100;
 
   const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
-  const auto lease = std::optional<wire::subscriptions::SubscriptionStatusLease>{
-    wire::subscriptions::SubscriptionStatusLease{"session-1", now + std::chrono::milliseconds(45000)}};
+  const auto session_id = std::optional<std::string>{"session-1"};
+  const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
@@ -405,7 +407,43 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesLeaseMeta
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(std::vector<SubscriptionReportedStatus>{topic_data}, lease, now), expected);
+    wire::subscriptions::serializeStatuses(
+      std::vector<SubscriptionReportedStatus>{topic_data}, session_id, expiry, now),
+    expected);
+}
+
+TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWithoutSessionId)
+{
+  auto topic_data = makeStatus(
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "ros.data.battery_state");
+  topic_data.interface_type = "sensor_msgs/msg/BatteryState";
+  topic_data.applied_interval_ms = 100;
+
+  const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
+  const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
+
+  nlohmann::json expected = {
+    {"v", wire::protocol::kProtocolVersion},
+    {"type", wire::protocol::kControlSubscriptionsStatus},
+    {"lease_expires_in_ms", 45000},
+    {"subscriptions", nlohmann::json::array()},
+  };
+  expected["subscriptions"].push_back({
+    {"kind", "topic"},
+    {"name", "/battery_state"},
+    {"status", "active"},
+    {"interface_type", "sensor_msgs/msg/BatteryState"},
+    {"delivery",
+     {{"kind", "data"},
+      {"track_name", "ros.data.battery_state"},
+      {"content_type", "application/x-ros-cdr"},
+      {"interval_ms", 100}}},
+  });
+
+  EXPECT_EQ(
+    wire::subscriptions::serializeStatuses(
+      std::vector<SubscriptionReportedStatus>{topic_data}, std::nullopt, expiry, now),
+    expected);
 }
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
@@ -445,6 +483,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
           "No ROS types found for topic '/nonexistent_topic'."),
       },
       std::nullopt,
+      std::nullopt,
       std::chrono::steady_clock::time_point{}),
     expected);
 }
@@ -457,7 +496,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliv
 
   EXPECT_THROW(
     (void)wire::subscriptions::serializeStatuses(
-      std::vector<SubscriptionReportedStatus>{status}, std::nullopt, std::chrono::steady_clock::time_point{}),
+      std::vector<SubscriptionReportedStatus>{status},
+      std::nullopt,
+      std::nullopt,
+      std::chrono::steady_clock::time_point{}),
     std::invalid_argument);
 }
 

@@ -352,7 +352,8 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
 
 nlohmann::json serializeStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses,
-  const std::optional<SubscriptionStatusLease> & lease,
+  const std::optional<std::string> & session_id,
+  const std::optional<std::chrono::steady_clock::time_point> & expiry,
   std::chrono::steady_clock::time_point now)
 {
   nlohmann::json subscriptions = nlohmann::json::array();
@@ -367,17 +368,21 @@ nlohmann::json serializeStatuses(
     // reported subscription-status entry.
     {"subscriptions", subscriptions},
   };
-  if (lease.has_value()) {
-    body["session_id"] = lease->session_id;
-    body["lease_expires_in_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(lease->expiry - now).count();
+  if (session_id.has_value()) {
+    body["session_id"] = *session_id;
+  }
+  if (expiry.has_value()) {
+    body["lease_expires_in_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(*expiry - now).count();
   }
 
   return body;
 }
 
 nlohmann::json serializeStatuses(
-  const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease)
+  const std::vector<SubscriptionReportedStatus> & statuses,
+  const std::optional<std::string> & session_id,
+  const std::optional<std::chrono::steady_clock::time_point> & expiry)
 {
-  return serializeStatuses(statuses, lease, std::chrono::steady_clock::now());
+  return serializeStatuses(statuses, session_id, expiry, std::chrono::steady_clock::now());
 }
 }  // namespace livekit_ros2_bridge::wire::subscriptions

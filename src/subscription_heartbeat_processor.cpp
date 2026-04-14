@@ -75,7 +75,7 @@ void SubscriptionHeartbeatProcessor::process(
   publishStatuses(*lease, statuses);
 }
 
-void SubscriptionHeartbeatProcessor::pruneExpiredLeases()
+void SubscriptionHeartbeatProcessor::pruneExpiredSessionLeases()
 {
   const auto now = std::chrono::steady_clock::now();
   for (auto it = leases_.begin(); it != leases_.end();) {
@@ -102,6 +102,7 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
         .field("reason", "anonymous_requester_without_resolvable_client_session")
         .fieldOr("session_id", session_id.value_or(""), "<absent>")
         .warnThrottle(*clock_, kLogThrottle);
+
       return std::nullopt;
     }
 
@@ -110,6 +111,7 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
       .field("requester_identity", it->second.requester_identity)
       .fieldOr("session_id", session_id.value_or(""), "<absent>")
       .warnThrottle(*clock_, kLogThrottle);
+
     return ResolvedLease{it->second.requester_identity, session_id, expiry};
   }
 
@@ -128,6 +130,7 @@ std::optional<SubscriptionHeartbeatProcessor::ResolvedLease> SubscriptionHeartbe
         .field("count", count)
         .warn();
     }
+
     return std::nullopt;
   }
 
@@ -176,12 +179,10 @@ void SubscriptionHeartbeatProcessor::publishStatuses(
     return;
   }
 
-  std::optional<wire::subscriptions::SubscriptionStatusLease> lease_metadata;
-  if (lease.session_id.has_value()) {
-    lease_metadata = wire::subscriptions::SubscriptionStatusLease{*lease.session_id, lease.expiry};
-  }
-
-  const std::string body = wire::subscriptions::serializeStatuses(statuses, lease_metadata).dump();
+  const std::string body =
+    wire::subscriptions::serializeStatuses(
+      statuses, lease.session_id, std::optional<std::chrono::steady_clock::time_point>{lease.expiry})
+      .dump();
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {lease.requester_identity};

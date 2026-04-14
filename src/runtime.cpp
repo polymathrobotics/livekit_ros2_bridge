@@ -83,7 +83,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
 
   subscription_lease_gc_timer_ = node_.create_wall_timer(kLeaseGcInterval, [this]() {
     submitToExecutor([this]() {
-      subscription_heartbeat_processor_->pruneExpiredLeases();
+      subscription_heartbeat_processor_->pruneExpiredSessionLeases();
       subscription_registry_->pruneExpiredLeases();
     });
   });

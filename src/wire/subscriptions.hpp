@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <optional>
+#include <string>
 #include <string_view>
 
 #include "core/subscriptions.hpp"
@@ -40,23 +41,21 @@ const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind);
 /// further normalize values such as negatives.
 SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body);
 
-struct SubscriptionStatusLease
-{
-  std::string session_id;
-  std::chrono::steady_clock::time_point expiry;
-};
-
 /// Serialize the full `ros.subscriptions.status` response body from reported status DTOs and
-/// optional lease metadata. The serializer owns the per-entry `active`/`error` mapping and the
-/// top-level envelope shape, including `lease_expires_in_ms`.
+/// optional session / lease metadata. `lease_expires_in_ms` is serialized whenever `expiry` is
+/// present, even if `session_id` is absent. The serializer owns the per-entry `active`/`error`
+/// mapping and the top-level envelope shape.
 nlohmann::json serializeStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses,
-  const std::optional<SubscriptionStatusLease> & lease,
+  const std::optional<std::string> & session_id,
+  const std::optional<std::chrono::steady_clock::time_point> & expiry,
   std::chrono::steady_clock::time_point now);
 
 /// Serialize the full `ros.subscriptions.status` response body using `steady_clock::now()` for
 /// `lease_expires_in_ms`.
 nlohmann::json serializeStatuses(
-  const std::vector<SubscriptionReportedStatus> & statuses, const std::optional<SubscriptionStatusLease> & lease);
+  const std::vector<SubscriptionReportedStatus> & statuses,
+  const std::optional<std::string> & session_id,
+  const std::optional<std::chrono::steady_clock::time_point> & expiry);
 
 }  // namespace livekit_ros2_bridge::wire::subscriptions
