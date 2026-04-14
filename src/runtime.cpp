@@ -140,49 +140,26 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   }
   LogEvent(node_.get_logger(), "runtime_startup_begin").fieldOr("room", config_.livekit.room, "<unset>").info();
 
-  initFailFast();
-  initVideoProfiling();
-  initRosInterfaces();
-  initSubscriptionRuntime();
-  initPacketRouting();
-  startRoomConnection();
-}
-
-Runtime::~Runtime()
-{
-  shutdown();
-}
-
-void Runtime::initFailFast()
-{
+  // Step 1: arm fail-fast monitoring before startup begins.
   if (config_.health.fail_fast_enabled) {
     state_.armGraceDeadline(config_.health.fail_fast_disconnect_grace);
   }
-
   fail_fast_timer_ = node_.create_wall_timer(kFailFastEvaluationInterval, [this]() { checkFailFast(); });
-}
 
-void Runtime::initVideoProfiling()
-{
-  if (!config_.video_profiling.enabled) {
-    return;
+  // Step 2: configure optional video profiling before any stream state is created.
+  if (config_.video_profiling.enabled) {
+    video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.video_profiling);
+    video_profiling_registry_->logConfig();
+    video_profile_summary_timer_ = node_.create_wall_timer(
+      video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
   }
 
-  video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.video_profiling);
-  video_profiling_registry_->logConfig();
-  video_profile_summary_timer_ = node_.create_wall_timer(
-    video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
-}
-
-void Runtime::initRosInterfaces()
-{
+  // Step 3: create the ROS-facing execution and publication helpers.
   ros_executor_queue_ = std::make_unique<RosExecutorQueue>(node_);
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(node_, config_.access_policy);
   ros_service_caller_ = std::make_unique<RosServiceCaller>(node_);
-}
 
-void Runtime::initSubscriptionRuntime()
-{
+  // Step 4: build subscription and stream state on top of the room connection.
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
     node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
 
@@ -198,19 +175,15 @@ void Runtime::initSubscriptionRuntime()
       subscription_registry_->pruneExpiredLeases();
     });
   });
-}
 
-void Runtime::initPacketRouting()
-{
+  // Step 5: wire ingress packet routing back onto the ROS executor.
   packet_router_ = std::make_unique<PacketRouter>(
     node_.get_clock(),
     [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
     *subscription_heartbeat_processor_,
     *ros_topic_publisher_);
-}
 
-void Runtime::startRoomConnection()
-{
+  // Step 6: start transport callbacks, then register required RPCs for readiness.
   // `start()` may deliver callbacks before RPC registration completes, so readiness is logged when
   // the second prerequisite arrives.
   room_connection_->start(
@@ -237,6 +210,11 @@ void Runtime::startRoomConnection()
   if (state_.markRpcRegistered()) {
     LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.livekit.room, "<unset>").info();
   }
+}
+
+Runtime::~Runtime()
+{
+  shutdown();
 }
 
 void Runtime::onConnected()

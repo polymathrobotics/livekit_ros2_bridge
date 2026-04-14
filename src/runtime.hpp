@@ -136,14 +136,8 @@ private:
   void onParticipantDisconnected(std::string requester_identity);
   void onReconnectRequested(const std::string & reason);
   void onConnected();
-  void initPacketRouting();
-  void initFailFast();
-  void initRosInterfaces();
-  void initSubscriptionRuntime();
-  void initVideoProfiling();
   void logPacketDrop(const IncomingPacket & packet, const char * reason, EventThrottle & throttle) const;
   void logExecutorWorkDrop(const char * reason, const char * stage, EventThrottle & throttle);
-  void startRoomConnection();
 
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
