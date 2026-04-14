@@ -559,7 +559,7 @@ TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTra
   auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
 
-  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
+  registry.onRemoteParticipantDisconnected("alice");
   registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
@@ -593,12 +593,12 @@ TEST(SubscriptionLeaseManagerTest, NewRequesterRepublishesAlreadyPublishedDataTr
   EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{first.track_name, first.track_name}));
 }
 
-TEST(SubscriptionLeaseManagerTest, StaleGenerationDoesNotRepublishReplacementSubscription)
+TEST(SubscriptionLeaseManagerTest, RevokedRequesterClearsQueuedRepublishBeforeReplacementSubscription)
 {
   ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("subscription_registry_stale_republish_generation_test");
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_revoke_republish_before_replacement_test");
   FakeRoomConnection session;
-  const std::string topic = "/battery/stale_republish_generation";
+  const std::string topic = "/battery/revoke_republish_before_replacement";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
 
@@ -609,14 +609,13 @@ TEST(SubscriptionLeaseManagerTest, StaleGenerationDoesNotRepublishReplacementSub
   DataStreamRegistry data_stream_registry(*node, session);
   auto registry = makeLeaseManager(*node, session, data_stream_registry);
   const auto first = registry.renewSubscription("alice", topic, 0, kFarFuture);
-  const auto stale_generation = data_stream_registry.generation();
 
+  registry.onRemoteParticipantDisconnected("alice");
   registry.revokeRequesterLeases("alice");
   ASSERT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
 
   const auto replacement = registry.renewSubscription("alice", topic, 0, kFarFuture);
 
-  registry.queueDataTrackRepublish("alice", stale_generation);
   registry.republishDataTracks("alice");
 
   EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic) != nullptr);
@@ -681,7 +680,7 @@ TEST(SubscriptionLeaseManagerTest, RevokeRequesterLeasesClearsQueuedRepublishFor
   const auto response = registry.renewSubscription("alice", topic, 1000, kFarFuture);
   registry.renewSubscription("bob", topic, 1000, kFarFuture);
 
-  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
+  registry.onRemoteParticipantDisconnected("alice");
   registry.revokeRequesterLeases("alice");
   registry.republishDataTracks("alice");
 
@@ -838,7 +837,7 @@ TEST(SubscriptionLeaseManagerTest, RequesterSpecificMethodsRejectEmptyIdentity)
     [&registry]() { (void)registry.renewSubscription("", "/some/topic", 0, kFarFuture); },
     "requester_identity is required");
   expectInvalidArgumentMessage(
-    [&registry]() { registry.queueDataTrackRepublish("", 0); }, "requester_identity is required");
+    [&registry]() { registry.onRemoteParticipantDisconnected(""); }, "requester_identity is required");
   expectInvalidArgumentMessage([&registry]() { registry.republishDataTracks(""); }, "requester_identity is required");
   expectInvalidArgumentMessage([&registry]() { registry.revokeRequesterLeases(""); }, "requester_identity is required");
 }

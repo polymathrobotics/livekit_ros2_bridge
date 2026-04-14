@@ -157,7 +157,7 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
 
-  registry.queueDataTrackRepublish("alice", data_stream_registry.generation());
+  registry.onRemoteParticipantDisconnected("alice");
   registry.republishDataTracks("alice");
   ASSERT_TRUE(
     publishUntilFrameCount(executor, publisher, message, room_connection, 2U, std::chrono::milliseconds(300)));

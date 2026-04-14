@@ -223,11 +223,10 @@ void Runtime::onRoomIncomingPacket(const IncomingPacket & packet)
 
 void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)
 {
-  const std::size_t generation = data_stream_registry_->generation();
-  submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity), generation]() {
+  submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity)]() {
     // Keep leases alive across a browser refresh, but queue fresh data-track publications
     // because LiveKit binds them to the old participant_session.
-    subscription_lease_manager_->queueDataTrackRepublish(remote_participant_identity, generation);
+    subscription_lease_manager_->onRemoteParticipantDisconnected(remote_participant_identity);
     ros_service_caller_->cancelCallsForRequester(remote_participant_identity);
   });
 }

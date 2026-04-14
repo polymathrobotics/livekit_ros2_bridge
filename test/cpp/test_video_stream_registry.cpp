@@ -27,7 +27,9 @@
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_registry.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

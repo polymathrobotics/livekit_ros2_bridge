@@ -83,10 +83,10 @@ public:
     int preferred_interval_ms,
     Clock::time_point expiry);
 
-  // Participant disconnect callbacks can lag behind lease expiry or a same-topic resubscribe. The
-  // caller supplies the observed generation for that session; only a matching generation queues
-  // the requester for data-track republish on the next heartbeat-confirmed reconnect.
-  void queueDataTrackRepublish(const std::string & requester_identity, std::size_t generation);
+  // Participant disconnects can leave a rejoined requester unable to see an already published
+  // data track. If the requester still owns any published data subscription, mark it for one
+  // republish on the next heartbeat-confirmed reconnect.
+  void onRemoteParticipantDisconnected(const std::string & requester_identity);
   // Republishes currently published data tracks for a requester once a fresh heartbeat proves the
   // requester has rejoined and still owns those subscriptions.
   void republishDataTracks(const std::string & requester_identity);

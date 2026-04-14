@@ -360,23 +360,13 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
   return status;
 }
 
-void SubscriptionLeaseManager::queueDataTrackRepublish(const std::string & requester_identity, std::size_t generation)
+void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string & requester_identity)
 {
   if (is_shutdown_.load()) {
     return;
   }
   if (requester_identity.empty()) {
     throw std::invalid_argument("requester_identity is required");
-  }
-  const std::size_t current_generation = data_stream_registry_.generation();
-  if (generation != current_generation) {
-    LogEvent(kLogger, "data_track_republish_queue_skipped")
-      .field("requester_identity", requester_identity)
-      .field("reason", "stale_generation")
-      .field("observed_generation", generation)
-      .field("current_generation", current_generation)
-      .info();
-    return;
   }
 
   for (const auto & [subscription_key, subscription] : subscriptions_) {
