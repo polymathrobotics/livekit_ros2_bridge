@@ -244,6 +244,42 @@ TEST(SubscriptionRegistryTest, PruneExpiredLeasesKeepsSharedSubscriptionAndRecom
   EXPECT_EQ(registry.renewSubscription("bob", topic, 300, kFarFuture).applied_interval_ms, 300);
 }
 
+TEST(SubscriptionRegistryTest, OmittedRequesterTargetExpiresWhileRenewedSiblingTargetStaysActive)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_omitted_target_expiry_test");
+  FakeRoomConnection session;
+  const std::string topic_a = "/battery/omitted_stays_alive";
+  const std::string topic_b = "/battery/omitted_expires";
+  auto publisher_a = node->create_publisher<sensor_msgs::msg::BatteryState>(topic_a, rclcpp::QoS(10));
+  auto publisher_b = node->create_publisher<sensor_msgs::msg::BatteryState>(topic_b, rclcpp::QoS(10));
+  (void)publisher_a;
+  (void)publisher_b;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic_a, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic_b, "sensor_msgs/msg/BatteryState"));
+
+  DataStreamRegistry data_stream_registry(*node, session);
+  SubscriptionRegistry registry(*node, data_stream_registry, nullptr);
+
+  const auto initial_expiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+  registry.renewSubscription("alice", topic_a, 0, initial_expiry);
+  registry.renewSubscription("alice", topic_b, 0, initial_expiry);
+
+  registry.renewSubscription("alice", topic_a, 0, kFarFuture);
+
+  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_a) != nullptr);
+  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_b) != nullptr);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  registry.pruneExpiredLeases();
+
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_a) != nullptr);
+  EXPECT_FALSE(registry.findSubscription(SubscriptionTargetKind::Topic, topic_b) != nullptr);
+}
+
 TEST(SubscriptionRegistryTest, CreatesVideoSubscriptionsForRosTopicsAndConfiguredSources)
 {
   ScopedRclcppInit init;

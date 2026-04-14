@@ -302,6 +302,46 @@ TEST_F(SubscriptionHeartbeatProcessorTest, ActiveSubscriptionPublishesSubscripti
   (void)publisher;
 }
 
+TEST_F(SubscriptionHeartbeatProcessorTest, OmittedHeartbeatTargetRemainsActiveUntilItsOriginalLeaseExpires)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto battery_a =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_a", "sensor_msgs/msg/BatteryState");
+  auto battery_b =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_b", "sensor_msgs/msg/BatteryState");
+
+  auto registry = makeRegistry();
+  SubscriptionHeartbeatProcessor processor(registry, *fake_room_connection_, access_policy_, node_->get_clock());
+
+  processor.process(
+    "requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100), makeTopicDemand("/battery_b", 200)}));
+
+  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  ASSERT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+
+  state_->published_outgoing_packets.clear();
+
+  processor.process("requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100)}));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  ASSERT_TRUE(envelope.contains("subscriptions"));
+  ASSERT_EQ(envelope["subscriptions"].size(), 1U);
+
+  const auto battery_a_status = findStatusEntry(envelope, "topic", "/battery_a");
+  ASSERT_TRUE(battery_a_status.has_value());
+  expectStatusEntry(*battery_a_status, "topic", "/battery_a", "active");
+  EXPECT_FALSE(findStatusEntry(envelope, "topic", "/battery_b").has_value());
+
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
+  EXPECT_TRUE(registry.findSubscription(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
+  EXPECT_TRUE(state_->unpublished_data_track_names.empty());
+
+  (void)battery_a;
+  (void)battery_b;
+}
+
 TEST_F(SubscriptionHeartbeatProcessorTest, AnonymousHeartbeatRenewsKnownClientSession)
 {
   rclcpp::executors::SingleThreadedExecutor executor;

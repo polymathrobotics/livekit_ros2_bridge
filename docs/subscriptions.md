@@ -1,6 +1,6 @@
 # Subscriptions
 
-`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat says "this is the full set of subscriptions I still want right now" for one requester. The bridge renews 45-second leases, updates shared runtime state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one requested subscription.
+`ros.subscriptions.heartbeat` is a lease renewal packet, not a one-time start command. Each heartbeat renews only the listed subscriptions for one requester. The bridge renews 45-second leases, updates shared runtime state, and publishes one `ros.subscriptions.status` packet when the heartbeat contains at least one requested subscription.
 
 ## Heartbeat request
 
@@ -62,6 +62,8 @@ Behavior:
 - session leases are separate from subscription leases
 
 Anonymous heartbeats without a known `session_id` are dropped. A heartbeat with an empty `subscriptions` array renews nothing and produces no status packet.
+
+Omitted subscriptions are not revoked immediately. If a requester previously renewed `/a` and `/b`, then later heartbeats renew only `/a`, the `/b` lease remains active until its last granted expiry time and is removed only when that lease ages out.
 
 ## Status response
 
@@ -190,6 +192,7 @@ Important behavior:
 ## Lease timing and cleanup
 
 - each successful heartbeat renews each requested subscription for 45 seconds from processing time
+- omitting a previously requested target from a later heartbeat leaves its existing lease untouched; it expires at its last granted expiry unless renewed again
 - the runtime sweeps expired session leases and stream leases once per second
 - `lease_expires_in_ms` reflects the remaining time at the moment the status packet is serialized
 - data-track delivery uses one applied interval per shared topic, based on the smallest current requester interval
