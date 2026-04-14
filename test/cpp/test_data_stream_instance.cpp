@@ -29,6 +29,7 @@
 #include "ros_test_support.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_lease_manager.hpp"
+#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -56,12 +57,20 @@ sensor_msgs::msg::BatteryState makeBatteryState()
 }
 
 SubscriptionLeaseManager makeLeaseManager(
-  rclcpp::Node & node, FakeRoomConnection & room_connection, DataStreamRegistry & data_stream_registry)
+  rclcpp::Node & node,
+  FakeRoomConnection & room_connection,
+  DataStreamRegistry & data_stream_registry,
+  VideoStreamRegistry & video_stream_registry)
 {
   AccessPolicyConfig access_policy_config;
   access_policy_config.subscribe.allow = {"*"};
   return SubscriptionLeaseManager(
-    node, room_connection, AccessPolicy(access_policy_config), node.get_clock(), data_stream_registry, nullptr);
+    node,
+    room_connection,
+    AccessPolicy(access_policy_config),
+    node.get_clock(),
+    data_stream_registry,
+    video_stream_registry);
 }
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
@@ -147,8 +156,9 @@ TEST(DataStreamInstanceTest, SuppressesMessagesAccordingToAppliedInterval)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, room_connection);
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry, video_stream_registry);
   renewViaHeartbeat(registry, "alice", topic, 150);
   const auto message = makeBatteryState();
 
@@ -173,8 +183,9 @@ TEST(DataStreamInstanceTest, RepublishResetsSuppressionBeforeIntervalExpires)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, room_connection);
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry, video_stream_registry);
   renewViaHeartbeat(registry, "alice", topic, 1000);
   const auto message = makeBatteryState();
 
@@ -210,8 +221,9 @@ TEST(DataStreamInstanceTest, RecoversFromPublishFailureWithoutStartingSuppressio
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   };
 
+  VideoStreamRegistry video_stream_registry(*node, room_connection);
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry, video_stream_registry);
   renewViaHeartbeat(registry, "alice", topic, 500);
   const auto message = makeBatteryState();
 
@@ -248,8 +260,9 @@ TEST(DataStreamInstanceTest, PendingPublishDoesNotStartSuppressionWindow)
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   };
 
+  VideoStreamRegistry video_stream_registry(*node, room_connection);
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry, video_stream_registry);
   renewViaHeartbeat(registry, "alice", topic, 1000);
 
   EXPECT_TRUE(room_connection.state->pushed_data_track_frames.empty());
@@ -270,8 +283,9 @@ TEST(DataStreamInstanceTest, ShutdownUnpublishesPublishedTrackAndDropsSubscripti
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, room_connection);
   DataStreamRegistry data_stream_registry(*node, room_connection);
-  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry);
+  auto registry = makeLeaseManager(*node, room_connection, data_stream_registry, video_stream_registry);
   renewViaHeartbeat(registry, "alice", topic, 0);
   const std::string track_name = room_connection.state->published_data_track_names.back();
   const auto message = makeBatteryState();

@@ -14,6 +14,7 @@
 
 #include "video_stream_registry.hpp"
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -40,11 +41,14 @@ VideoStreamRegistry::VideoStreamRegistry(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   const SubscriptionQosConfig * qos_config,
-  VideoProfilingRegistry * profiling_registry)
+  VideoProfilingRegistry * profiling_registry,
+  const VideoStreamConfig * video_stream_config)
 : node_(node)
 , room_connection_(room_connection)
 , qos_config_(qos_config)
 , profiling_registry_(profiling_registry)
+, default_video_stream_config_(makeDefaultVideoStreamConfig())
+, video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
 {}
 
 VideoStreamRegistry::~VideoStreamRegistry()
@@ -52,7 +56,54 @@ VideoStreamRegistry::~VideoStreamRegistry()
   shutdown();
 }
 
-std::string VideoStreamRegistry::start(const VideoStreamSpec & spec)
+VideoStreamInfo VideoStreamRegistry::resolve(const VideoStreamRequest & request) const
+{
+  return makeInfo(resolveSpec(request));
+}
+
+std::optional<VideoStreamInfo> VideoStreamRegistry::find(const VideoStreamRequest & request) const
+{
+  return findResolved(resolveSpec(request));
+}
+
+void VideoStreamRegistry::start(const VideoStreamRequest & request)
+{
+  startResolved(resolveSpec(request));
+}
+
+void VideoStreamRegistry::stop(const VideoStreamRequest & request)
+{
+  stopResolved(resolveSpec(request).stream_key);
+}
+
+VideoStreamInfo VideoStreamRegistry::makeInfo(const VideoStreamSpec & spec)
+{
+  return {spec.stream_key, spec.track_name, spec.degraded_reason.value_or("")};
+}
+
+VideoStreamSpec VideoStreamRegistry::resolveSpec(const VideoStreamRequest & request) const
+{
+  switch (request.kind) {
+    case SubscriptionTargetKind::Topic:
+      return resolveRosVideoTopicSpec(*video_stream_config_, request.name, request.interface_type);
+    case SubscriptionTargetKind::ConfiguredSource:
+      return resolveConfiguredVideoSourceSpec(*video_stream_config_, request.name);
+  }
+
+  throw std::invalid_argument("video stream request kind is invalid");
+}
+
+std::optional<VideoStreamInfo> VideoStreamRegistry::findResolved(const VideoStreamSpec & spec) const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (instances_.find(spec.stream_key) == instances_.end()) {
+    return std::nullopt;
+  }
+
+  return makeInfo(spec);
+}
+
+void VideoStreamRegistry::startResolved(const VideoStreamSpec & spec)
 {
   std::shared_ptr<VideoStreamInstance> instance;
   {
@@ -77,10 +128,10 @@ std::string VideoStreamRegistry::start(const VideoStreamSpec & spec)
 
   // Start outside the registry mutex; VideoStreamInstance owns the heavier startup path and its
   // lifecycle locking.
-  return instance->start();
+  (void)instance->start();
 }
 
-void VideoStreamRegistry::stop(const std::string & stream_key)
+void VideoStreamRegistry::stopResolved(const std::string & stream_key)
 {
   std::shared_ptr<VideoStreamInstance> instance;
   {

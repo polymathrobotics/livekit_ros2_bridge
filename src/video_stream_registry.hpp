@@ -16,8 +16,12 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
+
+#include "core/subscriptions.hpp"
+#include "video_stream_config.hpp"
 
 namespace rclcpp
 {
@@ -33,6 +37,24 @@ class VideoProfilingRegistry;
 struct VideoStreamSpec;
 class VideoStreamInstance;
 
+// Subscription-facing inputs used to resolve one shared video runtime.
+// ROS topics require `interface_type`; configured sources ignore it.
+struct VideoStreamRequest
+{
+  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
+  std::string name;
+  std::string interface_type;
+};
+
+// Stable video metadata derived from one resolved request and surfaced back to callers for
+// status and logging.
+struct VideoStreamInfo
+{
+  std::string stream_key;
+  std::string track_name;
+  std::string degraded_reason;
+};
+
 // Registry of shared in-process video runtimes keyed by resolved stream key.
 // Public methods are thread-safe. Once shutdown begins, later start requests fail.
 class VideoStreamRegistry final
@@ -45,30 +67,44 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     const SubscriptionQosConfig * qos_config = nullptr,
-    VideoProfilingRegistry * profiling_registry = nullptr);
+    VideoProfilingRegistry * profiling_registry = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr);
   ~VideoStreamRegistry();
 
-  // Returns the LiveKit track name for the shared runtime selected by `spec.stream_key`. Once a
-  // key exists, later starts reuse that instance and track identity.
-  std::string start(const VideoStreamSpec & spec);
-  // Detaches the current runtime for `stream_key` if present. A later `start()` creates a fresh
-  // instance instead of reusing one that is already shutting down.
-  void stop(const std::string & stream_key);
+  // Resolves one subscription-facing request into the stable shared runtime identity used for
+  // starts, status, and teardown.
+  VideoStreamInfo resolve(const VideoStreamRequest & request) const;
+  // Returns metadata only while the resolved stream currently has a live registry entry.
+  std::optional<VideoStreamInfo> find(const VideoStreamRequest & request) const;
+  // Starts or reuses the shared runtime addressed by `request`.
+  void start(const VideoStreamRequest & request);
+  // Detaches the current runtime selected by `request` if present. A later `start()` creates a
+  // fresh instance instead of reusing one that is already shutting down.
+  void stop(const VideoStreamRequest & request);
   // Idempotent terminal teardown. Instances are detached under the mutex and shut down after
   // unlocking because teardown touches external ROS and LiveKit state.
   void shutdown();
 
 private:
+  static VideoStreamInfo makeInfo(const VideoStreamSpec & spec);
+  VideoStreamSpec resolveSpec(const VideoStreamRequest & request) const;
+  std::optional<VideoStreamInfo> findResolved(const VideoStreamSpec & spec) const;
+  void startResolved(const VideoStreamSpec & spec);
+  void stopResolved(const std::string & stream_key);
+
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
   // Optional non-owning QoS config forwarded into new stream instances.
   const SubscriptionQosConfig * qos_config_;
   // Optional non-owning registry consulted only when creating a new stream instance.
   VideoProfilingRegistry * profiling_registry_;
+  // Optional non-owning config used to resolve topic/configured-source requests.
+  VideoStreamConfig default_video_stream_config_;
+  const VideoStreamConfig * video_stream_config_;
   // Guards `is_shutdown_` and `instances_`. Per-stream lifecycle synchronization lives
   // inside each VideoStreamInstance so the registry only serializes map membership and terminal
   // shutdown.
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   bool is_shutdown_ = false;
   // Shared ownership keeps an instance alive after the registry lock is released so callers can
   // start or stop it without holding the mutex.

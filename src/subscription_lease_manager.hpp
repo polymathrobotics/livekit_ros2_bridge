@@ -31,7 +31,6 @@
 #include "rclcpp/clock.hpp"
 #include "rclcpp/node.hpp"
 #include "utils/event_throttle.hpp"
-#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -54,8 +53,7 @@ public:
     AccessPolicy access_policy,
     rclcpp::Clock::SharedPtr clock,
     DataStreamRegistry & data_stream_registry,
-    VideoStreamRegistry * video_stream_registry,
-    const VideoStreamConfig * video_stream_config = nullptr,
+    VideoStreamRegistry & video_stream_registry,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
 
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
@@ -83,19 +81,13 @@ private:
     Clock::time_point expiry;
   };
 
-  struct VideoStreamHandle
-  {
-    std::string track_name;
-    VideoStreamSpec stream_spec;
-  };
-
   struct SharedSubscription
   {
     SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
     std::string name;
     std::string interface_type;
+    SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;
     std::map<std::string, Lease> leases;
-    std::optional<VideoStreamHandle> video;
   };
 
   using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
@@ -109,10 +101,8 @@ private:
   AccessPolicy access_policy_;
   rclcpp::Clock::SharedPtr clock_;
   DataStreamRegistry & data_stream_registry_;
-  VideoStreamRegistry * video_stream_registry_;
-  VideoStreamConfig default_video_stream_config_;
+  VideoStreamRegistry & video_stream_registry_;
   Clock::duration heartbeat_lease_duration_;
-  const VideoStreamConfig * video_stream_config_;
 
   std::atomic<bool> is_shutdown_{false};
   std::unordered_map<std::string, SessionLease> session_leases_;

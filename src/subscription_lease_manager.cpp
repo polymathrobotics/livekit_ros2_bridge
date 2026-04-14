@@ -26,6 +26,7 @@
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
 #include "video_stream_registry.hpp"
+#include "video_stream_spec.hpp"
 #include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
 
@@ -45,8 +46,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   AccessPolicy access_policy,
   rclcpp::Clock::SharedPtr clock,
   DataStreamRegistry & data_stream_registry,
-  VideoStreamRegistry * video_stream_registry,
-  const VideoStreamConfig * video_stream_config,
+  VideoStreamRegistry & video_stream_registry,
   Clock::duration heartbeat_lease_duration)
 : node_(node)
 , room_connection_(room_connection)
@@ -54,9 +54,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
 , clock_(std::move(clock))
 , data_stream_registry_(data_stream_registry)
 , video_stream_registry_(video_stream_registry)
-, default_video_stream_config_(makeDefaultVideoStreamConfig())
 , heartbeat_lease_duration_(heartbeat_lease_duration)
-, video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
 {}
 
 void SubscriptionLeaseManager::handleHeartbeat(
@@ -70,8 +68,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
 
   const auto expiry = Clock::now() + heartbeat_lease_duration_;
   if (heartbeat.session_id.has_value()) {
-    auto [it, inserted] = session_leases_.try_emplace(
-      *heartbeat.session_id, SessionLease{resolved_identity, expiry});
+    auto [it, inserted] = session_leases_.try_emplace(*heartbeat.session_id, SessionLease{resolved_identity, expiry});
     if (!inserted && it->second.requester_identity != resolved_identity) {
       throw std::logic_error("session lease invariant violated: session_id must resolve to one requester");
     }
@@ -85,28 +82,28 @@ void SubscriptionLeaseManager::handleHeartbeat(
   for (const auto & demand : heartbeat.subscriptions) {
     // `configured_source` targets name bridge-owned config entries rather than ROS graph
     // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
-    if (
-      demand.kind == SubscriptionTargetKind::Topic &&
-      !access_policy_.allows(AccessOperation::Subscribe, demand.name))
+    if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name))
     {
-      statuses.emplace_back(SubscriptionErrorStatus{
-        demand.kind,
-        demand.name,
-        SubscriptionStatusErrorReason::kForbidden,
-        "ROS topic '" + demand.name + "' not permitted.",
-      });
+      statuses.emplace_back(
+        SubscriptionErrorStatus{
+          demand.kind,
+          demand.name,
+          SubscriptionStatusErrorReason::kForbidden,
+          "ROS topic '" + demand.name + "' not permitted.",
+        });
       continue;
     }
 
     try {
       statuses.emplace_back(renewSubscription(resolved_identity, demand, expiry));
     } catch (const std::exception & exc) {
-      statuses.emplace_back(SubscriptionErrorStatus{
-        demand.kind,
-        demand.name,
-        SubscriptionStatusErrorReason::kNotFound,
-        exc.what(),
-      });
+      statuses.emplace_back(
+        SubscriptionErrorStatus{
+          demand.kind,
+          demand.name,
+          SubscriptionStatusErrorReason::kNotFound,
+          exc.what(),
+        });
     }
   }
 
@@ -121,9 +118,9 @@ void SubscriptionLeaseManager::handleHeartbeat(
     return;
   }
 
-  const std::string body = wire::subscriptions::serializeStatuses(
-      statuses, heartbeat.session_id, std::optional<Clock::time_point>{expiry})
-                             .dump();
+  const std::string body =
+    wire::subscriptions::serializeStatuses(statuses, heartbeat.session_id, std::optional<Clock::time_point>{expiry})
+      .dump();
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {resolved_identity};
@@ -216,7 +213,7 @@ SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
     const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
     subscription.leases[requester_identity] = lease;
 
-    if (!subscription.video.has_value()) {
+    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       const auto * data = data_stream_registry_.find(subscription.name);
       if (data == nullptr) {
         throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -241,21 +238,20 @@ SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
       return statusFor(subscription);
     }
 
-    // VideoStreamRegistry shares one runtime per resolved stream key, so renew reuses that
-    // runtime and updates the status-visible track name from the shared instance.
-    auto & video = *subscription.video;
-    if (video_stream_registry_ == nullptr) {
-      throw std::runtime_error("Video stream registry is unavailable.");
-    }
-    video.track_name = video_stream_registry_->start(video.stream_spec);
+    const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+    video_stream_registry_.start(request);
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "subscription_renew_failed");
     event.field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
       .field("requester_identity", requester_identity);
-    if (subscription.video.has_value()) {
-      const auto & video = *subscription.video;
-      event.field("stream_key", video.stream_spec.stream_key).field("track_name", video.track_name);
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+      const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+      try {
+        const auto active_video = video_stream_registry_.find(request);
+        const auto video = active_video.has_value() ? *active_video : video_stream_registry_.resolve(request);
+        event.field("stream_key", video.stream_key).field("track_name", video.track_name);
+      } catch (const std::exception &) {}
     } else if (const auto * data = data_stream_registry_.find(subscription.name)) {
       event.field("track_name", data->trackName());
     }
@@ -284,15 +280,10 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
     subscription.leases.emplace(requester_identity, lease);
 
     if (is_video) {
-      VideoStreamSpec stream_spec = demand.kind == SubscriptionTargetKind::ConfiguredSource
-                                      ? resolveConfiguredVideoSourceSpec(*video_stream_config_, demand.name)
-                                      : resolveRosVideoTopicSpec(*video_stream_config_, demand.name, interface_type);
-      stream_key = stream_spec.stream_key;
-      if (video_stream_registry_ == nullptr) {
-        throw std::runtime_error("Video stream registry is unavailable.");
-      }
-      std::string track_name = video_stream_registry_->start(stream_spec);
-      subscription.video = VideoStreamHandle{std::move(track_name), std::move(stream_spec)};
+      subscription.delivery_kind = SubscriptionDeliveryKind::kVideo;
+      const VideoStreamRequest request{demand.kind, demand.name, interface_type};
+      stream_key = video_stream_registry_.resolve(request).stream_key;
+      video_stream_registry_.start(request);
     } else {
       data_stream_registry_.create(demand.name, interface_type);
       data_stream_registry_.setIntervalMs(demand.name, appliedIntervalMs(subscription.leases));
@@ -316,7 +307,7 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
     std::string(wire::subscriptions::targetKindString(demand.kind)) + ":" + demand.name, std::move(subscription));
   (void)inserted;
 
-  if (!subscription_it->second.video.has_value()) {
+  if (subscription_it->second.delivery_kind != SubscriptionDeliveryKind::kVideo) {
     data_stream_registry_.start(subscription_it->second.name);
   }
 
@@ -326,9 +317,14 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
     .field("kind", wire::subscriptions::targetKindString(target_kind))
     .field("delivery", wire::subscriptions::deliveryKindString(status.delivery_kind))
     .field("requester_identity", requester_identity);
-  if (subscription_it->second.video.has_value()) {
-    const auto & video = *subscription_it->second.video;
-    event.field("stream_key", video.stream_spec.stream_key).field("track_name", video.track_name);
+  if (subscription_it->second.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    const VideoStreamRequest request{
+      subscription_it->second.target_kind, subscription_it->second.name, subscription_it->second.interface_type};
+    const auto video = video_stream_registry_.find(request);
+    if (!video.has_value()) {
+      throw std::logic_error("video subscription invariant violated: video stream is required");
+    }
+    event.field("stream_key", video->stream_key).field("track_name", video->track_name);
   } else if (const auto * data = data_stream_registry_.find(subscription_it->second.name)) {
     event.field("track_name", data->trackName());
   }
@@ -347,7 +343,7 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
 
   for (const auto & [subscription_key, subscription] : subscriptions_) {
     (void)subscription_key;
-    if (subscription.video.has_value()) {
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
       continue;
     }
 
@@ -390,7 +386,7 @@ void SubscriptionLeaseManager::republishDataTracks(const std::string & requester
 
   for (auto & [subscription_key, subscription] : subscriptions_) {
     (void)subscription_key;
-    if (subscription.video.has_value()) {
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
       continue;
     }
 
@@ -459,7 +455,7 @@ void SubscriptionLeaseManager::resetSessionState()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.video.has_value()) {
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
       continue;
     }
 
@@ -479,7 +475,7 @@ void SubscriptionLeaseManager::resetSessionState()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (!subscription.video.has_value()) {
+    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       continue;
     }
     destroyRuntime(subscription);
@@ -493,7 +489,7 @@ SubscriptionStatus SubscriptionLeaseManager::statusFor(const SharedSubscription 
   status.name = subscription.name;
   status.interface_type = subscription.interface_type;
 
-  if (!subscription.video.has_value()) {
+  if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
     const auto * data = data_stream_registry_.find(subscription.name);
     if (data == nullptr) {
       throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -507,10 +503,14 @@ SubscriptionStatus SubscriptionLeaseManager::statusFor(const SharedSubscription 
     return status;
   }
 
-  const auto & video = *subscription.video;
+  const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+  const auto video = video_stream_registry_.find(request);
+  if (!video.has_value()) {
+    throw std::logic_error("video subscription invariant violated: video stream is required");
+  }
   status.delivery_kind = SubscriptionDeliveryKind::kVideo;
-  status.track_name = video.track_name;
-  status.degraded_reason = video.stream_spec.degraded_reason.value_or("");
+  status.track_name = video->track_name;
+  status.degraded_reason = video->degraded_reason;
   return status;
 }
 
@@ -569,7 +569,7 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
     }
 
     if (subscription.leases.empty()) {
-      if (!subscription.video.has_value()) {
+      if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
         const auto * data = data_stream_registry_.find(subscription.name);
         if (data == nullptr) {
           throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -581,13 +581,17 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
           .field("track_name", data->trackName());
         event.info();
       } else {
-        const auto & video = *subscription.video;
+        const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+        const auto video = video_stream_registry_.find(request);
+        if (!video.has_value()) {
+          throw std::logic_error("video subscription invariant violated: video stream is required");
+        }
         LogEvent event(kLogger, "subscription_pruned");
         event.field("resource", subscription.name)
           .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
           .field("reason", kRemovalReason)
-          .field("stream_key", video.stream_spec.stream_key)
-          .field("track_name", video.track_name);
+          .field("stream_key", video->stream_key)
+          .field("track_name", video->track_name);
         event.info();
       }
       // `subscription_pruned` already captures this lease-driven teardown boundary.
@@ -596,7 +600,7 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
       continue;
     }
 
-    if (!subscription.video.has_value()) {
+    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
     }
     ++it;
@@ -605,7 +609,7 @@ void SubscriptionLeaseManager::removeLeasesIf(const LeasePredicate & should_remo
 
 void SubscriptionLeaseManager::destroyRuntime(SharedSubscription & subscription, bool log_destroy)
 {
-  if (!subscription.video.has_value()) {
+  if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
     const auto * data = data_stream_registry_.find(subscription.name);
     if (data == nullptr) {
       throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -621,19 +625,20 @@ void SubscriptionLeaseManager::destroyRuntime(SharedSubscription & subscription,
     return;
   }
 
-  const auto & video = *subscription.video;
+  const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+  const auto video = video_stream_registry_.find(request);
+  if (!video.has_value()) {
+    throw std::logic_error("video subscription invariant violated: video stream is required");
+  }
   if (log_destroy) {
     LogEvent event(kLogger, "subscription_destroyed");
     event.field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-      .field("stream_key", video.stream_spec.stream_key)
-      .field("track_name", video.track_name);
+      .field("stream_key", video->stream_key)
+      .field("track_name", video->track_name);
     event.info();
   }
-  if (video_stream_registry_ == nullptr) {
-    throw std::runtime_error("Video stream registry is unavailable.");
-  }
-  video_stream_registry_->stop(video.stream_spec.stream_key);
+  video_stream_registry_.stop(request);
 }
 
 void SubscriptionLeaseManager::shutdown()
@@ -649,7 +654,7 @@ void SubscriptionLeaseManager::shutdown()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.video.has_value()) {
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
       continue;
     }
 
@@ -669,7 +674,7 @@ void SubscriptionLeaseManager::shutdown()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (!subscription.video.has_value()) {
+    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
       continue;
     }
     destroyRuntime(subscription);

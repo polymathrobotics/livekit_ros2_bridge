@@ -139,8 +139,7 @@ SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
   DataStreamRegistry & data_stream_registry,
-  VideoStreamRegistry * video_stream_registry = nullptr,
-  const VideoStreamConfig * video_stream_config = nullptr,
+  VideoStreamRegistry & video_stream_registry,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   AccessPolicyConfig access_policy_config;
@@ -152,7 +151,6 @@ SubscriptionLeaseManager makeLeaseManager(
     node.get_clock(),
     data_stream_registry,
     video_stream_registry,
-    video_stream_config,
     heartbeat_lease_duration);
 }
 
@@ -161,8 +159,7 @@ SubscriptionLeaseManager makeLeaseManager(
   FakeRoomConnection & session,
   DataStreamRegistry & data_stream_registry,
   AccessPolicy access_policy,
-  VideoStreamRegistry * video_stream_registry = nullptr,
-  const VideoStreamConfig * video_stream_config = nullptr,
+  VideoStreamRegistry & video_stream_registry,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   return SubscriptionLeaseManager(
@@ -172,7 +169,6 @@ SubscriptionLeaseManager makeLeaseManager(
     node.get_clock(),
     data_stream_registry,
     video_stream_registry,
-    video_stream_config,
     heartbeat_lease_duration);
 }
 
@@ -333,23 +329,19 @@ protected:
   }
 
   SubscriptionLeaseManager makeManager(
-    AccessPolicy access_policy,
-    VideoStreamRegistry * video_stream_registry = nullptr,
-    const VideoStreamConfig * video_stream_config = nullptr)
+    AccessPolicy access_policy, const VideoStreamConfig * video_stream_config = nullptr)
   {
     data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *fake_room_connection_);
+    video_stream_registry_ =
+      std::make_unique<VideoStreamRegistry>(*node_, *fake_room_connection_, nullptr, nullptr, video_stream_config);
     return makeLeaseManager(
-      *node_,
-      *fake_room_connection_,
-      *data_stream_registry_,
-      std::move(access_policy),
-      video_stream_registry,
-      video_stream_config);
+      *node_, *fake_room_connection_, *data_stream_registry_, std::move(access_policy), *video_stream_registry_);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<FakeRoomConnection> fake_room_connection_;
   std::unique_ptr<DataStreamRegistry> data_stream_registry_;
+  std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::shared_ptr<FakeRoomConnectionState> state_;
   AccessPolicy access_policy_;
 };
@@ -381,8 +373,9 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
 
   const auto first =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
@@ -419,8 +412,9 @@ TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();
@@ -447,8 +441,9 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatClampsNegativeRequestedIntervalToZer
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, -25)}));
 
@@ -480,8 +475,9 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   };
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
 
   const auto failed =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 500)}));
@@ -516,9 +512,10 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSharedSubscriptionAndR
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
   auto registry =
-    makeLeaseManager(*node, session, data_stream_registry, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+    makeLeaseManager(*node, session, data_stream_registry, video_stream_registry, kShortHeartbeatLeaseDuration);
 
   sendHeartbeat(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 50)}));
   std::this_thread::sleep_for(kShortHeartbeatLeaseDuration + kLeaseWaitBuffer);
@@ -555,9 +552,10 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   ASSERT_TRUE(waitForTopicType(executor, node, topic_a, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(waitForTopicType(executor, node, topic_b, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
   auto registry =
-    makeLeaseManager(*node, session, data_stream_registry, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+    makeLeaseManager(*node, session, data_stream_registry, video_stream_registry, kShortHeartbeatLeaseDuration);
 
   sendHeartbeat(
     registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic_a, 0), makeTopicDemand(topic_b, 0)}));
@@ -590,8 +588,8 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfi
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomConnection session;
-  VideoStreamRegistry video_stream_registry(*node, session);
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  VideoStreamRegistry video_stream_registry(*node, session, nullptr, nullptr, &video_stream_config);
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
   (void)publisher;
@@ -601,7 +599,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfi
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry, &video_stream_registry, &video_stream_config);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
 
   const auto topic_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(video_topic)}));
@@ -627,8 +625,9 @@ TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTra
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto first =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 1000)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
@@ -656,8 +655,9 @@ TEST(SubscriptionLeaseManagerTest, NewRequesterHeartbeatRepublishesAlreadyPublis
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto first =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 1000)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
@@ -682,9 +682,10 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
   auto registry =
-    makeLeaseManager(*node, session, data_stream_registry, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+    makeLeaseManager(*node, session, data_stream_registry, video_stream_registry, kShortHeartbeatLeaseDuration);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();
@@ -715,7 +716,7 @@ TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscripti
   ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
 
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry, &video_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto data_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(data_topic, 0)}));
   const std::string data_track_name = data_status["delivery"]["track_name"].get<std::string>();
@@ -759,8 +760,9 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
     return DataTrackPushResult::success();
   };
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();
@@ -804,8 +806,9 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
     return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
   };
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   sendHeartbeat(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
 
   ASSERT_TRUE(publishUntil(executor, publisher, makeBatteryState(), [&]() { return push_attempt_count.load() >= 1; }));
@@ -817,8 +820,9 @@ TEST(SubscriptionLeaseManagerTest, OnRemoteParticipantDisconnectedRejectsEmptyId
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
   FakeRoomConnection session;
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
 
   expectInvalidArgumentMessage(
     [&registry]() { registry.onRemoteParticipantDisconnected(""); }, "requester_identity is required");
@@ -837,8 +841,9 @@ TEST(SubscriptionLeaseManagerTest, ShutdownReportsNotFoundSubscriptionsAndFurthe
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
+  VideoStreamRegistry video_stream_registry(*node, session);
   DataStreamRegistry data_stream_registry(*node, session);
-  auto registry = makeLeaseManager(*node, session, data_stream_registry);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
   const auto active =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = active["delivery"]["track_name"].get<std::string>();
@@ -870,29 +875,12 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
     *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingVideoStreamRegistryReturnsNotFound)
-{
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node_);
-
-  auto publisher = advertiseTopic<sensor_msgs::msg::Image>(executor, node_, "/camera/front", "sensor_msgs/msg/Image");
-
-  auto manager = makeManager(access_policy_);
-
-  manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/camera/front")}));
-
-  expectPublishedError(
-    *state_, "requester-1", "topic", "/camera/front", "not_found", "Video stream registry is unavailable.");
-  (void)publisher;
-}
-
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
-  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
 
-  auto manager = makeManager(deny_all, &video_stream_registry, &video_stream_config);
+  auto manager = makeManager(deny_all, &video_stream_config);
 
   manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
 
@@ -906,9 +894,8 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessP
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
 {
   const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
-  VideoStreamRegistry video_stream_registry(*node_, *fake_room_connection_);
 
-  auto manager = makeManager(access_policy_, &video_stream_registry, &video_stream_config);
+  auto manager = makeManager(access_policy_, &video_stream_config);
 
   manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
 

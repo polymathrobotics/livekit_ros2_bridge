@@ -75,7 +75,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   data_stream_registry_ = std::make_unique<DataStreamRegistry>(node_, *room_connection_, &config_.subscription_qos);
 
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
-    node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get());
+    node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get(), &config_.video_stream);
 
   subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
     node_,
@@ -83,8 +83,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     config_.access_policy,
     node_.get_clock(),
     *data_stream_registry_,
-    video_stream_registry_.get(),
-    &config_.video_stream);
+    *video_stream_registry_);
 
   subscription_lease_gc_timer_ = node_.create_wall_timer(
     kLeaseGcInterval, [this]() { submitToExecutor([this]() { subscription_lease_manager_->pruneExpiredLeases(); }); });

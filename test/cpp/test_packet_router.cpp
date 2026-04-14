@@ -31,6 +31,7 @@
 #include "ros_topic_publisher.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_lease_manager.hpp"
+#include "video_stream_registry.hpp"
 #include "wire/cdr.hpp"
 #include "wire/protocol.hpp"
 
@@ -133,8 +134,9 @@ protected:
   void initRouter(const AccessPolicy & access_policy)
   {
     data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
+    video_stream_registry_ = std::make_unique<VideoStreamRegistry>(*node_, *room_connection_);
     subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
-      *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, nullptr);
+      *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, *video_stream_registry_);
     ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
     packet_router_ = std::make_unique<PacketRouter>(
       node_->get_clock(),
@@ -146,6 +148,7 @@ protected:
   std::shared_ptr<rclcpp::Node> node_;
   std::unique_ptr<FakeRoomConnection> room_connection_;
   std::unique_ptr<DataStreamRegistry> data_stream_registry_;
+  std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
   std::unique_ptr<SubscriptionLeaseManager> subscription_lease_manager_;
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
   std::unique_ptr<PacketRouter> packet_router_;
@@ -254,8 +257,9 @@ TEST_F(PacketRouterTest, ValidatesConstructorDependencies)
 {
   const AccessPolicy access_policy = makeAccessPolicy();
   data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
+  video_stream_registry_ = std::make_unique<VideoStreamRegistry>(*node_, *room_connection_);
   subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
-    *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, nullptr);
+    *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, *video_stream_registry_);
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
 
   EXPECT_THROW(
