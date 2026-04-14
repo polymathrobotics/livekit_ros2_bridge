@@ -39,28 +39,23 @@ public:
   ~DataStreamRegistry();
 
   void create(const std::string & topic, const std::string & interface_type);
-  DataStreamInstance * find(const std::string & topic);
-  const DataStreamInstance * find(const std::string & topic) const;
-
+  void republish(const std::string & topic);
+  void resetSessionState();
   void setIntervalMs(const std::string & topic, int interval_ms);
   void start(const std::string & topic);
-  void republish(const std::string & topic);
+  void shutdown();
   void stop(const std::string & topic);
+
+  DataStreamInstance * find(const std::string & topic);
+  const DataStreamInstance * find(const std::string & topic) const;
+  std::size_t generation() const;
 
   bool onTrackPublished(const std::string & track_name, std::size_t generation);
   void onTrackFailed(const std::string & track_name);
 
-  std::size_t generation() const;
-  void resetSessionState();
-  void shutdown();
-
 private:
   using InstanceMap = std::unordered_map<std::string, std::shared_ptr<DataStreamInstance>>;
   using TrackMap = std::unordered_map<std::string, std::string>;
-
-  std::shared_ptr<DataStreamInstance> requireInstance(const std::string & topic) const;
-  std::shared_ptr<DataStreamInstance> findInstanceByTrackName(const std::string & track_name) const;
-  void clearInstances(bool reopen_gate);
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
@@ -70,6 +65,10 @@ private:
   std::atomic<std::size_t> generation_{0};
   InstanceMap instances_;
   TrackMap topics_by_track_name_;
+
+  std::shared_ptr<DataStreamInstance> requireInstance(const std::string & topic) const;
+  std::shared_ptr<DataStreamInstance> findInstanceByTrackName(const std::string & track_name) const;
+  void clearInstances(bool reopen_gate);
 };
 
 }  // namespace livekit_ros2_bridge

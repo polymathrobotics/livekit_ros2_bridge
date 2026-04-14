@@ -140,16 +140,10 @@ private:
     std::optional<VideoStreamHandle> video;
   };
 
-  static constexpr auto kLogThrottle = std::chrono::seconds(5);
-
   using SubscriptionMap = std::unordered_map<std::string, SharedSubscription>;
   using LeasePredicate = std::function<bool(const std::string & requester_identity, const Lease &)>;
 
-  std::optional<ResolvedLease> resolveLease(
-    const std::string & requester_identity, const std::optional<std::string> & session_id);
-  SubscriptionReportedStatus renewHeartbeatSubscription(const ResolvedLease & lease, const SubscriptionDemand & demand);
-  void publishStatuses(const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses);
-  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
 
   rclcpp::Node & node_;
@@ -173,6 +167,11 @@ private:
   std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
 
+  std::optional<ResolvedLease> resolveLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id);
+  SubscriptionReportedStatus renewHeartbeatSubscription(const ResolvedLease & lease, const SubscriptionDemand & demand);
+  void publishStatuses(const ResolvedLease & lease, const std::vector<SubscriptionReportedStatus> & statuses);
+  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
   VideoStreamRegistry & videoRegistry() const;
   SubscriptionStatus renewExistingSubscription(
     SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);

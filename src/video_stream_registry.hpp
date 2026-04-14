@@ -19,15 +19,18 @@
 #include <string>
 #include <unordered_map>
 
-#include "rclcpp/node.hpp"
-#include "room_connection.hpp"
-#include "subscription_qos.hpp"
-#include "video_profiling.hpp"
-#include "video_stream_spec.hpp"
+namespace rclcpp
+{
+class Node;
+}  // namespace rclcpp
 
 namespace livekit_ros2_bridge
 {
 
+class RoomConnection;
+struct SubscriptionQosConfig;
+class VideoProfilingRegistry;
+struct VideoStreamSpec;
 class VideoStreamInstance;
 
 // Registry of shared in-process video runtimes keyed by resolved stream key.

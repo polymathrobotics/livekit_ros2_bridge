@@ -19,8 +19,12 @@
 #include <vector>
 
 #include "rclcpp/logging.hpp"
+#include "room_connection.hpp"
+#include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_instance.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

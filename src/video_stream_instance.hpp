@@ -78,12 +78,14 @@ private:
   // Borrowed bridge-wide QoS overrides; the owner must outlive this instance.
   const SubscriptionQosConfig * qos_config_;
   std::shared_ptr<VideoStreamProfiler> profiler_;
+
   // Guards shutdown state and protects owned runtime handles across public methods and callbacks.
   std::mutex mutex_;
   bool is_shutdown_ = false;
   // Tracks whether this instance currently has a published track so duplicate
   // unpublish callbacks stay quiet during teardown.
   bool track_published_ = false;
+
   // Created on first start() so unused streams do not allocate subscriptions or pipelines.
   std::shared_ptr<VideoFrameSource> source_;
   // Constructed eagerly because every frame source needs a stable sink/publisher reference.

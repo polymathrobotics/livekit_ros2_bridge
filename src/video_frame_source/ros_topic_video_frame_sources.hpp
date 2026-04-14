@@ -68,8 +68,10 @@ private:
   std::optional<FrameLayout> layout_;
 
   void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
+
   void startLocked(const FrameLayout & layout);
   void pushLocked(const sensor_msgs::msg::Image & image, const FrameLayout & layout);
+
   void resetLocked() override;
 };
 
@@ -95,8 +97,10 @@ private:
   std::optional<CompressedImageCodec> codec_;
 
   void onImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
+
   void startLocked(CompressedImageCodec codec);
   void pushLocked(const sensor_msgs::msg::CompressedImage & image);
+
   void resetLocked() override;
 };
 

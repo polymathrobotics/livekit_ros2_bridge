@@ -62,6 +62,8 @@ struct RpcInvocation
   std::string payload;
 };
 
+using RpcHandler = std::function<std::optional<std::string>(const RpcInvocation &)>;
+
 // Throw from an RpcHandler to propagate an explicit RPC error code/message back to the remote
 // caller. Other exceptions are treated as generic internal failures.
 class RpcHandlerError : public std::runtime_error
@@ -80,8 +82,6 @@ public:
 private:
   std::uint32_t code_;
 };
-
-using RpcHandler = std::function<std::optional<std::string>(const RpcInvocation &)>;
 
 struct IncomingPacket
 {
