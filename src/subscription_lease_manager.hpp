@@ -28,7 +28,6 @@
 #include "access_policy.hpp"
 #include "core/subscriptions.hpp"
 #include "data_stream_registry.hpp"
-#include "rclcpp/clock.hpp"
 #include "rclcpp/node.hpp"
 #include "utils/event_throttle.hpp"
 
@@ -51,7 +50,6 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
-    rclcpp::Clock::SharedPtr clock,
     DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry & video_stream_registry,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
@@ -99,7 +97,6 @@ private:
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
-  rclcpp::Clock::SharedPtr clock_;
   DataStreamRegistry & data_stream_registry_;
   VideoStreamRegistry & video_stream_registry_;
   Clock::duration heartbeat_lease_duration_;

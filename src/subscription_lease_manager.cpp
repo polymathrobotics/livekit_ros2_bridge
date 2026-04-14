@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -44,14 +45,12 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   AccessPolicy access_policy,
-  rclcpp::Clock::SharedPtr clock,
   DataStreamRegistry & data_stream_registry,
   VideoStreamRegistry & video_stream_registry,
   Clock::duration heartbeat_lease_duration)
 : node_(node)
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
-, clock_(std::move(clock))
 , data_stream_registry_(data_stream_registry)
 , video_stream_registry_(video_stream_registry)
 , heartbeat_lease_duration_(heartbeat_lease_duration)
@@ -133,7 +132,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
       .field("requester_identity", resolved_identity)
       .fieldOr("session_id", heartbeat.session_id.value_or(""), "<absent>")
       .field("error", exc.what())
-      .warnThrottle(*clock_, kLogThrottle);
+      .warnThrottle(*node_.get_clock(), kLogThrottle);
   }
 }
 
@@ -149,7 +148,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
       LogEvent(kLogger, "heartbeat_dropped")
         .field("reason", "anonymous_requester_without_resolvable_client_session")
         .fieldOr("session_id", session_id.value_or(""), "<absent>")
-        .warnThrottle(*clock_, kLogThrottle);
+        .warnThrottle(*node_.get_clock(), kLogThrottle);
 
       return std::nullopt;
     }
@@ -157,7 +156,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
     LogEvent(kLogger, "heartbeat_client_session_fallback")
       .field("requester_identity", it->second.requester_identity)
       .fieldOr("session_id", session_id.value_or(""), "<absent>")
-      .warnThrottle(*clock_, kLogThrottle);
+      .warnThrottle(*node_.get_clock(), kLogThrottle);
 
     return it->second.requester_identity;
   }
@@ -213,49 +212,40 @@ SubscriptionStatus SubscriptionLeaseManager::renewExistingSubscription(
     const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
     subscription.leases[requester_identity] = lease;
 
-    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
-      const auto * data = data_stream_registry_.find(subscription.name);
-      if (data == nullptr) {
-        throw std::logic_error("data subscription invariant violated: data stream is required");
-      }
-      const DataStreamInstance::State state = data->state();
-
-      data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
-
-      const bool is_published = state == DataStreamInstance::State::kPublished;
-      if (!had_requester && is_published) {
-        // A new requester can receive subscription status before LiveKit surfaces the existing
-        // published data track to that participant session, so queue one republish when the
-        // requester first joins. The fresh lease was inserted just above, so only published
-        // state matters here.
-        republish_requesters_.insert(requester_identity);
-      }
-
-      if (state == DataStreamInstance::State::kNone || state == DataStreamInstance::State::kFailed) {
-        data_stream_registry_.start(subscription.name);
-      }
-
+    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+      const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
+      video_stream_registry_.start(request);
       return statusFor(subscription);
     }
 
-    const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-    video_stream_registry_.start(request);
-  } catch (const std::exception & exc) {
-    LogEvent event(kLogger, "subscription_renew_failed");
-    event.field("resource", subscription.name)
-      .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-      .field("requester_identity", requester_identity);
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
-      const VideoStreamRequest request{subscription.target_kind, subscription.name, subscription.interface_type};
-      try {
-        const auto active_video = video_stream_registry_.find(request);
-        const auto video = active_video.has_value() ? *active_video : video_stream_registry_.resolve(request);
-        event.field("stream_key", video.stream_key).field("track_name", video.track_name);
-      } catch (const std::exception &) {}
-    } else if (const auto * data = data_stream_registry_.find(subscription.name)) {
-      event.field("track_name", data->trackName());
+    const auto * data = data_stream_registry_.find(subscription.name);
+    if (data == nullptr) {
+      throw std::logic_error("data subscription invariant violated: data stream is required");
     }
-    event.field("error", exc.what()).warn();
+    const DataStreamInstance::State state = data->state();
+
+    data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
+
+    const bool is_published = state == DataStreamInstance::State::kPublished;
+    if (!had_requester && is_published) {
+      // A new requester can receive subscription status before LiveKit surfaces the existing
+      // published data track to that participant session, so queue one republish when the
+      // requester first joins. The fresh lease was inserted just above, so only published
+      // state matters here.
+      republish_requesters_.insert(requester_identity);
+    }
+
+    if (state == DataStreamInstance::State::kNone || state == DataStreamInstance::State::kFailed) {
+      data_stream_registry_.start(subscription.name);
+    }
+  } catch (...) {
+    LogEvent(kLogger, "subscription_renew_failed")
+      .field("resource", subscription.name)
+      .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
+      .field("requester_identity", requester_identity)
+      .fieldException("error", std::current_exception())
+      .warn();
+
     throw;
   }
 
@@ -288,13 +278,12 @@ SubscriptionStatus SubscriptionLeaseManager::createSubscription(
       data_stream_registry_.create(demand.name, interface_type);
       data_stream_registry_.setIntervalMs(demand.name, appliedIntervalMs(subscription.leases));
     }
-  } catch (const std::exception & exc) {
+  } catch (...) {
     LogEvent(kLogger, "subscription_renew_failed")
       .field("resource", demand.name)
       .field("kind", wire::subscriptions::targetKindString(demand.kind))
       .field("requester_identity", requester_identity)
-      .fieldIf(stream_key.has_value(), "stream_key", stream_key.value_or(""))
-      .field("error", exc.what())
+      .fieldException("error", std::current_exception())
       .warn();
     throw;
   }

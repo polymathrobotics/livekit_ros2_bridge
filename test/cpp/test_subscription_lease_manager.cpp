@@ -148,7 +148,6 @@ SubscriptionLeaseManager makeLeaseManager(
     node,
     session,
     AccessPolicy(access_policy_config),
-    node.get_clock(),
     data_stream_registry,
     video_stream_registry,
     heartbeat_lease_duration);
@@ -163,13 +162,7 @@ SubscriptionLeaseManager makeLeaseManager(
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   return SubscriptionLeaseManager(
-    node,
-    session,
-    std::move(access_policy),
-    node.get_clock(),
-    data_stream_registry,
-    video_stream_registry,
-    heartbeat_lease_duration);
+    node, session, std::move(access_policy), data_stream_registry, video_stream_registry, heartbeat_lease_duration);
 }
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)

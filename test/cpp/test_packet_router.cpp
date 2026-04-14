@@ -136,7 +136,7 @@ protected:
     data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
     video_stream_registry_ = std::make_unique<VideoStreamRegistry>(*node_, *room_connection_);
     subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
-      *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, *video_stream_registry_);
+      *node_, *room_connection_, access_policy, *data_stream_registry_, *video_stream_registry_);
     ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
     packet_router_ = std::make_unique<PacketRouter>(
       node_->get_clock(),
@@ -259,7 +259,7 @@ TEST_F(PacketRouterTest, ValidatesConstructorDependencies)
   data_stream_registry_ = std::make_unique<DataStreamRegistry>(*node_, *room_connection_);
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(*node_, *room_connection_);
   subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
-    *node_, *room_connection_, access_policy, node_->get_clock(), *data_stream_registry_, *video_stream_registry_);
+    *node_, *room_connection_, access_policy, *data_stream_registry_, *video_stream_registry_);
   ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
 
   EXPECT_THROW(

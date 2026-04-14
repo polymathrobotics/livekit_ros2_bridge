@@ -65,12 +65,7 @@ SubscriptionLeaseManager makeLeaseManager(
   AccessPolicyConfig access_policy_config;
   access_policy_config.subscribe.allow = {"*"};
   return SubscriptionLeaseManager(
-    node,
-    room_connection,
-    AccessPolicy(access_policy_config),
-    node.get_clock(),
-    data_stream_registry,
-    video_stream_registry);
+    node, room_connection, AccessPolicy(access_policy_config), data_stream_registry, video_stream_registry);
 }
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
