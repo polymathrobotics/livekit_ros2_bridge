@@ -122,25 +122,17 @@ private:
 
   std::optional<std::string> resolveRequesterIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
-  void renewSessionLease(
-    const std::string & requester_identity, const std::optional<std::string> & session_id, Clock::time_point expiry);
-  SubscriptionReportedStatus renewHeartbeatSubscription(
-    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
-  void publishStatuses(
-    const std::string & requester_identity,
-    const std::optional<std::string> & session_id,
-    Clock::time_point expiry,
-    const std::vector<SubscriptionReportedStatus> & statuses);
-  SubscriptionStatus renewSubscription(
-    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
-  void republishDataTracks(const std::string & requester_identity);
-  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
-  SubscriptionStatus renewExistingSubscription(
-    SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus createSubscription(
     const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
-  void removeLeasesIf(const LeasePredicate & should_remove, Clock::time_point reference_time);
+  SubscriptionStatus renewExistingSubscription(
+    SharedSubscription & subscription, const std::string & requester_identity, const Lease & lease);
+  SubscriptionStatus renewSubscription(
+    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
+  SubscriptionStatus statusFor(const SharedSubscription & subscription) const;
+
   void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
+  void removeLeasesIf(const LeasePredicate & should_remove, Clock::time_point reference_time);
+  void republishDataTracks(const std::string & requester_identity);
 };
 
 }  // namespace livekit_ros2_bridge

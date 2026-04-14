@@ -66,23 +66,78 @@ void SubscriptionLeaseManager::handleHeartbeat(
   if (!resolved_requester_identity.has_value()) {
     return;
   }
+  const auto & resolved_identity = *resolved_requester_identity;
 
   const auto expiry = Clock::now() + heartbeat_lease_duration_;
-  renewSessionLease(*resolved_requester_identity, heartbeat.session_id, expiry);
+  if (heartbeat.session_id.has_value()) {
+    auto [it, inserted] = session_leases_.try_emplace(
+      *heartbeat.session_id, SessionLease{resolved_identity, expiry});
+    if (!inserted && it->second.requester_identity != resolved_identity) {
+      throw std::logic_error("session lease invariant violated: session_id must resolve to one requester");
+    }
+
+    it->second.expiry = expiry;
+  }
 
   std::vector<SubscriptionReportedStatus> statuses;
   statuses.reserve(heartbeat.subscriptions.size());
 
   for (const auto & demand : heartbeat.subscriptions) {
-    statuses.emplace_back(renewHeartbeatSubscription(*resolved_requester_identity, demand, expiry));
+    // `configured_source` targets name bridge-owned config entries rather than ROS graph
+    // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
+    if (
+      demand.kind == SubscriptionTargetKind::Topic &&
+      !access_policy_.allows(AccessOperation::Subscribe, demand.name))
+    {
+      statuses.emplace_back(SubscriptionErrorStatus{
+        demand.kind,
+        demand.name,
+        SubscriptionStatusErrorReason::kForbidden,
+        "ROS topic '" + demand.name + "' not permitted.",
+      });
+      continue;
+    }
+
+    try {
+      statuses.emplace_back(renewSubscription(resolved_identity, demand, expiry));
+    } catch (const std::exception & exc) {
+      statuses.emplace_back(SubscriptionErrorStatus{
+        demand.kind,
+        demand.name,
+        SubscriptionStatusErrorReason::kNotFound,
+        exc.what(),
+      });
+    }
   }
 
   // A page refresh can reuse the requester identity before the old lease expires, but the
   // rejoined participant still needs a fresh data-track publication because the previous one
   // belonged to the disconnected participant_session.
-  republishDataTracks(*resolved_requester_identity);
+  republishDataTracks(resolved_identity);
 
-  publishStatuses(*resolved_requester_identity, heartbeat.session_id, expiry, statuses);
+  // A heartbeat may exist only to bind or renew the client-session lease. In that case the wire
+  // contract does not send an empty status envelope back.
+  if (statuses.empty()) {
+    return;
+  }
+
+  const std::string body = wire::subscriptions::serializeStatuses(
+      statuses, heartbeat.session_id, std::optional<Clock::time_point>{expiry})
+                             .dump();
+  OutgoingPacket packet;
+  packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
+  packet.recipient_identities = {resolved_identity};
+  packet.topic = wire::protocol::kControlSubscriptionsStatus;
+
+  try {
+    room_connection_.publishPacket(packet);
+  } catch (const std::exception & exc) {
+    LogEvent(kLogger, "subscription_status_publish_failed")
+      .field("requester_identity", resolved_identity)
+      .fieldOr("session_id", heartbeat.session_id.value_or(""), "<absent>")
+      .field("error", exc.what())
+      .warnThrottle(*clock_, kLogThrottle);
+  }
 }
 
 std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
@@ -129,77 +184,6 @@ std::optional<std::string> SubscriptionLeaseManager::resolveRequesterIdentity(
   }
 
   return requester_identity;
-}
-
-void SubscriptionLeaseManager::renewSessionLease(
-  const std::string & requester_identity, const std::optional<std::string> & session_id, Clock::time_point expiry)
-{
-  if (!session_id.has_value()) {
-    return;
-  }
-
-  auto [it, inserted] = session_leases_.try_emplace(*session_id, SessionLease{requester_identity, expiry});
-  if (!inserted && it->second.requester_identity != requester_identity) {
-    throw std::logic_error("session lease invariant violated: session_id must resolve to one requester");
-  }
-
-  it->second.expiry = expiry;
-}
-
-SubscriptionReportedStatus SubscriptionLeaseManager::renewHeartbeatSubscription(
-  const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry)
-{
-  // `configured_source` targets name bridge-owned config entries rather than ROS graph
-  // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
-  if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name)) {
-    return SubscriptionErrorStatus{
-      demand.kind,
-      demand.name,
-      SubscriptionStatusErrorReason::kForbidden,
-      "ROS topic '" + demand.name + "' not permitted.",
-    };
-  }
-
-  try {
-    return renewSubscription(requester_identity, demand, expiry);
-  } catch (const std::exception & exc) {
-    return SubscriptionErrorStatus{
-      demand.kind,
-      demand.name,
-      SubscriptionStatusErrorReason::kNotFound,
-      exc.what(),
-    };
-  }
-}
-
-void SubscriptionLeaseManager::publishStatuses(
-  const std::string & requester_identity,
-  const std::optional<std::string> & session_id,
-  Clock::time_point expiry,
-  const std::vector<SubscriptionReportedStatus> & statuses)
-{
-  // A heartbeat may exist only to bind or renew the client-session lease. In that case the wire
-  // contract does not send an empty status envelope back.
-  if (statuses.empty()) {
-    return;
-  }
-
-  const std::string body =
-    wire::subscriptions::serializeStatuses(statuses, session_id, std::optional<Clock::time_point>{expiry}).dump();
-  OutgoingPacket packet;
-  packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
-  packet.recipient_identities = {requester_identity};
-  packet.topic = wire::protocol::kControlSubscriptionsStatus;
-
-  try {
-    room_connection_.publishPacket(packet);
-  } catch (const std::exception & exc) {
-    LogEvent(kLogger, "subscription_status_publish_failed")
-      .field("requester_identity", requester_identity)
-      .fieldOr("session_id", session_id.value_or(""), "<absent>")
-      .field("error", exc.what())
-      .warnThrottle(*clock_, kLogThrottle);
-  }
 }
 
 SubscriptionStatus SubscriptionLeaseManager::renewSubscription(
