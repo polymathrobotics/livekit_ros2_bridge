@@ -95,6 +95,7 @@ public:
 private:
   mutable std::mutex mutex_;
   std::condition_variable idle_;
+
   bool is_open_ = true;
   bool is_draining_ = false;
   std::size_t active_entries_ = 0U;

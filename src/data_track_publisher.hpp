@@ -49,8 +49,8 @@ public:
 
   DataTrackPublisher(RoomConnection & connection, std::string name, rclcpp::Clock::SharedPtr clock);
 
-  void write(const std::uint8_t * cdr, std::size_t size);
   void publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail);
+  void write(const std::uint8_t * cdr, std::size_t size);
   void unpublish();
 
 private:

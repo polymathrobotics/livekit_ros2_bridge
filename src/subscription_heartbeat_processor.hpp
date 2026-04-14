@@ -52,8 +52,6 @@ public:
   void pruneExpiredLeases();
 
 private:
-  static constexpr auto kLogThrottle = std::chrono::seconds(5);
-
   // Tracks the requester identity bound to a wire `session_id` so anonymous heartbeats from an
   // already authenticated browser tab can renew until expiry.
   struct SessionLease
@@ -71,15 +69,7 @@ private:
     std::chrono::steady_clock::time_point expiry;
   };
 
-  std::optional<ResolvedLease> resolveLease(
-    const std::string & requester_identity, const std::optional<std::string> & session_id);
-  // Recovers the requester identity for an anonymous heartbeat from an existing leased
-  // `session_id`, and extends that lease when the fallback succeeds.
-  std::optional<std::string> resolveAnonymousIdentity(
-    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry);
-  nlohmann::json renewStatuses(const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands);
-
-  void publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses);
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   SubscriptionRegistry & subscription_registry_;
   RoomConnection & room_connection_;
@@ -89,6 +79,15 @@ private:
   rclcpp::Clock::SharedPtr clock_;
   std::unordered_map<std::string, SessionLease> leases_;
   EventThrottle conflict_throttle_{kLogThrottle};
+
+  std::optional<ResolvedLease> resolveLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id);
+  // Recovers the requester identity for an anonymous heartbeat from an existing leased
+  // `session_id`, and extends that lease when the fallback succeeds.
+  std::optional<std::string> resolveAnonymousIdentity(
+    const std::optional<std::string> & session_id, std::chrono::steady_clock::time_point expiry);
+  nlohmann::json renewStatuses(const ResolvedLease & lease, const std::vector<SubscriptionDemand> & demands);
+  void publishStatuses(const ResolvedLease & lease, const nlohmann::json & statuses);
 };
 
 }  // namespace livekit_ros2_bridge

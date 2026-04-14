@@ -54,6 +54,13 @@ public:
   VideoStreamInstance(VideoStreamInstance &&) = delete;
   VideoStreamInstance & operator=(VideoStreamInstance &&) = delete;
 
+  // Lazily constructs the input source on first start and reuses it until shutdown().
+  // Throws if shutdown() has already begun.
+  std::string start();
+  // Idempotent. Detaches owned runtime objects under mutex_ and tears them down after
+  // unlocking so their shutdown paths never re-enter this instance while the mutex is held.
+  void shutdown();
+
   // Callbacks may arrive from ROS, GStreamer, or LiveKit worker threads, including
   // after shutdown() has started. They only touch local bookkeeping here and never
   // reach back into source_ or publisher_ while teardown is in flight.
@@ -64,13 +71,6 @@ public:
   void onPipelineFailed(const std::string & reason) override;
   void onRestartFailed(const std::string & error) override;
   void onPushFailed(const std::string & error) override;
-
-  // Lazily constructs the input source on first start and reuses it until shutdown().
-  // Throws if shutdown() has already begun.
-  std::string start();
-  // Idempotent. Detaches owned runtime objects under mutex_ and tears them down after
-  // unlocking so their shutdown paths never re-enter this instance while the mutex is held.
-  void shutdown();
 
 private:
   rclcpp::Node & node_;

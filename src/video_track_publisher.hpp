@@ -57,8 +57,6 @@ public:
   void shutdown();
 
 private:
-  void ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us);
-
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
   // Callbacks run inline on whichever thread calls write()/shutdown(). write()
@@ -80,6 +78,8 @@ private:
   std::shared_ptr<VideoTrackHandle> track_;
   int width_ = 0;
   int height_ = 0;
+
+  void ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us);
 };
 
 }  // namespace livekit_ros2_bridge

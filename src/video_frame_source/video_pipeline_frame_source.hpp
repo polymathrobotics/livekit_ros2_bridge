@@ -64,6 +64,7 @@ public:
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr,
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
+
   // Default lifecycle for fixed-pipeline sources whose launch string is known
   // at construction time. Sources with extra producer state override these.
   void start() override;
@@ -86,15 +87,6 @@ protected:
   // does not call back into this object after ownership has been detached.
   static void teardown(GstElementPtr & pipeline, GstAppSrcPtr & appsrc, GstAppSinkPtr & appsink);
 
-  // Resets subclass-specific bookkeeping and atomically transfers the current
-  // pipeline handles out of the object. Caller must hold mutex_.
-  [[nodiscard]] PipelineHandles takePipelineLocked();
-  // Caller must hold mutex_. Parses `pipeline_description`, validates the named
-  // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
-  void startPipelineLocked(const std::string & description, bool require_appsrc = false);
-
-  virtual void resetLocked();
-
   VideoStreamSpec spec_;
   VideoFrameSink & sink_;
   VideoStreamLifecycleObserver & observer_;
@@ -112,6 +104,15 @@ protected:
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
   GstAppSinkPtr appsink_;
+
+  // Resets subclass-specific bookkeeping and atomically transfers the current
+  // pipeline handles out of the object. Caller must hold mutex_.
+  [[nodiscard]] PipelineHandles takePipelineLocked();
+  // Caller must hold mutex_. Parses `pipeline_description`, validates the named
+  // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
+  void startPipelineLocked(const std::string & description, bool require_appsrc = false);
+
+  virtual void resetLocked();
 
 private:
   GstFlowReturn onSample(GstAppSink * sink);

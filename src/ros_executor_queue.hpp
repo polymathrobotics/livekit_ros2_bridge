@@ -113,15 +113,13 @@ private:
     std::function<void()> cancel;
   };
 
-  void drain();
-  void wake();
-
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   // Protects shutdown_ and all state shared between submit(), wake(), drain(),
   // and shutdown().
   std::mutex mutex_;
   std::queue<Task> tasks_;
+
   // Cleared during shutdown() before the waitable is detached so concurrent
   // wake() callers either use the live waitable or cleanly become a no-op.
   std::shared_ptr<DrainWaitable> waitable_;
@@ -129,14 +127,20 @@ private:
   // node interfaces it was added to.
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
+
   rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr log_clock_;
+
   // Once set, new submissions are rejected and only work already running in
   // drain() is allowed to finish.
   bool shutdown_ = false;
+
   // Used so shutdown() can wait for an in-progress drain without deadlocking
   // when shutdown itself is called from the executor thread running drain().
   ReentrantQuiesceGate drain_gate_;
+
+  void drain();
+  void wake();
 };
 
 }  // namespace livekit_ros2_bridge

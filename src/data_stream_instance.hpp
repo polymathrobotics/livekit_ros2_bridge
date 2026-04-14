@@ -61,10 +61,6 @@ public:
   DataStreamInstance & operator=(DataStreamInstance &&) = delete;
   ~DataStreamInstance();
 
-  const std::string & trackName() const;
-  int intervalMs() const;
-  State state() const;
-
   void setIntervalMs(int interval_ms);
   // Starts one LiveKit publish attempt when this instance is idle or recovering from a failed
   // publish. The registry-supplied generation is echoed back through completion callbacks so
@@ -81,6 +77,10 @@ public:
   // refresh can retry on the same topic runtime.
   void failPublish();
   void shutdown();
+
+  const std::string & trackName() const;
+  int intervalMs() const;
+  State state() const;
 
 private:
   friend class SubscriptionRegistry;
@@ -199,9 +199,6 @@ private:
     QuiesceGate & callback_gate,
     const SubscriptionQosConfig * qos_config);
 
-  void subscribe();
-  void forwardMessage(const rclcpp::SerializedMessage & message);
-
   rclcpp::Node & node_;
 
   std::string topic_;
@@ -221,6 +218,9 @@ private:
   // ROS callback must present the same gate generation before touching this instance.
   std::size_t gate_generation_ = 0U;
   QuiesceGate & callback_gate_;
+
+  void subscribe();
+  void forwardMessage(const rclcpp::SerializedMessage & message);
 };
 
 }  // namespace livekit_ros2_bridge

@@ -58,24 +58,13 @@ public:
 
 private:
   using SteadyClock = std::chrono::steady_clock;
-  std::atomic<bool> shutting_down_{false};
-  std::mutex watchdog_mutex_;
-  std::optional<SteadyClock::time_point> watchdog_deadline_;
-
-  void checkWatchdog();
-  void onRoomConnected();
-  void onRoomIncomingPacket(const IncomingPacket & packet);
-  void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
-  void onRoomReconnectRequested(const std::string & reason);
-  void onRoomConnectionReset();
-
-  // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
-  // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
-  // if it reaches the queue before the executor is shut down.
-  void submitToExecutor(std::function<void()> work);
 
   rclcpp::Node & node_;
   RuntimeConfig config_;
+
+  std::atomic<bool> shutting_down_{false};
+  std::mutex watchdog_mutex_;
+  std::optional<SteadyClock::time_point> watchdog_deadline_;
 
   std::unique_ptr<RoomConnection> room_connection_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
@@ -96,6 +85,19 @@ private:
   EventThrottle executor_shutdown_enqueue_drop_{std::chrono::seconds(5)};
   EventThrottle executor_unavailable_drop_{std::chrono::seconds(5)};
   EventThrottle executor_shutdown_execute_drop_{std::chrono::seconds(5)};
+
+  // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
+  // stay ordered with session reset and teardown. Work accepted before shutdown may still execute
+  // if it reaches the queue before the executor is shut down.
+  void submitToExecutor(std::function<void()> work);
+
+  void onRoomConnected();
+  void onRoomIncomingPacket(const IncomingPacket & packet);
+  void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
+  void onRoomReconnectRequested(const std::string & reason);
+  void onRoomConnectionReset();
+
+  void checkWatchdog();
 };
 
 }  // namespace livekit_ros2_bridge

@@ -125,6 +125,11 @@ private:
   using LruEntries = std::list<LruEntry>;
   using EntryIndex = std::unordered_map<Key, typename LruEntries::iterator, Hash, KeyEqual>;
 
+  std::size_t capacity_ = 0U;
+  mutable std::mutex mutex_;
+  LruEntries entries_by_recency_;
+  EntryIndex entry_index_;
+
   std::optional<EvictedEntry> evictIfNeeded()
   {
     if (entry_index_.size() <= capacity_) {
@@ -136,11 +141,6 @@ private:
     entries_by_recency_.pop_front();
     return evicted;
   }
-
-  std::size_t capacity_ = 0U;
-  mutable std::mutex mutex_;
-  LruEntries entries_by_recency_;
-  EntryIndex entry_index_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -67,10 +67,10 @@ DataStreamInstance::DataStreamInstance(
 , interface_type_(std::move(interface_type))
 , track_name_(makeDataTrackName(topic_))
 , publisher_(room_connection, track_name_, node_.get_clock())
-, gate_generation_(callback_gate.currentGeneration())
 , registry_(registry)
-, callback_gate_(callback_gate)
 , qos_config_(qos_config)
+, gate_generation_(callback_gate.currentGeneration())
+, callback_gate_(callback_gate)
 {}
 
 DataStreamInstance::~DataStreamInstance()

@@ -66,9 +66,10 @@ private:
   {
     static Rules parse(const std::vector<std::string> & raw_rules);
 
-    bool matches(std::string_view resource) const;
     bool matches_all = false;
     std::set<std::string> patterns;
+
+    bool matches(std::string_view resource) const;
   };
 
   Rules publish_allow_;

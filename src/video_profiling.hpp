@@ -175,6 +175,7 @@ public:
 
 private:
   friend class VideoProfilingRegistry;
+
   std::unique_ptr<Impl> impl_;
 };
 
@@ -203,6 +204,7 @@ public:
 
 private:
   struct Impl;
+
   std::unique_ptr<Impl> impl_;
 };
 

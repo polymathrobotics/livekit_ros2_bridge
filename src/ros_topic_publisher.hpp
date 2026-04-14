@@ -58,8 +58,6 @@ public:
   void shutdown();
 
 private:
-  static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
-
   struct PublisherEntry
   {
     // Cache the validated interface type alongside the reusable publisher so
@@ -67,6 +65,8 @@ private:
     std::string type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };
+
+  static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;

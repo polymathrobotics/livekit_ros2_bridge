@@ -49,11 +49,6 @@ public:
   void unregisterRpcs(RoomConnection & connection);
 
 private:
-  std::optional<std::string> callService(const RpcInvocation & invocation);
-  std::optional<std::string> getInterfaces(const RpcInvocation & invocation);
-  std::optional<std::string> listServices(const RpcInvocation & invocation);
-  std::optional<std::string> listTopics(const RpcInvocation & invocation);
-
   rclcpp::Node & node_;
   // Copy the policy so registered callbacks do not depend on the caller
   // retaining the original config object for the life of the room connection.
@@ -62,6 +57,11 @@ private:
   // must run before either helper or node_ is destroyed.
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
+
+  std::optional<std::string> callService(const RpcInvocation & invocation);
+  std::optional<std::string> getInterfaces(const RpcInvocation & invocation);
+  std::optional<std::string> listServices(const RpcInvocation & invocation);
+  std::optional<std::string> listTopics(const RpcInvocation & invocation);
 };
 
 }  // namespace livekit_ros2_bridge

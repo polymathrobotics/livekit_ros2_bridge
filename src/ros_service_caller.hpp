@@ -72,11 +72,12 @@ public:
   void shutdown();
 
 private:
+  class Impl;
+
+  std::unique_ptr<Impl> impl_;
+
   void setPollCallbacksForTest(std::function<void()> on_poll_enter, std::function<void()> on_poll_exit);
   void setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load);
-
-  class Impl;
-  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace livekit_ros2_bridge

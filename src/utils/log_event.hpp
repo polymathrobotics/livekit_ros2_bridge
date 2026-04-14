@@ -222,10 +222,18 @@ public:
   }
 
 private:
+  rclcpp::Logger logger_;
+  std::ostringstream stream_;
+
   template <typename T>
   void appendField(std::string_view key, const T & value)
   {
     stream_ << " " << key << "=" << value;
+  }
+
+  void appendField(std::string_view key, const char * value)
+  {
+    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
   }
 
   template <typename T>
@@ -234,11 +242,6 @@ private:
     if (condition) {
       appendField(key, value);
     }
-  }
-
-  void appendField(std::string_view key, const char * value)
-  {
-    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
   }
 
   void appendFieldIfNotEmpty(std::string_view key, const std::string & value)
@@ -297,9 +300,6 @@ private:
       appendField(key, fallback);
     }
   }
-
-  rclcpp::Logger logger_;
-  std::ostringstream stream_;
 };
 
 }  // namespace livekit_ros2_bridge

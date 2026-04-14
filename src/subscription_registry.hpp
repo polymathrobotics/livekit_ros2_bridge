@@ -138,15 +138,8 @@ private:
   static SubscriptionStatus statusFor(const SharedSubscription & subscription);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
   static std::string keyFor(SubscriptionTargetKind target_kind, const std::string & resource);
-
-  VideoStreamRegistry & videoRegistry() const;
   static DataStreamInstance * dataInstance(SharedSubscription & subscription);
   static const DataStreamInstance * dataInstance(const SharedSubscription & subscription);
-  void removeLeasesIf(
-    const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
-  SubscriptionMap::iterator findDataByTrackName(const std::string & track_name);
-  void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
-  void clearSubscriptions();
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
@@ -172,6 +165,13 @@ private:
   // Requesters whose next confirmed heartbeat should force currently published data tracks
   // through an unpublish/publish cycle so the rejoined participant session sees them again.
   std::unordered_set<std::string> republish_requesters_;
+
+  VideoStreamRegistry & videoRegistry() const;
+  void removeLeasesIf(
+    const LeasePredicate & should_remove, LeaseRemovalReason reason, Clock::time_point reference_time);
+  SubscriptionMap::iterator findDataByTrackName(const std::string & track_name);
+  void destroyRuntime(SharedSubscription & subscription, bool log_destroy = true);
+  void clearSubscriptions();
 };
 
 }  // namespace livekit_ros2_bridge
