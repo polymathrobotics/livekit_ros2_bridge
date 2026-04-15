@@ -525,6 +525,13 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
     const int timeout_ms =
       request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
+
+    LogEvent(kLogger, "service_call_started")
+      .fieldOr("service", request.service)
+      .fieldIfNotEmpty("interface_type", interface_type)
+      .fieldOr("requester_identity", requester)
+      .info();
+
     impl_->inflight_calls.emplace(
       key,
       Impl::InflightCall{
