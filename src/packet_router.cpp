@@ -59,14 +59,17 @@ PacketRouter::PacketRouter(
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
   if (packet.topic == wire::protocol::kControlTopicPublish) {
-    bool missing_requester_identity = false;
+    // Unlike heartbeats, publish commands have no session-based requester recovery path
+    // downstream, so anonymous packets are rejected at the protocol boundary.
+    if (packet.requester_identity.empty()) {
+      LogEvent(kLogger, "packet_rejected")
+        .field("reason", "missing_requester_identity")
+        .fieldOr("requester_identity", packet.requester_identity)
+        .warnThrottle(*clock_, kLogThrottle);
+      return;
+    }
+
     try {
-      // Unlike heartbeats, publish commands have no session-based requester recovery path
-      // downstream, so anonymous packets are rejected at the protocol boundary.
-      if (packet.requester_identity.empty()) {
-        missing_requester_identity = true;
-        throw std::invalid_argument("requester_identity is required");
-      }
       // TODO: Rename this parsed object from command to request. ROS publishes messages on
       // topics; this control-path object is the caller's publish request.
       auto command = parseTopicPublishCommand(packet.payload);
@@ -75,9 +78,9 @@ void PacketRouter::handle(const IncomingPacket & packet) const
       });
     } catch (const std::exception & exc) {
       LogEvent(kLogger, "packet_rejected")
-        .field("reason", missing_requester_identity ? "missing_requester_identity" : "invalid_publish_command")
+        .field("reason", "invalid_publish_command")
         .fieldOr("requester_identity", packet.requester_identity)
-        .fieldIf(!missing_requester_identity, "error", exc.what())
+        .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
   } else if (packet.topic == wire::protocol::kControlSubscriptionsHeartbeat) {

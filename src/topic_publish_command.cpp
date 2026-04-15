@@ -15,7 +15,6 @@
 #include "topic_publish_command.hpp"
 
 #include <stdexcept>
-#include <utility>
 
 #include "nlohmann/json.hpp"
 #include "rclcpp/logging.hpp"
@@ -58,43 +57,42 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
   // PacketRouter already emits the operator-facing warn logs for invalid publish packets,
   // including the exact error text. Keep parser-local logs at debug level so local troubleshooting
   // can distinguish which contract boundary rejected the command without repeating that detail.
-  std::string topic;
+  TopicPublishCommand command;
   try {
-    topic = normalizeRosResourceName(
+    command.topic = normalizeRosResourceName(
       wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected").field("reason", "invalid_topic").debug();
     throw;
   }
 
-  std::string interface_type;
   try {
-    interface_type = wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError);
+    command.interface_type =
+      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected")
       .field("reason", "invalid_interface_type")
-      .field("topic", topic)
+      .field("topic", command.topic)
       .debug();
     throw;
   }
 
-  std::vector<std::uint8_t> cdr;
   try {
-    cdr = wire::cdr::parse(body, "message");
+    command.cdr = wire::cdr::parse(body, "message");
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_command_rejected")
       .field("reason", "invalid_message")
-      .field("topic", topic)
+      .field("topic", command.topic)
       .debug();
     throw;
   }
 
   // Reject an empty decoded CDR blob instead of treating it as an implicit
   // default-constructed message instance.
-  if (cdr.empty()) {
+  if (command.cdr.empty()) {
     LogEvent(kLogger, "topic_publish_command_rejected")
       .field("reason", "invalid_message")
-      .field("topic", topic)
+      .field("topic", command.topic)
       .debug();
     throw std::invalid_argument(kMessagePayloadError);
   }
@@ -102,11 +100,7 @@ TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & p
   // Normalize topic names here so policy checks, publisher lookup, and logs see one resource
   // spelling. Keep `interface_type` trimmed-but-exact because publish-time validation compares it
   // against the ROS graph.
-  return TopicPublishCommand{
-    std::move(topic),
-    std::move(interface_type),
-    std::move(cdr),
-  };
+  return command;
 }
 
 }  // namespace livekit_ros2_bridge

@@ -21,7 +21,6 @@
 #include <vector>
 
 #include "rclcpp/guard_condition.hpp"
-#include "rclcpp/logging.hpp"
 #include "rclcpp/version.h"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
@@ -31,7 +30,6 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-const auto kLogger = rclcpp::get_logger("ros_executor_queue");
 constexpr int kReadyEntityId = 0;
 }  // namespace
 
@@ -181,7 +179,6 @@ private:
 RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
 : callback_group_(node.get_node_base_interface()->get_default_callback_group())
 , waitables_(node.get_node_waitables_interface())
-, logger_(kLogger)
 , log_clock_(node.get_clock())
 {
   waitable_ = std::make_shared<DrainWaitable>(*this, node.get_node_base_interface()->get_context());
@@ -201,26 +198,22 @@ void RosExecutorQueue::shutdown()
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
   rclcpp::CallbackGroup::SharedPtr callback_group;
-  bool owns_shutdown = false;
 
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!shutdown_) {
-      shutdown_ = true;
-      queued_tasks = std::move(tasks_);
-      waitable = std::move(waitable_);
-      waitables = std::move(waitables_);
-      callback_group = std::move(callback_group_);
-      owns_shutdown = true;
-    }
-  }
-
-  if (!owns_shutdown) {
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (shutdown_) {
+    lock.unlock();
     // A concurrent shutdown() already took ownership of teardown; only wait
     // for any in-progress drain to finish before returning.
     drain_gate_.awaitIdle();
     return;
   }
+
+  shutdown_ = true;
+  queued_tasks = std::move(tasks_);
+  waitable = std::move(waitable_);
+  waitables = std::move(waitables_);
+  callback_group = std::move(callback_group_);
+  lock.unlock();
 
   const std::size_t canceled_count = queued_tasks.size();
   drain_gate_.close();
@@ -230,7 +223,7 @@ void RosExecutorQueue::shutdown()
   }
 
   if (canceled_count > 0U) {
-    LogEvent(kLogger, "executor_pending_tasks_canceled")
+    LogEvent(logger_, "executor_pending_tasks_canceled")
       .field("reason", "shutdown")
       .field("count", canceled_count)
       .warn();
@@ -273,7 +266,7 @@ void RosExecutorQueue::drain()
       // so queued work observes the same callback-group affinity as ROS callbacks.
       task.run();
     } catch (...) {
-      LogEvent(kLogger, "executor_task_failed")
+      LogEvent(logger_, "executor_task_failed")
         .field("action", "continue")
         .fieldException("error", std::current_exception())
         .error();
@@ -297,7 +290,7 @@ void RosExecutorQueue::wake()
   try {
     waitable->wake();
   } catch (...) {
-    LogEvent(kLogger, "executor_wake_failed")
+    LogEvent(logger_, "executor_wake_failed")
       .field("action", "shutdown")
       .fieldException("error", std::current_exception())
       .error();

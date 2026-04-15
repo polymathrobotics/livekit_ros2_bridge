@@ -69,6 +69,26 @@ std::optional<std::size_t> parseLimit(const Json & body)
   return static_cast<std::size_t>(limit);
 }
 
+std::optional<std::string> parseQuery(const Json & body)
+{
+  // Normalize blank and null queries to "no filter".
+  try {
+    return wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
+  } catch (const std::invalid_argument & exc) {
+    throw InvalidRequest("query", exc.what());
+  }
+}
+
+std::string serializeEntries(std::string_view key, const std::vector<ResourceEntry> & entries)
+{
+  Json resources = Json::array();
+  for (const auto & entry : entries) {
+    resources.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
+  }
+
+  return Json{{key, std::move(resources)}}.dump();
+}
+
 }  // namespace
 
 namespace wire::resources
@@ -83,15 +103,7 @@ ResourceListRequest parse(const std::string & payload)
     throw InvalidRequest("payload", exc.what());
   }
 
-  std::optional<std::string> query;
-  // Normalize blank and null queries to "no filter".
-  try {
-    query = wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
-  } catch (const std::invalid_argument & exc) {
-    throw InvalidRequest("query", exc.what());
-  }
-
-  return {query, parseLimit(body)};
+  return {parseQuery(body), parseLimit(body)};
 }
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
@@ -105,22 +117,12 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 
 std::string serializeServices(const std::vector<ResourceEntry> & entries)
 {
-  Json services = Json::array();
-  for (const auto & entry : entries) {
-    services.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
-  }
-
-  return Json{{"services", std::move(services)}}.dump();
+  return serializeEntries("services", entries);
 }
 
 std::string serializeTopics(const std::vector<ResourceEntry> & entries)
 {
-  Json topics = Json::array();
-  for (const auto & entry : entries) {
-    topics.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
-  }
-
-  return Json{{"topics", std::move(topics)}}.dump();
+  return serializeEntries("topics", entries);
 }
 
 }  // namespace wire::resources

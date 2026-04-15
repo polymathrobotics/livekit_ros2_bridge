@@ -76,8 +76,7 @@ void VideoTrackPublisher::shutdown()
     is_closed_ = true;
     track = std::move(track_);
     source_.reset();
-    width_ = 0;
-    height_ = 0;
+    published_dimensions_.reset();
   }
 
   if (!track) {
@@ -101,7 +100,8 @@ void VideoTrackPublisher::shutdown()
 void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us)
 {
   VideoStreamProfiler::StageTimer ensure_track_timer(profiler_.get(), VideoProfileStage::kEnsureTrack, timestamp_us);
-  if (source_ != nullptr && track_ != nullptr && width_ == width && height_ == height) {
+  if (source_ != nullptr && track_ != nullptr && published_dimensions_ && published_dimensions_->matches(width, height))
+  {
     return;
   }
 
@@ -126,15 +126,13 @@ void VideoTrackPublisher::ensureTrack(int width, int height, const std::optional
     // reusing stale state.
     source_.reset();
     track_.reset();
-    width_ = 0;
-    height_ = 0;
+    published_dimensions_.reset();
 
     auto source = std::make_shared<livekit::VideoSource>(width, height);
     auto track = room_connection_.publishVideoTrack(spec_.track_name, source, spec_.publish_config);
     source_ = std::move(source);
     track_ = std::move(track);
-    width_ = width;
-    height_ = height;
+    published_dimensions_ = PublishedDimensions{width, height};
     has_published_ = true;
     observer_.onTrackPublished(width, height, republished);
     // todo: is there another pattern we can use for this?

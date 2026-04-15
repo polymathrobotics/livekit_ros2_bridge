@@ -118,13 +118,6 @@ struct TypeParts
   }
 };
 
-// Minimal lookup result carried forward into dependency traversal.
-struct LoadedDefinition
-{
-  std::string package;
-  std::string definition;
-};
-
 std::string getPackageShareDirCompat(const std::string & package)
 {
   // ament_index_cpp 1.11+ adds the filesystem-path overload used by Kilted/Rolling, while
@@ -140,7 +133,7 @@ std::string getPackageShareDirCompat(const std::string & package)
 #endif
 }
 
-LoadedDefinition loadInterfaceDefinition(const std::string & interface_type)
+std::string loadInterfaceDefinition(const std::string & interface_type)
 {
   // Keep the uncached lookup path together so traversal only has to reason about ordering and
   // de-duplication.
@@ -180,7 +173,7 @@ LoadedDefinition loadInterfaceDefinition(const std::string & interface_type)
 
     std::ostringstream body;
     body << file.rdbuf();
-    return {parts.package, body.str()};
+    return body.str();
   } catch (const std::invalid_argument & exc) {
     lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
     LogEvent(kLogger, "interface_definition_lookup_rejected")
@@ -262,10 +255,13 @@ void collectInterfaceDefinitions(
     return;
   }
 
-  const LoadedDefinition loaded = loadInterfaceDefinition(interface_type);
-  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, loaded.definition});
+  const std::string definition = loadInterfaceDefinition(interface_type);
+  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, definition});
 
-  for (const auto & dependency : extractDependencies(loaded.definition, loaded.package)) {
+  // Successful loads already validated the identifier; re-parse here instead of carrying the
+  // package name through traversal state just for dependency qualification.
+  const std::string package = TypeParts::parse(interface_type).package;
+  for (const auto & dependency : extractDependencies(definition, package)) {
     collectInterfaceDefinitions(dependency, visited, definitions);
   }
 }

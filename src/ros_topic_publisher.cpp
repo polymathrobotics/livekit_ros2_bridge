@@ -16,7 +16,6 @@
 
 #include <chrono>
 #include <cstring>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -34,7 +33,7 @@ namespace
 
 constexpr std::size_t kPublisherDepth = 10U;
 constexpr std::size_t kDefaultMaxTopics = 50U;
-constexpr auto kRejectedPublishWarningThrottlePeriod = std::chrono::seconds(5);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("topic_publisher");
 
 }  // namespace
@@ -46,7 +45,6 @@ RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_po
 RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics)
 : node_(node)
 , access_policy_(std::move(access_policy))
-, max_topics_(max_topics)
 , publishers_(max_topics)
 {}
 
@@ -57,11 +55,6 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   const std::string & topic = command.topic;
 
   if (is_shutdown_.load()) {
-    LogEvent(kLogger, "publish_request_rejected")
-      .field("reason", "shutdown")
-      .field("topic", topic)
-      .field("requester_identity", requester_identity)
-      .warnThrottle(*node_.get_clock(), kRejectedPublishWarningThrottlePeriod);
     return;
   }
 
@@ -70,19 +63,18 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("reason", "forbidden")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .warn();
+      .warnThrottle(*node_.get_clock(), kLogThrottle);
+
     return;
   }
 
   std::string type;
   std::shared_ptr<rclcpp::GenericPublisher> publisher;
-  std::optional<PublisherEntry> cached;
   try {
-    cached = publishers_.peek(topic);
     // Cache hits deliberately skip the ROS graph. Once a publish succeeds, the
     // cached publisher pins the interface type for that topic until eviction or
     // shutdown clears the entry.
-    if (cached.has_value()) {
+    if (const auto cached = publishers_.peek(topic); cached.has_value()) {
       type = cached->type;
       publisher = cached->publisher;
     } else {
@@ -100,9 +92,12 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("requester_identity", requester_identity)
       .field("interface_type", command.interface_type)
       .field("error", exc.what())
-      .warn();
+      .warnThrottle(*node_.get_clock(), kLogThrottle);
+
     return;
   }
+
+  const bool had_cached_publisher = static_cast<bool>(publisher);
 
   // Control packets already carry a CDR payload, so copy the bytes directly
   // into SerializedMessage without a deserialize/serialize round trip.
@@ -122,14 +117,10 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     if (before_publish_handler_) {
       before_publish_handler_();
     }
+
     // before_publish_handler_ can trigger shutdown after publisher creation, so
     // recheck before sending bytes.
     if (is_shutdown_.load()) {
-      LogEvent(kLogger, "publish_request_dropped")
-        .field("reason", "shutdown")
-        .field("topic", topic)
-        .field("requester_identity", requester_identity)
-        .warn();
       return;
     }
 
@@ -140,10 +131,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       return;
     }
 
-    // Refresh recency only after a successful publish. If an in-flight cached
-    // publisher was evicted meanwhile, reinsert the handle that actually
-    // published so later commands can still reuse it.
-    if (cached.has_value() && publishers_.touch(topic)) {
+    // Refresh recency only after a successful publish.
+    if (had_cached_publisher && publishers_.touch(topic)) {
       return;
     }
 
@@ -163,7 +152,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("topic", topic)
       .field("evicted_topic", evicted->key)
       .field("count", evicted_count)
-      .field("max_topics", static_cast<int>(max_topics_))
+      .field("max_topics", static_cast<int>(publishers_.capacity()))
       .warn();
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_failed")

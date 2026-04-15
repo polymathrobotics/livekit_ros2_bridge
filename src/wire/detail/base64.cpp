@@ -82,29 +82,21 @@ Base64DecodeResult decodeBase64(std::string_view text)
 
   const std::size_t size = text.size();
   std::size_t pads = 0U;
-  std::size_t pad_index = size;
-  // Validate the alphabet and require any '=' padding to form a single suffix before
-  // handing the input to OpenSSL so we can distinguish missing padding from other
-  // malformed encodings.
-  for (std::size_t i = 0; i < size; ++i) {
-    const char c = text[i];
+  // Validate the alphabet and count any '=' suffix before handing the input to OpenSSL
+  // so we can distinguish missing padding from other malformed encodings.
+  for (const char c : text) {
     if (c == '=') {
-      if (pad_index == size) {
-        pad_index = i;
-      }
+      ++pads;
       continue;
     }
 
-    if (pad_index != size || base64Value(c) < 0) {
+    if (pads != 0U || base64Value(c) < 0) {
       return {{}, Base64Status::kInvalidEncoding};
     }
   }
 
-  if (pad_index != size) {
-    pads = size - pad_index;
-    if (pads > 2U || size == 1U) {
-      return {{}, Base64Status::kInvalidEncoding};
-    }
+  if (pads > 2U || (pads != 0U && size == 1U)) {
+    return {{}, Base64Status::kInvalidEncoding};
   }
 
   // A structurally valid alphabet/padding sequence that is not quartet-aligned is the

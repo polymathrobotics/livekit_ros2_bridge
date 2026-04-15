@@ -35,6 +35,12 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
 
+const VideoStreamConfig & defaultVideoStreamConfig()
+{
+  static const VideoStreamConfig kDefaultConfig = makeDefaultVideoStreamConfig();
+  return kDefaultConfig;
+}
+
 }  // namespace
 
 VideoStreamRegistry::VideoStreamRegistry(
@@ -47,8 +53,7 @@ VideoStreamRegistry::VideoStreamRegistry(
 , room_connection_(room_connection)
 , qos_config_(qos_config)
 , profiling_registry_(profiling_registry)
-, default_video_stream_config_(makeDefaultVideoStreamConfig())
-, video_stream_config_(video_stream_config == nullptr ? &default_video_stream_config_ : video_stream_config)
+, video_stream_config_(video_stream_config)
 {}
 
 VideoStreamRegistry::~VideoStreamRegistry()
@@ -128,14 +133,19 @@ void VideoStreamRegistry::stop(
   instance->shutdown();
 }
 
+const VideoStreamConfig & VideoStreamRegistry::videoStreamConfig() const
+{
+  return video_stream_config_ == nullptr ? defaultVideoStreamConfig() : *video_stream_config_;
+}
+
 VideoStreamSpec VideoStreamRegistry::resolveSpec(
   SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
   switch (kind) {
     case SubscriptionTargetKind::Topic:
-      return resolveRosVideoTopicSpec(*video_stream_config_, name, interface_type);
+      return resolveRosVideoTopicSpec(videoStreamConfig(), name, interface_type);
     case SubscriptionTargetKind::ConfiguredSource:
-      return resolveConfiguredVideoSourceSpec(*video_stream_config_, name);
+      return resolveConfiguredVideoSourceSpec(videoStreamConfig(), name);
   }
 
   throw std::invalid_argument("video stream request kind is invalid");

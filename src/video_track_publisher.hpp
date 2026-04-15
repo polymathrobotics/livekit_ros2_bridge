@@ -49,6 +49,17 @@ public:
   void shutdown();
 
 private:
+  struct PublishedDimensions
+  {
+    int width = 0;
+    int height = 0;
+
+    bool matches(int candidate_width, int candidate_height) const noexcept
+    {
+      return width == candidate_width && height == candidate_height;
+    }
+  };
+
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
 
@@ -63,8 +74,7 @@ private:
   bool has_published_ = false;
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<VideoTrackHandle> track_;
-  int width_ = 0;
-  int height_ = 0;
+  std::optional<PublishedDimensions> published_dimensions_;
 
   void ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us);
 };

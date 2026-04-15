@@ -79,6 +79,7 @@ public:
   void shutdown();
 
 private:
+  const VideoStreamConfig & videoStreamConfig() const;
   VideoStreamSpec resolveSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
 
@@ -88,8 +89,8 @@ private:
   const SubscriptionQosConfig * qos_config_;
   // Optional non-owning registry consulted only when creating a new stream instance.
   VideoProfilingRegistry * profiling_registry_;
-  // Optional non-owning config used to resolve topic/configured-source requests.
-  VideoStreamConfig default_video_stream_config_;
+  // Optional non-owning config used to resolve topic/configured-source requests. When null, the
+  // registry reads from the shared immutable bridge default config instead of caching its own copy.
   const VideoStreamConfig * video_stream_config_;
   // Guards `is_shutdown_` and `instances_`. Per-stream lifecycle synchronization lives
   // inside each VideoStreamInstance so the registry only serializes map membership and terminal

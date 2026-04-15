@@ -28,6 +28,7 @@
 
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
+#include "rclcpp/logging.hpp"
 #include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
@@ -80,20 +81,16 @@ public:
       }
     };
 
-    bool submitted = false;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!shutdown_) {
-        tasks_.push(std::move(task));
-        submitted = true;
-      }
-    }
-
-    if (!submitted) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (shutdown_) {
+      lock.unlock();
       LogEvent(logger_, "executor_task_rejected").field("reason", "shutdown").warnThrottle(*log_clock_, kLogThrottle);
       task.cancel();
       return future;
     }
+
+    tasks_.push(std::move(task));
+    lock.unlock();
 
     wake();
 
@@ -114,6 +111,7 @@ private:
   };
 
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
+  inline static const auto logger_ = rclcpp::get_logger("ros_executor_queue");
 
   // Protects shutdown_ and all state shared between submit(), wake(), drain(),
   // and shutdown().
@@ -128,7 +126,6 @@ private:
   rclcpp::CallbackGroup::SharedPtr callback_group_;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
 
-  rclcpp::Logger logger_;
   rclcpp::Clock::SharedPtr log_clock_;
 
   // Once set, new submissions are rejected and only work already running in

@@ -73,7 +73,6 @@ private:
 
   rclcpp::Node & node_;
   AccessPolicy access_policy_;
-  std::size_t max_topics_ = 0U;
   // Terminal lifecycle bit shared with in-flight publish() calls. publish()
   // rechecks it before reusing or updating cache state so shutdown() does not
   // resurrect bridge-owned publishers after teardown begins.

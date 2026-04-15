@@ -125,39 +125,31 @@ public:
   void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (thread_started_) {
+    if (worker_thread_.joinable()) {
       return;
     }
 
     config_ = std::move(config);
     callbacks_ = std::move(callbacks);
     stop_requested_ = false;
-    reconnect_requested_ = false;
-    reconnect_reason_.clear();
-    thread_started_ = true;
+    reconnect_reason_.reset();
     worker_thread_ = std::thread([this]() { run(); });
   }
 
   void stop() override
   {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (!thread_started_) {
+    if (!worker_thread_.joinable()) {
       return;
     }
     // Wake the worker regardless of whether it is currently waiting on an active connection or
     // sleeping in reconnect backoff; the stop path reuses the same condition variable.
     stop_requested_ = true;
-    reconnect_requested_ = true;
     condition_.notify_all();
     lock.unlock();
 
     // Join outside mutex_ because run() reacquires it during teardown before the thread exits.
-    if (worker_thread_.joinable()) {
-      worker_thread_.join();
-    }
-
-    lock.lock();
-    thread_started_ = false;
+    worker_thread_.join();
   }
 
   bool registerRpc(const std::string & method, RpcHandler handler) override
@@ -457,11 +449,6 @@ private:
       return;
     }
 
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      livekit_initialized_ = true;
-    }
-
     auto backoff = initial_backoff_;
     while (true) {
       {
@@ -475,7 +462,7 @@ private:
       if (connected) {
         backoff = initial_backoff_;
         std::unique_lock<std::mutex> lock(mutex_);
-        condition_.wait(lock, [this]() { return reconnect_requested_ || stop_requested_; });
+        condition_.wait(lock, [this]() { return stop_requested_ || reconnect_reason_.has_value(); });
       }
 
       bool should_stop = false;
@@ -483,7 +470,7 @@ private:
       {
         std::lock_guard<std::mutex> lock(mutex_);
         should_stop = stop_requested_;
-        reason = reconnect_reason_.empty() ? "retry_backoff" : reconnect_reason_;
+        reason = reconnect_reason_.value_or("retry_backoff");
       }
 
       reset(connected && !should_stop);
@@ -505,12 +492,7 @@ private:
     }
 
     reset(false);
-    if (livekit_initialized_) {
-      livekit::shutdown();
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-    livekit_initialized_ = false;
+    livekit::shutdown();
   }
 
   bool connect()
@@ -574,7 +556,7 @@ private:
       // binds against this connection's local participant under the same mutex.
       ++room_generation_;
       room_ = std::move(room);
-      reconnect_requested_ = false;
+      reconnect_reason_.reset();
       participant_disconnects_enabled_ = true;
       for (const auto & entry : rpc_handlers_) {
         if (!registerRpcLocked(entry.first)) {
@@ -622,10 +604,9 @@ private:
       // stale handles become harmless no-ops after reconnect.
       dropped_tracks = video_tracks_.size();
       video_tracks_.clear();
-      reconnect_requested_ = false;
-      reason = reconnect_reason_;
+      reason = reconnect_reason_.value_or("");
       room_name = config_.room;
-      reconnect_reason_.clear();
+      reconnect_reason_.reset();
       on_reset = callbacks_.on_connection_reset;
     }
 
@@ -661,9 +642,8 @@ private:
       std::lock_guard<std::mutex> lock(mutex_);
       // Keep the first reconnect cause for this episode; later transport noise should not
       // overwrite the reason reported during reset/backoff logging.
-      already_requested = reconnect_requested_;
+      already_requested = reconnect_reason_.has_value();
       if (!already_requested) {
-        reconnect_requested_ = true;
         reconnect_reason_ = reason;
         room_name = config_.room;
         on_reconnect = callbacks_.on_reconnect_requested;
@@ -750,19 +730,15 @@ private:
   std::chrono::milliseconds max_backoff_{kReconnectMaxBackoff};
 
   bool stop_requested_ = false;
-  // Shared wakeup latch for reconnect requests and stop(); run() consults stop_requested_ after
-  // each wakeup to decide whether to retry or exit.
-  bool reconnect_requested_ = false;
-  bool livekit_initialized_ = false;
   // Guards runtime-facing disconnect callbacks so transient reconnect churn does not look like a
   // requester disappearing permanently.
   bool participant_disconnects_enabled_ = false;
-  bool thread_started_ = false;
 
   // Bumped whenever the active room changes or is cleared so in-flight video operations cannot
   // repopulate handle state across reconnect boundaries.
   std::uint64_t room_generation_ = 0;
-  std::string reconnect_reason_;
+  // Presence means a reconnect episode is pending; the stored string carries the first cause.
+  std::optional<std::string> reconnect_reason_;
 };
 
 }  // namespace

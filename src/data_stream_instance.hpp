@@ -76,7 +76,7 @@ public:
   void failPublish();
   void shutdown();
 
-  const std::string & trackName() const;
+  std::string trackName() const;
   int intervalMs() const;
   State state() const;
 
@@ -201,7 +201,6 @@ private:
 
   std::string topic_;
   std::string interface_type_;
-  std::string track_name_;
 
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
   DataTrackPublisher publisher_;

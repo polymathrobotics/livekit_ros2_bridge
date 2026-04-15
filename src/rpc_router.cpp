@@ -250,14 +250,13 @@ void RpcRouter::unregisterRpcs(RoomConnection & connection)
 std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocation)
 {
   return withCallerIdentity(kServiceCallRpc, invocation, [this, &invocation]() {
-    ServiceCallRequest request;
-    // Keep the parsed request alive across the dispatch try/catch so failures
-    // after authorization can still log the target service name.
-    try {
-      request = wire::services::parse(invocation.payload);
-    } catch (const std::exception & exc) {
-      throwLoggedError(kServiceCallRpc, invocation, exc);
-    }
+    auto request = [&]() -> ServiceCallRequest {
+      try {
+        return wire::services::parse(invocation.payload);
+      } catch (const std::exception & exc) {
+        throwLoggedError(kServiceCallRpc, invocation, exc);
+      }
+    }();
 
     if (!access_policy_.allows(AccessOperation::CallService, request.service)) {
       addLogFields(LogEvent(kLogger, "rpc_request_rejected"), kServiceCallRpc, invocation)
@@ -268,6 +267,9 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
       throw RpcHandlerError(wire::protocol::kRpcErrorForbidden, "ROS service '" + request.service + "' not permitted.");
     }
 
+    // Once the request moves into the executor task, the router only needs the
+    // normalized service name for any later router-level error log.
+    const std::string service = request.service;
     try {
       const auto start = std::chrono::steady_clock::now();
       // First hop onto the ROS executor thread to create the client/request with
@@ -283,7 +285,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
       return wire::services::serialize(response.service, response.interface_type, response.response, elapsed_ms);
     } catch (const std::exception & exc) {
-      throwLoggedError(kServiceCallRpc, invocation, exc, std::string_view(request.service));
+      throwLoggedError(kServiceCallRpc, invocation, exc, std::string_view(service));
     }
   });
 }

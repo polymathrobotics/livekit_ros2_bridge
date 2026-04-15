@@ -90,12 +90,6 @@ struct ClampedInt
   ClampBoundary boundary = ClampBoundary::kNone;
 };
 
-struct ParsedInterval
-{
-  std::optional<int> interval_ms;
-  ClampBoundary boundary = ClampBoundary::kNone;
-};
-
 rclcpp::Clock & logClock()
 {
   static rclcpp::Clock clock(RCL_STEADY_TIME);
@@ -160,11 +154,11 @@ ClampedInt clampJsonInt(const nlohmann::json & value, const char * error_message
   return {static_cast<int>(raw_interval), ClampBoundary::kNone};
 }
 
-ParsedInterval parseIntervalMs(const nlohmann::json & entry)
+std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
 {
   const auto delivery_it = entry.find("delivery_preferences");
   if (delivery_it == entry.end()) {
-    return {};
+    return std::nullopt;
   }
 
   if (!delivery_it->is_object()) {
@@ -173,15 +167,15 @@ ParsedInterval parseIntervalMs(const nlohmann::json & entry)
 
   const auto interval_it = delivery_it->find("interval_ms");
   if (interval_it == delivery_it->end()) {
-    return {};
+    return std::nullopt;
   }
 
   const auto interval = clampJsonInt(*interval_it, "delivery_preferences.interval_ms must be an integer");
   if (interval.value == 0) {
-    return {};
+    return std::nullopt;
   }
 
-  return {interval.value, interval.boundary};
+  return interval;
 }
 
 void parseDemandTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
@@ -311,14 +305,15 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
 
     SubscriptionDemand demand;
     parseDemandTarget(entry, demand);
-    const auto interval = parseIntervalMs(entry);
-    demand.preferred_interval_ms = interval.interval_ms;
-    if (interval.boundary != ClampBoundary::kNone) {
-      LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
-        .field("kind", targetKindString(demand.kind))
-        .field("name", demand.name)
-        .field("boundary", clampBoundaryString(interval.boundary))
-        .warnThrottle(logClock(), kLogThrottle);
+    if (const auto interval = parseIntervalMs(entry)) {
+      demand.preferred_interval_ms = interval->value;
+      if (interval->boundary != ClampBoundary::kNone) {
+        LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
+          .field("kind", targetKindString(demand.kind))
+          .field("name", demand.name)
+          .field("boundary", clampBoundaryString(interval->boundary))
+          .warnThrottle(logClock(), kLogThrottle);
+      }
     }
 
     // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and

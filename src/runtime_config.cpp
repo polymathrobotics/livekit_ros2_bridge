@@ -513,10 +513,10 @@ VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
 
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
 {
-  // Keep the last-known room and url outside the guarded load path so startup
-  // failure logs can still identify which room was being configured.
-  std::string room;
-  std::string url;
+  // Keep the parameter snapshot outside the guarded load path so startup
+  // failure logs can still identify which room/url were being configured even
+  // if derived config assembly fails partway through.
+  RuntimeConfig config;
   const char * stage = "parameters_interface_validation";
 
   try {
@@ -526,11 +526,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     stage = "parameter_snapshot";
     ParamListener listener(parameters);
-    RuntimeConfig config;
     config.params = listener.get_params();
     const Params & params = config.params;
-    room = params.livekit.room;
-    url = params.livekit.url;
 
     stage = "livekit_config";
     config.livekit = loadLiveKitConfig(params);
@@ -561,8 +558,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   } catch (...) {
     LogEvent(kLogger, "runtime_config_load_failed")
       .field("stage", stage)
-      .fieldOr("room", room, kUnsetLogValue)
-      .fieldOr("url", url, kUnsetLogValue)
+      .fieldOr("room", config.params.livekit.room, kUnsetLogValue)
+      .fieldOr("url", config.params.livekit.url, kUnsetLogValue)
       .fieldException("error", std::current_exception())
       .error();
 

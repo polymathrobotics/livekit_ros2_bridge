@@ -62,6 +62,34 @@ std::string makeTopicTrackSuffix(std::string_view topic)
   return suffix;
 }
 
+std::string makeStreamKey(std::string_view prefix, std::string_view canonical_name)
+{
+  std::string stream_key;
+  stream_key.reserve(prefix.size() + 1U + canonical_name.size());
+  stream_key.append(prefix);
+  stream_key.push_back(':');
+  stream_key.append(canonical_name);
+  return stream_key;
+}
+
+std::string makeTrackName(std::string_view prefix, std::string_view suffix)
+{
+  std::string track_name;
+  track_name.reserve(prefix.size() + suffix.size());
+  track_name.append(prefix);
+  track_name.append(suffix);
+  return track_name;
+}
+
+std::string makeTopicTrackName(std::string_view normalized_topic)
+{
+  const std::string suffix = makeTopicTrackSuffix(normalized_topic);
+  if (suffix.empty()) {
+    return makeTrackName(kTopicTrackPrefix, kUnnamedTrackSuffix);
+  }
+  return makeTrackName(kTopicTrackPrefix, suffix);
+}
+
 bool isUnreservedTrackByte(unsigned char byte)
 {
   return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '-' ||
@@ -87,22 +115,25 @@ std::string encodeConfiguredSourceTrackSuffix(std::string_view name)
   return suffix;
 }
 
+std::string makeConfiguredSourceTrackName(std::string_view name)
+{
+  return makeTrackName(kConfiguredSourceTrackPrefix, encodeConfiguredSourceTrackSuffix(name));
+}
+
 const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
   const std::vector<RosVideoTopicRule> & rules, std::string_view normalized_topic)
 {
   const RosVideoTopicRule * match = nullptr;
-  std::size_t match_size = 0;
   for (const auto & rule : rules) {
     if (!rosResourceMatchesPattern(normalized_topic, rule.pattern)) {
       continue;
     }
     // Prefer the longest matching pattern; same-length matches keep declaration order.
     const auto pattern_size = rule.pattern.size();
-    if (match != nullptr && pattern_size <= match_size) {
+    if (match != nullptr && pattern_size <= match->pattern.size()) {
       continue;
     }
     match = &rule;
-    match_size = pattern_size;
   }
   if (match == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
@@ -154,19 +185,10 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   }
 
   const auto & rule = selectBestMatchingRosVideoTopicRule(config.ros_topic_rules, normalized_topic);
-  const std::string suffix = makeTopicTrackSuffix(normalized_topic);
-  const std::string_view track_suffix =
-    suffix.empty() ? std::string_view{kUnnamedTrackSuffix} : std::string_view{suffix};
 
   VideoStreamSpec spec;
-  spec.stream_key.reserve(std::string_view{kTopicKeyPrefix}.size() + 1U + normalized_topic.size());
-  spec.stream_key.append(kTopicKeyPrefix);
-  spec.stream_key.push_back(':');
-  spec.stream_key.append(normalized_topic);
-
-  spec.track_name.reserve(std::string_view{kTopicTrackPrefix}.size() + track_suffix.size());
-  spec.track_name.append(kTopicTrackPrefix);
-  spec.track_name.append(track_suffix);
+  spec.stream_key = makeStreamKey(kTopicKeyPrefix, normalized_topic);
+  spec.track_name = makeTopicTrackName(normalized_topic);
   spec.input_kind = VideoInputKind::RosTopic;
   spec.ros_topic = normalized_topic;
   spec.interface_type = interface_type;
@@ -191,17 +213,10 @@ VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & confi
   }
 
   const auto & source_config = it->second;
-  const std::string suffix = encodeConfiguredSourceTrackSuffix(name);
 
   VideoStreamSpec spec;
-  spec.stream_key.reserve(std::string_view{kConfiguredSourceKeyPrefix}.size() + 1U + name.size());
-  spec.stream_key.append(kConfiguredSourceKeyPrefix);
-  spec.stream_key.push_back(':');
-  spec.stream_key.append(name);
-
-  spec.track_name.reserve(std::string_view{kConfiguredSourceTrackPrefix}.size() + suffix.size());
-  spec.track_name.append(kConfiguredSourceTrackPrefix);
-  spec.track_name.append(suffix);
+  spec.stream_key = makeStreamKey(kConfiguredSourceKeyPrefix, name);
+  spec.track_name = makeConfiguredSourceTrackName(name);
   spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.source_name = name;
   spec.config_id = name;

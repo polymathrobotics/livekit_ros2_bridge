@@ -44,12 +44,10 @@ class VideoPipelineFrameSource : public VideoFrameSource, public std::enable_sha
 public:
   // Configures optional self-recovery for sources whose pipeline can be
   // recreated from a stable launch description after EOS or ERROR.
-  // TODO: don't love this struct
+  // TODO: let fixed-pipeline sources supply restart descriptions on demand
+  // without going through this generic config bundle.
   struct RestartConfig
   {
-    // Must resolve to a GstBin containing `kAppSinkName`; when
-    // `require_appsrc` is true it must also expose `kVideoAppSrcName`.
-    std::string pipeline_description;
     // Requires the named appsrc and captures its handle so ROS-backed
     // subclasses can resume pushing into a restarted pipeline.
     bool require_appsrc = false;
@@ -65,8 +63,9 @@ public:
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
 
-  // Default lifecycle for fixed-pipeline sources whose launch string is known
-  // at construction time. Sources with extra producer state override these.
+  // Default lifecycle for fixed-pipeline sources whose launch string can be
+  // rebuilt from canonical source state. Sources with extra producer state
+  // override these.
   void start() override;
   void shutdown() override;
 
@@ -111,6 +110,9 @@ protected:
   // Caller must hold mutex_. Parses `pipeline_description`, validates the named
   // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
   void startPipelineLocked(const std::string & description, bool require_appsrc = false);
+  // Fixed-pipeline sources override this to derive the restart description
+  // from canonical state instead of caching a second copy beside `spec_`.
+  virtual std::string fixedPipelineDescription() const;
 
   virtual void resetLocked();
 

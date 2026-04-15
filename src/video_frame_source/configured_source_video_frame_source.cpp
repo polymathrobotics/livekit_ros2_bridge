@@ -35,15 +35,19 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
   VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : VideoPipelineFrameSource(
-    spec,
+    std::move(spec),
     sink,
     observer,
     std::move(profiler),
     VideoPipelineFrameSource::RestartConfig{
-      buildVideoPipelineDescription(spec.ingress_fragment, spec.transform_fragment),
       false,
       kRestartDelay,
     })
 {}
+
+std::string ConfiguredSourceVideoFrameSource::fixedPipelineDescription() const
+{
+  return buildVideoPipelineDescription(spec_.ingress_fragment, spec_.transform_fragment);
+}
 
 }  // namespace livekit_ros2_bridge

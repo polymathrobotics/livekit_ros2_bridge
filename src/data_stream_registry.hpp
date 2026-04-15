@@ -55,7 +55,6 @@ public:
 
 private:
   using InstanceMap = std::unordered_map<std::string, std::shared_ptr<DataStreamInstance>>;
-  using TrackMap = std::unordered_map<std::string, std::string>;
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;
@@ -64,7 +63,6 @@ private:
   std::atomic<bool> is_shutdown_{false};
   std::atomic<std::size_t> generation_{0};
   InstanceMap instances_;
-  TrackMap topics_by_track_name_;
 
   std::shared_ptr<DataStreamInstance> requireInstance(const std::string & topic) const;
   std::shared_ptr<DataStreamInstance> findInstanceByTrackName(const std::string & track_name) const;

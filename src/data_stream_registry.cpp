@@ -60,12 +60,11 @@ void DataStreamRegistry::create(const std::string & topic, const std::string & i
   instance->subscribe();
 
   const std::string track_name = instance->trackName();
-  auto [it, inserted] = instances_.emplace(topic, std::move(instance));
-  (void)inserted;
-  if (!topics_by_track_name_.emplace(track_name, topic).second) {
-    instances_.erase(it);
+  if (findInstanceByTrackName(track_name) != nullptr) {
     throw std::logic_error("data stream already exists for track '" + track_name + "'");
   }
+
+  instances_.emplace(topic, std::move(instance));
 }
 
 DataStreamInstance * DataStreamRegistry::find(const std::string & topic)
@@ -102,7 +101,6 @@ void DataStreamRegistry::stop(const std::string & topic)
     return;
   }
 
-  topics_by_track_name_.erase(it->second->trackName());
   auto instance = std::move(it->second);
   instances_.erase(it);
   instance->shutdown();
@@ -174,12 +172,16 @@ std::shared_ptr<DataStreamInstance> DataStreamRegistry::requireInstance(const st
 
 std::shared_ptr<DataStreamInstance> DataStreamRegistry::findInstanceByTrackName(const std::string & track_name) const
 {
-  const auto it = topics_by_track_name_.find(track_name);
-  if (it == topics_by_track_name_.end()) {
-    return nullptr;
+  // Publish completion/failure callbacks are infrequent, so derive the matching instance from
+  // the owned runtimes instead of mirroring a second track-name index.
+  for (const auto & [topic, instance] : instances_) {
+    (void)topic;
+    if (instance->trackName() == track_name) {
+      return instance;
+    }
   }
 
-  return requireInstance(it->second);
+  return nullptr;
 }
 
 void DataStreamRegistry::clearInstances(bool reopen_gate)
@@ -187,10 +189,9 @@ void DataStreamRegistry::clearInstances(bool reopen_gate)
   const std::size_t callback_generation = callback_gate_.close();
   auto owned_instances = std::move(instances_);
   instances_.clear();
-  topics_by_track_name_.clear();
 
-  for (auto & [track_name, instance] : owned_instances) {
-    (void)track_name;
+  for (auto & [topic, instance] : owned_instances) {
+    (void)topic;
     instance->shutdown();
   }
 

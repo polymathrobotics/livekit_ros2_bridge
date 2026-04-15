@@ -81,6 +81,13 @@ public:
     is_open_ = false;
   }
 
+  // Reports whether new work may still enter the guarded section.
+  bool isOpen()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return is_open_;
+  }
+
   // Waits until the section is idle, or until the caller is itself the current owner.
   void awaitIdle()
   {

@@ -77,39 +77,46 @@ DataTrackPublisher::DataTrackPublisher(RoomConnection & connection, std::string 
 
 void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
 {
-  const char * stage = "room_publish";
+  std::shared_ptr<livekit::LocalDataTrack> track;
   try {
-    auto track = room_connection_.publishDataTrack(name_);
-    stage = "registry_accept";
-
-    // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
-    // accepts only the current generation for this track name, so stale completions are reclaimed
-    // immediately instead of leaving an orphaned LiveKit track behind.
-    try {
-      if (on_accept(generation)) {
-        track_ = std::move(track);
-        return;
-      }
-    } catch (...) {
-      tryUnpublishTrack(room_connection_, name_, track);
-      throw;
-    }
-
-    LogEvent(kLogger, "data_track_publish_reclaimed")
-      .field("track_name", name_)
-      .field("generation", generation)
-      .field("reason", "stale_registry_state")
-      .info();
-    tryUnpublishTrack(room_connection_, name_, track);
+    track = room_connection_.publishDataTrack(name_);
   } catch (...) {
     const auto exception = std::current_exception();
     on_fail();
     LogEvent(kLogger, "data_track_publish_error")
       .field("track_name", name_)
-      .field("stage", stage)
+      .field("stage", "room_publish")
       .fieldException("error", exception)
       .warn();
+    return;
   }
+
+  // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
+  // accepts only the current generation for this track name, so stale completions are reclaimed
+  // immediately instead of leaving an orphaned LiveKit track behind.
+  try {
+    if (on_accept(generation)) {
+      track_ = std::move(track);
+      return;
+    }
+  } catch (...) {
+    const auto exception = std::current_exception();
+    tryUnpublishTrack(room_connection_, name_, track);
+    on_fail();
+    LogEvent(kLogger, "data_track_publish_error")
+      .field("track_name", name_)
+      .field("stage", "registry_accept")
+      .fieldException("error", exception)
+      .warn();
+    return;
+  }
+
+  LogEvent(kLogger, "data_track_publish_reclaimed")
+    .field("track_name", name_)
+    .field("generation", generation)
+    .field("reason", "stale_registry_state")
+    .info();
+  tryUnpublishTrack(room_connection_, name_, track);
 }
 
 void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)

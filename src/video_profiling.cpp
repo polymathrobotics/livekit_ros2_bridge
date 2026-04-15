@@ -76,6 +76,11 @@ struct DurationSamples
 {
   std::vector<double> durations_ms;
 
+  bool hasSamples() const
+  {
+    return !durations_ms.empty();
+  }
+
   void addDurationMs(double duration_ms)
   {
     durations_ms.push_back(duration_ms);
@@ -507,7 +512,6 @@ struct VideoStreamProfiler::Impl
   VideoStreamSpec spec;
   std::mutex mutex;
   std::shared_ptr<TraceRecorder> recorder;
-  bool has_activity = false;
 
   std::size_t frames_in = 0;
   std::size_t frames_sampled = 0;
@@ -642,6 +646,22 @@ void recordTraceSpan(
   impl.recorder->recordComplete(impl.spec.stream_key, trace_event_name, start_time, duration, std::move(args));
 }
 
+template <typename ProfileStateT>
+bool hasProfileActivity(const ProfileStateT & state)
+{
+  return state.frames_in > 0 || state.frames_sampled > 0 || state.frames_captured > 0 ||
+         state.pipeline_start_count > 0 || state.pipeline_failure_count > 0 || state.restart_failed_count > 0 ||
+         state.push_failed_count > 0 || state.sample_unpack_failed_count > 0 || state.capture_failed_count > 0 ||
+         state.track_publish_count > 0 || state.track_republish_count > 0 || state.track_unpublish_count > 0 ||
+         state.source_timestamp_regression_count > 0 || state.ingress_arrival_gap_ms.hasSamples() ||
+         state.output_arrival_gap_ms.hasSamples() || state.source_timestamp_gap_ms.hasSamples() ||
+         state.appsrc_to_sample_ms.hasSamples() || state.source_to_output_submit_ms.hasSamples() ||
+         state.push_to_appsrc_ms.hasSamples() || state.sample_callback_ms.hasSamples() ||
+         state.sample_unpack_ms.hasSamples() || state.frame_sink_ms.hasSamples() ||
+         state.publisher_handle_frame_ms.hasSamples() || state.ensure_track_ms.hasSamples() ||
+         state.capture_frame_ms.hasSamples();
+}
+
 }  // namespace
 
 const char * videoProfileStageToString(VideoProfileStage stage)
@@ -651,16 +671,7 @@ const char * videoProfileStageToString(VideoProfileStage stage)
 
 bool VideoStreamProfileSummary::hasActivity() const
 {
-  return frames_in > 0 || frames_sampled > 0 || frames_captured > 0 || pipeline_start_count > 0 ||
-         pipeline_failure_count > 0 || restart_failed_count > 0 || push_failed_count > 0 ||
-         sample_unpack_failed_count > 0 || capture_failed_count > 0 || track_publish_count > 0 ||
-         track_republish_count > 0 || track_unpublish_count > 0 || source_timestamp_regression_count > 0 ||
-         ingress_arrival_gap_ms.hasSamples() || output_arrival_gap_ms.hasSamples() ||
-         source_timestamp_gap_ms.hasSamples() || appsrc_to_sample_ms.hasSamples() ||
-         source_to_output_submit_ms.hasSamples() ||
-         std::any_of(kStageMetrics.begin(), kStageMetrics.end(), [this](const auto & metric) {
-           return (this->*(metric.summary)).hasSamples();
-         });
+  return hasProfileActivity(*this);
 }
 
 VideoStreamProfiler::VideoStreamProfiler(VideoStreamSpec spec)
@@ -673,7 +684,6 @@ void VideoStreamProfiler::noteIngress(
   SteadyClock::time_point arrival_time, std::optional<std::int64_t> source_timestamp_us)
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->frames_in++;
   recordTraceInstant(*impl_, kIngressTraceEventName, frameTimestampArgs(source_timestamp_us));
 
@@ -703,7 +713,6 @@ void VideoStreamProfiler::noteSample(std::optional<std::int64_t> frame_timestamp
 {
   const auto sample_ready_time = SteadyClock::now();
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->frames_sampled++;
   recordTraceInstant(*impl_, kSampledTraceEventName, frameTimestampArgs(frame_timestamp_us));
 
@@ -727,7 +736,6 @@ void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestam
 {
   const auto capture_complete_time = SteadyClock::now();
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->frames_captured++;
   recordTraceInstant(*impl_, kCapturedTraceEventName, frameTimestampArgs(frame_timestamp_us));
 
@@ -757,7 +765,6 @@ void VideoStreamProfiler::noteCapture(std::optional<std::int64_t> frame_timestam
 void VideoStreamProfiler::notePipelineStart()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->pipeline_start_count++;
   recordTraceInstant(*impl_, kPipelineStartTraceEventName);
 }
@@ -768,7 +775,6 @@ void VideoStreamProfiler::notePipelineFailure(const std::string & reason)
   addTraceArg(args, "reason", reason);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->pipeline_failure_count++;
   recordTraceInstant(*impl_, kPipelineFailureTraceEventName, std::move(args));
 }
@@ -779,7 +785,6 @@ void VideoStreamProfiler::noteRestartFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->restart_failed_count++;
   recordTraceInstant(*impl_, kRestartFailureTraceEventName, std::move(args));
 }
@@ -790,7 +795,6 @@ void VideoStreamProfiler::notePushFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->push_failed_count++;
   recordTraceInstant(*impl_, kPushFailureTraceEventName, std::move(args));
 }
@@ -801,7 +805,6 @@ void VideoStreamProfiler::noteSampleUnpackFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->sample_unpack_failed_count++;
   recordTraceInstant(*impl_, kSampleUnpackFailureTraceEventName, std::move(args));
 }
@@ -812,7 +815,6 @@ void VideoStreamProfiler::noteCaptureFailed(const std::string & error)
   addTraceArg(args, "error", error);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->capture_failed_count++;
   recordTraceInstant(*impl_, kCaptureFailureTraceEventName, std::move(args));
 }
@@ -825,7 +827,6 @@ void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republi
   addTraceArg(args, "republished", republished);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   std::size_t * count = &impl_->track_publish_count;
   const char * event_name = kTrackPublishedTraceEventName;
   if (republished) {
@@ -839,7 +840,6 @@ void VideoStreamProfiler::noteTrackPublished(int width, int height, bool republi
 void VideoStreamProfiler::noteTrackUnpublish()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   impl_->track_unpublish_count++;
   recordTraceInstant(*impl_, kTrackUnpublishingTraceEventName);
 }
@@ -854,7 +854,6 @@ void VideoStreamProfiler::recordStage(
   const auto & stage_metric = stageMetric(stage);
 
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  impl_->has_activity = true;
   (impl_.get()->*(stage_metric.samples)).addDurationMs(duration_ms);
   recordTraceSpan(
     *impl_,
@@ -867,7 +866,7 @@ void VideoStreamProfiler::recordStage(
 std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
 {
   std::lock_guard<std::mutex> lock(impl_->mutex);
-  if (!impl_->has_activity) {
+  if (!hasProfileActivity(*impl_)) {
     return std::nullopt;
   }
 
@@ -898,7 +897,6 @@ std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
     summary.*(metric.summary) = (impl_.get()->*(metric.samples)).takeSummary();
   }
 
-  impl_->has_activity = false;
   impl_->frames_in = 0;
   impl_->frames_sampled = 0;
   impl_->frames_captured = 0;

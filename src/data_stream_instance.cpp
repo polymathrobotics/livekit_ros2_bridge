@@ -65,8 +65,7 @@ DataStreamInstance::DataStreamInstance(
 : node_(node)
 , topic_(std::move(topic))
 , interface_type_(std::move(interface_type))
-, track_name_(makeDataTrackName(topic_))
-, publisher_(room_connection, track_name_, node_.get_clock())
+, publisher_(room_connection, makeDataTrackName(topic_), node_.get_clock())
 , registry_(registry)
 , qos_config_(qos_config)
 , gate_generation_(callback_gate.currentGeneration())
@@ -97,14 +96,14 @@ void DataStreamInstance::start(std::size_t generation)
   if (prev_state == State::kFailed) {
     LogEvent(kLogger, "data_track_pending")
       .field("resource", topic_)
-      .field("track_name", track_name_)
+      .field("track_name", trackName())
       .field("reason", "retry_after_publish_failure")
       .info();
   }
   publisher_.publish(
     generation,
-    [this](std::size_t generation) { return registry_.onTrackPublished(track_name_, generation); },
-    [this]() { registry_.onTrackFailed(track_name_); });
+    [this](std::size_t generation) { return registry_.onTrackPublished(trackName(), generation); },
+    [this]() { registry_.onTrackFailed(trackName()); });
 }
 
 void DataStreamInstance::republish(std::size_t generation)
@@ -122,8 +121,8 @@ void DataStreamInstance::republish(std::size_t generation)
   publication_.beginPublish(generation);
   publisher_.publish(
     generation,
-    [this](std::size_t generation) { return registry_.onTrackPublished(track_name_, generation); },
-    [this]() { registry_.onTrackFailed(track_name_); });
+    [this](std::size_t generation) { return registry_.onTrackPublished(trackName(), generation); },
+    [this]() { registry_.onTrackFailed(trackName()); });
 }
 
 bool DataStreamInstance::completePublish(std::size_t generation)
@@ -132,7 +131,7 @@ bool DataStreamInstance::completePublish(std::size_t generation)
     return false;
   }
 
-  LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", track_name_).info();
+  LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", trackName()).info();
   return true;
 }
 
@@ -149,9 +148,9 @@ void DataStreamInstance::shutdown()
   subscription_.reset();
 }
 
-const std::string & DataStreamInstance::trackName() const
+std::string DataStreamInstance::trackName() const
 {
-  return track_name_;
+  return makeDataTrackName(topic_);
 }
 
 int DataStreamInstance::intervalMs() const
@@ -230,7 +229,7 @@ void DataStreamInstance::forwardMessage(const rclcpp::SerializedMessage & messag
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "data_track_delivery_failed")
       .field("resource", topic_)
-      .field("track_name", track_name_)
+      .field("track_name", trackName())
       .field("error", exc.what())
       .warnThrottle(*node_.get_clock(), kLogThrottle);
   }

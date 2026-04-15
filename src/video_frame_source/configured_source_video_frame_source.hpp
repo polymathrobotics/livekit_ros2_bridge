@@ -31,6 +31,9 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+
+protected:
+  std::string fixedPipelineDescription() const override;
 };
 
 }  // namespace livekit_ros2_bridge

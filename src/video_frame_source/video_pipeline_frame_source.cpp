@@ -48,10 +48,6 @@ struct I420Layout
 {
   int width = 0;
   int height = 0;
-  std::size_t luma_width = 0;
-  std::size_t luma_height = 0;
-  std::size_t chroma_width = 0;
-  std::size_t chroma_height = 0;
 
   static I420Layout fromInfo(const GstVideoInfo & video_info)
   {
@@ -61,22 +57,37 @@ struct I420Layout
     if (layout.width <= 0 || layout.height <= 0) {
       throw std::runtime_error("I420 sample dimensions are invalid.");
     }
-
-    layout.luma_width = static_cast<std::size_t>(layout.width);
-    layout.luma_height = static_cast<std::size_t>(layout.height);
-    layout.chroma_width = (layout.luma_width + 1U) / 2U;
-    layout.chroma_height = (layout.luma_height + 1U) / 2U;
     return layout;
+  }
+
+  [[nodiscard]] std::size_t lumaWidth() const
+  {
+    return static_cast<std::size_t>(width);
+  }
+
+  [[nodiscard]] std::size_t lumaHeight() const
+  {
+    return static_cast<std::size_t>(height);
+  }
+
+  [[nodiscard]] std::size_t chromaWidth() const
+  {
+    return (lumaWidth() + 1U) / 2U;
+  }
+
+  [[nodiscard]] std::size_t chromaHeight() const
+  {
+    return (lumaHeight() + 1U) / 2U;
   }
 
   [[nodiscard]] std::size_t lumaPlaneSize() const
   {
-    return luma_width * luma_height;
+    return lumaWidth() * lumaHeight();
   }
 
   [[nodiscard]] std::size_t chromaPlaneSize() const
   {
-    return chroma_width * chroma_height;
+    return chromaWidth() * chromaHeight();
   }
 
   [[nodiscard]] std::size_t byteCount() const
@@ -87,9 +98,9 @@ struct I420Layout
   void validate(const GstVideoFrame * frame) const
   {
     if (
-      !hasPlaneDimensions(frame, 0, luma_width, luma_height) ||
-      !hasPlaneDimensions(frame, 1, chroma_width, chroma_height) ||
-      !hasPlaneDimensions(frame, 2, chroma_width, chroma_height))
+      !hasPlaneDimensions(frame, 0, lumaWidth(), lumaHeight()) ||
+      !hasPlaneDimensions(frame, 1, chromaWidth(), chromaHeight()) ||
+      !hasPlaneDimensions(frame, 2, chromaWidth(), chromaHeight()))
     {
       throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
     }
@@ -165,9 +176,9 @@ PackedI420Frame packI420Frame(GstSample * sample)
   frame.data.resize(layout.byteCount());
 
   auto * dst = frame.data.data();
-  copyI420Plane(gst_frame, 0, dst, layout.luma_width);
-  copyI420Plane(gst_frame, 1, dst + layout.lumaPlaneSize(), layout.chroma_width);
-  copyI420Plane(gst_frame, 2, dst + layout.lumaPlaneSize() + layout.chromaPlaneSize(), layout.chroma_width);
+  copyI420Plane(gst_frame, 0, dst, layout.lumaWidth());
+  copyI420Plane(gst_frame, 1, dst + layout.lumaPlaneSize(), layout.chromaWidth());
+  copyI420Plane(gst_frame, 2, dst + layout.lumaPlaneSize() + layout.chromaPlaneSize(), layout.chromaWidth());
   return frame;
 }
 
@@ -224,7 +235,7 @@ void VideoPipelineFrameSource::start()
   }
 
   const auto & config = restart_config_.value();
-  startPipelineLocked(config.pipeline_description, config.require_appsrc);
+  startPipelineLocked(fixedPipelineDescription(), config.require_appsrc);
 }
 
 void VideoPipelineFrameSource::shutdown()
@@ -334,6 +345,11 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & descripti
     .field("stream_key", spec_.stream_key)
     .field("track_name", spec_.track_name)
     .info();
+}
+
+std::string VideoPipelineFrameSource::fixedPipelineDescription() const
+{
+  throw std::logic_error("Video pipeline source did not provide a fixed pipeline description.");
 }
 
 void VideoPipelineFrameSource::resetLocked()
@@ -500,9 +516,8 @@ void VideoPipelineFrameSource::recoverAfterFailure()
   // pipeline members during recovery.
   auto handles = takePipelineLocked();
   teardown(handles.pipeline, handles.appsrc, handles.appsink);
-  // Allow a freshly started pipeline to schedule a new recovery cycle if it
-  // immediately fails during startup or before the next steady-state frame.
-  recovery_pending_ = false;
+  // takePipelineLocked() clears the pending marker for the detached pipeline,
+  // so a restarted pipeline begins from a clean recovery state.
 
   const RestartConfig * config = restart_config_ ? &*restart_config_ : nullptr;
   if (config == nullptr) {
@@ -510,7 +525,7 @@ void VideoPipelineFrameSource::recoverAfterFailure()
   }
 
   try {
-    startPipelineLocked(config->pipeline_description, config->require_appsrc);
+    startPipelineLocked(fixedPipelineDescription(), config->require_appsrc);
   } catch (const std::exception & exc) {
     observer_.onRestartFailed(exc.what());
   }

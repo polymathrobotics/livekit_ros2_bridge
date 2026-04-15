@@ -213,7 +213,7 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
     subscription.leases[requester_identity] = lease;
 
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    if (isVideoSubscription(subscription)) {
       video_stream_registry_.start(subscription.target_kind, subscription.name, subscription.interface_type);
       return status(subscription);
     }
@@ -226,8 +226,7 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
 
     data_stream_registry_.setIntervalMs(subscription.name, appliedIntervalMs(subscription.leases));
 
-    const bool is_published = state == DataStreamInstance::State::kPublished;
-    if (!had_requester && is_published) {
+    if (!had_requester && state == DataStreamInstance::State::kPublished) {
       // A new requester can receive subscription status before LiveKit surfaces the existing
       // published data track to that participant session, so queue one republish when the
       // requester first joins. The fresh lease was inserted just above, so only published
@@ -255,25 +254,20 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
 SubscriptionStatus SubscriptionLeaseManager::create(
   const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease)
 {
-  bool is_video = demand.kind == SubscriptionTargetKind::ConfiguredSource;
-  std::string interface_type;
   Subscription subscription;
   subscription.target_kind = demand.kind;
   subscription.name = demand.name;
 
   try {
-    if (!is_video) {
-      interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), demand.name, "topic");
-      is_video = classifyRosVideoIngestMode(interface_type).has_value();
+    if (demand.kind == SubscriptionTargetKind::Topic) {
+      subscription.interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), demand.name, "topic");
     }
-    subscription.interface_type = interface_type;
     subscription.leases.emplace(requester_identity, lease);
 
-    if (is_video) {
-      subscription.delivery_kind = SubscriptionDeliveryKind::kVideo;
-      video_stream_registry_.start(demand.kind, demand.name, interface_type);
+    if (isVideoSubscription(subscription)) {
+      video_stream_registry_.start(demand.kind, demand.name, subscription.interface_type);
     } else {
-      data_stream_registry_.create(demand.name, interface_type);
+      data_stream_registry_.create(demand.name, subscription.interface_type);
       data_stream_registry_.setIntervalMs(demand.name, appliedIntervalMs(subscription.leases));
       data_stream_registry_.start(demand.name);
     }
@@ -316,7 +310,7 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
 
   for (const auto & [subscription_key, subscription] : subscriptions_) {
     (void)subscription_key;
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    if (isVideoSubscription(subscription)) {
       continue;
     }
 
@@ -353,7 +347,7 @@ void SubscriptionLeaseManager::republishTracks(const std::string & requester_ide
 
   for (auto & [subscription_key, subscription] : subscriptions_) {
     (void)subscription_key;
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    if (isVideoSubscription(subscription)) {
       continue;
     }
 
@@ -422,7 +416,7 @@ void SubscriptionLeaseManager::resetSessionState()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    if (isVideoSubscription(subscription)) {
       continue;
     }
 
@@ -442,7 +436,7 @@ void SubscriptionLeaseManager::resetSessionState()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
+    if (!isVideoSubscription(subscription)) {
       continue;
     }
     destroy(subscription);
@@ -456,7 +450,7 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
   status.name = subscription.name;
   status.interface_type = subscription.interface_type;
 
-  if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
+  if (!isVideoSubscription(subscription)) {
     const auto * data = data_stream_registry_.find(subscription.name);
     if (data == nullptr) {
       throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -479,6 +473,12 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
   status.track_name = video->track_name;
   status.degraded_reason = video->degraded_reason;
   return status;
+}
+
+bool SubscriptionLeaseManager::isVideoSubscription(const Subscription & subscription)
+{
+  return subscription.target_kind == SubscriptionTargetKind::ConfiguredSource ||
+         classifyRosVideoIngestMode(subscription.interface_type).has_value();
 }
 
 int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Lease> & leases)
@@ -534,7 +534,7 @@ void SubscriptionLeaseManager::applyExpiredLeaseRemovals(
 
 void SubscriptionLeaseManager::refreshDataSubscriptionInterval(const Subscription & subscription)
 {
-  if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo || subscription.leases.empty()) {
+  if (isVideoSubscription(subscription) || subscription.leases.empty()) {
     return;
   }
 
@@ -572,7 +572,7 @@ void SubscriptionLeaseManager::pruneExpiredSubscriptionLeases(Clock::time_point 
 
 void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_destroy)
 {
-  if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
+  if (!isVideoSubscription(subscription)) {
     const auto * data = data_stream_registry_.find(subscription.name);
     if (data == nullptr) {
       throw std::logic_error("data subscription invariant violated: data stream is required");
@@ -617,7 +617,7 @@ void SubscriptionLeaseManager::shutdown()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.delivery_kind == SubscriptionDeliveryKind::kVideo) {
+    if (isVideoSubscription(subscription)) {
       continue;
     }
 
@@ -637,7 +637,7 @@ void SubscriptionLeaseManager::shutdown()
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;
-    if (subscription.delivery_kind != SubscriptionDeliveryKind::kVideo) {
+    if (!isVideoSubscription(subscription)) {
       continue;
     }
     destroy(subscription);

@@ -14,11 +14,46 @@
 
 #include "subscription_qos.hpp"
 
+#include <optional>
+
 #include "rclcpp/version.h"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
+namespace
+{
+
+template <typename Policy>
+struct PublisherPolicySummary
+{
+  std::optional<Policy> resolved_policy;
+  bool mixed = false;
+};
+
+template <typename Policy, typename Accessor>
+PublisherPolicySummary<Policy> summarizePublisherPolicy(
+  const std::vector<PublisherQos> & publishers, Accessor accessor, Policy weaker_policy, Policy stronger_policy)
+{
+  PublisherPolicySummary<Policy> summary;
+  for (const auto & publisher : publishers) {
+    const Policy policy = accessor(publisher);
+    if (policy != weaker_policy && policy != stronger_policy) {
+      continue;
+    }
+    if (!summary.resolved_policy.has_value()) {
+      summary.resolved_policy = policy;
+      continue;
+    }
+    if (*summary.resolved_policy != policy) {
+      summary.mixed = true;
+      summary.resolved_policy = weaker_policy;
+    }
+  }
+  return summary;
+}
+
+}  // namespace
 
 ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
@@ -51,38 +86,20 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 
   // Only explicit publisher policies participate in resolution. Unknown and
   // system-default entries do not provide a concrete policy to inherit.
-  bool has_reliable = false;
-  bool has_best_effort = false;
-  bool has_volatile = false;
-  bool has_transient_local = false;
-  for (const auto & publisher : publishers) {
-    switch (publisher.reliability) {
-      case rclcpp::ReliabilityPolicy::Reliable:
-        has_reliable = true;
-        break;
-      case rclcpp::ReliabilityPolicy::BestEffort:
-        has_best_effort = true;
-        break;
-      default:
-        break;
-    }
+  const auto reliability = summarizePublisherPolicy(
+    publishers,
+    [](const PublisherQos & publisher) { return publisher.reliability; },
+    rclcpp::ReliabilityPolicy::BestEffort,
+    rclcpp::ReliabilityPolicy::Reliable);
+  const auto durability = summarizePublisherPolicy(
+    publishers,
+    [](const PublisherQos & publisher) { return publisher.durability; },
+    rclcpp::DurabilityPolicy::Volatile,
+    rclcpp::DurabilityPolicy::TransientLocal);
+  resolved.mixed_reliability = reliability.mixed;
+  resolved.mixed_durability = durability.mixed;
 
-    switch (publisher.durability) {
-      case rclcpp::DurabilityPolicy::Volatile:
-        has_volatile = true;
-        break;
-      case rclcpp::DurabilityPolicy::TransientLocal:
-        has_transient_local = true;
-        break;
-      default:
-        break;
-    }
-  }
-  resolved.mixed_reliability = has_reliable && has_best_effort;
-  resolved.mixed_durability = has_volatile && has_transient_local;
-
-  const bool has_publisher_qos = has_best_effort || has_reliable || has_volatile || has_transient_local;
-  if (match == nullptr && !has_publisher_qos) {
+  if (match == nullptr && !reliability.resolved_policy.has_value() && !durability.resolved_policy.has_value()) {
     // No override matched and publishers exposed no concrete policy, so the
     // caller's base QoS is already the final answer.
     return resolved;
@@ -96,9 +113,8 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     resolved.qos.reliability(
       match->reliability == SubscriptionQosReliabilityMode::kBestEffort ? rclcpp::ReliabilityPolicy::BestEffort
                                                                         : rclcpp::ReliabilityPolicy::Reliable);
-  } else if (has_best_effort || has_reliable) {
-    resolved.qos.reliability(
-      has_best_effort ? rclcpp::ReliabilityPolicy::BestEffort : rclcpp::ReliabilityPolicy::Reliable);
+  } else if (reliability.resolved_policy.has_value()) {
+    resolved.qos.reliability(*reliability.resolved_policy);
     resolved.used_publisher_qos = true;
   }
 
@@ -106,9 +122,8 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     resolved.qos.durability(
       match->durability == SubscriptionQosDurabilityMode::kTransientLocal ? rclcpp::DurabilityPolicy::TransientLocal
                                                                           : rclcpp::DurabilityPolicy::Volatile);
-  } else if (has_volatile || has_transient_local) {
-    resolved.qos.durability(
-      has_volatile ? rclcpp::DurabilityPolicy::Volatile : rclcpp::DurabilityPolicy::TransientLocal);
+  } else if (durability.resolved_policy.has_value()) {
+    resolved.qos.durability(*durability.resolved_policy);
     resolved.used_publisher_qos = true;
   }
 

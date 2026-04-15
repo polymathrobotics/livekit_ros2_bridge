@@ -406,7 +406,6 @@ struct RosServiceCaller::Impl
   std::function<void()> on_poll_enter;
   std::function<void()> on_poll_exit;
   std::function<void(const std::string &)> on_type_support_load;
-  bool shutdown_flag = false;
   EventThrottle late_response_throttle{kLogThrottle};
 };
 
@@ -443,7 +442,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   std::string interface_type;
 
-  if (impl_->shutdown_flag) {
+  if (!impl_->poll_gate.isOpen()) {
     const std::runtime_error exc("Service caller is shut down.");
     logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
     promise.set_exception(std::make_exception_ptr(exc));
@@ -572,7 +571,6 @@ void RosServiceCaller::resetSessionState()
 
 void RosServiceCaller::shutdown()
 {
-  impl_->shutdown_flag = true;
   impl_->poll_gate.close();
   impl_->poll_gate.awaitIdle();
 

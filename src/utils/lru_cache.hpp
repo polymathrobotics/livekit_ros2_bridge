@@ -96,6 +96,11 @@ public:
     return evictIfNeeded();
   }
 
+  std::size_t capacity() const
+  {
+    return capacity_;
+  }
+
   void clear()
   {
     std::lock_guard<std::mutex> lock(mutex_);

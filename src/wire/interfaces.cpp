@@ -37,18 +37,18 @@ namespace
 class InvalidFieldArgument final : public std::invalid_argument
 {
 public:
-  InvalidFieldArgument(std::string_view field, const char * message)
+  InvalidFieldArgument(const char * field, const char * message)
   : std::invalid_argument(message)
   , field_(field)
   {}
 
-  std::string_view field() const noexcept
+  const char * field() const noexcept
   {
     return field_;
   }
 
 private:
-  std::string_view field_;
+  const char * field_;
 };
 
 }  // namespace
@@ -78,12 +78,11 @@ std::vector<std::string> parse(const std::string & payload)
 
 std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 {
-  const auto * error = dynamic_cast<const InvalidFieldArgument *>(&exc);
-  if (error == nullptr) {
-    return std::nullopt;
+  if (const auto * error = dynamic_cast<const InvalidFieldArgument *>(&exc); error != nullptr) {
+    return error->field();
   }
 
-  return error->field();
+  return std::nullopt;
 }
 
 std::string serialize(const std::vector<InterfaceDefinition> & definitions)

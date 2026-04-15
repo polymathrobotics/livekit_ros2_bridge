@@ -217,6 +217,35 @@ TEST(VideoProfilingTest, SampleKeepsIngressMatchAvailableUntilCaptureConsumesIt)
   EXPECT_EQ(summary.source_to_output_submit_ms.sample_count, 1U);
 }
 
+TEST(VideoProfilingTest, SummaryBoundaryPreservesPendingIngressCorrelationWithoutExtraSummary)
+{
+  test_support::ScopedRclcppInit init;
+  const auto trace_path = makeTracePath("livekit_ros2_bridge_video_profiling_boundary_correlation_trace.json");
+  VideoProfilingRegistry registry = makeRegistry(trace_path);
+  const auto profiler = registry.getOrCreateProfiler(makeSpec());
+  ASSERT_NE(profiler, nullptr);
+
+  const auto base = VideoStreamProfiler::SteadyClock::now();
+  profiler->noteIngress(base, 1000);
+
+  const auto ingress_only_summaries = registry.takeSummaries();
+  ASSERT_EQ(ingress_only_summaries.size(), 1U);
+  EXPECT_EQ(ingress_only_summaries.front().frames_in, 1U);
+  EXPECT_TRUE(registry.takeSummaries().empty());
+
+  profiler->noteSample(1000);
+  profiler->noteCapture(1000);
+
+  const auto matched_summaries = registry.takeSummaries();
+  ASSERT_EQ(matched_summaries.size(), 1U);
+  const auto & summary = matched_summaries.front();
+  EXPECT_EQ(summary.frames_in, 0U);
+  EXPECT_EQ(summary.frames_sampled, 1U);
+  EXPECT_EQ(summary.frames_captured, 1U);
+  EXPECT_TRUE(summary.appsrc_to_sample_ms.hasSamples());
+  EXPECT_TRUE(summary.source_to_output_submit_ms.hasSamples());
+}
+
 TEST(VideoProfilingTest, SummaryCapturesFailureLifecycleAndStageMetrics)
 {
   test_support::ScopedRclcppInit init;

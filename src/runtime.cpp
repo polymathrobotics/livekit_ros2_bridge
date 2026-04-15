@@ -55,8 +55,8 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   // Preflight: arm shutdown watchdog monitoring before transport startup begins.
   if (config_.health.watchdog_enabled) {
     watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
+    watchdog_timer_ = node_.create_wall_timer(kWatchdogEvaluationInterval, [this]() { checkWatchdog(); });
   }
-  watchdog_timer_ = node_.create_wall_timer(kWatchdogEvaluationInterval, [this]() { checkWatchdog(); });
 
   // Preflight: configure optional video profiling before any stream state is created.
   if (config_.video_profiling.enabled) {
@@ -182,7 +182,7 @@ void Runtime::onRoomConnected()
     return;
   }
 
-  {
+  if (config_.health.watchdog_enabled) {
     std::lock_guard<std::mutex> lock(watchdog_mutex_);
     watchdog_deadline_.reset();
   }
@@ -231,13 +231,9 @@ void Runtime::onRoomReconnectRequested(const std::string & reason)
     return;
   }
 
-  {
+  if (config_.health.watchdog_enabled) {
     std::lock_guard<std::mutex> lock(watchdog_mutex_);
-    if (config_.health.watchdog_enabled) {
-      watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
-    } else {
-      watchdog_deadline_.reset();
-    }
+    watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
   }
 
   LogEvent log = LogEvent(node_.get_logger(), "runtime_disconnect_observed")
@@ -307,7 +303,7 @@ void Runtime::submitToExecutor(std::function<void()> work)
 
 void Runtime::checkWatchdog()
 {
-  if (!config_.health.watchdog_enabled || shutting_down_.load()) {
+  if (shutting_down_.load()) {
     return;
   }
 

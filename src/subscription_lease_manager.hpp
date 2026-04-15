@@ -83,7 +83,6 @@ private:
     SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
     std::string name;
     std::string interface_type;
-    SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;
     std::map<std::string, Lease> leases;
   };
 
@@ -99,6 +98,7 @@ private:
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
   static std::vector<ExpiredLeaseRemoval> collectExpiredLeaseRemovals(
     const Subscription & subscription, Clock::time_point reference_time);
+  static bool isVideoSubscription(const Subscription & subscription);
 
   rclcpp::Node & node_;
   RoomConnection & room_connection_;

@@ -107,6 +107,50 @@ std::optional<std::int64_t> timestampUsFromRosStamp(const builtin_interfaces::ms
   return static_cast<std::int64_t>(stamp.sec) * 1000000LL + static_cast<std::int64_t>(stamp.nanosec / 1000U);
 }
 
+FrameLayout frameLayoutFromImage(const sensor_msgs::msg::Image & image, GstVideoFormat format)
+{
+  FrameLayout layout;
+  layout.width = static_cast<int>(image.width);
+  layout.height = static_cast<int>(image.height);
+  layout.format = format;
+  layout.stride = image.step;
+  return layout;
+}
+
+bool frameLayoutsMatch(const FrameLayout & lhs, const FrameLayout & rhs)
+{
+  return lhs.width == rhs.width && lhs.height == rhs.height && lhs.format == rhs.format && lhs.stride == rhs.stride;
+}
+
+void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & previous_layout, const FrameLayout & layout)
+{
+  LogEvent event(kLogger, "video_stream_input_layout_changed");
+  event.field("stream_key", spec.stream_key).field("topic", spec.ros_topic);
+  if (previous_layout.width != layout.width) {
+    event.field("previous_width", previous_layout.width).field("width", layout.width);
+  }
+  if (previous_layout.height != layout.height) {
+    event.field("previous_height", previous_layout.height).field("height", layout.height);
+  }
+  if (previous_layout.stride != layout.stride) {
+    event.field("previous_stride", previous_layout.stride).field("stride", layout.stride);
+  }
+  if (previous_layout.format != layout.format) {
+    event.field("previous_format", gstVideoFormatName(previous_layout.format))
+      .field("format", gstVideoFormatName(layout.format));
+  }
+  event.info();
+}
+
+CompressedImageCodec compressedImageCodecFromImage(const sensor_msgs::msg::CompressedImage & image)
+{
+  const auto codec = parseCompressedImageCodec(image.format);
+  if (!codec.has_value()) {
+    throw std::runtime_error("Unsupported compressed image format '" + image.format + "'.");
+  }
+  return *codec;
+}
+
 GstBufferPtr makeStampedGstBuffer(
   const std::uint8_t * data, std::size_t size, const builtin_interfaces::msg::Time & stamp)
 {
@@ -235,44 +279,25 @@ void RawRosVideoFrameSource::onImage(const sensor_msgs::msg::Image::ConstSharedP
       throw std::runtime_error("Unsupported ROS image encoding '" + image->encoding + "'.");
     }
 
-    FrameLayout layout;
-    layout.width = static_cast<int>(image->width);
-    layout.height = static_cast<int>(image->height);
-    layout.format = format;
-    layout.stride = image->step;
+    const FrameLayout layout = frameLayoutFromImage(*image, format);
     // Raw appsrc caps are fixed when the pipeline starts. A frame-shape or
     // stride change is treated as a stream reconfiguration and forces rebuild.
-    const bool matches_layout = layout_.has_value() && layout_->width == layout.width &&
-                                layout_->height == layout.height && layout_->format == layout.format &&
-                                layout_->stride == layout.stride;
-    if (matches_layout && pipeline_ != nullptr) {
-      pushLocked(*image, layout);
-      return;
-    }
-    if (layout_.has_value() && !matches_layout) {
+    if (layout_) {
       const FrameLayout & previous_layout = *layout_;
-      const bool width_changed = previous_layout.width != layout.width;
-      const bool height_changed = previous_layout.height != layout.height;
-      const bool stride_changed = previous_layout.stride != layout.stride;
-      const bool format_changed = previous_layout.format != layout.format;
-      LogEvent(kLogger, "video_stream_input_layout_changed")
-        .field("stream_key", spec_.stream_key)
-        .field("topic", spec_.ros_topic)
-        .fieldIf(width_changed, "previous_width", previous_layout.width)
-        .fieldIf(width_changed, "width", layout.width)
-        .fieldIf(height_changed, "previous_height", previous_layout.height)
-        .fieldIf(height_changed, "height", layout.height)
-        .fieldIf(stride_changed, "previous_stride", previous_layout.stride)
-        .fieldIf(stride_changed, "stride", layout.stride)
-        .fieldIf(format_changed, "previous_format", gstVideoFormatName(previous_layout.format))
-        .fieldIf(format_changed, "format", gstVideoFormatName(layout.format))
-        .info();
+      if (frameLayoutsMatch(previous_layout, layout)) {
+        if (pipeline_ != nullptr) {
+          pushLocked(*image);
+          return;
+        }
+      } else {
+        logFrameLayoutChange(spec_, previous_layout, layout);
+      }
     }
 
     auto handles = takePipelineLocked();
     teardown(handles.pipeline, handles.appsrc, handles.appsink);
     startLocked(layout);
-    pushLocked(*image, layout);
+    pushLocked(*image);
   } catch (const std::exception & exc) {
     // Keep the ROS subscription alive after a frame-handling failure so the
     // next frame can rebuild the pipeline from the latest observed layout.
@@ -303,15 +328,19 @@ void RawRosVideoFrameSource::startLocked(const FrameLayout & layout)
   layout_ = layout;
 }
 
-void RawRosVideoFrameSource::pushLocked(const sensor_msgs::msg::Image & image, const FrameLayout & layout)
+void RawRosVideoFrameSource::pushLocked(const sensor_msgs::msg::Image & image)
 {
   if (appsrc_ == nullptr) {
     throw std::runtime_error("Raw video appsrc is unavailable.");
+  }
+  if (!layout_) {
+    throw std::runtime_error("Raw video layout is unavailable.");
   }
 
   VideoStreamProfiler::StageTimer push_timer(
     profiler_.get(), VideoProfileStage::kPushToAppSrc, timestampUsFromRosStamp(image.header.stamp));
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
+  const FrameLayout & layout = *layout_;
 
   // Preserve the ROS row stride for downstream elements instead of assuming the
   // image bytes are tightly packed for this format.
@@ -411,29 +440,29 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
       profiler_->noteIngress(ingress_time, source_timestamp_us);
     }
 
-    const auto codec = parseCompressedImageCodec(image->format);
-    if (!codec.has_value()) {
-      throw std::runtime_error("Unsupported compressed image format '" + image->format + "'.");
-    }
+    const CompressedImageCodec codec = compressedImageCodecFromImage(*image);
 
     // The decoder chain differs per codec (`jpegdec` vs `pngdec`), so the
     // pipeline is recreated whenever the advertised codec changes.
-    if (codec_ == codec && pipeline_ != nullptr) {
-      pushLocked(*image);
-      return;
-    }
-    if (codec_.has_value() && codec_ != codec) {
-      LogEvent(kLogger, "video_stream_input_codec_changed")
-        .field("stream_key", spec_.stream_key)
-        .field("topic", spec_.ros_topic)
-        .field("previous_codec", compressedImageCodecName(*codec_))
-        .field("codec", compressedImageCodecName(*codec))
-        .info();
+    if (codec_) {
+      if (*codec_ == codec) {
+        if (pipeline_ != nullptr) {
+          pushLocked(*image);
+          return;
+        }
+      } else {
+        LogEvent(kLogger, "video_stream_input_codec_changed")
+          .field("stream_key", spec_.stream_key)
+          .field("topic", spec_.ros_topic)
+          .field("previous_codec", compressedImageCodecName(*codec_))
+          .field("codec", compressedImageCodecName(codec))
+          .info();
+      }
     }
 
     auto handles = takePipelineLocked();
     teardown(handles.pipeline, handles.appsrc, handles.appsink);
-    startLocked(*codec);
+    startLocked(codec);
     pushLocked(*image);
   } catch (const std::exception & exc) {
     // Keep the ROS subscription alive after a frame-handling failure so the

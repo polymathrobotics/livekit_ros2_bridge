@@ -70,7 +70,7 @@ private:
   void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
 
   void startLocked(const FrameLayout & layout);
-  void pushLocked(const sensor_msgs::msg::Image & image, const FrameLayout & layout);
+  void pushLocked(const sensor_msgs::msg::Image & image);
 
   void resetLocked() override;
 };
