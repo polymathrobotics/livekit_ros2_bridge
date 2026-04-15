@@ -20,7 +20,6 @@
 #include <string>
 
 #include "access_policy.hpp"
-#include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
@@ -43,7 +42,6 @@ struct RuntimeConfig
     std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::minutes(10)};
   };
 
-  Params params;
   LiveKitConfig livekit;
   HealthConfig health;
   AccessPolicy access_policy;
@@ -52,9 +50,6 @@ struct RuntimeConfig
   VideoProfilingConfig video_profiling;
 };
 
-// Loads the bridge's startup-only configuration from parameters once. Later ROS parameter
-// mutations are not observed.
-// Throws std::invalid_argument for a null interface and std::runtime_error for invalid config.
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters);
 
 }  // namespace livekit_ros2_bridge

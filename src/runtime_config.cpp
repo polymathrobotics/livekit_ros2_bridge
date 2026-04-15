@@ -463,52 +463,6 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
   return config;
 }
 
-// Keep the generated parameter-library field layout at the edge so startup
-// config assembly reads in terms of runtime-owned concepts.
-LiveKitConfig loadLiveKitConfig(const Params & params)
-{
-  if (params.livekit.url.empty()) {
-    throw std::runtime_error("livekit.url is required");
-  }
-  if (params.livekit.room.empty()) {
-    throw std::runtime_error("livekit.room is required");
-  }
-
-  LiveKitConfig config;
-  config.url = params.livekit.url;
-  config.room = params.livekit.room;
-  config.access_token = params.livekit.token;
-  return config;
-}
-
-RuntimeConfig::HealthConfig loadHealthConfig(const Params & params)
-{
-  RuntimeConfig::HealthConfig config;
-  config.watchdog_enabled = params.health.watchdog.enabled;
-  config.watchdog_recovery_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::duration<double>(params.health.watchdog.recovery_timeout_seconds));
-  return config;
-}
-
-AccessPolicy loadAccessPolicy(const Params & params)
-{
-  AccessPolicyConfig config;
-  config.publish = AccessRuleConfig{params.access.rules.publish.allow, params.access.rules.publish.deny};
-  config.subscribe = AccessRuleConfig{params.access.rules.subscribe.allow, params.access.rules.subscribe.deny};
-  config.service = AccessRuleConfig{params.access.rules.service.allow, params.access.rules.service.deny};
-  return AccessPolicy(config);
-}
-
-VideoProfilingConfig loadVideoProfilingConfig(const Params & params)
-{
-  VideoProfilingConfig config;
-  config.enabled = params.debug.video_profiling.enabled;
-  config.summary_interval = std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
-  config.trace_file = params.debug.video_profiling.trace_file;
-  config.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
-  return config;
-}
-
 }  // namespace
 
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
@@ -517,6 +471,7 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   // failure logs can still identify which room/url were being configured even
   // if derived config assembly fails partway through.
   RuntimeConfig config;
+  Params params;
   const char * stage = "parameters_interface_validation";
 
   try {
@@ -526,17 +481,25 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     stage = "parameter_snapshot";
     ParamListener listener(parameters);
-    config.params = listener.get_params();
-    const Params & params = config.params;
+    params = listener.get_params();
 
     stage = "livekit_config";
-    config.livekit = loadLiveKitConfig(params);
+    config.livekit.url = params.livekit.url;
+    config.livekit.room = params.livekit.room;
+    config.livekit.access_token = params.livekit.token;
 
     stage = "health_config";
-    config.health = loadHealthConfig(params);
+    config.health.watchdog_enabled = params.health.watchdog.enabled;
+    config.health.watchdog_recovery_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::duration<double>(params.health.watchdog.recovery_timeout_seconds));
 
     stage = "access_policy";
-    config.access_policy = loadAccessPolicy(params);
+    config.access_policy = AccessPolicy(
+      AccessPolicyConfig{
+        AccessRuleConfig{params.access.rules.publish.allow, params.access.rules.publish.deny},
+        AccessRuleConfig{params.access.rules.subscribe.allow, params.access.rules.subscribe.deny},
+        AccessRuleConfig{params.access.rules.service.allow, params.access.rules.service.deny},
+      });
 
     stage = "subscription_qos_config";
     config.subscription_qos = loadSubscriptionQosConfig(params);
@@ -545,7 +508,11 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     config.video_stream = loadVideoStreamConfig(params);
 
     stage = "video_profiling_config";
-    config.video_profiling = loadVideoProfilingConfig(params);
+    config.video_profiling.enabled = params.debug.video_profiling.enabled;
+    config.video_profiling.summary_interval =
+      std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
+    config.video_profiling.trace_file = params.debug.video_profiling.trace_file;
+    config.video_profiling.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
 
     LogEvent(kLogger, "runtime_config_loaded")
       .fieldOr("room", config.livekit.room, kUnsetLogValue)
@@ -558,8 +525,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   } catch (...) {
     LogEvent(kLogger, "runtime_config_load_failed")
       .field("stage", stage)
-      .fieldOr("room", config.params.livekit.room, kUnsetLogValue)
-      .fieldOr("url", config.params.livekit.url, kUnsetLogValue)
+      .fieldOr("room", params.livekit.room, kUnsetLogValue)
+      .fieldOr("url", params.livekit.url, kUnsetLogValue)
       .fieldException("error", std::current_exception())
       .error();
 
