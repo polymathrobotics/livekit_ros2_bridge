@@ -48,11 +48,9 @@ RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_po
 , publishers_(max_topics)
 {}
 
-void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
+void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)
 {
-  // TODO: Rename TopicPublishCommand/command to TopicPublishRequest/request. ROS uses
-  // "message" for the thing published on a topic; this object is the publish request.
-  const std::string & topic = command.topic;
+  const std::string & topic = request.topic;
 
   if (is_shutdown_.load()) {
     return;
@@ -82,15 +80,15 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       type = requireSingleInterfaceType(topics, topic, "topic");
     }
 
-    if (type != command.interface_type) {
-      throw std::invalid_argument("type mismatch expected=" + type + " got=" + command.interface_type);
+    if (type != request.interface_type) {
+      throw std::invalid_argument("type mismatch expected=" + type + " got=" + request.interface_type);
     }
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "invalid_request")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .field("interface_type", command.interface_type)
+      .field("interface_type", request.interface_type)
       .field("error", exc.what())
       .warnThrottle(*node_.get_clock(), kLogThrottle);
 
@@ -101,12 +99,12 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   // Control packets already carry a CDR payload, so copy the bytes directly
   // into SerializedMessage without a deserialize/serialize round trip.
-  rclcpp::SerializedMessage serialized(command.cdr.size());
+  rclcpp::SerializedMessage serialized(request.cdr.size());
   auto & rcl_message = serialized.get_rcl_serialized_message();
-  if (!command.cdr.empty()) {
-    std::memcpy(rcl_message.buffer, command.cdr.data(), command.cdr.size());
+  if (!request.cdr.empty()) {
+    std::memcpy(rcl_message.buffer, request.cdr.data(), request.cdr.size());
   }
-  rcl_message.buffer_length = command.cdr.size();
+  rcl_message.buffer_length = request.cdr.size();
 
   try {
     if (!publisher) {

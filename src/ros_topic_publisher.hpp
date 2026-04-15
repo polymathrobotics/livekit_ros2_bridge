@@ -26,7 +26,7 @@
 #include "access_policy.hpp"
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node.hpp"
-#include "topic_publish_command.hpp"
+#include "topic_publish_request.hpp"
 #include "utils/event_throttle.hpp"
 #include "utils/lru_cache.hpp"
 
@@ -44,17 +44,14 @@ public:
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.
-  // `command.cdr` must already contain serialized ROS CDR bytes for
-  // `command.interface_type`; publish() copies that payload directly into
+  // `request.cdr` must already contain serialized ROS CDR bytes for
+  // `request.interface_type`; publish() copies that payload directly into
   // rclcpp::SerializedMessage. Cold topics must already exist in the ROS graph
   // with exactly one interface type. After the first successful publish, later
   // requests are checked against the cached publisher/type instead of
   // consulting the graph again, and shutdown() keeps those cached handles from
   // being recreated once teardown starts.
-  // TODO: Rename TopicPublishCommand/command to TopicPublishRequest/request. ROS topic
-  // publication publishes a message; this parameter is the caller's LiveKit data-packet request
-  // that carries one.
-  void publish(const std::string & requester_identity, const TopicPublishCommand & command);
+  void publish(const std::string & requester_identity, const TopicPublishRequest & request);
 
   // Idempotently rejects later publish() calls and clears the bridge-owned
   // cached publisher handles.
@@ -64,7 +61,7 @@ private:
   struct PublisherEntry
   {
     // Cache the validated interface type alongside the reusable publisher so
-    // cache hits can reject mismatched commands without another graph lookup.
+    // cache hits can reject mismatched requests without another graph lookup.
     std::string type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };

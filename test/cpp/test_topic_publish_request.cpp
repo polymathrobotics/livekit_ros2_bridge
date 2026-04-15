@@ -19,7 +19,7 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "topic_publish_command.hpp"
+#include "topic_publish_request.hpp"
 #include "wire/cdr.hpp"
 
 namespace livekit_ros2_bridge
@@ -28,10 +28,10 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-TopicPublishCommand parse(const nlohmann::json & body)
+TopicPublishRequest parse(const nlohmann::json & body)
 {
   const auto payload = body.dump();
-  return parseTopicPublishCommand(std::vector<std::uint8_t>(payload.begin(), payload.end()));
+  return parseTopicPublishRequest(std::vector<std::uint8_t>(payload.begin(), payload.end()));
 }
 
 template <typename Fn>
@@ -54,30 +54,30 @@ nlohmann::json makeBody()
   };
 }
 
-TEST(TopicPublishCommandTest, ParsesValidCommandAndNormalizesFields)
+TEST(TopicPublishRequestTest, ParsesValidRequestAndNormalizesFields)
 {
   auto body = makeBody();
   body["topic"] = " //camera///image/ ";
   body["interface_type"] = "  std_msgs/msg/String  ";
 
-  const auto command = parse(body);
+  const auto request = parse(body);
 
-  EXPECT_EQ(command.topic, "/camera/image");
-  EXPECT_EQ(command.interface_type, "std_msgs/msg/String");
-  EXPECT_EQ(command.cdr, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
+  EXPECT_EQ(request.topic, "/camera/image");
+  EXPECT_EQ(request.interface_type, "std_msgs/msg/String");
+  EXPECT_EQ(request.cdr, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
 }
 
-TEST(TopicPublishCommandTest, AcceptsRootTopicAfterNormalization)
+TEST(TopicPublishRequestTest, AcceptsRootTopicAfterNormalization)
 {
   auto body = makeBody();
   body["topic"] = "  ////  ";
 
-  const auto command = parse(body);
+  const auto request = parse(body);
 
-  EXPECT_EQ(command.topic, "/");
+  EXPECT_EQ(request.topic, "/");
 }
 
-TEST(TopicPublishCommandTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayload)
+TEST(TopicPublishRequestTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayload)
 {
   const std::vector<std::uint8_t> cdr = {0x00, 0x01, 0x7f, 0x80, 0xff};
 
@@ -85,44 +85,44 @@ TEST(TopicPublishCommandTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayl
   body["topic"] = "  battery/cmd  ";
   body["message"] = wire::cdr::serialize(cdr);
 
-  const auto command = parse(body);
+  const auto request = parse(body);
 
-  EXPECT_EQ(command.topic, "/battery/cmd");
-  EXPECT_EQ(command.cdr, cdr);
+  EXPECT_EQ(request.topic, "/battery/cmd");
+  EXPECT_EQ(request.cdr, cdr);
 }
 
-TEST(TopicPublishCommandTest, RejectsInvalidJsonAndNonObjectRoot)
+TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
 {
-  EXPECT_THROW(parseTopicPublishCommand(std::vector<std::uint8_t>{'{'}), std::invalid_argument);
+  EXPECT_THROW(parseTopicPublishRequest(std::vector<std::uint8_t>{'{'}), std::invalid_argument);
   EXPECT_THROW(
-    parseTopicPublishCommand(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}), std::invalid_argument);
+    parseTopicPublishRequest(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}), std::invalid_argument);
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingOrBlankTopicField)
+TEST(TopicPublishRequestTest, RejectsMissingOrBlankTopicField)
 {
   auto body = makeBody();
   body.erase("topic");
-  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish command requires a string 'topic' field.");
+  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a string 'topic' field.");
 
   body = makeBody();
   body["topic"] = "   ";
-  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish command requires a non-empty 'topic' field.");
+  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a non-empty 'topic' field.");
 }
 
-TEST(TopicPublishCommandTest, RejectsMissingInterfaceTypeField)
+TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
 {
   auto body = makeBody();
   body.erase("interface_type");
   expectInvalidArgument(
-    [&body]() { (void)parse(body); }, "Publish command requires a non-empty 'interface_type' field.");
+    [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'interface_type' field.");
 }
 
-TEST(TopicPublishCommandTest, RejectsEmptyMessagePayload)
+TEST(TopicPublishRequestTest, RejectsEmptyMessagePayload)
 {
   auto body = makeBody();
   body["message"] = wire::cdr::serialize(std::vector<std::uint8_t>{});
   expectInvalidArgument(
-    [&body]() { (void)parse(body); }, "Publish command requires a non-empty message.payload_base64 field.");
+    [&body]() { (void)parse(body); }, "Publish request requires a non-empty message.payload_base64 field.");
 }
 
 }  // namespace

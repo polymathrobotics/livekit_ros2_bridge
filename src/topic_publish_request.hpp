@@ -21,11 +21,8 @@
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a `ros.topics.publish` publish request carried in a LiveKit data packet.
-// TODO: Rename TopicPublishCommand and parseTopicPublishCommand around "publish request" wording,
-// and scrub the remaining "command"/"control message" language in this module. `ros.topics.publish`
-// is a LiveKit -> ROS publish request, not a control message.
-struct TopicPublishCommand
+/// Parsed form of a `ros.topics.publish` request carried in a LiveKit data packet.
+struct TopicPublishRequest
 {
   /// Normalized absolute topic name.
   std::string topic;
@@ -37,6 +34,6 @@ struct TopicPublishCommand
 /// Parse a JSON topic-publish request. Normalizes `topic`, trims `interface_type` without
 /// rewriting its package/msg spelling, and requires a non-empty CDR `message` payload. Throws
 /// `std::invalid_argument` on malformed JSON or protocol-contract violations.
-TopicPublishCommand parseTopicPublishCommand(const std::vector<std::uint8_t> & payload);
+TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & payload);
 
 }  // namespace livekit_ros2_bridge

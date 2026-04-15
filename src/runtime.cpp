@@ -27,7 +27,7 @@
 #include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
 #include "subscription_lease_manager.hpp"
-#include "topic_publish_command.hpp"
+#include "topic_publish_request.hpp"
 #include "utils/log_event.hpp"
 #include "video_stream_registry.hpp"
 

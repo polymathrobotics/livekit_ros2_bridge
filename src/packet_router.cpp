@@ -59,7 +59,7 @@ PacketRouter::PacketRouter(
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
   if (packet.topic == wire::protocol::kControlTopicPublish) {
-    // Unlike heartbeats, publish commands have no session-based requester recovery path
+    // Unlike heartbeats, publish requests have no session-based requester recovery path
     // downstream, so anonymous packets are rejected at the protocol boundary.
     if (packet.requester_identity.empty()) {
       LogEvent(kLogger, "packet_rejected")
@@ -70,15 +70,13 @@ void PacketRouter::handle(const IncomingPacket & packet) const
     }
 
     try {
-      // TODO: Rename this parsed object from command to request. ROS publishes messages on
-      // topics; this control-path object is the caller's publish request.
-      auto command = parseTopicPublishCommand(packet.payload);
-      submitToExecutor([this, requester_identity = packet.requester_identity, command = std::move(command)]() mutable {
-        ros_topic_publisher_.publish(requester_identity, command);
+      auto request = parseTopicPublishRequest(packet.payload);
+      submitToExecutor([this, requester_identity = packet.requester_identity, request = std::move(request)]() mutable {
+        ros_topic_publisher_.publish(requester_identity, request);
       });
     } catch (const std::exception & exc) {
       LogEvent(kLogger, "packet_rejected")
-        .field("reason", "invalid_publish_command")
+        .field("reason", "invalid_publish_request")
         .fieldOr("requester_identity", packet.requester_identity)
         .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);

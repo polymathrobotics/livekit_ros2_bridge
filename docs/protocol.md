@@ -382,7 +382,7 @@ Behavior:
 
 Control topics and RPCs fail differently:
 
-- malformed control packets, unsupported control topics, and anonymous publish commands are dropped after logging
+- malformed control packets, unsupported control topics, and anonymous publish requests are dropped after logging
 - malformed subscription heartbeats are dropped after logging
 - well-formed subscription heartbeats report per-target failures through `ros.subscriptions.status`
 - RPC failures surface through LiveKit RPC errors

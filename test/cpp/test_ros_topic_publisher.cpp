@@ -52,14 +52,14 @@ std::vector<std::uint8_t> serializeMessageToCdr(const MessageT & message)
   return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
 }
 
-TopicPublishCommand makeCommand(
+TopicPublishRequest makeRequest(
   const std::string & topic, const std::string & interface_type, std::vector<std::uint8_t> cdr)
 {
-  TopicPublishCommand command;
-  command.topic = topic;
-  command.interface_type = interface_type;
-  command.cdr = std::move(cdr);
-  return command;
+  TopicPublishRequest request;
+  request.topic = topic;
+  request.interface_type = interface_type;
+  request.cdr = std::move(cdr);
+  return request;
 }
 
 AccessPolicy makeAccessPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -206,7 +206,7 @@ void expectTopicNotPublished(
   EXPECT_EQ(harness.countPublishers(topic), 0U);
 }
 
-TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
+TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/cmd";
@@ -224,14 +224,14 @@ TEST(TopicPublisherTest, PublishesMessagesToCommandTopic)
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
 }
 
-TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
+TEST(TopicPublisherTest, RejectsDeniedPublishRequests)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/blocked";
@@ -248,7 +248,7 @@ TEST(TopicPublisherTest, RejectsDeniedPublishCommands)
 
   sensor_msgs::msg::BatteryState message;
 
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -279,13 +279,13 @@ TEST(TopicPublisherTest, CacheSizeOneEvictsPreviousTopicAndRecreatesItOnReuse)
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
-  publisher.publish("alice", makeCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(first_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 1U; }));
   EXPECT_EQ(harness.countPublishers(first_topic), 1U);
 
   message.voltage = 47.0F;
-  publisher.publish("alice", makeCommand(second_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(second_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return second_topic_voltages.size() == 1U; }));
   EXPECT_NEAR(second_topic_voltages.back(), 47.0F, 1e-6F);
@@ -293,7 +293,7 @@ TEST(TopicPublisherTest, CacheSizeOneEvictsPreviousTopicAndRecreatesItOnReuse)
     [&]() { return harness.countPublishers(first_topic) == 0U && harness.countPublishers(second_topic) == 1U; }));
 
   message.voltage = 50.0F;
-  publisher.publish("alice", makeCommand(first_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(first_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 2U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 50.0F, 1e-6F);
@@ -318,7 +318,7 @@ TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() == 1U; }));
 
@@ -330,14 +330,14 @@ TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)
 
   sensor_msgs::msg::BatteryState second_message;
   second_message.voltage = 49.0F;
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(second_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(second_message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() == 2U; }));
   EXPECT_NEAR(received_voltages.back(), 49.0F, 1e-6F);
 
   std_msgs::msg::String wrong_message;
   wrong_message.data = "wrong type";
-  publisher.publish("alice", makeCommand(topic, "std_msgs/msg/String", serializeMessageToCdr(wrong_message)));
+  publisher.publish("alice", makeRequest(topic, "std_msgs/msg/String", serializeMessageToCdr(wrong_message)));
 
   EXPECT_FALSE(harness.spinUntil([&]() { return received_voltages.size() > 2U; }, std::chrono::milliseconds(200)));
   EXPECT_EQ(graph_calls, 0U);
@@ -359,8 +359,8 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
-  const TopicPublishCommand command =
-    makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message));
+  const TopicPublishRequest request =
+    makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message));
 
   bool fail_first_publish = true;
   bool subscriber_ready = false;
@@ -373,17 +373,17 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
     }
   };
 
-  publisher.publish("alice", command);
+  publisher.publish("alice", request);
 
   EXPECT_TRUE(subscriber_ready);
   expectTopicNotPublished(harness, topic, received_message);
 
-  publisher.publish("alice", command);
+  publisher.publish("alice", request);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
 }
 
-TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
+TEST(TopicPublisherTest, RejectsRequestsWhoseDeclaredTypeDoesNotMatchTheGraph)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/invalid";
@@ -400,12 +400,12 @@ TEST(TopicPublisherTest, RejectsCommandsWhoseDeclaredTypeDoesNotMatchTheGraph)
 
   std_msgs::msg::String wrong_message;
 
-  publisher.publish("alice", makeCommand(topic, "std_msgs/msg/String", serializeMessageToCdr(wrong_message)));
+  publisher.publish("alice", makeRequest(topic, "std_msgs/msg/String", serializeMessageToCdr(wrong_message)));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
 
-TEST(TopicPublisherTest, RejectsCommandsForTopicsMissingFromTheGraph)
+TEST(TopicPublisherTest, RejectsRequestsForTopicsMissingFromTheGraph)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/missing";
@@ -414,13 +414,13 @@ TEST(TopicPublisherTest, RejectsCommandsForTopicsMissingFromTheGraph)
 
   sensor_msgs::msg::BatteryState message;
 
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   EXPECT_FALSE(harness.spinUntil(
     [&]() { return harness.observerNode().count_publishers(topic) != 0U; }, std::chrono::milliseconds(200)));
 }
 
-TEST(TopicPublisherTest, RejectsCommandsWhenTopicGraphHasMultipleTypes)
+TEST(TopicPublisherTest, RejectsRequestsWhenTopicGraphHasMultipleTypes)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/ambiguous";
@@ -441,7 +441,7 @@ TEST(TopicPublisherTest, RejectsCommandsWhenTopicGraphHasMultipleTypes)
 
   sensor_msgs::msg::BatteryState message;
 
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -463,7 +463,7 @@ TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdo
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_EQ(harness.countPublishers(topic), 1U);
@@ -476,7 +476,7 @@ TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdo
   received_message.reset();
   sensor_msgs::msg::BatteryState late_message;
 
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(late_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(late_message)));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -501,14 +501,14 @@ TEST(TopicPublisherTest, ShutdownDuringInFlightFirstPublishDoesNotLeavePublisher
   };
 
   sensor_msgs::msg::BatteryState first_message;
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(first_message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return harness.countPublishers(topic) == 0U; }));
 
   const std::size_t deliveries_after_shutdown = delivered_messages.load();
 
   sensor_msgs::msg::BatteryState second_message;
-  publisher.publish("alice", makeCommand(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(second_message)));
+  publisher.publish("alice", makeRequest(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(second_message)));
 
   EXPECT_FALSE(harness.spinUntil(
     [&]() { return delivered_messages.load() > deliveries_after_shutdown; }, std::chrono::milliseconds(200)));
