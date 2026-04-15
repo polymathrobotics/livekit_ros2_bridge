@@ -30,6 +30,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+// TODO: Rename this parser/module away from "command". In ROS, the published thing is a
+// message; this JSON object is the caller's publish request that carries one.
 constexpr char kTopicFieldError[] = "Publish command requires a string 'topic' field.";
 constexpr char kTopicEmptyError[] = "Publish command requires a non-empty 'topic' field.";
 constexpr char kInterfaceTypeError[] = "Publish command requires a non-empty 'interface_type' field.";

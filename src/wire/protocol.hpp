@@ -19,7 +19,10 @@
 namespace livekit_ros2_bridge::wire::protocol
 {
 
-// Stable control topics and RPC names used on the LiveKit data channel.
+// Stable data-packet topics and RPC names used on the LiveKit data channel.
+// TODO: Split the internal constant names so `ros.topics.publish` is no longer grouped under
+// "control". It is a topic-publish request carried on a LiveKit data-packet topic, while the
+// subscription heartbeat/status topics are actual control messages. Keep the wire values stable.
 inline constexpr char kControlTopicPublish[] = "ros.topics.publish";
 inline constexpr char kControlSubscriptionsHeartbeat[] = "ros.subscriptions.heartbeat";
 inline constexpr char kControlSubscriptionsStatus[] = "ros.subscriptions.status";

@@ -52,6 +52,8 @@ RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_po
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishCommand & command)
 {
+  // TODO: Rename TopicPublishCommand/command to TopicPublishRequest/request. ROS uses
+  // "message" for the thing published on a topic; this object is the publish request.
   const std::string & topic = command.topic;
 
   if (is_shutdown_.load()) {

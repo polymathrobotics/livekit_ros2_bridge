@@ -41,19 +41,39 @@ class RosTopicPublisher;
 class VideoStreamRegistry;
 class VideoProfilingRegistry;
 
-// Wires one RoomConnection to the ROS-facing ingress helpers, publication owners,
-// RPC handlers, and in-process video streams for a node.
-// Construction performs eager startup; destruction shuts the room connection down before the ROS
-// ingress helpers are torn down.
+/// ## Startup order
+///
+/// Construction is eager rather than lazy:
+///
+/// 1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
+/// 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
+/// 3. It starts `RoomConnection` with callbacks for connection reset, participant disconnect, and incoming control packets.
+/// 4. After the connection thread is running, it registers the LiveKit RPC methods.
+///
+/// That order matters. The ROS-side helpers exist before the connection can emit callbacks, and the RPC surface is not exposed until the runtime has everything needed to serve those calls.
+///
+/// It runs one background loop:
+///
+/// - try to connect once
+/// - wait for disconnect or stop
+/// - clear per-connection room state
+/// - reconnect with exponential backoff unless stop was requested
 class Runtime final
 {
 public:
   Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config);
   ~Runtime();
 
-  // Idempotently begins teardown. RPC methods are unregistered before stop() so no new room
-  // ingress reaches ROS while shutdown is in progress, and the executor queue is then shut down
-  // after already-running work has had a chance to drain.
+  /// The key invariant is that the connection stops before the executor queue is torn down. Already
+  /// accepted work may still be draining at that point, so the runtime also checks the shutdown
+  /// flag inside queued lambdas.
+  ///
+  /// 1. flip the shutdown flag so new work is dropped
+  /// 2. stop the lease GC timer
+  /// 3. unregister RPC methods from the active connection
+  /// 4. stop `RoomConnection` so no new SDK callbacks can enqueue ROS work
+  /// 5. shut down `RosExecutorQueue`
+  /// 6. shut down `SubscriptionRegistry`, unpublish data tracks, stop video streams, shut down `RosServiceCaller`, and clear cached ROS topic publishers
   void shutdown();
 
 private:

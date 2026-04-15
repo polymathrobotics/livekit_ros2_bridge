@@ -419,6 +419,22 @@ RosServiceCaller::~RosServiceCaller()
   shutdown();
 }
 
+// ros.services.call spans both sides of the runtime boundary.
+//
+// Phase 1 happens here on the ROS executor: resolve the service type, create
+// or reuse the rcl client, deserialize the request, and call
+// rcl_send_request().
+//
+// Phase 2 happens later from poll(): call rcl_take_response(), match by
+// client pointer and sequence number, fulfill the stored promise, and time
+// out or cancel pending calls when needed.
+//
+// That split keeps executor-affine request creation safe without blocking the
+// executor until the remote service replies. Immediate failures such as
+// shutdown, bad requests, quota limits, or client creation errors fail here
+// in phase 1. Later failures such as timeout, requester disconnect,
+// connection reset, or shutdown while the call is inflight settle the stored
+// promise from phase 2.
 std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
   const std::string & requester, const ServiceCallRequest & request)
 {

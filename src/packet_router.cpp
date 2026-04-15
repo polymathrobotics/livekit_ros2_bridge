@@ -67,6 +67,8 @@ void PacketRouter::handle(const IncomingPacket & packet) const
         missing_requester_identity = true;
         throw std::invalid_argument("requester_identity is required");
       }
+      // TODO: Rename this parsed object from command to request. ROS publishes messages on
+      // topics; this control-path object is the caller's publish request.
       auto command = parseTopicPublishCommand(packet.payload);
       submitToExecutor([this, requester_identity = packet.requester_identity, command = std::move(command)]() mutable {
         ros_topic_publisher_.publish(requester_identity, command);
