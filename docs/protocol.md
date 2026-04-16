@@ -36,9 +36,9 @@ Terms used throughout this document:
 
 | Surface | Name | Role | Direction | Purpose |
 | --- | --- | --- | --- | --- |
-| Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | caller -> bridge | Best-effort ROS topic publication |
-| Data-Packet Topic | `lkros.heartbeat` | Control-Plane Request | caller -> bridge | Request and renew subscriptions |
-| Data-Packet Topic | `lkros.status` | Control-Plane Status | bridge -> caller | Per-subscription status |
+| Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | requester -> bridge | Best-effort ROS topic publication |
+| Data-Packet Topic | `lkros.heartbeat` | Control-Plane Request | requester -> bridge | Request and renew subscriptions |
+| Data-Packet Topic | `lkros.status` | Control-Plane Status | bridge -> requester | Per-subscription status |
 | RPC | `ros2.service.call` | Request-Response | caller <-> bridge | Call an authorized ROS service |
 | RPC | `ros2.interface.show` | Request-Response | caller <-> bridge | Fetch interface definitions |
 | RPC | `ros2.service.list` | Request-Response | caller <-> bridge | List authorized ROS services |
@@ -160,9 +160,10 @@ This path targets a ROS publisher, not the bridge control plane. It is intended 
 - `other_video` names MUST address configured entries from `video.other.<id>`
 - `delivery_preferences` MAY be present, but when present it MUST be an object
 - `delivery_preferences.interval_ms` MAY be present, but when present it MUST be an integer
-- `interval_ms: 0` MUST mean no preference
-- if the same target appears more than once, the bridge MUST produce one effective request and MUST use the smallest non-zero `interval_ms`
-- negative `interval_ms` values MUST clamp to `0` when the lease is applied
+- wire `interval_ms` values outside the bridge's local integer range MUST clamp into that range before duplicate coalescing
+- `interval_ms: 0` MUST mean no preference and MUST NOT override a non-zero interval during duplicate coalescing
+- if the same canonical `(kind, name)` target appears more than once after topic normalization or other-video name trimming, the bridge MUST produce one effective request in first-seen order and MUST keep the smallest non-zero parsed `interval_ms`
+- negative `interval_ms` values MUST remain eligible during duplicate coalescing and MUST clamp to `0` only when the lease is applied
 - `session_id` is optional; missing, `null`, and blank values MUST be treated as absent
 - each heartbeat MUST renew the listed subscriptions for 45 seconds
 - omitting a previously requested target MUST leave its existing lease active until expiry
@@ -217,6 +218,8 @@ One practical pattern is for a browser tab to send a heartbeat with both `reques
 
 - `v` MUST be the protocol version and is currently `2`
 - `type` MUST always be `lkros.status`
+- `subscriptions` MUST be included on every status packet and MUST be a non-empty array
+- `subscriptions` MUST report the heartbeat's effective request set after canonicalization and duplicate coalescing, in that effective request order
 - `session_id` MUST be included only when the heartbeat carried a non-blank `session_id`
 - `lease_expires_in_ms` MUST be included on every non-empty status packet
 - `lease_expires_in_ms` MUST be treated as approximate because the bridge computes it at serialization time
@@ -229,14 +232,24 @@ Active statuses MUST include:
 - `kind`: `topic` or `other_video`
 - `name`
 - `status`: `active`
+- `delivery`
 
 Error statuses MUST include:
 
 - `kind`
 - `name`
 - `status`: `error`
+- `error`
 - `error.reason`
 - `error.message`
+
+Additional requirements:
+
+- active `topic` statuses MUST include `interface_type`, even when the topic is delivered as video
+- active `other_video` statuses MUST NOT include `interface_type`
+- active `delivery.kind` MUST be `data` or `video`
+- active `delivery.track_name` MUST always be present
+- active video statuses MAY include `degraded_reason` when the stream is degraded but still deliverable
 
 Current `error.reason` values:
 
@@ -267,7 +280,9 @@ Non-video ROS topics are delivered on a LiveKit data track.
 
 Requirements:
 
-- `track_name` MUST be deterministic: the bridge prefixes `lkros.data` and replaces `/` with `.`
+- `delivery.kind` MUST be `data`
+- `delivery.track_name` MUST be deterministic: the bridge prefixes `lkros.data` and replaces `/` with `.`
+- `delivery.content_type` MUST be `application/x-ros-cdr`
 - `delivery.interval_ms` MUST always be present for data deliveries, including `0`
 - bytes sent on the data track MUST be raw serialized CDR bytes, not nested JSON
 
@@ -291,8 +306,11 @@ Video deliveries use deterministic track names.
 
 Requirements:
 
+- `delivery.kind` MUST be `video`
+- `delivery.track_name` MUST always be present
 - `other_video` targets MUST always use video delivery
 - ROS topics MUST use video delivery only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
+- active `topic` entries that use video delivery MUST still include `interface_type`
 - video `track_name` values MUST be deterministic and stable for the target name
 - `other_video` track names MUST percent-encode any byte outside RFC 3986 unreserved characters
 
@@ -345,7 +363,7 @@ Requirements:
 }
 ```
 
-### Requirements
+### Request Requirements
 
 - `service` and `request` MUST be present
 - `service` MUST normalize to a non-empty ROS service name
@@ -354,8 +372,17 @@ Requirements:
 - `timeout_ms`, when present, MUST be an integer
 - values `<= 0` MUST NOT disable timeouts; they MUST fall back to the bridge default of `2000` ms
 - the bridge MUST check access policy after request parsing and before the ROS request is sent
-- each requester identity MUST be limited to at most `4` in-flight service calls
-- some failures MAY happen after request acceptance, including timeout, requester disconnect, session reset, or shutdown
+- each caller identity MUST be limited to at most `4` in-flight service calls
+- some failures MAY happen after request acceptance, including timeout, caller disconnect, session reset, or shutdown
+
+### Successful Response Requirements
+
+- a successful response MUST be a JSON object with fields `ok`, `service`, `response`, and `elapsed_ms`
+- `ok` MUST be `true`
+- `service.name` MUST be the normalized ROS service name the bridge actually invoked
+- `service.interface_type` MUST be the exact interface type the bridge actually used to execute the call
+- `response` MUST use the shared ROS CDR JSON envelope
+- `elapsed_ms` MUST be a non-negative integer measured by the bridge
 
 ### Notes (informative)
 
@@ -390,13 +417,19 @@ Clients that omit `interface_type` should do so only when they are prepared for 
 }
 ```
 
-### Requirements
+### Request Requirements
 
 - `interface_types` MUST be present and MUST be a non-empty array
 - every array entry MUST trim to a non-empty string
-- the bridge MUST return the requested definition first, then any transitive message dependencies
-- duplicates MUST be removed while preserving first discovery order
-- `definition` MUST be the raw `.msg` or `.srv` file content from the package share directory
+
+### Successful Response Requirements
+
+- a successful response MUST be a JSON object with an `interfaces` array
+- each `interfaces` entry MUST include `interface_type`, `format`, and `definition`
+- `format` MUST currently be `ros2msg`
+- `definition` MUST be the raw `.msg`, `.srv`, or `.action` file content from the package share directory
+- for each requested interface type in request order, the bridge MUST append that requested definition first, then any transitive message dependencies in first-discovery order
+- repeated requested types and shared dependencies MUST be removed from the response while preserving first-seen response order
 
 ### Notes (informative)
 
@@ -429,7 +462,7 @@ Despite the singular command-style name, the JSON request remains batch-oriented
 }
 ```
 
-### Requirements
+### Request Requirements
 
 - `query` is optional
 - missing, `null`, and blank `query` values MUST be treated as absent
@@ -437,6 +470,12 @@ Despite the singular command-style name, the JSON request remains batch-oriented
 - filtering MUST happen after the ROS graph query and after access-policy checks
 - `query` MUST match substrings in either the resource name or the interface type
 - resources with zero or multiple interface types MUST be skipped instead of being returned ambiguously
+
+### Successful Response Requirements
+
+- a successful response MUST be a JSON object with a `services` array
+- each `services` entry MUST include `name` and `interface_type`
+- the `services` array MAY be empty when no authorized resource matches the request
 
 ## RPC: `ros2.topic.list`
 
@@ -464,7 +503,7 @@ Despite the singular command-style name, the JSON request remains batch-oriented
 }
 ```
 
-### Requirements
+### Request Requirements
 
 - `query` is optional
 - missing, `null`, and blank `query` values MUST be treated as absent
@@ -472,6 +511,12 @@ Despite the singular command-style name, the JSON request remains batch-oriented
 - filtering MUST happen after the ROS graph query and after access-policy checks
 - `query` MUST match substrings in either the resource name or the interface type
 - resources with zero or multiple interface types MUST be skipped instead of being returned ambiguously
+
+### Successful Response Requirements
+
+- a successful response MUST be a JSON object with a `topics` array
+- each `topics` entry MUST include `name` and `interface_type`
+- the `topics` array MAY be empty when no authorized resource matches the request
 
 ## Delivery and Sharing Model
 
