@@ -38,7 +38,7 @@ The bridge has two delivery modes:
 This means your client needs different expectations for each:
 
 - data-track subscriptions need interface definitions from `ros.interfaces.get`
-- video subscriptions depend on `video_topic_rule_ids`, `video_configured_source_ids`, and the matching `video.topic_rules.*` / `video.configured_sources.*` configuration
+- video subscriptions depend on `video_topic_ids`, `video_other_ids`, and the matching `video.topics.*` / `video.other.*` configuration
 
 The full contract lives in [docs/protocol.md](./docs/protocol.md).
 
@@ -97,7 +97,7 @@ Supported today:
 - topic subscriptions
 - video subscriptions
 - small ROS topic publications into ROS 2
-- configured video sources
+- other video sources
 
 Not supported today:
 

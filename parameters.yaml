@@ -87,14 +87,14 @@ livekit_ros2_bridge:
           default_value: []
           description: "Denylist patterns for service targets."
 
-  video_topic_rule_ids:
+  video_topic_ids:
     type: string_array
     default_value: []
-    description: "Video topic rule ids defined under video.topic_rules.<id>."
-  video_configured_source_ids:
+    description: "Video topic ids defined under video.topics.<id>."
+  video_other_ids:
     type: string_array
     default_value: []
-    description: "Video configured source ids defined under video.configured_sources.<id>."
+    description: "Other video ids defined under video.other.<id>."
 
   video:
     publish:
@@ -122,11 +122,11 @@ livekit_ros2_bridge:
         description: "Global LiveKit simulcast override: auto, enabled, or disabled."
         validation:
           one_of<>: [["auto", "enabled", "disabled"]]
-    topic_rules:
-      __map_video_topic_rule_ids:
+    topics:
+      __map_video_topic_ids:
         pattern:
           type: string
-          description: "Topic pattern for this video topic rule (e.g. '/camera/front/*')."
+          description: "Topic pattern for this video topic (e.g. '/camera/front/*')."
         transform:
           type: string
           default_value: ""
@@ -135,48 +135,48 @@ livekit_ros2_bridge:
           codec:
             type: string
             default_value: ""
-            description: "Optional LiveKit codec override for this video topic rule. Empty inherits from video.publish.codec."
+            description: "Optional LiveKit codec override for this video topic. Empty inherits from video.publish.codec."
             validation:
               one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
           max_bitrate_bps:
             type: int
             default_value: -1
-            description: "Optional LiveKit max video bitrate override for this rule in bps. -1 inherits from video.publish.max_bitrate_bps."
+            description: "Optional LiveKit max video bitrate override for this video topic in bps. -1 inherits from video.publish.max_bitrate_bps."
             validation:
               gt_eq<>: [-1]
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this rule. -1 inherits from video.publish.max_framerate."
+            description: "Optional LiveKit max video framerate override for this video topic. -1 inherits from video.publish.max_framerate."
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ""
-            description: "Optional LiveKit simulcast override for this video topic rule. Empty inherits from video.publish.simulcast."
+            description: "Optional LiveKit simulcast override for this video topic. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
-    configured_sources:
-      __map_video_configured_source_ids:
+    other:
+      __map_video_other_ids:
         source:
           type: string
-          description: "Ingress fragment for this configured video source (e.g. uridecodebin, v4l2src)."
+          description: "Ingress fragment for this other video source (e.g. uridecodebin, v4l2src)."
         transform:
           type: string
           default_value: ""
-          description: "Optional GStreamer transform fragment inserted after configured source ingress."
+          description: "Optional GStreamer transform fragment inserted after other video ingress."
         publish:
           codec:
             type: string
             default_value: ""
-            description: "Optional LiveKit codec override for this configured video source. Empty inherits from video.publish.codec."
+            description: "Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec."
             validation:
               one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
           max_bitrate_bps:
             type: int
             default_value: -1
             description: >-
-              Optional LiveKit max video bitrate override for this configured
+              Optional LiveKit max video bitrate override for this other video
               source in bps. -1 inherits from
               video.publish.max_bitrate_bps.
             validation:
@@ -184,13 +184,13 @@ livekit_ros2_bridge:
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this configured source. -1 inherits from video.publish.max_framerate."
+            description: "Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate."
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ""
-            description: "Optional LiveKit simulcast override for this configured video source. Empty inherits from video.publish.simulcast."
+            description: "Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
 

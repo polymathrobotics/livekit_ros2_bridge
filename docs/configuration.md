@@ -12,8 +12,8 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
   - [Access rules](#access-rules)
   - [Video](#video)
     - [Defaults](#defaults)
-    - [ROS topic rules](#ros-topic-rules)
-    - [Configured sources](#configured-sources)
+    - [ROS topics](#ros-topics)
+    - [Other video sources](#other-video-sources)
   - [Profiling](#profiling)
   - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
@@ -65,7 +65,7 @@ Behavior notes:
 
 - deny rules win over allow rules
 - rules are global and name-based, not requester-specific
-- `configured_source` targets do not use `access.rules.subscribe.*`; they are controlled by `video_configured_source_ids` and `video.configured_sources.*`
+- `configured_source` targets do not use `access.rules.subscribe.*`; they are controlled by `video_other_ids` and `video.other.*`
 - a forbidden topic subscription is reported as `forbidden` in `ros.subscriptions.status`
 
 Pattern notes:
@@ -90,33 +90,33 @@ Pattern notes:
 Publish default notes:
 
 - these defaults expose the same publish controls described in LiveKit's [video track configuration guide](https://docs.livekit.io/transport/media/advanced/) and C++ [`TrackPublishOptions` reference](https://docs.livekit.io/reference/client-sdk-cpp/structlivekit_1_1TrackPublishOptions.html); the bridge forwards them directly when it publishes a video track
-- these defaults apply to ROS video topic rules, configured sources, and the built-in ROS fallback rule
+- these defaults apply to ROS video topics, other video sources, and the built-in ROS fallback rule
 - `auto` or `0` means "use LiveKit SDK default behavior" for that field
 - entry-level overrides merge per field with these global defaults
 
-#### ROS topic rules
+#### ROS topics
 
-These rules apply to ROS topics, not configured sources.
+These entries apply to ROS topics, not other video sources.
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `video_topic_rule_ids` | `[]` | array of ids | ROS video rule ids defined under `video.topic_rules.<id>.*` |
-| `video.topic_rules.<id>.pattern` | none | ROS topic pattern | Required topic pattern for this rule |
-| `video.topic_rules.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after bridge-managed ROS ingress |
-| `video.topic_rules.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
-| `video.topic_rules.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
-| `video.topic_rules.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
-| `video.topic_rules.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
+| `video_topic_ids` | `[]` | array of ids | ROS video topic ids defined under `video.topics.<id>.*` |
+| `video.topics.<id>.pattern` | none | ROS topic pattern | Required topic pattern for this entry |
+| `video.topics.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after bridge-managed ROS ingress |
+| `video.topics.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
+| `video.topics.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
+| `video.topics.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
+| `video.topics.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
 
-Rule notes:
+Topic notes:
 
-- duplicate ids in `video_topic_rule_ids` are rejected at startup
-- every entry under `video.topic_rules.<id>.*` must have a matching id in `video_topic_rule_ids`
-- `video_topic_rule_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
-- all matching rules are considered
+- duplicate ids in `video_topic_ids` are rejected at startup
+- every entry under `video.topics.<id>.*` must have a matching id in `video_topic_ids`
+- `video_topic_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
+- all matching entries are considered
 - the longest matching pattern wins
 - same-length ties keep declaration order
-- if no user rule matches, the built-in `default_ros` rule matches `/*` with no extra `transform`
+- if no user entry matches, the built-in `default_ros` entry matches `/*` with no extra `transform`
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
 
 Pipeline notes:
@@ -135,23 +135,23 @@ Supported ROS video inputs:
 - for `sensor_msgs/msg/Image`, supported encodings are `mono8`, `mono16`, `rgb8`, `bgr8`, `rgba8`, `bgra8`, `yuv422`, and `yuv422_yuy2`
 - for `sensor_msgs/msg/CompressedImage`, supported payloads are JPEG and PNG, including image_transport-style format strings that name `jpeg`, `jpg`, or `png`
 
-#### Configured sources
+#### Other video sources
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `video_configured_source_ids` | `[]` | array of ids | Configured source ids defined under `video.configured_sources.<id>.*` |
-| `video.configured_sources.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
-| `video.configured_sources.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the configured ingress |
-| `video.configured_sources.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
-| `video.configured_sources.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
-| `video.configured_sources.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
-| `video.configured_sources.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
+| `video_other_ids` | `[]` | array of ids | Other video ids defined under `video.other.<id>.*` |
+| `video.other.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
+| `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
+| `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
+| `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
+| `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
+| `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
 
-Source notes:
+Other video notes:
 
-- duplicate ids in `video_configured_source_ids` are rejected at startup
-- every entry under `video.configured_sources.<id>.*` must have a matching id in `video_configured_source_ids`
-- `video_configured_source_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
+- duplicate ids in `video_other_ids` are rejected at startup
+- every entry under `video.other.<id>.*` must have a matching id in `video_other_ids`
+- `video_other_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
 - `source` is required and must be non-empty after trimming
 - `source` should start with a concrete ingress element such as `uridecodebin`, `v4l2src`, or `videotestsrc`
 - `transform` is optional and sits between your ingress and the bridge-owned tail
@@ -162,10 +162,10 @@ Source notes:
 
 Lookup notes:
 
-- clients request configured sources by `configured_source` name
+- clients request these sources with `kind: "configured_source"` and the source id as `name`
 - lookup trims only surrounding whitespace from the requested name
 - configured source track names percent-encode bytes outside RFC 3986 unreserved characters
-- configured sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_configured_source_ids` and `video.configured_sources.*`
+- other video sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_other_ids` and `video.other.*`
 
 ### Profiling
 
@@ -208,22 +208,22 @@ Resolution notes:
 
 ### RTSP or device inputs
 
-Use `video.configured_sources.*` when the bridge should ingest video directly from GStreamer instead of subscribing to an existing ROS `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage` topic.
+Use `video.other.*` when the bridge should ingest video directly from GStreamer instead of subscribing to an existing ROS `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage` topic.
 
-1. Define one or more configured source ids and give each one a `source` fragment.
+1. Define one or more other video ids and give each one a `source` fragment.
 
    ```yaml
    livekit_ros2_bridge:
      ros__parameters:
-       video_configured_source_ids: ["front_rtsp", "usb_cam"]
+       video_other_ids: ["front_rtsp", "usb_cam"]
 
-       video.configured_sources.front_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
-       video.configured_sources.front_rtsp.transform: "videoscale ! video/x-raw,width=1280,height=720"
-       video.configured_sources.front_rtsp.publish.codec: "h264"
+       video.other.front_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
+       video.other.front_rtsp.transform: "videoscale ! video/x-raw,width=1280,height=720"
+       video.other.front_rtsp.publish.codec: "h264"
 
-       video.configured_sources.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"
-       video.configured_sources.usb_cam.transform: ""
-       video.configured_sources.usb_cam.publish.max_framerate: 30.0
+       video.other.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"
+       video.other.usb_cam.transform: ""
+       video.other.usb_cam.publish.max_framerate: 30.0
    ```
 
 2. Keep the pipeline boundaries in the right place.
@@ -232,9 +232,9 @@ Use `video.configured_sources.*` when the bridge should ingest video directly fr
    - `transform` is optional and should contain only middle-of-pipeline processing stages
    - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own queue/convert/I420/appsink tail
    - leave `video.publish.*` and per-source `publish.*` unset unless you need to force codec, bitrate, framerate, or simulcast behavior
-   - configured sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_configured_source_ids`
+   - other video sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_other_ids`
 
-3. Request the configured source by id from the client.
+3. Request the source by id from the client with `kind: "configured_source"`.
 
    ```json
    {
@@ -255,8 +255,8 @@ Use `video.configured_sources.*` when the bridge should ingest video directly fr
 
 4. Expect video delivery in `ros.subscriptions.status`.
 
-   - the `name` is the trimmed configured source id
+   - the `name` is the trimmed source id
    - an active entry reports `delivery.kind: "video"`
    - the track name is deterministic, for example `ros.video.configured_source.front_rtsp`
-   - if the configured source name contains reserved bytes, the track-name suffix is percent-encoded
-   - if a client asks for a configured source that does not exist, the bridge reports `not_found`
+   - if the source id contains reserved bytes, the track-name suffix is percent-encoded
+   - if a client asks for a source that does not exist, the bridge reports `not_found`

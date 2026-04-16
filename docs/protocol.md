@@ -107,7 +107,7 @@ Behavior:
 - each subscription entry must be an object with string `kind` and `name` fields
 - `kind` must be `topic` or `configured_source`
 - `topic` names normalize as ROS resource names
-- `configured_source` names address configured entries from `video.configured_sources.<id>`
+- `configured_source` names address configured entries from `video.other.<id>`
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
 - `interval_ms: 0` means no preference
@@ -240,13 +240,13 @@ Notes:
 | Requested target | Resolved from | Delivery | Shared resource model |
 | --- | --- | --- | --- |
 | Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
-| ROS video topic | normalized topic name, unique graph type, and matching video rule | video | one in-process video stream per resolved `stream_key` |
-| Configured source | matching `video.configured_sources.*` entry | video | one in-process video stream per resolved `stream_key` |
+| ROS video topic | normalized topic name, unique graph type, and matching video topic entry | video | one in-process video stream per resolved `stream_key` |
+| Configured source | matching `video.other.*` entry | video | one in-process video stream per resolved `stream_key` |
 
 Important behavior:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- `configured_source` targets do not use subscribe rules; they are controlled by which `video_configured_source_ids` and `video.configured_sources.*` entries exist
+- `configured_source` targets do not use subscribe rules; they are controlled by which `video_other_ids` and `video.other.*` entries exist
 - the bridge never guesses when topic type resolution is ambiguous
 - when the last requester lease disappears, the shared data track or video stream is torn down
 

@@ -396,25 +396,21 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
   auto builtin_rules = std::move(config.ros_topic_rules);
   config.ros_topic_rules.clear();
 
-  std::unordered_set<std::string> seen_rule_ids;
-  std::unordered_set<std::string> seen_source_ids;
-  std::unordered_set<std::string> seen_source_names;
-  // Topic-rule transforms are middle fragments only. Wrap them in a synthetic
+  std::unordered_set<std::string> seen_topic_ids;
+  std::unordered_set<std::string> seen_other_ids;
+  std::unordered_set<std::string> seen_other_names;
+  // Topic-entry transforms are middle fragments only. Wrap them in a synthetic
   // bridge-owned ingress so validation exercises the same ownership shape the
   // runtime will assemble around a ROS subscription.
   const std::string validation_ingress = "appsrc name=" + std::string{kBridgeVideoAppSrcName} +
                                          " is-live=true block=false format=time do-timestamp=true"
                                          " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
-  for (const auto & entry_id : params.video_topic_rule_ids) {
+  for (const auto & entry_id : params.video_topic_ids) {
     const auto & entry = requireUniqueEntry(
-      seen_rule_ids,
-      entry_id,
-      params.video.topic_rules.video_topic_rule_ids_map,
-      "video topic rule id",
-      "video topic rule");
+      seen_topic_ids, entry_id, params.video.topics.video_topic_ids_map, "video topic id", "video topic");
 
-    const std::string rule_context = "video topic rule '" + entry_id + "'";
-    const std::string pattern = normalizeRosResourcePattern(entry.pattern, "video topic rule");
+    const std::string rule_context = "video topic '" + entry_id + "'";
+    const std::string pattern = normalizeRosResourcePattern(entry.pattern, "video topic");
     const std::string transform_fragment = trim(entry.transform);
     validateVideoPipelineDescription(
       rule_context + " transform",
@@ -429,15 +425,11 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
-  for (const auto & entry_id : params.video_configured_source_ids) {
+  for (const auto & entry_id : params.video_other_ids) {
     const auto & entry = requireUniqueEntry(
-      seen_source_ids,
-      entry_id,
-      params.video.configured_sources.video_configured_source_ids_map,
-      "video configured source id",
-      "video configured source");
+      seen_other_ids, entry_id, params.video.other.video_other_ids_map, "other video id", "other video source");
 
-    const std::string source_context = "video configured source '" + entry_id + "'";
+    const std::string source_context = "other video source '" + entry_id + "'";
     const std::string ingress_fragment = trim(entry.source);
     if (ingress_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
@@ -448,15 +440,14 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
       buildVideoPipelineDescription(ingress_fragment, transform_fragment),
       kConfiguredSourceEndpointLayout);
 
-    // Configured sources are keyed by the trimmed configured-source name. Only
+    // Other video sources are keyed by the trimmed requested name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
     const std::string source_name = trim(entry_id);
     if (source_name.empty()) {
-      throw std::runtime_error(
-        "video configured source '" + entry_id + "' must trim to a non-empty configured source name");
+      throw std::runtime_error(source_context + " must trim to a non-empty name");
     }
-    if (!seen_source_names.emplace(source_name).second) {
-      throw std::runtime_error("duplicate configured video source name '" + source_name + "'");
+    if (!seen_other_names.emplace(source_name).second) {
+      throw std::runtime_error("duplicate other video source name '" + source_name + "'");
     }
 
     ConfiguredVideoStreamSource source;
@@ -553,8 +544,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     LogEvent(kLogger, "runtime_config_loaded")
       .fieldOr("url", config.livekit.url, kUnsetLogValue)
       .field("token_present", !config.livekit.access_token.empty())
-      .field("custom_video_rule_count", params.video_topic_rule_ids.size())
-      .field("configured_source_count", config.video_stream.configured_sources.size())
+      .field("custom_video_topic_count", params.video_topic_ids.size())
+      .field("other_video_count", config.video_stream.configured_sources.size())
       .info();
 
     return config;

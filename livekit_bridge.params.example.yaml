@@ -35,16 +35,16 @@ livekit_ros2_bridge:
 
     # Optional video sources.
     # Add entries here if you want the bridge to publish video into LiveKit.
-    # `video.topic_rules.*` match one or more ROS topics by pattern.
-    # `video.configured_sources.*` run in-process GStreamer source fragments that you provide.
+    # `video.topics.*` match one or more ROS topics by pattern.
+    # `video.other.*` run in-process GStreamer source fragments that you provide.
     # Keep the IDs at the root for now because generate_parameter_library 0.6
     # in the current test matrix cannot move them cleanly under
-    # `video.topic_rules.ids` / `video.configured_sources.ids` yet.
-    # Topic rules use required `pattern`, optional `transform`, and optional
+    # `video.topics.ids` / `video.other.ids` yet.
+    # ROS topics use required `pattern`, optional `transform`, and optional
     # `publish.*` overrides.
-    # Configured sources use required `source`, optional `transform`, and optional
+    # Other video sources use required `source`, optional `transform`, and optional
     # `publish.*` overrides. Their ids are trimmed only; `/front`, `front`,
-    # and `front/` are three distinct configured sources.
+    # and `front/` are three distinct other video sources.
     # The bridge always appends its own queue/convert/I420/appsink tail.
     #
     # Optional default LiveKit publish policy:
@@ -59,16 +59,16 @@ livekit_ros2_bridge:
     # debug.profiling.trace_file: "/workspace/traces/video-profile.trace.json"
     # debug.profiling.trace_max_events: 250000
     #
-    # video_topic_rule_ids: ["front_camera"]
-    # video_configured_source_ids: ["back_rtsp", "usb_cam"]
+    # video_topic_ids: ["front_camera"]
+    # video_other_ids: ["back_rtsp", "usb_cam"]
     #
-    # video.topic_rules.front_camera.pattern: "/camera/front/*"
-    # video.topic_rules.front_camera.publish.max_framerate: 15.0
-    # video.topic_rules.front_camera.transform: "videoscale ! video/x-raw,width=1280,height=720"
+    # video.topics.front_camera.pattern: "/camera/front/*"
+    # video.topics.front_camera.publish.max_framerate: 15.0
+    # video.topics.front_camera.transform: "videoscale ! video/x-raw,width=1280,height=720"
     #
-    # video.configured_sources.back_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
-    # video.configured_sources.back_rtsp.publish.codec: "h264"
-    # video.configured_sources.back_rtsp.transform: ""
+    # video.other.back_rtsp.source: "uridecodebin uri=rtsp://127.0.0.1:8554/front source::latency=0"
+    # video.other.back_rtsp.publish.codec: "h264"
+    # video.other.back_rtsp.transform: ""
     #
-    # video.configured_sources.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"
-    # video.configured_sources.usb_cam.transform: ""
+    # video.other.usb_cam.source: "v4l2src device=/dev/video0 do-timestamp=true"
+    # video.other.usb_cam.transform: ""
