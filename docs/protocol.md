@@ -1,23 +1,36 @@
 # Client Interface and Protocol Specification
 
-This document is the authoritative specification for the client-facing interface and protocol of `livekit_ros2_bridge`, with explanatory material where useful.
+This document is the authoritative specification for the client-facing interface and protocol of `livekit_ros2_bridge`.
 
-## Typical client flow
+Unless a section or subsection is labeled informative, it is normative. Examples, notes, and the final client-flow walkthrough are informative. This document uses `MUST`, `MUST NOT`, `SHOULD`, and `MAY` in their usual normative sense.
 
-Most integrations follow this order:
+## Purpose, Scope, and Conformance
 
-1. Join the same LiveKit room as the bridge.
-2. Call `ros.topics.list` and `ros.services.list` to discover only the resources your policy allows.
-3. Call `ros.interfaces.get` for the message and service types your client needs to encode or decode.
-4. Use `ros.services.call` for request-response operations.
-5. Send `ros.topics.publish` packets for small allowed topic writes.
-6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video subscriptions.
-7. Read `ros.subscriptions.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
-8. Subscribe to the announced LiveKit data track or video publication.
+This specification defines the external contract between a client and the bridge:
 
-For a first integration, start with one service call or one topic subscription path. Once that works, add more interface types, video, and broader policy rules.
+- LiveKit RPC methods exposed by the bridge
+- LiveKit control-topic packets accepted by the bridge
+- LiveKit status packets and media deliveries emitted by the bridge
+- shared request, response, authorization, and delivery semantics
 
-## Surface summary
+A conforming client MUST follow the request and response schemas and the behavioral rules in this document. Clients MUST NOT rely on behavior that this document does not specify.
+
+## Versioning and Terminology
+
+This document describes the current client-facing protocol of the bridge. The `ros.subscriptions.status` packet includes a protocol version field `v`, which is currently `2`.
+
+Terms used throughout this document:
+
+- bridge: the `livekit_ros2_bridge` participant in the LiveKit room
+- caller: the client making an RPC request
+- requester: the client sending a control-topic packet or owning a subscription lease
+- control topic: a LiveKit data-topic message exchanged outside the RPC surface
+- data track: a LiveKit data publication carrying raw ROS CDR bytes
+- video track: a LiveKit video publication carrying a ROS-backed or GStreamer-backed stream
+- normalized name: a ROS resource name after the bridge has converted it to absolute-style form for validation and policy checks
+- lease: the bridge's time-bounded record that a requester still wants a subscription
+
+## Protocol Surfaces
 
 | Surface | Name | Direction | Purpose |
 | --- | --- | --- | --- |
@@ -29,9 +42,9 @@ For a first integration, start with one service call or one topic subscription p
 | RPC | `ros.services.list` | caller <-> bridge | List authorized ROS services |
 | RPC | `ros.topics.list` | caller <-> bridge | List authorized ROS topics |
 
-## Shared wire rules
+## Shared Wire Rules
 
-ROS binary payloads use the same JSON envelope everywhere:
+ROS binary payloads MUST use the same JSON envelope everywhere they appear:
 
 ```json
 {
@@ -40,22 +53,47 @@ ROS binary payloads use the same JSON envelope everywhere:
 }
 ```
 
-Important rules:
+Requirements:
 
-- `payload_base64` must be padded standard base64
-- wrong `content_type`, wrong JSON types, and invalid base64 are rejected
-- parsers trim string fields before validation
-- blank optional strings are usually treated as missing
-- unknown JSON fields are ignored unless a specific parser rejects them
-- ROS names are normalized to absolute-style names before validation and policy checks
-- if normalization produces an empty name, the request is invalid
-- anonymous RPC calls are rejected up front
-- anonymous `ros.topics.publish` packets are dropped
-- anonymous `ros.subscriptions.heartbeat` packets are accepted only through the `session_id` fallback described below
+- `content_type` MUST be `application/x-ros-cdr`
+- `payload_base64` MUST be padded standard base64
+- wrong `content_type`, wrong JSON field types, and invalid base64 MUST be rejected
+- parsers MUST trim string fields before validation
+- blank optional strings SHOULD be treated as absent unless an operation says otherwise
+- unknown JSON fields SHOULD be ignored unless an operation says otherwise
+- whether the decoded payload may be empty is operation-specific; operations that require a non-empty payload say so explicitly
 
-## Control topic: `ros.topics.publish`
+### Example (informative)
 
-Request body:
+The same envelope shape is used for:
+
+- `ros.topics.publish.message`
+- `ros.services.call.request`
+- `ros.services.call.response`
+
+## Identity, Authorization, and Name Normalization
+
+Requirements:
+
+- ROS names MUST be normalized to absolute-style names before validation and policy checks
+- if normalization produces an empty name, the request MUST be treated as invalid
+- anonymous RPC calls MUST be rejected up front
+- anonymous `ros.topics.publish` packets MUST be dropped
+- anonymous `ros.subscriptions.heartbeat` packets MUST be accepted only through the `session_id` fallback defined in this document
+- `ros.topics.publish` MUST check authorization against `access.rules.publish.*`
+- `ros.services.call` and `ros.services.list` MUST check authorization against `access.rules.service.*`
+- topic subscriptions and `ros.topics.list` MUST check authorization against `access.rules.subscribe.*`
+- `other_video` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by configured `video_other_ids` and `video.other.*` entries
+
+### Example (informative)
+
+If a client asks to publish `cmd_vel`, the bridge normalizes that name before it validates the request or checks publish policy. If the normalized name is empty, the request is invalid. If the normalized name is valid but not allowed by publish policy, the bridge drops the packet.
+
+## Control Topic: `ros.topics.publish`
+
+`ros.topics.publish` is a best-effort write path for small allowed ROS topic publications.
+
+### Example Request (informative)
 
 ```json
 {
@@ -68,19 +106,25 @@ Request body:
 }
 ```
 
-Behavior:
+### Requirements
 
-- `topic` is required, must be a string, and must normalize to a non-empty ROS topic name
-- `interface_type` is required, trimmed, and must stay non-empty
-- `message` is required and must decode to a non-empty CDR payload
-- the bridge checks publish authorization against the normalized topic name
-- the requested `interface_type` must match the bridge's resolved topic type exactly
-- once the bridge has cached a publisher for a topic, later requests are checked against that cached type instead of re-reading the ROS graph
-- this path is best-effort and has no acknowledgement packet; malformed, forbidden, or late requests are logged and dropped
+- `topic` MUST be present, MUST be a string, and MUST normalize to a non-empty ROS topic name
+- `interface_type` MUST be present, MUST trim to a non-empty string, and MUST match the bridge's resolved topic type exactly
+- `message` MUST be present and MUST decode to a non-empty CDR payload
+- the bridge MUST check publish authorization against the normalized topic name
+- once the bridge has cached a publisher for a topic, later requests MUST be checked against that cached type instead of re-reading the ROS graph
+- this path MUST be best-effort and MUST NOT emit an acknowledgement packet
+- malformed, forbidden, or late requests MUST be logged and dropped
 
-## Control topic: `ros.subscriptions.heartbeat`
+### Notes (informative)
 
-Request body:
+This path is intended for command-style writes, not for building a high-volume transport on top of control topics.
+
+## Control Topic: `ros.subscriptions.heartbeat`
+
+`ros.subscriptions.heartbeat` requests and renews topic or video subscriptions.
+
+### Example Request (informative)
 
 ```json
 {
@@ -101,38 +145,44 @@ Request body:
 }
 ```
 
-Behavior:
+### Requirements
 
-- `subscriptions` is required and must be an array
-- each subscription entry must be an object with string `kind` and `name` fields
-- `kind` must be `topic` or `other_video`
-- `topic` names normalize as ROS resource names
-- `other_video` names address configured entries from `video.other.<id>`
-- `delivery_preferences` is optional and must be an object when present
-- `delivery_preferences.interval_ms` is optional and must be an integer when present
-- `interval_ms: 0` means no preference
-- repeating the same target yields one effective request; the smallest non-zero `interval_ms` wins
-- negative `interval_ms` values clamp to `0` when the lease is applied
-- `session_id` is optional; missing, `null`, and blank values are treated as absent
-- each heartbeat renews the listed subscriptions for 45 seconds
-- omitting a previously requested target leaves its existing lease active until expiry
-- a heartbeat with an empty `subscriptions` array renews nothing and publishes no status packet
+- `subscriptions` MUST be present and MUST be an array
+- each subscription entry MUST be an object with string `kind` and `name` fields
+- `kind` MUST be `topic` or `other_video`
+- `topic` names MUST normalize as ROS resource names
+- `other_video` names MUST address configured entries from `video.other.<id>`
+- `delivery_preferences` MAY be present, but when present it MUST be an object
+- `delivery_preferences.interval_ms` MAY be present, but when present it MUST be an integer
+- `interval_ms: 0` MUST mean no preference
+- if the same target appears more than once, the bridge MUST produce one effective request and MUST use the smallest non-zero `interval_ms`
+- negative `interval_ms` values MUST clamp to `0` when the lease is applied
+- `session_id` is optional; missing, `null`, and blank values MUST be treated as absent
+- each heartbeat MUST renew the listed subscriptions for 45 seconds
+- omitting a previously requested target MUST leave its existing lease active until expiry
+- a heartbeat with an empty `subscriptions` array MUST renew nothing and MUST publish no status packet
 
-### Requester identity and `session_id`
+### Requester Identity and `session_id`
 
 The bridge prefers the LiveKit packet's `requester_identity`. `session_id` exists only to keep heartbeats working when LiveKit omits that identity from user-data packets.
 
-Behavior:
+Requirements:
 
-- heartbeats with a non-empty `requester_identity` are accepted normally
-- if that heartbeat also includes `session_id`, the bridge binds the `session_id` to that requester for 45 seconds
-- a later heartbeat with an empty `requester_identity` is accepted only if it includes a known, unexpired `session_id`
-- a `session_id` cannot be rebound to a different requester until the existing lease expires
-- anonymous heartbeats without a known `session_id` are dropped
+- heartbeats with a non-empty `requester_identity` MUST be accepted normally
+- if that heartbeat also includes `session_id`, the bridge MUST bind that `session_id` to the requester for 45 seconds
+- a later heartbeat with an empty `requester_identity` MUST be accepted only if it includes a known, unexpired `session_id`
+- a `session_id` MUST NOT be rebound to a different requester until the existing lease expires
+- anonymous heartbeats without a known `session_id` MUST be dropped
 
-## Control topic: `ros.subscriptions.status`
+### Example (informative)
 
-Response body:
+One practical pattern is for a browser tab to send a heartbeat with both `requester_identity` and `session_id`, then continue using the same `session_id` if later user-data packets omit identity. The lease lasts 45 seconds, so the client needs to keep heartbeating before that lease expires.
+
+## Control Topic: `ros.subscriptions.status`
+
+`ros.subscriptions.status` reports the result of a non-empty heartbeat.
+
+### Example Response (informative)
 
 ```json
 {
@@ -157,23 +207,24 @@ Response body:
 }
 ```
 
-Envelope rules:
+### Envelope Requirements
 
-- `v` is the protocol version and is currently `2`
-- `type` is always `ros.subscriptions.status`
-- `session_id` is included only when the heartbeat carried a non-blank `session_id`
-- `lease_expires_in_ms` is included on every non-empty status packet and is approximate because it is computed at serialization time
-- the bridge publishes no status packet when the heartbeat produces an empty `subscriptions` array
+- `v` MUST be the protocol version and is currently `2`
+- `type` MUST always be `ros.subscriptions.status`
+- `session_id` MUST be included only when the heartbeat carried a non-blank `session_id`
+- `lease_expires_in_ms` MUST be included on every non-empty status packet
+- `lease_expires_in_ms` MUST be treated as approximate because the bridge computes it at serialization time
+- the bridge MUST publish no status packet when the heartbeat produced an empty `subscriptions` array
 
-### Per-subscription status objects
+### Per-Subscription Status Objects
 
-Active statuses always include:
+Active statuses MUST include:
 
 - `kind`: `topic` or `other_video`
 - `name`
 - `status`: `active`
 
-Error statuses always include:
+Error statuses MUST include:
 
 - `kind`
 - `name`
@@ -187,9 +238,11 @@ Current `error.reason` values:
 - `unavailable`: the bridge could not start or keep running a required runtime dependency, usually a video stream pipeline
 - `not_found`: lookup or subscription creation failed for another reason
 
-### Active topic subscriptions on a data track
+### Active Topic Subscriptions on a Data Track
 
-Non-video ROS topics are delivered on a LiveKit data track:
+Non-video ROS topics are delivered on a LiveKit data track.
+
+#### Example (informative)
 
 ```json
 {
@@ -206,15 +259,17 @@ Non-video ROS topics are delivered on a LiveKit data track:
 }
 ```
 
-Notes:
+Requirements:
 
-- `track_name` is deterministic: the bridge prefixes `ros.data` and replaces `/` with `.`
-- `delivery.interval_ms` is always present for data deliveries, including `0`
-- the bytes sent on the data track are raw serialized CDR bytes, not nested JSON
+- `track_name` MUST be deterministic: the bridge prefixes `ros.data` and replaces `/` with `.`
+- `delivery.interval_ms` MUST always be present for data deliveries, including `0`
+- bytes sent on the data track MUST be raw serialized CDR bytes, not nested JSON
 
-### Active video subscription entries
+### Active Video Subscription Entries
 
-Video deliveries use deterministic track names:
+Video deliveries use deterministic track names.
+
+#### Example (informative)
 
 ```json
 {
@@ -228,36 +283,32 @@ Video deliveries use deterministic track names:
 }
 ```
 
-Notes:
+Requirements:
 
-- other video targets always use video delivery
-- ROS topics use video delivery only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
-- video `track_name` is deterministic and stable for the target name
-- other video track names percent-encode any byte outside RFC 3986 unreserved characters
+- `other_video` targets MUST always use video delivery
+- ROS topics MUST use video delivery only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
+- video `track_name` values MUST be deterministic and stable for the target name
+- `other_video` track names MUST percent-encode any byte outside RFC 3986 unreserved characters
 
-## Delivery and sharing model
+#### Error Example (informative)
 
-| Requested target | Resolved from | Delivery | Shared resource model |
-| --- | --- | --- | --- |
-| Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
-| ROS video topic | normalized topic name, unique graph type, and matching video topic entry | video | one in-process video stream per resolved `stream_key` |
-| Other video | matching `video.other.*` entry | video | one in-process video stream per resolved `stream_key` |
-
-Important behavior:
-
-- topic subscriptions use `access.rules.subscribe.*`
-- other video targets do not use subscribe rules; they are controlled by which `video_other_ids` and `video.other.*` entries exist
-- the bridge never guesses when topic type resolution is ambiguous
-- when the last requester lease disappears, the shared data track or video stream is torn down
-
-## Reconnect behavior
-
-- if a requester reconnects and still owns a live data subscription, the bridge republishes the data track after a heartbeat confirms the requester
-- well-formed subscription heartbeats can therefore trigger one data-track republish after a page refresh or participant reconnect
+```json
+{
+  "kind": "topic",
+  "name": "/restricted_topic",
+  "status": "error",
+  "error": {
+    "reason": "forbidden",
+    "message": "subscription denied by policy"
+  }
+}
+```
 
 ## RPC: `ros.services.call`
 
-Request body:
+`ros.services.call` performs an authorized ROS request-response operation.
+
+### Example Request (informative)
 
 ```json
 {
@@ -271,7 +322,7 @@ Request body:
 }
 ```
 
-Successful response body:
+### Example Successful Response (informative)
 
 ```json
 {
@@ -288,20 +339,27 @@ Successful response body:
 }
 ```
 
-Behavior:
+### Requirements
 
-- `service` and `request` are required
-- `request.payload_base64` must decode to a non-empty byte vector
-- `interface_type` is optional; if omitted or blank, the bridge requires exactly one graph-advertised service type
-- `timeout_ms` must be an integer
-- values `<= 0` do not disable timeouts; they fall back to the bridge default of `2000` ms
-- access policy is checked after request parsing and before the ROS request is sent
-- each requester identity can have at most `4` in-flight service calls
-- some failures happen later than request acceptance, such as timeout, requester disconnect, session reset, or shutdown
+- `service` and `request` MUST be present
+- `service` MUST normalize to a non-empty ROS service name
+- `request.payload_base64` MUST decode to a non-empty byte vector
+- `interface_type` is optional; if omitted or blank, the bridge MUST require exactly one graph-advertised service type
+- `timeout_ms`, when present, MUST be an integer
+- values `<= 0` MUST NOT disable timeouts; they MUST fall back to the bridge default of `2000` ms
+- the bridge MUST check access policy after request parsing and before the ROS request is sent
+- each requester identity MUST be limited to at most `4` in-flight service calls
+- some failures MAY happen after request acceptance, including timeout, requester disconnect, session reset, or shutdown
+
+### Notes (informative)
+
+Clients that omit `interface_type` should do so only when they are prepared for ambiguity to fail the call.
 
 ## RPC: `ros.interfaces.get`
 
-Request body:
+`ros.interfaces.get` returns interface definitions needed to encode or decode ROS payloads.
+
+### Example Request (informative)
 
 ```json
 {
@@ -312,7 +370,7 @@ Request body:
 }
 ```
 
-Successful response body:
+### Example Successful Response (informative)
 
 ```json
 {
@@ -326,26 +384,32 @@ Successful response body:
 }
 ```
 
-Behavior:
+### Requirements
 
-- `interface_types` is required and must be a non-empty array
-- every array entry must trim to a non-empty string
-- the bridge returns the requested definition first, then any transitive message dependencies
-- duplicates are removed while preserving first discovery order
-- `definition` is the raw `.msg` or `.srv` file content from the package share directory
+- `interface_types` MUST be present and MUST be a non-empty array
+- every array entry MUST trim to a non-empty string
+- the bridge MUST return the requested definition first, then any transitive message dependencies
+- duplicates MUST be removed while preserving first discovery order
+- `definition` MUST be the raw `.msg` or `.srv` file content from the package share directory
 
-## RPC: `ros.services.list` and `ros.topics.list`
+### Notes (informative)
 
-Shared request body:
+This method exists so a client can obtain message and service definitions before it tries to serialize or deserialize CDR payloads.
+
+## RPC: `ros.services.list`
+
+`ros.services.list` lists authorized ROS services.
+
+### Example Request (informative)
 
 ```json
 {
-  "query": "image",
+  "query": "trigger",
   "limit": 10
 }
 ```
 
-Successful response bodies:
+### Example Successful Response (informative)
 
 ```json
 {
@@ -358,6 +422,30 @@ Successful response bodies:
 }
 ```
 
+### Requirements
+
+- `query` is optional
+- missing, `null`, and blank `query` values MUST be treated as absent
+- `limit` is optional, but when present it MUST be a positive integer
+- filtering MUST happen after the ROS graph query and after access-policy checks
+- `query` MUST match substrings in either the resource name or the interface type
+- resources with zero or multiple interface types MUST be skipped instead of being returned ambiguously
+
+## RPC: `ros.topics.list`
+
+`ros.topics.list` lists authorized ROS topics.
+
+### Example Request (informative)
+
+```json
+{
+  "query": "image",
+  "limit": 10
+}
+```
+
+### Example Successful Response (informative)
+
 ```json
 {
   "topics": [
@@ -369,16 +457,49 @@ Successful response bodies:
 }
 ```
 
-Behavior:
+### Requirements
 
 - `query` is optional
-- missing, `null`, and blank `query` values are treated as absent
-- `limit` is optional, but when present it must be a positive integer
-- filtering happens after the ROS graph query and after access-policy checks
-- `query` matches substrings in either the resource name or the interface type
-- resources with zero or multiple interface types are skipped instead of being returned ambiguously
+- missing, `null`, and blank `query` values MUST be treated as absent
+- `limit` is optional, but when present it MUST be a positive integer
+- filtering MUST happen after the ROS graph query and after access-policy checks
+- `query` MUST match substrings in either the resource name or the interface type
+- resources with zero or multiple interface types MUST be skipped instead of being returned ambiguously
 
-## Error handling
+## Delivery and Sharing Model
+
+| Requested target | Resolved from | Delivery | Shared resource model |
+| --- | --- | --- | --- |
+| Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
+| ROS video topic | normalized topic name, unique graph type, and matching video topic entry | video | one in-process video stream per resolved `stream_key` |
+| Other video | matching `video.other.*` entry | video | one in-process video stream per resolved `stream_key` |
+
+Requirements:
+
+- topic subscriptions MUST use `access.rules.subscribe.*`
+- `other_video` targets MUST NOT use subscribe rules
+- the bridge MUST NOT guess when topic type resolution is ambiguous
+- when the last requester lease disappears, the shared data track or video stream MUST be torn down
+
+### Example (informative)
+
+If two requesters subscribe to the same normalized non-video ROS topic, they share one ROS subscription and one data track. The bridge tracks separate leases, but not separate data-track backends for that topic.
+
+## Reconnect and Lease Semantics
+
+Requirements:
+
+- each heartbeat-renewed subscription lease lasts 45 seconds from the renewing heartbeat
+- omitting a target from a later heartbeat MUST NOT cancel its existing lease immediately
+- the bridge MUST allow leases to expire naturally when they are not renewed
+- if a requester reconnects and still owns a live data subscription, the bridge MUST republish the data track after a heartbeat confirms the requester
+- a well-formed subscription heartbeat MAY therefore trigger one data-track republish after a page refresh or participant reconnect
+
+### Example (informative)
+
+If a browser refreshes but sends another valid heartbeat before the old lease expires, the bridge can re-announce the same data-track delivery without recreating the subscription from scratch.
+
+## Error Model
 
 Control topics and RPCs fail differently:
 
@@ -396,4 +517,48 @@ Stable RPC error codes:
 | `2403` | forbidden | access policy denies the requested service or topic |
 | `2500` | internal | ROS graph failures, client creation failures, runtime exceptions, late service-call failures |
 
-The bridge maps `std::invalid_argument` and `std::out_of_range` to `2400`. Everything else becomes `2500` unless the code already raised a more specific `RpcHandlerError`.
+The bridge MUST map `std::invalid_argument` and `std::out_of_range` to `2400`. Everything else MUST become `2500` unless the code already raised a more specific `RpcHandlerError`.
+
+## Informative Examples
+
+### Service Call Flow (informative)
+
+One common request-response path looks like this:
+
+1. Call `ros.services.list` to discover an allowed service.
+2. Call `ros.interfaces.get` for the service type.
+3. Serialize the request payload as ROS CDR.
+4. Call `ros.services.call`.
+5. Decode the returned ROS CDR response payload.
+
+### Topic Subscription Flow (informative)
+
+One common data-subscription path looks like this:
+
+1. Send `ros.subscriptions.heartbeat` with a `topic` subscription request.
+2. Read `ros.subscriptions.status`.
+3. If the status is `active` and `delivery.kind` is `data`, subscribe to the announced LiveKit data track.
+4. Decode incoming bytes on that track as raw ROS CDR for the reported `interface_type`.
+
+### Other Video Flow (informative)
+
+One common non-ROS video path looks like this:
+
+1. Send `ros.subscriptions.heartbeat` with `kind: "other_video"` and the configured source id as `name`.
+2. Read `ros.subscriptions.status`.
+3. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
+
+## Informative Typical Client Flow
+
+Most integrations follow this order:
+
+1. Join the same LiveKit room as the bridge.
+2. Call `ros.topics.list` and `ros.services.list` to discover only the resources your policy allows.
+3. Call `ros.interfaces.get` for the message and service types your client needs to encode or decode.
+4. Use `ros.services.call` for request-response operations.
+5. Send `ros.topics.publish` packets for small allowed topic writes.
+6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video subscriptions.
+7. Read `ros.subscriptions.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
+8. Subscribe to the announced LiveKit data track or video publication.
+
+For a first integration, start with one service-call path or one topic-subscription path. Once that works, add more interface types, video, and broader policy rules.
