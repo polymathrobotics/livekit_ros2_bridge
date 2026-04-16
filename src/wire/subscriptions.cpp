@@ -40,7 +40,7 @@ const char * targetKindString(SubscriptionTargetKind kind)
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return "topic";
-    case SubscriptionTargetKind::ConfiguredSource:
+    case SubscriptionTargetKind::OtherVideo:
       return "other_video";
   }
 
@@ -53,7 +53,7 @@ std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind
     return SubscriptionTargetKind::Topic;
   }
   if (kind == "other_video") {
-    return SubscriptionTargetKind::ConfiguredSource;
+    return SubscriptionTargetKind::OtherVideo;
   }
 
   return std::nullopt;

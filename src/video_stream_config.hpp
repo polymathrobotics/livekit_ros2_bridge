@@ -56,8 +56,8 @@ struct RosVideoTopicRule
   VideoPublishConfig publish_config;
 };
 
-// Declared config for one configured video source before it is resolved into a stream spec.
-struct ConfiguredVideoStreamSource
+// Declared config for one other video source before it is resolved into a stream spec.
+struct OtherVideoSource
 {
   std::string ingress_fragment;
   std::string transform_fragment;
@@ -69,8 +69,8 @@ struct ConfiguredVideoStreamSource
 struct VideoStreamConfig
 {
   std::vector<RosVideoTopicRule> ros_topic_rules;
-  // Keyed by the trimmed configured-source name used during stream-spec resolution.
-  std::unordered_map<std::string, ConfiguredVideoStreamSource> configured_sources;
+  // Keyed by the trimmed other-video-source name used during stream-spec resolution.
+  std::unordered_map<std::string, OtherVideoSource> other_video_sources;
   VideoPublishConfig default_publish_config;
 };
 

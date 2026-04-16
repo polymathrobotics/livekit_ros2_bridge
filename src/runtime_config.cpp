@@ -270,7 +270,7 @@ struct EndpointLayout
 };
 
 constexpr EndpointLayout kRosTopicRuleEndpointLayout{1U, 1U, 1U, 1U};
-constexpr EndpointLayout kConfiguredSourceEndpointLayout{};
+constexpr EndpointLayout kOtherVideoSourceEndpointLayout{};
 
 EndpointCounts countPipelineEndpoints(const std::string & context, GstElement * pipeline)
 {
@@ -438,23 +438,23 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     validateVideoPipelineDescription(
       source_context,
       buildVideoPipelineDescription(ingress_fragment, transform_fragment),
-      kConfiguredSourceEndpointLayout);
+      kOtherVideoSourceEndpointLayout);
 
     // Other video sources are keyed by the trimmed requested name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
-    const std::string source_name = trim(entry_id);
-    if (source_name.empty()) {
+    const std::string other_video_source_name = trim(entry_id);
+    if (other_video_source_name.empty()) {
       throw std::runtime_error(source_context + " must trim to a non-empty name");
     }
-    if (!seen_other_names.emplace(source_name).second) {
-      throw std::runtime_error("duplicate other video source name '" + source_name + "'");
+    if (!seen_other_names.emplace(other_video_source_name).second) {
+      throw std::runtime_error("duplicate other video source name '" + other_video_source_name + "'");
     }
 
-    ConfiguredVideoStreamSource source;
+    OtherVideoSource source;
     source.ingress_fragment = ingress_fragment;
     source.transform_fragment = transform_fragment;
     source.publish_config = parseVideoPublishConfig(entry, source_context, config.default_publish_config);
-    config.configured_sources.emplace(source_name, std::move(source));
+    config.other_video_sources.emplace(other_video_source_name, std::move(source));
   }
 
   config.ros_topic_rules.insert(
@@ -545,7 +545,7 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
       .fieldOr("url", config.livekit.url, kUnsetLogValue)
       .field("token_present", !config.livekit.access_token.empty())
       .field("custom_video_topic_count", params.video_topic_ids.size())
-      .field("other_video_count", config.video_stream.configured_sources.size())
+      .field("other_video_count", config.video_stream.other_video_sources.size())
       .info();
 
     return config;

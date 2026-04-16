@@ -63,7 +63,7 @@ add_library(${PROJECT_NAME} SHARED
   src/subscription_lease_manager.cpp
   src/subscription_qos.cpp
   src/topic_publish_request.cpp
-  src/video_frame_source/configured_source_video_frame_source.cpp
+  src/video_frame_source/other_video_frame_source.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
   src/video_profiling.cpp

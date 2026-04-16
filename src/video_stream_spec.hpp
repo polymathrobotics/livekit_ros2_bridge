@@ -27,23 +27,23 @@ inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
 inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
-inline constexpr char kConfiguredSourceIngestMode[] = "other_video";
+inline constexpr char kOtherVideoIngestMode[] = "other_video";
 
 enum class VideoInputKind
 {
   RosTopic,
-  ConfiguredSource,
+  OtherVideoSource,
 };
 
 struct VideoStreamSpec
 {
   // Resolved runtime inputs for one shared video stream instance.
   // Stable video runtime key derived from the canonical topic/source identifier:
-  // "topic:<normalized topic>" or "other_video:<trimmed configured source name>".
+  // "topic:<normalized topic>" or "other_video:<trimmed other video source name>".
   std::string stream_key;
   // Stable LiveKit track name derived from the same canonical identifier as stream_key.
   // ROS topics keep the legacy slash/colon-to-dot mapping that existing subscribers already use,
-  // while configured sources percent-encode their free-form names to keep the suffix reversible.
+  // while other video sources percent-encode their free-form names to keep the suffix reversible.
   // This is client-visible in subscription status and should remain stable for a given stream.
   std::string track_name;
 
@@ -52,17 +52,17 @@ struct VideoStreamSpec
   // Set only for ROS-topic sources and must resolve via classifyRosVideoIngestMode(...).
   std::string interface_type;
 
-  // Set only for configured sources after configured-source-name trimming.
-  std::string source_name;
+  // Set only for other video sources after other-video-source-name trimming.
+  std::string other_video_source_name;
 
   VideoInputKind input_kind = VideoInputKind::RosTopic;
   std::string ingest_mode;
-  // ROS sources store the matched rule_id; configured sources store the canonical trimmed configured source name.
+  // ROS sources store the matched rule_id; other video sources store the canonical trimmed other-video-source name.
   std::string config_id;
   // Optional operator-facing detail surfaced when the stream is degraded but still addressable.
   std::optional<std::string> degraded_reason;
 
-  // Configured sources set this to the configured ingress fragment. ROS sources leave it empty.
+  // Other video sources set this to the configured ingress fragment. ROS sources leave it empty.
   std::string ingress_fragment;
   // Optional GStreamer transform fragment inserted after ingress and before the bridge-owned tail.
   std::string transform_fragment;
@@ -79,8 +79,8 @@ std::string videoInputKindToString(VideoInputKind kind);
 // precedence without an extra priority field.
 VideoStreamSpec resolveRosVideoTopicSpec(
   const VideoStreamConfig & config, const std::string & topic, const std::string & interface_type);
-// Trims the configured source name before lookup. The resulting track name percent-encodes that canonical name
+// Trims the other-video-source name before lookup. The resulting track name percent-encodes that canonical name
 // because other-video identifiers are free-form strings, not normalized ROS resource paths.
-VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name);
+VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & requested_name);
 
 }  // namespace livekit_ros2_bridge

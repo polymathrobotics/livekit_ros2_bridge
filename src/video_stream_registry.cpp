@@ -144,8 +144,8 @@ VideoStreamSpec VideoStreamRegistry::resolveSpec(
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return resolveRosVideoTopicSpec(videoStreamConfig(), name, interface_type);
-    case SubscriptionTargetKind::ConfiguredSource:
-      return resolveConfiguredVideoSourceSpec(videoStreamConfig(), name);
+    case SubscriptionTargetKind::OtherVideo:
+      return resolveOtherVideoSourceSpec(videoStreamConfig(), name);
   }
 
   throw std::invalid_argument("video stream request kind is invalid");

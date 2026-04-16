@@ -126,12 +126,12 @@ bool publishUntil(
   return predicate();
 }
 
-VideoStreamConfig makeConfiguredVideoStreamConfig()
+VideoStreamConfig makeOtherVideoSourceConfig()
 {
   VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
-  ConfiguredVideoStreamSource configured_source;
-  configured_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  stream_config.configured_sources.emplace("/sources/front", std::move(configured_source));
+  OtherVideoSource other_video_source;
+  other_video_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  stream_config.other_video_sources.emplace("/sources/front", std::move(other_video_source));
   return stream_config;
 }
 
@@ -170,9 +170,9 @@ SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> 
   return SubscriptionDemand{SubscriptionTargetKind::Topic, name, interval_ms};
 }
 
-SubscriptionDemand makeConfiguredSourceDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+SubscriptionDemand makeOtherVideoDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return SubscriptionDemand{SubscriptionTargetKind::ConfiguredSource, name, interval_ms};
+  return SubscriptionDemand{SubscriptionTargetKind::OtherVideo, name, interval_ms};
 }
 
 SubscriptionHeartbeat makeHeartbeat(
@@ -576,12 +576,12 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, topic_b) != nullptr);
 }
 
-TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfiguredSources)
+TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOtherVideoSources)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomConnection session;
-  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
   VideoStreamRegistry video_stream_registry(*node, session, nullptr, nullptr, &video_stream_config);
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
@@ -597,7 +597,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndConfi
   const auto topic_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(video_topic)}));
   const auto source_status = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "bob", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
+    registry, *session.state, "bob", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
 
   EXPECT_EQ(topic_status["delivery"]["kind"], "video");
   EXPECT_EQ(topic_status["delivery"]["track_name"], "ros.video.camera.front");
@@ -899,14 +899,14 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
     *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessPolicyAndReturnsVideoStatus)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
 
   auto manager = makeManager(deny_all, &video_stream_config);
 
-  manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
 
   const auto status = extractPublishedStatusEntry(*state_, "requester-1");
   expectStatusEntry(status, "other_video", "/sources/front", "active");
@@ -915,13 +915,13 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessP
   EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingConfiguredSourceReturnsErrorOnSourceIdField)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingOtherVideoReturnsErrorOnSourceIdField)
 {
-  const VideoStreamConfig video_stream_config = makeConfiguredVideoStreamConfig();
+  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
 
   auto manager = makeManager(access_policy_, &video_stream_config);
 
-  manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/missing")}));
+  manager.handleHeartbeat("requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/missing")}));
 
   expectPublishedError(
     *state_,

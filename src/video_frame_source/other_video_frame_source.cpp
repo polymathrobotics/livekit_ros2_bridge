@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_frame_source/configured_source_video_frame_source.hpp"
+#include "video_frame_source/other_video_frame_source.hpp"
 
 #include <chrono>
 #include <utility>
@@ -23,13 +23,13 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-// Configured sources can restart immediately, but a small backoff avoids tight
+// Other video sources can restart immediately, but a small backoff avoids tight
 // loops on a broken static launch string.
 constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 
 }  // namespace
 
-ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
+OtherVideoFrameSource::OtherVideoFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & sink,
   VideoStreamLifecycleObserver & observer,
@@ -45,7 +45,7 @@ ConfiguredSourceVideoFrameSource::ConfiguredSourceVideoFrameSource(
     })
 {}
 
-std::string ConfiguredSourceVideoFrameSource::fixedPipelineDescription() const
+std::string OtherVideoFrameSource::fixedPipelineDescription() const
 {
   return buildVideoPipelineDescription(spec_.ingress_fragment, spec_.transform_fragment);
 }

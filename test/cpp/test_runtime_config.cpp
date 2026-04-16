@@ -272,10 +272,11 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.transform_fragment, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
   const auto & fallback_rule = config.video_stream.ros_topic_rules.back();
   EXPECT_EQ(fallback_rule.rule_id, "default_ros");
-  ASSERT_EQ(config.video_stream.configured_sources.size(), 1U);
+  ASSERT_EQ(config.video_stream.other_video_sources.size(), 1U);
   EXPECT_EQ(
-    config.video_stream.configured_sources.at("front_rtsp").ingress_fragment, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(config.video_stream.configured_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
+    config.video_stream.other_video_sources.at("front_rtsp").ingress_fragment,
+    "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(config.video_stream.other_video_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
@@ -418,7 +419,7 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
     const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_publish_override", options);
 
     expectPublishConfigEq(
-      config.video_stream.configured_sources.at("front").publish_config,
+      config.video_stream.other_video_sources.at("front").publish_config,
       VideoPublishCodec::H265,
       500000U,
       30.0,
@@ -559,12 +560,12 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherVideoSources)
   options.arguments({"--ros-args", "--params-file", params_path.string()});
   const RuntimeConfig config = loadRuntimeConfigForNode(node_name, options);
 
-  ASSERT_EQ(config.video_stream.configured_sources.size(), 2U);
+  ASSERT_EQ(config.video_stream.other_video_sources.size(), 2U);
   EXPECT_EQ(
-    config.video_stream.configured_sources.at("/front_rtsp").ingress_fragment,
+    config.video_stream.other_video_sources.at("/front_rtsp").ingress_fragment,
     "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    config.video_stream.configured_sources.at("/front_rtsp/").ingress_fragment,
+    config.video_stream.other_video_sources.at("/front_rtsp/").ingress_fragment,
     "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);

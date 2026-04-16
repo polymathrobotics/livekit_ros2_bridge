@@ -28,9 +28,9 @@ namespace
 {
 
 constexpr char kTopicKeyPrefix[] = "topic";
-constexpr char kConfiguredSourceKeyPrefix[] = "other_video";
+constexpr char kOtherVideoKeyPrefix[] = "other_video";
 constexpr char kTopicTrackPrefix[] = "ros.video.";
-constexpr char kConfiguredSourceTrackPrefix[] = "ros.video.other.";
+constexpr char kOtherVideoTrackPrefix[] = "ros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 constexpr char kUnnamedTrackSuffix[] = "unnamed";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");
@@ -98,7 +98,7 @@ bool isUnreservedTrackByte(unsigned char byte)
 
 // Other-video names are free-form identifiers, so percent-encode reserved bytes
 // to keep the client-visible track suffix reversible and avoid dot-mapping collisions.
-std::string encodeConfiguredSourceTrackSuffix(std::string_view name)
+std::string encodeOtherVideoTrackSuffix(std::string_view name)
 {
   std::string suffix;
   suffix.reserve(name.size() * 3U);
@@ -115,9 +115,9 @@ std::string encodeConfiguredSourceTrackSuffix(std::string_view name)
   return suffix;
 }
 
-std::string makeConfiguredSourceTrackName(std::string_view name)
+std::string makeOtherVideoTrackName(std::string_view name)
 {
-  return makeTrackName(kConfiguredSourceTrackPrefix, encodeConfiguredSourceTrackSuffix(name));
+  return makeTrackName(kOtherVideoTrackPrefix, encodeOtherVideoTrackSuffix(name));
 }
 
 const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
@@ -200,30 +200,30 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   return spec;
 }
 
-VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name)
+VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & requested_name)
 {
-  const std::string name = trim(source_name);
+  const std::string name = trim(requested_name);
   if (name.empty()) {
     throw std::invalid_argument("Invalid other video name.");
   }
 
-  const auto it = config.configured_sources.find(name);
-  if (it == config.configured_sources.end()) {
+  const auto it = config.other_video_sources.find(name);
+  if (it == config.other_video_sources.end()) {
     throw std::invalid_argument("Unknown other video source '" + name + "'.");
   }
 
   const auto & source_config = it->second;
 
   VideoStreamSpec spec;
-  spec.stream_key = makeStreamKey(kConfiguredSourceKeyPrefix, name);
-  spec.track_name = makeConfiguredSourceTrackName(name);
-  spec.input_kind = VideoInputKind::ConfiguredSource;
-  spec.source_name = name;
+  spec.stream_key = makeStreamKey(kOtherVideoKeyPrefix, name);
+  spec.track_name = makeOtherVideoTrackName(name);
+  spec.input_kind = VideoInputKind::OtherVideoSource;
+  spec.other_video_source_name = name;
   spec.config_id = name;
 
   spec.ingress_fragment = source_config.ingress_fragment;
   spec.transform_fragment = source_config.transform_fragment;
-  spec.ingest_mode = kConfiguredSourceIngestMode;
+  spec.ingest_mode = kOtherVideoIngestMode;
   spec.publish_config = source_config.publish_config;
 
   return spec;

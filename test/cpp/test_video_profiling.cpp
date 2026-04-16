@@ -147,9 +147,9 @@ TEST(VideoProfilingTest, RegistryReusesExistingProfilerForStreamKeyDespiteDiffer
   const auto active_spec = makeSpec();
   auto reused_spec = makeSpec();
   reused_spec.track_name = "ros.video.other.front_camera";
-  reused_spec.input_kind = VideoInputKind::ConfiguredSource;
-  reused_spec.ingest_mode = kConfiguredSourceIngestMode;
-  reused_spec.source_name = "front_camera";
+  reused_spec.input_kind = VideoInputKind::OtherVideoSource;
+  reused_spec.ingest_mode = kOtherVideoIngestMode;
+  reused_spec.other_video_source_name = "front_camera";
 
   const auto profiler = registry.getOrCreateProfiler(active_spec);
   const auto reused_profiler = registry.getOrCreateProfiler(reused_spec);

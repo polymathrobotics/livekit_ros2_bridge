@@ -126,13 +126,13 @@ bool publishUntil(
   return predicate();
 }
 
-VideoStreamConfig makeConfiguredSourceConfig(std::initializer_list<const char *> source_names)
+VideoStreamConfig makeOtherVideoSourceConfig(std::initializer_list<const char *> source_names)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
   for (const char * source_name : source_names) {
-    ConfiguredVideoStreamSource source;
+    OtherVideoSource source;
     source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-    config.configured_sources.emplace(source_name, std::move(source));
+    config.other_video_sources.emplace(source_name, std::move(source));
   }
   return config;
 }
@@ -470,39 +470,39 @@ TEST_F(VideoStreamRegistryTest, ProfilingCapturesCompressedRosStreamActivity)
   EXPECT_TRUE(summary.push_to_appsrc_ms.hasSamples());
 }
 
-TEST_F(VideoStreamRegistryTest, ConfiguredSourceStartIsIdempotentAndStopUnpublishesPublishedTrack)
+TEST_F(VideoStreamRegistryTest, OtherVideoStartIsIdempotentAndStopUnpublishesPublishedTrack)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_configured_source"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_other_video"));
   FakeRoomConnection room_connection;
-  const auto stream_config = makeConfiguredSourceConfig({"/sources/front"});
+  const auto stream_config = makeOtherVideoSourceConfig({"/sources/front"});
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
   const std::string source_name = "/sources/front";
-  const auto info = registry.resolve(SubscriptionTargetKind::ConfiguredSource, source_name);
+  const auto info = registry.resolve(SubscriptionTargetKind::OtherVideo, source_name);
 
-  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
-  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
+  registry.start(SubscriptionTargetKind::OtherVideo, source_name);
+  registry.start(SubscriptionTargetKind::OtherVideo, source_name);
 
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(room_connection.state->published_video_track_names, (std::vector<std::string>{info.track_name}));
 
-  registry.stop(SubscriptionTargetKind::ConfiguredSource, source_name);
+  registry.stop(SubscriptionTargetKind::OtherVideo, source_name);
 
   EXPECT_EQ(room_connection.state->unpublished_video_track_names, (std::vector<std::string>{info.track_name}));
 }
 
-TEST_F(VideoStreamRegistryTest, ProfilingCapturesConfiguredSourceActivity)
+TEST_F(VideoStreamRegistryTest, ProfilingCapturesOtherVideoActivity)
 {
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_configured_source"));
+  auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_profiled_other_video"));
   FakeRoomConnection room_connection;
   VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
-  const auto stream_config = makeConfiguredSourceConfig({"/sources/profiled_front"});
+  const auto stream_config = makeOtherVideoSourceConfig({"/sources/profiled_front"});
   VideoStreamRegistry registry(*node, room_connection, nullptr, &profiling_registry, &stream_config);
 
   const std::string source_name = "/sources/profiled_front";
 
-  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
+  registry.start(SubscriptionTargetKind::OtherVideo, source_name);
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
 
@@ -531,12 +531,12 @@ TEST_F(VideoStreamRegistryTest, ShutdownUnpublishesActiveTracksAndIsIdempotent)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown"));
   FakeRoomConnection room_connection;
-  const auto stream_config = makeConfiguredSourceConfig({"/sources/shutdown"});
+  const auto stream_config = makeOtherVideoSourceConfig({"/sources/shutdown"});
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
   const std::string source_name = "/sources/shutdown";
-  const auto info = registry.resolve(SubscriptionTargetKind::ConfiguredSource, source_name);
-  registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
+  const auto info = registry.resolve(SubscriptionTargetKind::OtherVideo, source_name);
+  registry.start(SubscriptionTargetKind::OtherVideo, source_name);
 
   ASSERT_TRUE(
     waitUntil([&room_connection]() { return room_connection.state->published_video_track_names.size() == 1U; }));
@@ -565,7 +565,7 @@ TEST_F(VideoStreamRegistryTest, StartRejectsNewStreamsAfterShutdown)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("video_stream_registry_shutdown_reject"));
   FakeRoomConnection room_connection;
-  const auto stream_config = makeConfiguredSourceConfig({"/sources/shutdown"});
+  const auto stream_config = makeOtherVideoSourceConfig({"/sources/shutdown"});
   VideoStreamRegistry registry(*node, room_connection, nullptr, nullptr, &stream_config);
 
   const std::string source_name = "/sources/shutdown";
@@ -573,7 +573,7 @@ TEST_F(VideoStreamRegistryTest, StartRejectsNewStreamsAfterShutdown)
   registry.shutdown();
 
   try {
-    registry.start(SubscriptionTargetKind::ConfiguredSource, source_name);
+    registry.start(SubscriptionTargetKind::OtherVideo, source_name);
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Video stream registry is shut down.");

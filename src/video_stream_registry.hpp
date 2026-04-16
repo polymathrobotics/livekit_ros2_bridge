@@ -89,7 +89,7 @@ private:
   const SubscriptionQosConfig * qos_config_;
   // Optional non-owning registry consulted only when creating a new stream instance.
   VideoProfilingRegistry * profiling_registry_;
-  // Optional non-owning config used to resolve topic/configured-source requests. When null, the
+  // Optional non-owning config used to resolve topic/other-video requests. When null, the
   // registry reads from the shared immutable bridge default config instead of caching its own copy.
   const VideoStreamConfig * video_stream_config_;
   // Guards `is_shutdown_` and `instances_`. Per-stream lifecycle synchronization lives

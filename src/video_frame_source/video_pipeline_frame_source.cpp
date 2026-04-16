@@ -402,7 +402,7 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     pts_us = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
   }
   if (profiler_ != nullptr) {
-    if (spec_.input_kind == VideoInputKind::ConfiguredSource) {
+    if (spec_.input_kind == VideoInputKind::OtherVideoSource) {
       profiler_->noteIngress(VideoStreamProfiler::SteadyClock::now(), pts_us);
     }
     profiler_->noteSample(pts_us);

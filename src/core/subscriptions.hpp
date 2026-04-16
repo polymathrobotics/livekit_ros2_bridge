@@ -26,7 +26,7 @@ namespace livekit_ros2_bridge
 enum class SubscriptionTargetKind
 {
   Topic,
-  ConfiguredSource,
+  OtherVideo,
 };
 
 // A single lease-backed subscription demand plus any non-zero delivery preference overrides.

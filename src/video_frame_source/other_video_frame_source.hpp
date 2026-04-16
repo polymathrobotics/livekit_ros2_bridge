@@ -19,14 +19,14 @@
 namespace livekit_ros2_bridge
 {
 
-// Frame source for configured-source streams whose ingress pipeline is fully
+// Frame source for other-video-source streams whose ingress pipeline is fully
 // described by the stream spec at construction time, so failure recovery can
 // recreate the same launch string without coordinating with an external
 // producer.
-class ConfiguredSourceVideoFrameSource final : public VideoPipelineFrameSource
+class OtherVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
-  ConfiguredSourceVideoFrameSource(
+  OtherVideoFrameSource(
     VideoStreamSpec spec,
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,

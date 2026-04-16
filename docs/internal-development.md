@@ -83,7 +83,7 @@ Use these words and phrases consistently in `livekit_ros2_bridge`.
 - `track types`: Prefer `data track`, `video track`, and `audio track`. Use bare `track` only when the type is obvious from the surrounding code.
 - `scope provides context`: In short functions or well-named types/namespaces, prefer short role-based locals and bare verbs when the surrounding scope already makes the domain obvious. Prefer `body` to `responseBody` unless extra words are needed to disambiguate.
 - `preserve the role noun`: When shortening a type or field name, remove redundant qualifiers before removing the semantic role word. Prefer `Rules` over `OperationRules`, but keep `RuleEntries` instead of shortening it to `Entries`.
-- `resource` vs `target`: `resource` is a real ROS graph entity. `target` may also be a configured source.
+- `resource` vs `target`: `resource` is a real ROS graph entity. `target` may also be a bridge-owned other video source.
 - `topic`: In LiveKit packet code, `topic` means the LiveKit data-packet topic. Use `ros_topic` or `lk_topic` when both concepts are nearby.
 - `connection` vs `session` vs `lease`: `connection` is the bridge's room connection, `session`
   is a requester or participant over time, and `lease` is a time-limited claim.

@@ -20,7 +20,7 @@
 
 #include "gtest/gtest.h"
 #include "utils/gstreamer_raii.hpp"
-#include "video_frame_source/configured_source_video_frame_source.hpp"
+#include "video_frame_source/other_video_frame_source.hpp"
 #include "video_frame_source/video_pipeline_frame_source.hpp"
 
 namespace livekit_ros2_bridge
@@ -34,10 +34,10 @@ VideoStreamSpec makeTestSpec()
   VideoStreamSpec spec;
   spec.stream_key = "other_video:test";
   spec.track_name = "ros.video.other.test";
-  spec.input_kind = VideoInputKind::ConfiguredSource;
-  spec.ingest_mode = kConfiguredSourceIngestMode;
+  spec.input_kind = VideoInputKind::OtherVideoSource;
+  spec.ingest_mode = kOtherVideoIngestMode;
   spec.config_id = "test";
-  spec.source_name = "test";
+  spec.other_video_source_name = "test";
   return spec;
 }
 
@@ -154,12 +154,12 @@ TEST_F(VideoPipelineFrameSourceTest, StartCapturesRequiredAppSrcHandle)
   source->shutdown();
 }
 
-TEST_F(VideoPipelineFrameSourceTest, ConfiguredSourceLifecycleIsIdempotent)
+TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
 {
   VideoStreamSpec spec = makeTestSpec();
   spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
 
-  auto source = std::make_shared<ConfiguredSourceVideoFrameSource>(spec, sink_, observer_);
+  auto source = std::make_shared<OtherVideoFrameSource>(spec, sink_, observer_);
   source->start();
   source->start();
   source->shutdown();

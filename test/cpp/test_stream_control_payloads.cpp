@@ -85,7 +85,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
   expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
-    SubscriptionTargetKind::ConfiguredSource,
+    SubscriptionTargetKind::OtherVideo,
     "front_camera",
     125);
 
@@ -190,7 +190,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinim
     25);
 }
 
-TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSourcesUsingTrimmedName)
+TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateOtherVideoTargetsUsingTrimmedName)
 {
   expectDemand(
     nlohmann::json::parse(
@@ -198,7 +198,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
       {"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
       {"kind":" other_video ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
     ]})"),
-    SubscriptionTargetKind::ConfiguredSource,
+    SubscriptionTargetKind::OtherVideo,
     "front_camera",
     25);
 }
@@ -249,7 +249,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
   ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
   EXPECT_EQ(heartbeat.subscriptions[0].kind, SubscriptionTargetKind::Topic);
   EXPECT_EQ(heartbeat.subscriptions[0].name, "/camera/front");
-  EXPECT_EQ(heartbeat.subscriptions[1].kind, SubscriptionTargetKind::ConfiguredSource);
+  EXPECT_EQ(heartbeat.subscriptions[1].kind, SubscriptionTargetKind::OtherVideo);
   EXPECT_EQ(heartbeat.subscriptions[1].name, "/camera/front");
   EXPECT_EQ(heartbeat.subscriptions[2].name, "front_camera");
   EXPECT_EQ(heartbeat.subscriptions[3].name, "front_camera/");
@@ -262,12 +262,12 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
   topic_data.applied_interval_ms = 50;
 
-  auto configured_source_video = makeStatus(
-    SubscriptionTargetKind::ConfiguredSource,
+  auto other_video = makeStatus(
+    SubscriptionTargetKind::OtherVideo,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
     "ros.video.other.%2Fsources%2Ffront");
-  configured_source_video.degraded_reason = "source warming up";
+  other_video.degraded_reason = "source warming up";
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
@@ -295,7 +295,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
 
   EXPECT_EQ(
     wire::subscriptions::serializeStatuses(
-      std::vector<SubscriptionReportedStatus>{topic_data, configured_source_video},
+      std::vector<SubscriptionReportedStatus>{topic_data, other_video},
       std::nullopt,
       std::nullopt,
       std::chrono::steady_clock::time_point{}),
@@ -342,7 +342,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
           SubscriptionStatusErrorReason::kUnavailable,
           "Video stream registry is unavailable."),
         makeErrorStatus(
-          SubscriptionTargetKind::ConfiguredSource,
+          SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
           SubscriptionStatusErrorReason::kNotFound,
           "Unknown other video source '/sources/missing'."),
@@ -425,8 +425,8 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWit
 
 TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
 {
-  auto configured_source_video = makeStatus(
-    SubscriptionTargetKind::ConfiguredSource,
+  auto other_video = makeStatus(
+    SubscriptionTargetKind::OtherVideo,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
     "ros.video.other.%2Fsources%2Ffront");
@@ -452,7 +452,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
   EXPECT_EQ(
     wire::subscriptions::serializeStatuses(
       std::vector<SubscriptionReportedStatus>{
-        configured_source_video,
+        other_video,
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",

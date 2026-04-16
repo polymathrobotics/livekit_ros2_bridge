@@ -188,54 +188,54 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceho
   EXPECT_EQ(spec.transform_fragment, "{topic}");
 }
 
-TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecTrimsConfiguredSourceName)
+TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
   const auto expected_publish_config =
     makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
 
-  ConfiguredVideoStreamSource source_config;
+  OtherVideoSource source_config;
   source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
   source_config.transform_fragment = "videobalance saturation=0.0";
   source_config.publish_config = expected_publish_config;
 
-  config.configured_sources.emplace("front_camera", std::move(source_config));
+  config.other_video_sources.emplace("front_camera", std::move(source_config));
 
-  const auto spec = resolveConfiguredVideoSourceSpec(config, "  front_camera  ");
+  const auto spec = resolveOtherVideoSourceSpec(config, "  front_camera  ");
 
   EXPECT_EQ(spec.stream_key, "other_video:front_camera");
   EXPECT_EQ(spec.track_name, "ros.video.other.front_camera");
-  EXPECT_EQ(spec.source_name, "front_camera");
-  EXPECT_EQ(spec.input_kind, VideoInputKind::ConfiguredSource);
-  EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
+  EXPECT_EQ(spec.other_video_source_name, "front_camera");
+  EXPECT_EQ(spec.input_kind, VideoInputKind::OtherVideoSource);
+  EXPECT_EQ(spec.ingest_mode, kOtherVideoIngestMode);
   EXPECT_EQ(spec.ingress_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(spec.transform_fragment, "videobalance saturation=0.0");
   expectPublishConfigEq(spec.publish_config, expected_publish_config);
 }
 
-TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecPercentEncodesTrackNameSuffix)
+TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecPercentEncodesTrackNameSuffix)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
 
-  ConfiguredVideoStreamSource source_config;
+  OtherVideoSource source_config;
   source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
 
-  config.configured_sources.emplace("/sources/front:rgb%", std::move(source_config));
+  config.other_video_sources.emplace("/sources/front:rgb%", std::move(source_config));
 
-  const auto spec = resolveConfiguredVideoSourceSpec(config, "/sources/front:rgb%");
+  const auto spec = resolveOtherVideoSourceSpec(config, "/sources/front:rgb%");
 
   EXPECT_EQ(spec.track_name, "ros.video.other.%2Fsources%2Ffront%3Argb%25");
 }
 
-TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecRejectsInvalidNames)
+TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecRejectsInvalidNames)
 {
   const VideoStreamConfig config = makeDefaultVideoStreamConfig();
 
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveConfiguredVideoSourceSpec(config, "sources/missing"); },
+    [&]() { (void)resolveOtherVideoSourceSpec(config, "sources/missing"); },
     "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveConfiguredVideoSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+    [&]() { (void)resolveOtherVideoSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
 }  // namespace

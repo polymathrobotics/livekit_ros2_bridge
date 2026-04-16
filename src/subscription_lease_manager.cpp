@@ -477,7 +477,7 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
 
 bool SubscriptionLeaseManager::isVideoSubscription(const Subscription & subscription)
 {
-  return subscription.target_kind == SubscriptionTargetKind::ConfiguredSource ||
+  return subscription.target_kind == SubscriptionTargetKind::OtherVideo ||
          classifyRosVideoIngestMode(subscription.interface_type).has_value();
 }
 
