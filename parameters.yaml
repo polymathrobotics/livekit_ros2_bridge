@@ -20,9 +20,7 @@ livekit_ros2_bridge:
     token:
       type: string
       default_value: ""
-      description: "LiveKit startup token. The bridge uses this token for room connection attempts and does not mint replacement tokens."
-      validation:
-        not_empty<>: null
+      description: "LiveKit startup token falls back to the LIVEKIT_TOKEN environment variable."
 
   health:
     watchdog:

@@ -30,6 +30,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
+constexpr char kLivekitTokenEnvVar[] = "LIVEKIT_TOKEN";
+
 rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
@@ -133,6 +135,25 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
   EXPECT_EQ(config.livekit.access_token, "static-token");
 }
 
+TEST_F(RuntimeConfigTest, FallsBackToEnvironmentTokenWhenParameterIsUnset)
+{
+  test_support::ScopedEnvironmentVariable env_token(kLivekitTokenEnvVar, std::string("env-token"));
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_env_token", makeBaseOptions());
+
+  EXPECT_EQ(config.livekit.access_token, "env-token");
+}
+
+TEST_F(RuntimeConfigTest, ParameterTokenWinsOverEnvironmentToken)
+{
+  test_support::ScopedEnvironmentVariable env_token(kLivekitTokenEnvVar, std::string("env-token"));
+
+  const RuntimeConfig config =
+    loadRuntimeConfigForNode("startup_config_parameter_token_precedence", makeStaticTokenOptions());
+
+  EXPECT_EQ(config.livekit.access_token, "static-token");
+}
+
 TEST_F(RuntimeConfigTest, DefaultVideoConfigAddsBuiltInCatchAllRosRule)
 {
   const RuntimeConfig config =
@@ -219,7 +240,11 @@ TEST_F(RuntimeConfigTest, NullParametersInterfaceIsRejected)
 
 TEST_F(RuntimeConfigTest, MissingRequiredStartupParametersThrow)
 {
-  expectConfigErrorContains("startup_config_missing_token", makeBaseOptions(), "livekit.token");
+  test_support::ScopedEnvironmentVariable env_token(kLivekitTokenEnvVar, std::nullopt);
+  expectConfigError(
+    "startup_config_missing_token",
+    makeBaseOptions(),
+    "LiveKit startup token is required; set livekit.token or LIVEKIT_TOKEN");
 
   {
     rclcpp::NodeOptions options;

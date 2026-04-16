@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <stdexcept>
 #include <string_view>
@@ -41,6 +42,21 @@ const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
 constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
 constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
+constexpr char kLivekitTokenEnvVar[] = "LIVEKIT_TOKEN";
+
+std::string resolveLivekitAccessToken(const Params & params)
+{
+  if (!params.livekit.token.empty()) {
+    return params.livekit.token;
+  }
+
+  const char * env_token = std::getenv(kLivekitTokenEnvVar);
+  if (env_token != nullptr && env_token[0] != '\0') {
+    return env_token;
+  }
+
+  throw std::runtime_error("LiveKit startup token is required; set livekit.token or LIVEKIT_TOKEN");
+}
 
 std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char * context)
 {
@@ -486,7 +502,7 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     stage = "livekit_config";
     config.livekit.url = params.livekit.url;
     config.livekit.room = params.livekit.room;
-    config.livekit.access_token = params.livekit.token;
+    config.livekit.access_token = resolveLivekitAccessToken(params);
 
     stage = "health_config";
     config.health.watchdog_enabled = params.health.watchdog.enabled;

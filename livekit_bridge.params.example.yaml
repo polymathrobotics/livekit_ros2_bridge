@@ -6,14 +6,14 @@
 #   ros2 run livekit_ros2_bridge livekit_ros2_bridge_node --ros-args \
 #     --params-file $(pwd)/livekit_bridge.params.yaml
 #
-# The runtime Docker image also expects a local params file instead of building
-# one from env vars. Mount your local file to `/config/livekit_bridge.params.yaml`
-# or set `LIVEKIT_BRIDGE_PARAMS_FILE` to a different in-container path.
+# The runtime Docker image still expects a local params file for non-secret
+# config. Mount your local file to `/config/livekit_bridge.params.yaml` or set
+# `LIVEKIT_BRIDGE_PARAMS_FILE` to a different in-container path.
 #
 # The bridge will not start until you set:
 # - `livekit.url`: your LiveKit server URL
 # - `livekit.room`: the room this bridge should join
-# - `livekit.token`: a token minted outside the bridge
+# - either `livekit.token` or `LIVEKIT_TOKEN`: a token minted outside the bridge
 # - at least one allowed topic or service in `access.rules.*.allow`
 
 ---
@@ -23,7 +23,9 @@ livekit_ros2_bridge:
     livekit.url: ""  # e.g. "wss://your-livekit.example"
     livekit.room: ""  # e.g. "robot-room"
 
-    # Use a token you created outside the bridge.
+    # Use a token you created outside the bridge. Leave this empty if you want
+    # to inject the token with LIVEKIT_TOKEN instead. If both are set, this
+    # parameter wins.
     livekit.token: ""
 
     # Tell the bridge what remote clients are allowed to use.

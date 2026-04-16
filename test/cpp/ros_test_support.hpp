@@ -15,8 +15,11 @@
 #pragma once
 
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -45,6 +48,51 @@ public:
       rclcpp::shutdown();
     }
   }
+};
+
+class ScopedEnvironmentVariable
+{
+public:
+  ScopedEnvironmentVariable(const char * name, std::optional<std::string> value)
+  : name_(name)
+  , previous_value_(read(name))
+  {
+    apply(value);
+  }
+
+  ~ScopedEnvironmentVariable()
+  {
+    try {
+      apply(previous_value_);
+    } catch (...) {}
+  }
+
+private:
+  static std::optional<std::string> read(const char * name)
+  {
+    const char * value = std::getenv(name);
+    if (value == nullptr) {
+      return std::nullopt;
+    }
+    return std::string(value);
+  }
+
+  void apply(const std::optional<std::string> & value) const
+  {
+    if (value.has_value()) {
+      if (::setenv(name_.c_str(), value->c_str(), 1) != 0) {
+        throw std::runtime_error("setenv failed for " + name_);
+      }
+      return;
+    }
+
+    if (::unsetenv(name_.c_str()) != 0) {
+      throw std::runtime_error("unsetenv failed for " + name_);
+    }
+  }
+
+  std::string name_;
+  std::optional<std::string> previous_value_;
 };
 
 inline bool spinUntil(

@@ -48,7 +48,7 @@ You need:
 
 - a ROS 2 workspace where you can build and source this package
 - a reachable LiveKit deployment
-- a pre-minted `livekit.token`
+- a pre-minted startup token provided via `livekit.token` or `LIVEKIT_TOKEN` env variable.
 - at least one allowed topic or service in `access.rules.*.allow`
 
 ## Quickstart
@@ -59,14 +59,14 @@ You need:
    cp livekit_bridge.params.example.yaml livekit_bridge.params.yaml
    ```
 
-2. Edit `livekit_bridge.params.yaml` and set the connection, token, and at least one allow rule.
+2. Edit `livekit_bridge.params.yaml` and set the connection, at least one allow rule, and either `livekit.token` or the `LIVEKIT_TOKEN` env variable.
 
    ```yaml
    livekit_ros2_bridge:
      ros__parameters:
        livekit.url: "wss://your-livekit.example"
        livekit.room: "robot-room"
-       livekit.token: ""
+       livekit.token: ""  # optional if LIVEKIT_TOKEN is set
 
        access.rules.subscribe.allow: ["/camera/*"]
        access.rules.publish.allow: ["/cmd_vel"]
@@ -78,6 +78,7 @@ You need:
 3. Run the node.
 
    ```bash
+   export LIVEKIT_TOKEN="your-pre-minted-token"
    ros2 run livekit_ros2_bridge livekit_ros2_bridge_node --ros-args \
      --params-file $(pwd)/livekit_bridge.params.yaml
    ```

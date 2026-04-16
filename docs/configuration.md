@@ -23,11 +23,17 @@ Startup fails if `livekit.url` or `livekit.room` is empty.
 
 | Parameter | Required | Notes |
 | --- | --- | --- |
-| `livekit.token` | yes | Startup token for the bridge participant. The bridge does not mint or refresh tokens. |
+| `livekit.token` | no* | Startup token for the bridge participant. If non-empty, it wins over `LIVEKIT_TOKEN`. |
 
-Startup fails if `livekit.token` is empty.
+| Environment variable | Required | Notes |
+| --- | --- | --- |
+| `LIVEKIT_TOKEN` | no* | Fallback startup token when `livekit.token` is empty. |
 
-The bridge reuses the configured startup token when it creates a fresh room connection. If that token expires, later reconnect attempts will fail until something outside the bridge restarts it with a fresh token.
+\* One of `livekit.token` or `LIVEKIT_TOKEN` must be non-empty.
+
+Startup fails if both `livekit.token` and `LIVEKIT_TOKEN` are empty.
+
+The bridge reuses the resolved startup token when it creates a fresh room connection. If that token expires, later reconnect attempts will fail until something outside the bridge restarts it with a fresh token.
 
 ## Watchdog health parameters
 
@@ -48,7 +54,7 @@ Important behavior:
 - when the recovery timeout expires, the bridge logs the failure, shuts down, and exits non-zero
 - clean shutdown does not trigger the watchdog
 
-This is separate from static config validation. Missing `livekit.url`, `livekit.room`, or `livekit.token` still fail immediately at startup without waiting for the recovery timeout.
+This is separate from static config validation. Missing `livekit.url` or `livekit.room`, or leaving both `livekit.token` and `LIVEKIT_TOKEN` empty, still fail immediately at startup without waiting for the recovery timeout.
 
 ## Access rules
 
