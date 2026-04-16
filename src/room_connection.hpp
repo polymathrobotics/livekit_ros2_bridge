@@ -38,7 +38,6 @@ namespace livekit_ros2_bridge
 struct LiveKitConfig
 {
   std::string url;
-  std::string room;
   std::string access_token;
 };
 

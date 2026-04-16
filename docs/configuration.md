@@ -17,7 +17,6 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
 | Setting | Default | Required | Allowed values | Notes |
 | --- | --- | --- | --- | --- |
 | `livekit.url` | `""` | yes | non-empty string | LiveKit server URL |
-| `livekit.room` | `""` | yes | non-empty string | LiveKit room name |
 | `livekit.token` | `""` | yes* | string | Startup token for the bridge participant. If non-empty, it wins over `LIVEKIT_TOKEN`. |
 | `LIVEKIT_TOKEN` | unset | yes* | string | Fallback startup token when `livekit.token` is empty |
 
@@ -25,7 +24,7 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
 
 Notes:
 
-- startup fails if `livekit.url` or `livekit.room` is empty
+- startup fails if `livekit.url` is empty
 - startup fails if both token sources are empty
 - the resolved startup token is reused when the bridge creates a fresh room connection
 - if that token expires later, reconnect attempts fail until something outside the bridge restarts it with a fresh token

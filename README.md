@@ -65,7 +65,6 @@ You need:
    livekit_ros2_bridge:
      ros__parameters:
        livekit.url: "wss://your-livekit.example"
-       livekit.room: "robot-room"
        livekit.token: ""  # optional if LIVEKIT_TOKEN is set
 
        access.rules.subscribe.allow: ["/camera/*"]

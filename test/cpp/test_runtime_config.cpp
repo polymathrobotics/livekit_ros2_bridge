@@ -36,7 +36,6 @@ rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.url", "ws://test:7880");
-  options.append_parameter_override("livekit.room", "robot-room");
   return options;
 }
 
@@ -131,7 +130,6 @@ TEST_F(RuntimeConfigTest, StaticTokenStartupLoadsConnectionSettings)
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_static_token", makeStaticTokenOptions());
 
   EXPECT_EQ(config.livekit.url, "ws://test:7880");
-  EXPECT_EQ(config.livekit.room, "robot-room");
   EXPECT_EQ(config.livekit.access_token, "static-token");
 }
 
@@ -248,18 +246,9 @@ TEST_F(RuntimeConfigTest, MissingRequiredStartupParametersThrow)
 
   {
     rclcpp::NodeOptions options;
-    options.append_parameter_override("livekit.room", "robot-room");
     options.append_parameter_override("livekit.token", "static-token");
 
     expectConfigErrorContains("startup_config_missing_url", options, "Parameter 'livekit.url' cannot be empty");
-  }
-
-  {
-    rclcpp::NodeOptions options;
-    options.append_parameter_override("livekit.url", "ws://test:7880");
-    options.append_parameter_override("livekit.token", "static-token");
-
-    expectConfigErrorContains("startup_config_missing_room", options, "Parameter 'livekit.room' cannot be empty");
   }
 }
 
@@ -566,7 +555,6 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctConfiguredSources)
     params_file << node_name << ":\n";
     params_file << "  ros__parameters:\n";
     params_file << "    livekit.url: ws://test:7880\n";
-    params_file << "    livekit.room: robot-room\n";
     params_file << "    livekit.token: static-token\n";
     params_file << "    video_configured_source_ids: ['/front_rtsp', '/front_rtsp/']\n";
     params_file << "    \"video.configured_sources./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";

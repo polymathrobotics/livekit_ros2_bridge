@@ -11,12 +11,6 @@ livekit_ros2_bridge:
       description: "LiveKit server URL."
       validation:
         not_empty<>: null
-    room:
-      type: string
-      default_value: ""
-      description: "LiveKit room name."
-      validation:
-        not_empty<>: null
     token:
       type: string
       default_value: ""

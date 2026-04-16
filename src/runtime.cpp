@@ -50,7 +50,10 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   if (room_connection_ == nullptr) {
     throw std::runtime_error("Failed to create LiveKit room connection");
   }
-  LogEvent(node_.get_logger(), "runtime_startup_begin").fieldOr("room", config_.livekit.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_startup_begin")
+    .fieldOr("url", config_.livekit.url, "<unset>")
+    .field("token_present", !config_.livekit.access_token.empty())
+    .info();
 
   // Preflight: arm shutdown watchdog monitoring before transport startup begins.
   if (config_.health.watchdog_enabled) {
@@ -96,7 +99,8 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   // callbacks only after every ingress path above is ready.
   if (!rpc_router_->registerRpcs(*room_connection_)) {
     LogEvent(node_.get_logger(), "runtime_startup_failed")
-      .fieldOr("room", config_.livekit.room, "<unset>")
+      .fieldOr("url", config_.livekit.url, "<unset>")
+      .field("token_present", !config_.livekit.access_token.empty())
       .field("reason", "required_rpc_registration_failed")
       .error();
     shutdown();
@@ -126,7 +130,7 @@ void Runtime::shutdown()
     return;
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_start").fieldOr("room", config_.livekit.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_start").info();
 
   // Disarm periodic work first so lease GC and watchdog evaluation stop racing a deliberate
   // shutdown while the shared components below are being torn down.
@@ -173,7 +177,7 @@ void Runtime::shutdown()
     video_profiling_registry_->flushTrace();
   }
 
-  LogEvent(node_.get_logger(), "runtime_shutdown_complete").fieldOr("room", config_.livekit.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_shutdown_complete").info();
 }
 
 void Runtime::onRoomConnected()
@@ -187,7 +191,7 @@ void Runtime::onRoomConnected()
     watchdog_deadline_.reset();
   }
 
-  LogEvent(node_.get_logger(), "runtime_ready").fieldOr("room", config_.livekit.room, "<unset>").info();
+  LogEvent(node_.get_logger(), "runtime_ready").info();
 }
 
 void Runtime::onRoomIncomingPacket(const IncomingPacket & packet)
@@ -236,9 +240,8 @@ void Runtime::onRoomReconnectRequested(const std::string & reason)
     watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
   }
 
-  LogEvent log = LogEvent(node_.get_logger(), "runtime_disconnect_observed")
-                   .fieldOr("room", config_.livekit.room, "<unset>")
-                   .fieldOr("disconnect_reason", reason, "connection_lost");
+  LogEvent log =
+    LogEvent(node_.get_logger(), "runtime_disconnect_observed").fieldOr("disconnect_reason", reason, "connection_lost");
 
   if (!config_.health.watchdog_enabled) {
     log.info();
@@ -323,7 +326,6 @@ void Runtime::checkWatchdog()
   }
 
   LogEvent(node_.get_logger(), "runtime_watchdog_triggered")
-    .fieldOr("room", config_.livekit.room, "<unset>")
     .field("disconnect_reason", "recovery_timeout")
     .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0)
     .error();

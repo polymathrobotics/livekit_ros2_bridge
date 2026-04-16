@@ -36,7 +36,6 @@ TEST_F(NodeTest, ConstructsWithRequiredConnectionParameters)
   // This test only exercises presence of the required startup parameters. A non-empty placeholder
   // URL is enough because Node construction does not synchronously reject malformed values here.
   options.append_parameter_override("livekit.url", "not-a-url");
-  options.append_parameter_override("livekit.room", "robot-room");
   options.append_parameter_override("livekit.token", "test-token");
 
   EXPECT_NO_THROW((void)std::make_shared<Node>(options));
@@ -45,7 +44,6 @@ TEST_F(NodeTest, ConstructsWithRequiredConnectionParameters)
 TEST_F(NodeTest, FailsWhenUrlMissing)
 {
   rclcpp::NodeOptions options;
-  options.append_parameter_override("livekit.room", "robot-room");
   options.append_parameter_override("livekit.token", "test-token");
 
   // Keep one node-boundary failure check here because generate_parameter_library rejects missing

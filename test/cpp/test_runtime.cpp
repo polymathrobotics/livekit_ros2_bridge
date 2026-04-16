@@ -84,7 +84,6 @@ rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.url", "ws://test:7880");
-  options.append_parameter_override("livekit.room", "robot-room");
   return options;
 }
 

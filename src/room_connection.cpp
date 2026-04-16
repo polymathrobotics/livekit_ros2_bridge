@@ -93,7 +93,6 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.room_connection");
 constexpr char kUnknownLogValue[] = "<unknown>";
-constexpr char kUnsetLogValue[] = "<unset>";
 constexpr char kLocalParticipantUnavailable[] = "LiveKit local participant unavailable.";
 
 struct LocalParticipantSnapshot
@@ -482,7 +481,6 @@ private:
       if (backoff.count() > 0) {
         LogEvent(kLogger, "room_reconnect_backoff")
           .field("reason", reason.c_str())
-          .fieldOr("room", config_.room, kUnsetLogValue)
           .field("delay_seconds", backoff.count() / 1000.0)
           .warn();
         std::unique_lock<std::mutex> lock(mutex_);
@@ -518,7 +516,7 @@ private:
         LogEvent(kLogger, "room_connect_failed")
           .field("reason", "connect_returned_false")
           .field("url", config.url)
-          .fieldOr("room", config.room, kUnsetLogValue)
+          .field("token_present", !config.access_token.empty())
           .error();
         // This Room only exists for the current connect attempt, so clear the delegate before
         // dropping it on every failure path.
@@ -529,7 +527,7 @@ private:
       LogEvent(kLogger, "room_connect_failed")
         .field("reason", "exception")
         .field("url", config.url)
-        .fieldOr("room", config.room, kUnsetLogValue)
+        .field("token_present", !config.access_token.empty())
         .fieldException("error", std::current_exception())
         .error();
 
@@ -542,7 +540,7 @@ private:
       LogEvent(kLogger, "room_connect_failed")
         .field("reason", "local_participant_unavailable")
         .field("url", config.url)
-        .fieldOr("room", config.room, kUnsetLogValue)
+        .field("token_present", !config.access_token.empty())
         .error();
       room->setDelegate(nullptr);
       return false;
@@ -569,7 +567,7 @@ private:
     }
 
     if (!registered) {
-      LogEvent(kLogger, "rpc_registration_incomplete").fieldOr("room", config.room, kUnsetLogValue).error();
+      LogEvent(kLogger, "rpc_registration_incomplete").error();
       reset(false);
       return false;
     }
@@ -591,7 +589,6 @@ private:
     std::shared_ptr<livekit::Room> room;
     std::function<void()> on_reset;
     std::string reason;
-    std::string room_name;
     std::size_t dropped_tracks = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -605,7 +602,6 @@ private:
       dropped_tracks = video_tracks_.size();
       video_tracks_.clear();
       reason = reconnect_reason_.value_or("");
-      room_name = config_.room;
       reconnect_reason_.reset();
       on_reset = callbacks_.on_connection_reset;
     }
@@ -621,7 +617,6 @@ private:
 
     LogEvent(kLogger, "room_connection_reset")
       .field("reason", reason.empty() ? "connection_reset" : reason.c_str())
-      .fieldOr("room", room_name, kUnsetLogValue)
       .fieldIf(dropped_tracks > 0U, "dropped_video_tracks", dropped_tracks)
       .info();
 
@@ -634,7 +629,6 @@ private:
 
   void requestReconnect(const char * reason)
   {
-    std::string room_name;
     std::string reconnect_reason = reason;
     bool already_requested = false;
     std::function<void(const std::string &)> on_reconnect;
@@ -645,7 +639,6 @@ private:
       already_requested = reconnect_reason_.has_value();
       if (!already_requested) {
         reconnect_reason_ = reason;
-        room_name = config_.room;
         on_reconnect = callbacks_.on_reconnect_requested;
       }
       condition_.notify_all();
@@ -655,10 +648,7 @@ private:
       return;
     }
 
-    LogEvent(kLogger, "room_reconnect_requested")
-      .field("reason", reason)
-      .fieldOr("room", room_name, kUnsetLogValue)
-      .warn();
+    LogEvent(kLogger, "room_reconnect_requested").field("reason", reason).warn();
     if (!on_reconnect) {
       return;
     }

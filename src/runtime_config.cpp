@@ -25,6 +25,7 @@
 
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
+#include "rclcpp/parameter.hpp"
 #include "subscription_qos.hpp"
 #include "utils/gstreamer_raii.hpp"
 #include "utils/log_event.hpp"
@@ -56,6 +57,27 @@ std::string resolveLivekitAccessToken(const Params & params)
   }
 
   throw std::runtime_error("LiveKit startup token is required; set livekit.token or LIVEKIT_TOKEN");
+}
+
+bool hasResolvedLivekitAccessToken(
+  const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters, const Params & params)
+{
+  if (!params.livekit.token.empty()) {
+    return true;
+  }
+
+  if (parameters != nullptr) {
+    rclcpp::Parameter configured_token;
+    if (
+      parameters->get_parameter("livekit.token", configured_token) &&
+      configured_token.get_type() == rclcpp::PARAMETER_STRING && !configured_token.as_string().empty())
+    {
+      return true;
+    }
+  }
+
+  const char * env_token = std::getenv(kLivekitTokenEnvVar);
+  return env_token != nullptr && env_token[0] != '\0';
 }
 
 std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char * context)
@@ -484,8 +506,8 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
 {
   // Keep the parameter snapshot outside the guarded load path so startup
-  // failure logs can still identify which room/url were being configured even
-  // if derived config assembly fails partway through.
+  // failure logs can still identify the configured URL and whether a startup
+  // token was present even if derived config assembly fails partway through.
   RuntimeConfig config;
   Params params;
   const char * stage = "parameters_interface_validation";
@@ -501,7 +523,6 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     stage = "livekit_config";
     config.livekit.url = params.livekit.url;
-    config.livekit.room = params.livekit.room;
     config.livekit.access_token = resolveLivekitAccessToken(params);
 
     stage = "health_config";
@@ -531,8 +552,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     config.video_profiling.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
 
     LogEvent(kLogger, "runtime_config_loaded")
-      .fieldOr("room", config.livekit.room, kUnsetLogValue)
       .fieldOr("url", config.livekit.url, kUnsetLogValue)
+      .field("token_present", !config.livekit.access_token.empty())
       .field("custom_video_rule_count", params.video_topic_rule_ids.size())
       .field("configured_source_count", config.video_stream.configured_sources.size())
       .info();
@@ -541,8 +562,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
   } catch (...) {
     LogEvent(kLogger, "runtime_config_load_failed")
       .field("stage", stage)
-      .fieldOr("room", params.livekit.room, kUnsetLogValue)
       .fieldOr("url", params.livekit.url, kUnsetLogValue)
+      .field("token_present", hasResolvedLivekitAccessToken(parameters, params))
       .fieldException("error", std::current_exception())
       .error();
 
