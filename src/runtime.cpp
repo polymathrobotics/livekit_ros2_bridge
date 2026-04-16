@@ -61,12 +61,12 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     watchdog_timer_ = node_.create_wall_timer(kWatchdogEvaluationInterval, [this]() { checkWatchdog(); });
   }
 
-  // Preflight: configure optional video profiling before any stream state is created.
-  if (config_.video_profiling.enabled) {
-    video_profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.video_profiling);
-    video_profiling_registry_->logConfig();
+  // Preflight: configure optional profiling before any stream state is created.
+  if (config_.profiling.enabled) {
+    profiling_registry_ = std::make_unique<VideoProfilingRegistry>(node_.get_logger(), config_.profiling);
+    profiling_registry_->logConfig();
     video_profile_summary_timer_ = node_.create_wall_timer(
-      video_profiling_registry_->config().summary_interval, [this]() { video_profiling_registry_->logSummaries(); });
+      profiling_registry_->config().summary_interval, [this]() { profiling_registry_->logSummaries(); });
   }
 
   // Bring up the core ROS-facing helpers first. Later handlers and session state depend on these.
@@ -78,7 +78,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   data_stream_registry_ = std::make_unique<DataStreamRegistry>(node_, *room_connection_, &config_.subscription_qos);
 
   video_stream_registry_ = std::make_unique<VideoStreamRegistry>(
-    node_, *room_connection_, &config_.subscription_qos, video_profiling_registry_.get(), &config_.video_stream);
+    node_, *room_connection_, &config_.subscription_qos, profiling_registry_.get(), &config_.video_stream);
 
   subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
     node_, *room_connection_, config_.access_policy, *data_stream_registry_, *video_stream_registry_);
@@ -172,9 +172,9 @@ void Runtime::shutdown()
     ros_topic_publisher_->shutdown();
   }
 
-  if (video_profiling_registry_ != nullptr) {
-    video_profiling_registry_->logSummaries();
-    video_profiling_registry_->flushTrace();
+  if (profiling_registry_ != nullptr) {
+    profiling_registry_->logSummaries();
+    profiling_registry_->flushTrace();
   }
 
   LogEvent(node_.get_logger(), "runtime_shutdown_complete").info();

@@ -47,7 +47,7 @@ struct RuntimeConfig
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos;
   VideoStreamConfig video_stream;
-  VideoProfilingConfig video_profiling;
+  VideoProfilingConfig profiling;
 };
 
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters);

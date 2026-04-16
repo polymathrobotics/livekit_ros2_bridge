@@ -92,7 +92,7 @@ private:
   std::unique_ptr<RosTopicPublisher> ros_topic_publisher_;
   std::unique_ptr<DataStreamRegistry> data_stream_registry_;
   std::unique_ptr<VideoStreamRegistry> video_stream_registry_;
-  std::unique_ptr<VideoProfilingRegistry> video_profiling_registry_;
+  std::unique_ptr<VideoProfilingRegistry> profiling_registry_;
   std::unique_ptr<SubscriptionLeaseManager> subscription_lease_manager_;
   std::unique_ptr<RosServiceCaller> ros_service_caller_;
   std::unique_ptr<PacketRouter> packet_router_;

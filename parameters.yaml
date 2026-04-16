@@ -33,21 +33,21 @@ livekit_ros2_bridge:
           gt_eq<>: [0.0]
 
   debug:
-    video_profiling:
+    profiling:
       enabled:
         type: bool
         default_value: false
-        description: "Enable bridge-side video profiling and trace capture at startup."
+        description: "Enable bridge-side profiling and trace capture at startup."
       summary_interval_ms:
         type: int
         default_value: 5000
-        description: "Interval for aggregated bridge video profiling summary logs."
+        description: "Interval for aggregated bridge profiling summary logs."
         validation:
           gt<>: [0]
       trace_file:
         type: string
         default_value: "/workspace/log/video-profile.trace.json"
-        description: "Trace output path written on shutdown when video profiling is enabled."
+        description: "Trace output path written on shutdown when profiling is enabled."
         validation:
           not_empty<>: null
       trace_max_events:
@@ -194,18 +194,18 @@ livekit_ros2_bridge:
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
 
-  subscription_qos_overrides_ids:
+  subscription_qos_ids:
     type: string_array
     default_value: []
-    description: "QoS override ids defined under subscription.qos_overrides.<id>."
+    description: "QoS ids defined under subscription.qos.<id>."
 
   subscription:
-    qos_overrides:
-      __map_subscription_qos_overrides_ids:
+    qos:
+      __map_subscription_qos_ids:
         pattern:
           type: string
           default_value: ""
-          description: "ROS topic pattern to match for this subscriber QoS override."
+          description: "ROS topic pattern to match for this subscriber QoS entry."
         reliability:
           type: string
           default_value: "auto"

@@ -53,11 +53,11 @@ livekit_ros2_bridge:
     # video.publish.max_framerate: 0.0
     # video.publish.simulcast: "auto"  # or "enabled", "disabled"
     #
-    # Optional bridge-side video profiling:
-    # debug.video_profiling.enabled: true
-    # debug.video_profiling.summary_interval_ms: 5000
-    # debug.video_profiling.trace_file: "/workspace/traces/video-profile.trace.json"
-    # debug.video_profiling.trace_max_events: 250000
+    # Optional bridge-side profiling:
+    # debug.profiling.enabled: true
+    # debug.profiling.summary_interval_ms: 5000
+    # debug.profiling.trace_file: "/workspace/traces/video-profile.trace.json"
+    # debug.profiling.trace_max_events: 250000
     #
     # video_topic_rule_ids: ["front_camera"]
     # video_configured_source_ids: ["back_rtsp", "usb_cam"]

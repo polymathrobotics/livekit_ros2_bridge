@@ -202,28 +202,28 @@ TEST_F(RuntimeConfigTest, AccessRulesLoadIntoRuntimeAccessPolicy)
   EXPECT_FALSE(config.access_policy.allows(AccessOperation::CallService, "/robot/status"));
 }
 
-TEST_F(RuntimeConfigTest, VideoProfilingDefaultsAndOverridesLoadFromParameters)
+TEST_F(RuntimeConfigTest, ProfilingDefaultsAndOverridesLoadFromParameters)
 {
   const RuntimeConfig default_config =
-    loadRuntimeConfigForNode("startup_config_video_profiling_defaults", makeStaticTokenOptions());
+    loadRuntimeConfigForNode("startup_config_profiling_defaults", makeStaticTokenOptions());
 
-  EXPECT_FALSE(default_config.video_profiling.enabled);
-  EXPECT_EQ(default_config.video_profiling.summary_interval, kVideoProfilingDefaultSummaryInterval);
-  EXPECT_EQ(default_config.video_profiling.trace_file, kVideoProfilingDefaultTraceFile);
-  EXPECT_EQ(default_config.video_profiling.trace_max_events, kVideoProfilingDefaultTraceMaxEvents);
+  EXPECT_FALSE(default_config.profiling.enabled);
+  EXPECT_EQ(default_config.profiling.summary_interval, kVideoProfilingDefaultSummaryInterval);
+  EXPECT_EQ(default_config.profiling.trace_file, kVideoProfilingDefaultTraceFile);
+  EXPECT_EQ(default_config.profiling.trace_max_events, kVideoProfilingDefaultTraceMaxEvents);
 
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("debug.video_profiling.enabled", true);
-  options.append_parameter_override("debug.video_profiling.summary_interval_ms", 1200);
-  options.append_parameter_override("debug.video_profiling.trace_file", "/tmp/bridge.trace.json");
-  options.append_parameter_override("debug.video_profiling.trace_max_events", 4096);
+  options.append_parameter_override("debug.profiling.enabled", true);
+  options.append_parameter_override("debug.profiling.summary_interval_ms", 1200);
+  options.append_parameter_override("debug.profiling.trace_file", "/tmp/bridge.trace.json");
+  options.append_parameter_override("debug.profiling.trace_max_events", 4096);
 
-  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_video_profiling_overrides", options);
+  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_profiling_overrides", options);
 
-  EXPECT_TRUE(overridden_config.video_profiling.enabled);
-  EXPECT_EQ(overridden_config.video_profiling.summary_interval, std::chrono::milliseconds(1200));
-  EXPECT_EQ(overridden_config.video_profiling.trace_file, "/tmp/bridge.trace.json");
-  EXPECT_EQ(overridden_config.video_profiling.trace_max_events, 4096U);
+  EXPECT_TRUE(overridden_config.profiling.enabled);
+  EXPECT_EQ(overridden_config.profiling.summary_interval, std::chrono::milliseconds(1200));
+  EXPECT_EQ(overridden_config.profiling.trace_file, "/tmp/bridge.trace.json");
+  EXPECT_EQ(overridden_config.profiling.trace_max_events, 4096U);
 }
 
 TEST_F(RuntimeConfigTest, NullParametersInterfaceIsRejected)
@@ -290,16 +290,16 @@ TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
     config.video_stream.default_publish_config, VideoPublishCodec::H264, 900000U, 24.0, VideoPublishSimulcast::Enabled);
 }
 
-TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams)
+TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosEntriesLoadFromUnifiedParams)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera", "front"});
-  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "best_effort");
-  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
-  options.append_parameter_override("subscription.qos_overrides.front.pattern", "/camera/front");
-  options.append_parameter_override("subscription.qos_overrides.front.reliability", "auto");
-  options.append_parameter_override("subscription.qos_overrides.front.durability", "transient_local");
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"camera", "front"});
+  options.append_parameter_override("subscription.qos.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos.camera.reliability", "best_effort");
+  options.append_parameter_override("subscription.qos.camera.durability", "auto");
+  options.append_parameter_override("subscription.qos.front.pattern", "/camera/front");
+  options.append_parameter_override("subscription.qos.front.reliability", "auto");
+  options.append_parameter_override("subscription.qos.front.durability", "transient_local");
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_subscription_qos_params", options);
 
@@ -321,10 +321,10 @@ TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosOverridesLoadFromUnifiedParams
 TEST_F(RuntimeConfigTest, SubscriptionQosOverrideNormalizesPattern)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("subscription.qos_overrides.front.pattern", " //camera/front/ ");
-  options.append_parameter_override("subscription.qos_overrides.front.reliability", "auto");
-  options.append_parameter_override("subscription.qos_overrides.front.durability", "auto");
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("subscription.qos.front.pattern", " //camera/front/ ");
+  options.append_parameter_override("subscription.qos.front.reliability", "auto");
+  options.append_parameter_override("subscription.qos.front.durability", "auto");
 
   const RuntimeConfig config =
     loadRuntimeConfigForNode("startup_config_subscription_qos_pattern_normalization", options);
@@ -336,10 +336,10 @@ TEST_F(RuntimeConfigTest, SubscriptionQosOverrideNormalizesPattern)
 TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecificError)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera", "camera"});
-  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "auto");
-  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"camera", "camera"});
+  options.append_parameter_override("subscription.qos.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos.camera.reliability", "auto");
+  options.append_parameter_override("subscription.qos.camera.durability", "auto");
 
   expectConfigError(
     "startup_config_duplicate_subscription_qos_override_id",
@@ -350,27 +350,27 @@ TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecif
 TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsEmptyPattern)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera"});
-  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "   ");
-  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "auto");
-  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription.qos.camera.pattern", "   ");
+  options.append_parameter_override("subscription.qos.camera.reliability", "auto");
+  options.append_parameter_override("subscription.qos.camera.durability", "auto");
 
   expectConfigError(
-    "startup_config_empty_subscription_qos_pattern", options, "subscription.qos_overrides pattern must not be empty");
+    "startup_config_empty_subscription_qos_pattern", options, "subscription.qos pattern must not be empty");
 }
 
 TEST_F(RuntimeConfigTest, UnsupportedSubscriptionQosReliabilityIsRejectedByParameterLibrary)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("subscription_qos_overrides_ids", std::vector<std::string>{"camera"});
-  options.append_parameter_override("subscription.qos_overrides.camera.pattern", "/camera/*");
-  options.append_parameter_override("subscription.qos_overrides.camera.reliability", "sometimes");
-  options.append_parameter_override("subscription.qos_overrides.camera.durability", "auto");
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"camera"});
+  options.append_parameter_override("subscription.qos.camera.pattern", "/camera/*");
+  options.append_parameter_override("subscription.qos.camera.reliability", "sometimes");
+  options.append_parameter_override("subscription.qos.camera.durability", "auto");
 
   expectConfigErrorContains(
     "startup_config_invalid_subscription_qos_reliability",
     options,
-    "Parameter 'subscription.qos_overrides.camera.reliability' with the value 'sometimes' is not in the set");
+    "Parameter 'subscription.qos.camera.reliability' with the value 'sometimes' is not in the set");
 }
 
 TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)

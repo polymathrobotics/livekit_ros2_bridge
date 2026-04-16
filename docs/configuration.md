@@ -14,8 +14,8 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
     - [Defaults](#defaults)
     - [ROS topic rules](#ros-topic-rules)
     - [Configured sources](#configured-sources)
-  - [Video profiling](#video-profiling)
-  - [QoS overrides](#qos-overrides)
+  - [Profiling](#profiling)
+  - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
   - [RTSP or device inputs](#rtsp-or-device-inputs)
 
@@ -167,28 +167,28 @@ Lookup notes:
 - configured source track names percent-encode bytes outside RFC 3986 unreserved characters
 - configured sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_configured_source_ids` and `video.configured_sources.*`
 
-### Video profiling
+### Profiling
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `debug.video_profiling.enabled` | `false` | `true`, `false` | Enables bridge-side video profiling at startup |
-| `debug.video_profiling.summary_interval_ms` | `5000` | integer `> 0` | Interval for aggregated profiling summary logs |
-| `debug.video_profiling.trace_file` | `"/workspace/log/video-profile.trace.json"` | non-empty string | Trace output path written on shutdown when profiling is enabled |
-| `debug.video_profiling.trace_max_events` | `250000` | integer `> 0` | Maximum retained in-memory trace events before older events are dropped |
+| `debug.profiling.enabled` | `false` | `true`, `false` | Enables bridge-side profiling at startup |
+| `debug.profiling.summary_interval_ms` | `5000` | integer `> 0` | Interval for aggregated profiling summary logs |
+| `debug.profiling.trace_file` | `"/workspace/log/video-profile.trace.json"` | non-empty string | Trace output path written on shutdown when profiling is enabled |
+| `debug.profiling.trace_max_events` | `250000` | integer `> 0` | Maximum retained in-memory trace events before older events are dropped |
 
 Notes:
 
 - profiling is configured at startup only
 - when enabled, the bridge logs the profiling config, emits periodic summaries, and flushes the trace file on shutdown
 
-### QoS overrides
+### QoS
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `subscription_qos_overrides_ids` | `[]` | array of ids | QoS override ids to load from `subscription.qos_overrides.<id>.*` |
-| `subscription.qos_overrides.<id>.pattern` | `""` | ROS topic pattern | Required for each referenced id |
-| `subscription.qos_overrides.<id>.reliability` | `auto` | `auto`, `reliable`, `best_effort` | Reliability override for matching topics |
-| `subscription.qos_overrides.<id>.durability` | `auto` | `auto`, `volatile`, `transient_local` | Durability override for matching topics |
+| `subscription_qos_ids` | `[]` | array of ids | QoS ids to load from `subscription.qos.<id>.*` |
+| `subscription.qos.<id>.pattern` | `""` | ROS topic pattern | Required for each referenced id |
+| `subscription.qos.<id>.reliability` | `auto` | `auto`, `reliable`, `best_effort` | Reliability override for matching topics |
+| `subscription.qos.<id>.durability` | `auto` | `auto`, `volatile`, `transient_local` | Durability override for matching topics |
 
 Resolution notes:
 

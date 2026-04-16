@@ -118,7 +118,7 @@ SubscriptionQosReliabilityMode parseSubscriptionQosReliability(const std::string
     return SubscriptionQosReliabilityMode::kBestEffort;
   }
 
-  throw std::runtime_error("unsupported subscription.qos_overrides reliability mode '" + raw_mode + "'");
+  throw std::runtime_error("unsupported subscription.qos reliability mode '" + raw_mode + "'");
 }
 
 SubscriptionQosDurabilityMode parseSubscriptionQosDurability(const std::string & raw_mode)
@@ -133,7 +133,7 @@ SubscriptionQosDurabilityMode parseSubscriptionQosDurability(const std::string &
     return SubscriptionQosDurabilityMode::kTransientLocal;
   }
 
-  throw std::runtime_error("unsupported subscription.qos_overrides durability mode '" + raw_mode + "'");
+  throw std::runtime_error("unsupported subscription.qos durability mode '" + raw_mode + "'");
 }
 
 VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
@@ -482,17 +482,17 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
   SubscriptionQosConfig config;
 
   std::unordered_set<std::string> seen_override_ids;
-  for (const auto & override_id : params.subscription_qos_overrides_ids) {
+  for (const auto & override_id : params.subscription_qos_ids) {
     const auto & entry = requireUniqueEntry(
       seen_override_ids,
       override_id,
-      params.subscription.qos_overrides.subscription_qos_overrides_ids_map,
+      params.subscription.qos.subscription_qos_ids_map,
       "subscription QoS override id",
       "subscription QoS override entry");
 
     TopicSubscriptionQosOverride topic_override;
     topic_override.id = override_id;
-    topic_override.pattern = normalizeRosResourcePattern(entry.pattern, "subscription.qos_overrides");
+    topic_override.pattern = normalizeRosResourcePattern(entry.pattern, "subscription.qos");
     topic_override.reliability = parseSubscriptionQosReliability(entry.reliability);
     topic_override.durability = parseSubscriptionQosDurability(entry.durability);
     config.topic_overrides.push_back(std::move(topic_override));
@@ -544,12 +544,11 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     stage = "video_stream_config";
     config.video_stream = loadVideoStreamConfig(params);
 
-    stage = "video_profiling_config";
-    config.video_profiling.enabled = params.debug.video_profiling.enabled;
-    config.video_profiling.summary_interval =
-      std::chrono::milliseconds(params.debug.video_profiling.summary_interval_ms);
-    config.video_profiling.trace_file = params.debug.video_profiling.trace_file;
-    config.video_profiling.trace_max_events = static_cast<std::size_t>(params.debug.video_profiling.trace_max_events);
+    stage = "profiling_config";
+    config.profiling.enabled = params.debug.profiling.enabled;
+    config.profiling.summary_interval = std::chrono::milliseconds(params.debug.profiling.summary_interval_ms);
+    config.profiling.trace_file = params.debug.profiling.trace_file;
+    config.profiling.trace_max_events = static_cast<std::size_t>(params.debug.profiling.trace_max_events);
 
     LogEvent(kLogger, "runtime_config_loaded")
       .fieldOr("url", config.livekit.url, kUnsetLogValue)
