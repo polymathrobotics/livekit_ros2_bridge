@@ -76,7 +76,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
 
   const auto raw_spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
   EXPECT_EQ(raw_spec.stream_key, "topic:/camera/front/image");
-  EXPECT_EQ(raw_spec.track_name, "ros.video.camera.front.image");
+  EXPECT_EQ(raw_spec.track_name, "lkros.video.camera.front.image");
   EXPECT_EQ(raw_spec.ros_topic, "/camera/front/image");
   EXPECT_EQ(raw_spec.interface_type, kImageInterfaceType);
   EXPECT_EQ(raw_spec.input_kind, VideoInputKind::RosTopic);
@@ -87,7 +87,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   const auto compressed_spec =
     resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
   EXPECT_EQ(compressed_spec.stream_key, "topic:/camera/front/image/compressed");
-  EXPECT_EQ(compressed_spec.track_name, "ros.video.camera.front.image.compressed");
+  EXPECT_EQ(compressed_spec.track_name, "lkros.video.camera.front.image.compressed");
   EXPECT_EQ(compressed_spec.config_id, "default_ros");
   EXPECT_EQ(compressed_spec.ingest_mode, kCompressedImageIngestMode);
   expectPublishConfigEq(compressed_spec.publish_config, config.default_publish_config);
@@ -105,7 +105,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
   const auto spec = resolveRosVideoTopicSpec(config, "  camera//front/image/  ", kImageInterfaceType);
 
   EXPECT_EQ(spec.stream_key, "topic:/camera/front/image");
-  EXPECT_EQ(spec.track_name, "ros.video.camera.front.image");
+  EXPECT_EQ(spec.track_name, "lkros.video.camera.front.image");
   EXPECT_EQ(spec.ros_topic, "/camera/front/image");
   EXPECT_EQ(spec.config_id, "normalized");
   EXPECT_EQ(spec.transform_fragment, "videoconvert ! normalized-filter");
@@ -119,7 +119,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesUnnamedTrackNameForRootTop
   const auto spec = resolveRosVideoTopicSpec(config, "/", kImageInterfaceType);
 
   EXPECT_EQ(spec.stream_key, "topic:/");
-  EXPECT_EQ(spec.track_name, "ros.video.unnamed");
+  EXPECT_EQ(spec.track_name, "lkros.video.unnamed");
   EXPECT_EQ(spec.ros_topic, "/");
 }
 
@@ -204,7 +204,7 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
   const auto spec = resolveOtherVideoSourceSpec(config, "  front_camera  ");
 
   EXPECT_EQ(spec.stream_key, "other_video:front_camera");
-  EXPECT_EQ(spec.track_name, "ros.video.other.front_camera");
+  EXPECT_EQ(spec.track_name, "lkros.video.other.front_camera");
   EXPECT_EQ(spec.other_video_source_name, "front_camera");
   EXPECT_EQ(spec.input_kind, VideoInputKind::OtherVideoSource);
   EXPECT_EQ(spec.ingest_mode, kOtherVideoIngestMode);
@@ -224,7 +224,7 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecPercentEncodesTrackNameSuff
 
   const auto spec = resolveOtherVideoSourceSpec(config, "/sources/front:rgb%");
 
-  EXPECT_EQ(spec.track_name, "ros.video.other.%2Fsources%2Ffront%3Argb%25");
+  EXPECT_EQ(spec.track_name, "lkros.video.other.%2Fsources%2Ffront%3Argb%25");
 }
 
 TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecRejectsInvalidNames)

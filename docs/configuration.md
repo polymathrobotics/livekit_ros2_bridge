@@ -66,7 +66,7 @@ Behavior notes:
 - deny rules win over allow rules
 - rules are global and name-based, not requester-specific
 - other video targets do not use `access.rules.subscribe.*`; they are controlled by `video_other_ids` and `video.other.*`
-- a forbidden topic subscription is reported as `forbidden` in `ros.subscriptions.status`
+- a forbidden topic subscription is reported as `forbidden` in `lkros.status`
 
 Pattern notes:
 
@@ -239,7 +239,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    ```json
    {
      "v": 2,
-     "type": "ros.subscriptions.heartbeat",
+     "type": "lkros.heartbeat",
      "subscriptions": [
        {
          "kind": "other_video",
@@ -253,10 +253,10 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    }
    ```
 
-4. Expect video delivery in `ros.subscriptions.status`.
+4. Expect video delivery in `lkros.status`.
 
    - the `name` is the trimmed source id
    - an active entry reports `delivery.kind: "video"`
-   - the track name is deterministic, for example `ros.video.other.front_rtsp`
+   - the track name is deterministic, for example `lkros.video.other.front_rtsp`
    - if the source id contains reserved bytes, the track-name suffix is percent-encoded
    - if a client asks for a source that does not exist, the bridge reports `not_found`

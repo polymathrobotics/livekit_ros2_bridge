@@ -22,8 +22,8 @@ namespace livekit_ros2_bridge::wire::protocol
 // Stable data-packet topics and RPC names used on the LiveKit data channel. Keep the wire values
 // stable even if internal naming changes.
 inline constexpr char kTopicPubTopic[] = "ros2.topic.pub";
-inline constexpr char kSubscriptionsHeartbeatTopic[] = "ros.subscriptions.heartbeat";
-inline constexpr char kSubscriptionsStatusTopic[] = "ros.subscriptions.status";
+inline constexpr char kBridgeHeartbeatTopic[] = "lkros.heartbeat";
+inline constexpr char kBridgeStatusTopic[] = "lkros.status";
 inline constexpr char kRpcServiceCall[] = "ros2.service.call";
 inline constexpr char kRpcInterfaceShow[] = "ros2.interface.show";
 inline constexpr char kRpcServiceList[] = "ros2.service.list";

@@ -29,8 +29,8 @@ namespace
 
 constexpr char kTopicKeyPrefix[] = "topic";
 constexpr char kOtherVideoKeyPrefix[] = "other_video";
-constexpr char kTopicTrackPrefix[] = "ros.video.";
-constexpr char kOtherVideoTrackPrefix[] = "ros.video.other.";
+constexpr char kTopicTrackPrefix[] = "lkros.video.";
+constexpr char kOtherVideoTrackPrefix[] = "lkros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 constexpr char kUnnamedTrackSuffix[] = "unnamed";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");

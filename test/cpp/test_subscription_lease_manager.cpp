@@ -213,7 +213,7 @@ nlohmann::json extractPublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, wire::protocol::kSubscriptionsStatusTopic);
+  EXPECT_EQ(packet.topic, wire::protocol::kBridgeStatusTopic);
 
   if (packet.recipient_identities.size() != 1U) {
     ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
@@ -380,7 +380,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
   EXPECT_EQ(first["delivery"]["kind"], "data");
   EXPECT_EQ(first["delivery"]["content_type"], wire::protocol::kDataContentTypeCdr);
   EXPECT_EQ(first["delivery"]["interval_ms"], 0);
-  EXPECT_EQ(first["delivery"]["track_name"], "ros.data.battery.state");
+  EXPECT_EQ(first["delivery"]["track_name"], "lkros.data.battery.state");
   EXPECT_EQ(second["delivery"]["track_name"], first["delivery"]["track_name"]);
   EXPECT_EQ(
     session.state->published_data_track_names,
@@ -488,7 +488,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
   EXPECT_EQ(recovered["interface_type"], "sensor_msgs/msg/BatteryState");
   EXPECT_EQ(recovered["delivery"]["kind"], "data");
   EXPECT_EQ(recovered["delivery"]["interval_ms"], 500);
-  EXPECT_EQ(recovered["delivery"]["track_name"], "ros.data.battery.failed_publish_response");
+  EXPECT_EQ(recovered["delivery"]["track_name"], "lkros.data.battery.failed_publish_response");
   EXPECT_EQ(publish_attempt_count, 2);
 }
 
@@ -600,7 +600,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOther
     registry, *session.state, "bob", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
 
   EXPECT_EQ(topic_status["delivery"]["kind"], "video");
-  EXPECT_EQ(topic_status["delivery"]["track_name"], "ros.video.camera.front");
+  EXPECT_EQ(topic_status["delivery"]["track_name"], "lkros.video.camera.front");
   EXPECT_EQ(source_status["delivery"]["kind"], "video");
   EXPECT_FALSE(source_status["delivery"]["track_name"].get<std::string>().empty());
 }
@@ -754,7 +754,7 @@ TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscripti
   EXPECT_FALSE(registry.find(SubscriptionTargetKind::Topic, video_topic) != nullptr);
   EXPECT_FALSE(data_stream_registry.onTrackPublished(data_track_name, data_stream_registry.generation()));
   EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{data_track_name});
-  EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"ros.video.camera.reset"});
+  EXPECT_EQ(session.state->unpublished_video_track_names, std::vector<std::string>{"lkros.video.camera.reset"});
 }
 
 TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallback)
@@ -947,7 +947,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscri
 
   const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
   EXPECT_EQ(envelope["v"], wire::protocol::kProtocolVersion);
-  EXPECT_EQ(envelope["type"], wire::protocol::kSubscriptionsStatusTopic);
+  EXPECT_EQ(envelope["type"], wire::protocol::kBridgeStatusTopic);
   EXPECT_EQ(envelope["session_id"], "session-1");
   ASSERT_TRUE(envelope["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(envelope["lease_expires_in_ms"].get<std::int64_t>(), 0);
@@ -956,7 +956,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscri
   const auto & delivery = status["delivery"];
   expectStatusEntry(status, "topic", "/battery_state", "active");
   EXPECT_EQ(status["interface_type"], "sensor_msgs/msg/BatteryState");
-  EXPECT_EQ(delivery["track_name"], "ros.data.battery_state");
+  EXPECT_EQ(delivery["track_name"], "lkros.data.battery_state");
   EXPECT_EQ(delivery["interval_ms"], 100);
   (void)publisher;
 }

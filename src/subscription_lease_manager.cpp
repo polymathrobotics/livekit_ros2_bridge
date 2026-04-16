@@ -124,7 +124,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
   OutgoingPacket packet;
   packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
   packet.recipient_identities = {resolved_identity};
-  packet.topic = wire::protocol::kSubscriptionsStatusTopic;
+  packet.topic = wire::protocol::kBridgeStatusTopic;
 
   try {
     room_connection_.publishPacket(packet);

@@ -32,7 +32,7 @@ VideoStreamSpec makeSpec()
 {
   VideoStreamSpec spec;
   spec.stream_key = "topic:/synthetic/front_camera/image_raw";
-  spec.track_name = "ros.video.synthetic.front_camera";
+  spec.track_name = "lkros.video.synthetic.front_camera";
   spec.ros_topic = "/synthetic/front_camera/image_raw";
   spec.input_kind = VideoInputKind::RosTopic;
   spec.ingest_mode = kRawImageIngestMode;
@@ -100,7 +100,7 @@ TEST(VideoProfilingTest, RegistryCollectsOnlyActiveStreamSummariesAndResetsThem)
   const auto active_spec = makeSpec();
   auto idle_spec = makeSpec();
   idle_spec.stream_key = "topic:/synthetic/rear_camera/image_raw";
-  idle_spec.track_name = "ros.video.synthetic.rear_camera";
+  idle_spec.track_name = "lkros.video.synthetic.rear_camera";
   idle_spec.ros_topic = "/synthetic/rear_camera/image_raw";
 
   const auto profiler = registry.getOrCreateProfiler(active_spec);
@@ -146,7 +146,7 @@ TEST(VideoProfilingTest, RegistryReusesExistingProfilerForStreamKeyDespiteDiffer
   VideoProfilingRegistry registry = makeRegistry(trace_path);
   const auto active_spec = makeSpec();
   auto reused_spec = makeSpec();
-  reused_spec.track_name = "ros.video.other.front_camera";
+  reused_spec.track_name = "lkros.video.other.front_camera";
   reused_spec.input_kind = VideoInputKind::OtherVideoSource;
   reused_spec.ingest_mode = kOtherVideoIngestMode;
   reused_spec.other_video_source_name = "front_camera";

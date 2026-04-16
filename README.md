@@ -23,8 +23,8 @@ The bridge uses three kinds of LiveKit surfaces:
 | Surface | Name | Role | Purpose |
 | --- | --- | --- | --- |
 | Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | Best-effort ROS topic publication |
-| Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | Request and renew topic or video subscriptions |
-| Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | The named LiveKit tracks of what the bridge actually made available after a heartbeat |
+| Data-Packet Topic | `lkros.heartbeat` | Control-Plane Request | Request and renew topic or video subscriptions |
+| Data-Packet Topic | `lkros.status` | Control-Plane Status | The named LiveKit tracks of what the bridge actually made available after a heartbeat |
 | RPC | `ros2.service.call` | Request-Response | Call an authorized ROS service |
 | RPC | `ros2.service.list` | Request-Response | List authorized ROS services |
 | RPC | `ros2.topic.list` | Request-Response | List authorized ROS topics |

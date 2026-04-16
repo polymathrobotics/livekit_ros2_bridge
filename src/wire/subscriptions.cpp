@@ -355,7 +355,7 @@ nlohmann::json serializeStatuses(
 
   nlohmann::json body = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     // The wire contract keeps the broad `subscriptions` array name even though each object is one
     // reported subscription-status entry.
     {"subscriptions", subscriptions},

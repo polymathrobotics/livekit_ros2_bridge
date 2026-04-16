@@ -81,7 +81,7 @@ void PacketRouter::handle(const IncomingPacket & packet) const
         .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-  } else if (packet.topic == wire::protocol::kSubscriptionsHeartbeatTopic) {
+  } else if (packet.topic == wire::protocol::kBridgeHeartbeatTopic) {
     try {
       nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
       auto heartbeat = wire::subscriptions::parseHeartbeat(body);

@@ -32,7 +32,7 @@ const char * targetKindString(SubscriptionTargetKind kind);
 std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind);
 const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind);
 
-/// Parse one subscription control-plane heartbeat body from `ros.subscriptions.heartbeat`.
+/// Parse one subscription control-plane heartbeat body from `lkros.heartbeat`.
 /// `session_id` is optional and trimmed; missing, null, or blank values are treated as absent.
 /// `subscriptions` is required. `topic` names are normalized as ROS resource names, while
 /// `other_video` names are only trimmed because they are bridge-defined identifiers.
@@ -41,7 +41,7 @@ const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind);
 /// further normalize values such as negatives.
 SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body);
 
-/// Serialize the full `ros.subscriptions.status` response body from reported status DTOs and
+/// Serialize the full `lkros.status` response body from reported status DTOs and
 /// optional session / lease metadata. `lease_expires_in_ms` is serialized whenever `expiry` is
 /// present, even if `session_id` is absent. The serializer owns the per-entry `active`/`error`
 /// mapping and the top-level envelope shape.
@@ -51,7 +51,7 @@ nlohmann::json serializeStatuses(
   const std::optional<std::chrono::steady_clock::time_point> & expiry,
   std::chrono::steady_clock::time_point now);
 
-/// Serialize the full `ros.subscriptions.status` response body using `steady_clock::now()` for
+/// Serialize the full `lkros.status` response body using `steady_clock::now()` for
 /// `lease_expires_in_ms`.
 nlohmann::json serializeStatuses(
   const std::vector<SubscriptionReportedStatus> & statuses,

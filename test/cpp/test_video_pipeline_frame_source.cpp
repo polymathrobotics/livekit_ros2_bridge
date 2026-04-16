@@ -33,7 +33,7 @@ VideoStreamSpec makeTestSpec()
 {
   VideoStreamSpec spec;
   spec.stream_key = "other_video:test";
-  spec.track_name = "ros.video.other.test";
+  spec.track_name = "lkros.video.other.test";
   spec.input_kind = VideoInputKind::OtherVideoSource;
   spec.ingest_mode = kOtherVideoIngestMode;
   spec.config_id = "test";

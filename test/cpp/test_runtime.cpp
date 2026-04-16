@@ -113,7 +113,7 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, wire::protocol::kSubscriptionsStatusTopic);
+  EXPECT_EQ(packet.topic, wire::protocol::kBridgeStatusTopic);
   EXPECT_EQ(packet.recipient_identities, (std::vector<std::string>{requester_identity}));
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
@@ -417,7 +417,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 
@@ -427,7 +427,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 
@@ -455,7 +455,7 @@ TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecrea
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 
@@ -469,7 +469,7 @@ TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecrea
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 
@@ -495,7 +495,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 
@@ -553,7 +553,7 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
         callbacks.on_incoming_packet_received(
           IncomingPacket{
             std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-            wire::protocol::kSubscriptionsHeartbeatTopic,
+            wire::protocol::kBridgeHeartbeatTopic,
             "participant-1",
           });
       }
@@ -624,7 +624,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   harness.state->callbacks.on_incoming_packet_received(
     IncomingPacket{
       std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      wire::protocol::kSubscriptionsHeartbeatTopic,
+      wire::protocol::kBridgeHeartbeatTopic,
       "participant-1",
     });
 

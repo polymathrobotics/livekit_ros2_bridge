@@ -258,7 +258,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepara
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnlyBody)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "ros.data.lidar.points");
+    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "lkros.data.lidar.points");
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
   topic_data.applied_interval_ms = 50;
 
@@ -266,12 +266,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
     SubscriptionTargetKind::OtherVideo,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
-    "ros.video.other.%2Fsources%2Ffront");
+    "lkros.video.other.%2Fsources%2Ffront");
   other_video.degraded_reason = "source warming up";
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -281,7 +281,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
     {"interface_type", "sensor_msgs/msg/PointCloud2"},
     {"delivery",
      {{"kind", "data"},
-      {"track_name", "ros.data.lidar.points"},
+      {"track_name", "lkros.data.lidar.points"},
       {"content_type", "application/x-ros-cdr"},
       {"interval_ms", 50}}},
   });
@@ -290,7 +290,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
     {"name", "/sources/front"},
     {"status", "active"},
     {"degraded_reason", "source warming up"},
-    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.other.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.other.%2Fsources%2Ffront"}}},
   });
 
   EXPECT_EQ(
@@ -306,7 +306,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
 {
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -356,7 +356,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAndExpiryMetadata)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "ros.data.battery_state");
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.applied_interval_ms = 100;
 
@@ -366,7 +366,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     {"session_id", "session-1"},
     {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
@@ -378,7 +378,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
     {"interface_type", "sensor_msgs/msg/BatteryState"},
     {"delivery",
      {{"kind", "data"},
-      {"track_name", "ros.data.battery_state"},
+      {"track_name", "lkros.data.battery_state"},
       {"content_type", "application/x-ros-cdr"},
       {"interval_ms", 100}}},
   });
@@ -392,7 +392,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWithoutSessionId)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "ros.data.battery_state");
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.applied_interval_ms = 100;
 
@@ -401,7 +401,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
   };
@@ -412,7 +412,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
     {"interface_type", "sensor_msgs/msg/BatteryState"},
     {"delivery",
      {{"kind", "data"},
-      {"track_name", "ros.data.battery_state"},
+      {"track_name", "lkros.data.battery_state"},
       {"content_type", "application/x-ros-cdr"},
       {"interval_ms", 100}}},
   });
@@ -429,18 +429,18 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
     SubscriptionTargetKind::OtherVideo,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
-    "ros.video.other.%2Fsources%2Ffront");
+    "lkros.video.other.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kSubscriptionsStatusTopic},
+    {"type", wire::protocol::kBridgeStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
     {"kind", "other_video"},
     {"name", "/sources/front"},
     {"status", "active"},
-    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.other.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.other.%2Fsources%2Ffront"}}},
   });
   expected["subscriptions"].push_back({
     {"kind", "topic"},

@@ -55,7 +55,7 @@ enum class SubscriptionDeliveryKind
   kVideo,
 };
 
-// Active subscription status object reported on `ros.subscriptions.status`.
+// Active subscription status object reported on `lkros.status`.
 struct SubscriptionStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -80,7 +80,7 @@ enum class SubscriptionStatusErrorReason
   kNotFound,
 };
 
-// Error subscription status object reported on `ros.subscriptions.status`.
+// Error subscription status object reported on `lkros.status`.
 struct SubscriptionErrorStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;

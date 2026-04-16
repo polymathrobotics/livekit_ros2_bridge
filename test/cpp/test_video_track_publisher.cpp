@@ -293,7 +293,7 @@ TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAf
   FakeRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeVideoStreamSpec("stream:lifecycle_observer", "ros.video.camera.lifecycle_observer"), observer);
+    connection, makeVideoStreamSpec("stream:lifecycle_observer", "lkros.video.camera.lifecycle_observer"), observer);
 
   publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   publisher.write(2, 2, makeI420Frame(2, 2), 2000);
@@ -312,10 +312,10 @@ TEST(VideoTrackPublisherTest, LifecycleObserverTracksRepublishAndIgnoresFramesAf
   EXPECT_EQ(
     connection.state->event_log,
     (std::vector<std::string>{
-      "publish_video_track:ros.video.camera.lifecycle_observer",
-      "unpublish_video_track:ros.video.camera.lifecycle_observer",
-      "publish_video_track:ros.video.camera.lifecycle_observer",
-      "unpublish_video_track:ros.video.camera.lifecycle_observer",
+      "publish_video_track:lkros.video.camera.lifecycle_observer",
+      "unpublish_video_track:lkros.video.camera.lifecycle_observer",
+      "publish_video_track:lkros.video.camera.lifecycle_observer",
+      "unpublish_video_track:lkros.video.camera.lifecycle_observer",
     }));
 }
 
@@ -324,15 +324,16 @@ TEST(VideoTrackPublisherTest, ShutdownSwallowsVideoUnpublishFailureAndStaysClose
   ThrowingUnpublishRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeVideoStreamSpec("stream:unpublish_failure", "ros.video.camera.unpublish_failure"), observer);
+    connection, makeVideoStreamSpec("stream:unpublish_failure", "lkros.video.camera.unpublish_failure"), observer);
 
   publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   EXPECT_NO_THROW(publisher.shutdown());
   publisher.write(4, 4, makeI420Frame(4, 4), 2000);
   EXPECT_NO_THROW(publisher.shutdown());
 
-  EXPECT_EQ(connection.published_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
-  EXPECT_EQ(connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.unpublish_failure"}));
+  EXPECT_EQ(connection.published_video_track_names, (std::vector<std::string>{"lkros.video.camera.unpublish_failure"}));
+  EXPECT_EQ(
+    connection.unpublished_video_track_names, (std::vector<std::string>{"lkros.video.camera.unpublish_failure"}));
   EXPECT_EQ(observer.unpublish_call_count, 1);
 }
 
@@ -341,7 +342,7 @@ TEST(VideoTrackPublisherTest, PublishFailureOnFirstFrameCanRetryAndStillShutdown
   FailNthPublishRoomConnection connection(1);
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeVideoStreamSpec("stream:publish_retry", "ros.video.camera.publish_retry"), observer);
+    connection, makeVideoStreamSpec("stream:publish_retry", "lkros.video.camera.publish_retry"), observer);
 
   EXPECT_THROW(publisher.write(2, 2, makeI420Frame(2, 2), 1000), std::runtime_error);
   publisher.write(2, 2, makeI420Frame(2, 2), 2000);
@@ -350,10 +351,10 @@ TEST(VideoTrackPublisherTest, PublishFailureOnFirstFrameCanRetryAndStillShutdown
   EXPECT_EQ(
     connection.published_video_track_names,
     (std::vector<std::string>{
-      "ros.video.camera.publish_retry",
-      "ros.video.camera.publish_retry",
+      "lkros.video.camera.publish_retry",
+      "lkros.video.camera.publish_retry",
     }));
-  EXPECT_EQ(connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.publish_retry"}));
+  EXPECT_EQ(connection.unpublished_video_track_names, (std::vector<std::string>{"lkros.video.camera.publish_retry"}));
   EXPECT_EQ(
     observer.published_events,
     (std::vector<std::tuple<int, int, bool>>{
@@ -367,7 +368,7 @@ TEST(VideoTrackPublisherTest, RepublishFailureLeavesPublisherReadyForRetryWithou
   FailNthPublishRoomConnection connection(2);
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeVideoStreamSpec("stream:republish_retry", "ros.video.camera.republish_retry"), observer);
+    connection, makeVideoStreamSpec("stream:republish_retry", "lkros.video.camera.republish_retry"), observer);
 
   publisher.write(2, 2, makeI420Frame(2, 2), 1000);
   EXPECT_THROW(publisher.write(4, 4, makeI420Frame(4, 4), 2000), std::runtime_error);
@@ -377,15 +378,15 @@ TEST(VideoTrackPublisherTest, RepublishFailureLeavesPublisherReadyForRetryWithou
   EXPECT_EQ(
     connection.published_video_track_names,
     (std::vector<std::string>{
-      "ros.video.camera.republish_retry",
-      "ros.video.camera.republish_retry",
-      "ros.video.camera.republish_retry",
+      "lkros.video.camera.republish_retry",
+      "lkros.video.camera.republish_retry",
+      "lkros.video.camera.republish_retry",
     }));
   EXPECT_EQ(
     connection.unpublished_video_track_names,
     (std::vector<std::string>{
-      "ros.video.camera.republish_retry",
-      "ros.video.camera.republish_retry",
+      "lkros.video.camera.republish_retry",
+      "lkros.video.camera.republish_retry",
     }));
   EXPECT_EQ(
     observer.published_events,
@@ -401,7 +402,7 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
   BlockingPublishRoomConnection connection;
   RecordingObserver observer;
   VideoTrackPublisher publisher(
-    connection, makeVideoStreamSpec("stream:concurrent_shutdown", "ros.video.camera.concurrent_shutdown"), observer);
+    connection, makeVideoStreamSpec("stream:concurrent_shutdown", "lkros.video.camera.concurrent_shutdown"), observer);
 
   auto write_future =
     std::async(std::launch::async, [&publisher]() { publisher.write(2, 2, makeI420Frame(2, 2), 1000); });
@@ -423,9 +424,10 @@ TEST(VideoTrackPublisherTest, ShutdownWaitsForInFlightPublishThenUnpublishesOnce
       std::make_tuple(2, 2, false),
     }));
   EXPECT_EQ(observer.unpublish_call_count, 1);
-  EXPECT_EQ(connection.published_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
   EXPECT_EQ(
-    connection.unpublished_video_track_names, (std::vector<std::string>{"ros.video.camera.concurrent_shutdown"}));
+    connection.published_video_track_names, (std::vector<std::string>{"lkros.video.camera.concurrent_shutdown"}));
+  EXPECT_EQ(
+    connection.unpublished_video_track_names, (std::vector<std::string>{"lkros.video.camera.concurrent_shutdown"}));
 }
 
 }  // namespace

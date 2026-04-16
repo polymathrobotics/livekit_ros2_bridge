@@ -17,7 +17,7 @@ A conforming client MUST follow the request and response schemas and the behavio
 
 ## Versioning and Terminology
 
-This document describes the current client-facing protocol of the bridge. The `ros.subscriptions.status` packet includes a protocol version field `v`, which is currently `2`.
+This document describes the current client-facing protocol of the bridge. The `lkros.status` packet includes a protocol version field `v`, which is currently `2`.
 
 Terms used throughout this document:
 
@@ -37,8 +37,8 @@ Terms used throughout this document:
 | Surface | Name | Role | Direction | Purpose |
 | --- | --- | --- | --- | --- |
 | Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | caller -> bridge | Best-effort ROS topic publication |
-| Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | caller -> bridge | Request and renew subscriptions |
-| Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | bridge -> caller | Per-subscription status |
+| Data-Packet Topic | `lkros.heartbeat` | Control-Plane Request | caller -> bridge | Request and renew subscriptions |
+| Data-Packet Topic | `lkros.status` | Control-Plane Status | bridge -> caller | Per-subscription status |
 | RPC | `ros2.service.call` | Request-Response | caller <-> bridge | Call an authorized ROS service |
 | RPC | `ros2.interface.show` | Request-Response | caller <-> bridge | Fetch interface definitions |
 | RPC | `ros2.service.list` | Request-Response | caller <-> bridge | List authorized ROS services |
@@ -85,7 +85,7 @@ Requirements:
 - if normalization produces an empty name, the request MUST be treated as invalid
 - anonymous RPC calls MUST be rejected up front
 - anonymous `ros2.topic.pub` packets MUST be dropped
-- anonymous `ros.subscriptions.heartbeat` packets MUST be accepted only through the `session_id` fallback defined in this document
+- anonymous `lkros.heartbeat` packets MUST be accepted only through the `session_id` fallback defined in this document
 - `ros2.topic.pub` MUST check authorization against `access.rules.publish.*`
 - `ros2.service.call` and `ros2.service.list` MUST check authorization against `access.rules.service.*`
 - topic subscriptions and `ros2.topic.list` MUST check authorization against `access.rules.subscribe.*`
@@ -126,9 +126,9 @@ If a client asks to publish `cmd_vel`, the bridge normalizes that name before it
 
 This path targets a ROS publisher, not the bridge control plane. It is intended for command-style writes, not for building a high-volume transport on top of data-packet topics.
 
-## Data-Packet Topic: `ros.subscriptions.heartbeat`
+## Data-Packet Topic: `lkros.heartbeat`
 
-`ros.subscriptions.heartbeat` is a control-plane request on a LiveKit data-packet topic. It requests and renews topic or video subscriptions.
+`lkros.heartbeat` is a control-plane request on a LiveKit data-packet topic. It requests and renews topic or video subscriptions.
 
 ### Example Request (informative)
 
@@ -184,16 +184,16 @@ Requirements:
 
 One practical pattern is for a browser tab to send a heartbeat with both `requester_identity` and `session_id`, then continue using the same `session_id` if later user-data packets omit identity. The lease lasts 45 seconds, so the client needs to keep heartbeating before that lease expires.
 
-## Data-Packet Topic: `ros.subscriptions.status`
+## Data-Packet Topic: `lkros.status`
 
-`ros.subscriptions.status` is a control-plane status message on a LiveKit data-packet topic. It reports the result of a non-empty heartbeat.
+`lkros.status` is a control-plane status message on a LiveKit data-packet topic. It reports the result of a non-empty heartbeat.
 
 ### Example Response (informative)
 
 ```json
 {
   "v": 2,
-  "type": "ros.subscriptions.status",
+  "type": "lkros.status",
   "session_id": "tab-123",
   "lease_expires_in_ms": 44980,
   "subscriptions": [
@@ -204,7 +204,7 @@ One practical pattern is for a browser tab to send a heartbeat with both `reques
       "interface_type": "sensor_msgs/msg/BatteryState",
       "delivery": {
         "kind": "data",
-        "track_name": "ros.data.battery_state",
+        "track_name": "lkros.data.battery_state",
         "content_type": "application/x-ros-cdr",
         "interval_ms": 100
       }
@@ -216,7 +216,7 @@ One practical pattern is for a browser tab to send a heartbeat with both `reques
 ### Envelope Requirements
 
 - `v` MUST be the protocol version and is currently `2`
-- `type` MUST always be `ros.subscriptions.status`
+- `type` MUST always be `lkros.status`
 - `session_id` MUST be included only when the heartbeat carried a non-blank `session_id`
 - `lease_expires_in_ms` MUST be included on every non-empty status packet
 - `lease_expires_in_ms` MUST be treated as approximate because the bridge computes it at serialization time
@@ -258,7 +258,7 @@ Non-video ROS topics are delivered on a LiveKit data track.
   "interface_type": "sensor_msgs/msg/BatteryState",
   "delivery": {
     "kind": "data",
-    "track_name": "ros.data.battery_state",
+    "track_name": "lkros.data.battery_state",
     "content_type": "application/x-ros-cdr",
     "interval_ms": 100
   }
@@ -267,7 +267,7 @@ Non-video ROS topics are delivered on a LiveKit data track.
 
 Requirements:
 
-- `track_name` MUST be deterministic: the bridge prefixes `ros.data` and replaces `/` with `.`
+- `track_name` MUST be deterministic: the bridge prefixes `lkros.data` and replaces `/` with `.`
 - `delivery.interval_ms` MUST always be present for data deliveries, including `0`
 - bytes sent on the data track MUST be raw serialized CDR bytes, not nested JSON
 
@@ -284,7 +284,7 @@ Video deliveries use deterministic track names.
   "status": "active",
   "delivery": {
     "kind": "video",
-    "track_name": "ros.video.other.front_camera"
+    "track_name": "lkros.video.other.front_camera"
   }
 }
 ```
@@ -512,7 +512,7 @@ Data-packet topics and RPCs fail differently:
 
 - malformed `ros2.topic.pub` packets, unsupported data-packet topics, and anonymous publish requests are dropped after logging
 - malformed subscription heartbeats are dropped after logging
-- well-formed subscription heartbeats report per-target failures through `ros.subscriptions.status`
+- well-formed subscription heartbeats report per-target failures through `lkros.status`
 - RPC failures surface through LiveKit RPC errors
 
 Stable RPC error codes:
@@ -542,8 +542,8 @@ One common request-response path looks like this:
 
 One common data-subscription path looks like this:
 
-1. Send `ros.subscriptions.heartbeat` with a `topic` subscription request.
-2. Read `ros.subscriptions.status`.
+1. Send `lkros.heartbeat` with a `topic` subscription request.
+2. Read `lkros.status`.
 3. If the status is `active` and `delivery.kind` is `data`, subscribe to the announced LiveKit data track.
 4. Decode incoming bytes on that track as raw ROS CDR for the reported `interface_type`.
 
@@ -551,8 +551,8 @@ One common data-subscription path looks like this:
 
 One common non-ROS video path looks like this:
 
-1. Send `ros.subscriptions.heartbeat` with `kind: "other_video"` and the configured source id as `name`.
-2. Read `ros.subscriptions.status`.
+1. Send `lkros.heartbeat` with `kind: "other_video"` and the configured source id as `name`.
+2. Read `lkros.status`.
 3. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
 
 ## Informative Typical Client Flow
@@ -564,8 +564,8 @@ Most integrations follow this order:
 3. Call `ros2.interface.show` for the message and service types your client needs to encode or decode.
 4. Use `ros2.service.call` for request-response operations.
 5. Send `ros2.topic.pub` packets for small allowed topic writes.
-6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video subscriptions.
-7. Read `ros.subscriptions.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
+6. Send `lkros.heartbeat` on a regular cadence to request topic or video subscriptions.
+7. Read `lkros.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
 8. Subscribe to the announced LiveKit data track or video publication.
 
 For a first integration, start with one service-call path or one topic-subscription path. Once that works, add more interface types, video, and broader policy rules.
@@ -581,10 +581,10 @@ This bridge mirrors the ROS 2 CLI at the entrypoint-name level, not at the paylo
 | `ros2 interface show <type>` | RPC `ros2.interface.show` | Clients fetch raw ROS interface definitions here before they encode or decode ROS CDR payloads. The request body still supports batching via `interface_types`. |
 | `ros2 service call /service Type ...` | RPC `ros2.service.call` | Request and response bodies use the shared JSON CDR envelope with base64 payload bytes, not ROS CLI text formatting. |
 | `ros2 topic pub /topic Type ...` | Data-packet topic `ros2.topic.pub` | This is a best-effort one-message write path for small allowed publishes. The bridge sends no acknowledgement packet. |
-| `ros2 topic echo /topic` for a non-video topic | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit data track | The heartbeat requests the subscription, the status packet reports whether it became active and names the track, and the track carries raw ROS CDR bytes. |
-| Subscribing to an image topic such as `/camera/image_raw` | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | ROS image topics may resolve to video delivery instead of a data track when the bridge treats the topic as video. |
-| Subscribing to a configured non-ROS video source | Data-packet topic `ros.subscriptions.heartbeat` with `kind: "other_video"` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | There is no direct ROS CLI equivalent for `other_video`; it addresses a configured bridge-owned video source. |
+| `ros2 topic echo /topic` for a non-video topic | Data-packet topic `lkros.heartbeat` -> data-packet topic `lkros.status` -> LiveKit data track | The heartbeat requests the subscription, the status packet reports whether it became active and names the track, and the track carries raw ROS CDR bytes. |
+| Subscribing to an image topic such as `/camera/image_raw` | Data-packet topic `lkros.heartbeat` -> data-packet topic `lkros.status` -> LiveKit video track | ROS image topics may resolve to video delivery instead of a data track when the bridge treats the topic as video. |
+| Subscribing to a configured non-ROS video source | Data-packet topic `lkros.heartbeat` with `kind: "other_video"` -> data-packet topic `lkros.status` -> LiveKit video track | There is no direct ROS CLI equivalent for `other_video`; it addresses a configured bridge-owned video source. |
 | `ros2 action *` | No protocol equivalent | ROS actions are not supported by this package today. |
 | `ros2 param *` | No protocol equivalent | ROS parameter get and set are not supported by this package today. |
 
-The easy-to-miss part is that `ros.subscriptions.heartbeat` and `ros.subscriptions.status` are bridge-specific control-plane messages, not standard ROS messages. For non-video topics, the announced LiveKit data track carries raw ROS CDR bytes rather than JSON, and clients should use the `track_name` reported in `ros.subscriptions.status` instead of treating track naming as a separate discovery flow.
+The easy-to-miss part is that `lkros.heartbeat` and `lkros.status` are bridge-specific control-plane messages, not standard ROS messages. For non-video topics, the announced LiveKit data track carries raw ROS CDR bytes rather than JSON, and clients should use the `track_name` reported in `lkros.status` instead of treating track naming as a separate discovery flow.

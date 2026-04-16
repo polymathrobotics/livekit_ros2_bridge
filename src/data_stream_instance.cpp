@@ -44,7 +44,7 @@ const auto kLogger = rclcpp::get_logger("data_stream_instance");
 // externally visible LiveKit identity for this ROS topic.
 std::string makeDataTrackName(const std::string & topic)
 {
-  std::string name = "ros.data";
+  std::string name = "lkros.data";
   name.reserve(name.size() + topic.size());
   for (char ch : topic) {
     name.push_back(ch == '/' ? '.' : ch);

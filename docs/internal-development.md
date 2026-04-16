@@ -35,7 +35,7 @@ Use these words and phrases consistently in `livekit_ros2_bridge`.
 - `cdr`: Payload encoding only. Never the transport.
 - `config`: Startup configuration loaded from parameters. It does not change while the bridge is running.
 - `connection`: The bridge's connection to a LiveKit room, including reconnect handling.
-- `control-plane message`: A bridge protocol message sent on a LiveKit data-packet topic for subscription heartbeats and status. Do not use it for `ros2.topic.pub` or streamed ROS topic data.
+- `control-plane message`: A bridge protocol message sent on a LiveKit data-packet topic for `lkros.heartbeat` and `lkros.status`. Do not use it for `ros2.topic.pub` or streamed ROS topic data.
 - `data packet`: LiveKit `publishData` payload. The bridge uses data packets for control-plane messages and ROS publish requests.
 - `data-packet topic`: The topic string attached to a LiveKit `publishData` packet.
 - `demand`: One requested subscription carried inside a heartbeat.

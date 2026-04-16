@@ -60,7 +60,7 @@ TEST(DataTrackPublisherTest, PublishFailureInvokesFailureCallbackWithoutRetainin
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_publish_failure_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.publish_failure";
+  const std::string track_name = "lkros.data.battery.publish_failure";
   room_connection.state->publish_data_track_handler =
     [](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     throw std::runtime_error("simulated publish failure");
@@ -82,7 +82,7 @@ TEST(DataTrackPublisherTest, RejectedPublishIsImmediatelyReclaimedAndNotRetained
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_stale_reclaim_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.stale_reclaim";
+  const std::string track_name = "lkros.data.battery.stale_reclaim";
   DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
@@ -99,7 +99,7 @@ TEST(DataTrackPublisherTest, RejectedRepublishDoesNotDisplaceExistingActiveTrack
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_rejected_republish_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.rejected_republish";
+  const std::string track_name = "lkros.data.battery.rejected_republish";
   DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
@@ -130,7 +130,7 @@ TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndRe
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_publish_callback_failure_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.publish_callback_failure";
+  const std::string track_name = "lkros.data.battery.publish_callback_failure";
   DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
@@ -148,7 +148,7 @@ TEST(DataTrackPublisherTest, PublishAcceptedCallbackExceptionReportsFailureAndRe
 
 TEST(DataTrackPublisherTest, QueueFullWriteDropsFrameAndKeepsTrackPublishedUntilUnpublish)
 {
-  const std::string track_name = "ros.data.battery.queue_full";
+  const std::string track_name = "lkros.data.battery.queue_full";
   expectWriteFailureKeepsTrackPublishedUntilUnpublish(
     "data_track_publisher_queue_full_test", track_name, [](const std::string &, const std::vector<std::uint8_t> &) {
       return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
@@ -157,7 +157,7 @@ TEST(DataTrackPublisherTest, QueueFullWriteDropsFrameAndKeepsTrackPublishedUntil
 
 TEST(DataTrackPublisherTest, WriteFailureStaysBestEffortAndKeepsTrackPublishedUntilUnpublish)
 {
-  const std::string track_name = "ros.data.battery.push_failure";
+  const std::string track_name = "lkros.data.battery.push_failure";
   expectWriteFailureKeepsTrackPublishedUntilUnpublish(
     "data_track_publisher_push_failure_test", track_name, [](const std::string &, const std::vector<std::uint8_t> &) {
       return DataTrackPushResult::failure(
@@ -170,7 +170,7 @@ TEST(DataTrackPublisherTest, UnpublishClearsActiveTrackAndIsIdempotent)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_unpublish_lifecycle_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.unpublish_lifecycle";
+  const std::string track_name = "lkros.data.battery.unpublish_lifecycle";
   DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
   bool publish_failed = false;
 
@@ -197,7 +197,7 @@ TEST(DataTrackPublisherTest, RepeatedUnpublishAfterFailureDoesNotRetryOrRetainTr
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("data_track_publisher_unpublish_failure_test");
   FakeRoomConnection room_connection;
-  const std::string track_name = "ros.data.battery.unpublish_failure";
+  const std::string track_name = "lkros.data.battery.unpublish_failure";
   room_connection.state->unpublish_rejected_data_track_names.push_back(track_name);
 
   DataTrackPublisher publisher(room_connection, track_name, node->get_clock());
