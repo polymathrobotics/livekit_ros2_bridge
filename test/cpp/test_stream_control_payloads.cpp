@@ -84,7 +84,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
   expectDemand(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
+      R"({"subscriptions":[{"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
     125);
@@ -143,7 +143,7 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFie
 TEST(StreamControlPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
 {
   expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"configured_source","name":"   "}]})"));
+  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"other_video","name":"   "}]})"));
   expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"));
 }
 
@@ -195,8 +195,8 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatCoalescesDuplicateConfiguredSource
   expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[
-      {"kind":"configured_source","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
-      {"kind":" configured_source ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
+      {"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
+      {"kind":" other_video ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
     ]})"),
     SubscriptionTargetKind::ConfiguredSource,
     "front_camera",
@@ -240,9 +240,9 @@ TEST(StreamControlPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepar
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
       {"kind":"topic","name":"/camera/front","delivery_preferences":{"interval_ms":25}},
-      {"kind":"configured_source","name":"/camera/front","delivery_preferences":{"interval_ms":125}},
-      {"kind":"configured_source","name":"front_camera","delivery_preferences":{"interval_ms":25}},
-      {"kind":"configured_source","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
+      {"kind":"other_video","name":"/camera/front","delivery_preferences":{"interval_ms":125}},
+      {"kind":"other_video","name":"front_camera","delivery_preferences":{"interval_ms":25}},
+      {"kind":"other_video","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
 
@@ -266,7 +266,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
     SubscriptionTargetKind::ConfiguredSource,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
-    "ros.video.configured_source.%2Fsources%2Ffront");
+    "ros.video.other.%2Fsources%2Ffront");
   configured_source_video.degraded_reason = "source warming up";
 
   nlohmann::json expected = {
@@ -286,11 +286,11 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOn
       {"interval_ms", 50}}},
   });
   expected["subscriptions"].push_back({
-    {"kind", "configured_source"},
+    {"kind", "other_video"},
     {"name", "/sources/front"},
     {"status", "active"},
     {"degraded_reason", "source warming up"},
-    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.other.%2Fsources%2Ffront"}}},
   });
 
   EXPECT_EQ(
@@ -322,10 +322,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
     {"error", {{"reason", "unavailable"}, {"message", "Video stream registry is unavailable."}}},
   });
   expected["subscriptions"].push_back({
-    {"kind", "configured_source"},
+    {"kind", "other_video"},
     {"name", "/sources/missing"},
     {"status", "error"},
-    {"error", {{"reason", "not_found"}, {"message", "Unknown configured video source '/sources/missing'."}}},
+    {"error", {{"reason", "not_found"}, {"message", "Unknown other video source '/sources/missing'."}}},
   });
 
   EXPECT_EQ(
@@ -345,7 +345,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnly
           SubscriptionTargetKind::ConfiguredSource,
           "/sources/missing",
           SubscriptionStatusErrorReason::kNotFound,
-          "Unknown configured video source '/sources/missing'."),
+          "Unknown other video source '/sources/missing'."),
       },
       std::nullopt,
       std::nullopt,
@@ -429,7 +429,7 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
     SubscriptionTargetKind::ConfiguredSource,
     "/sources/front",
     SubscriptionDeliveryKind::kVideo,
-    "ros.video.configured_source.%2Fsources%2Ffront");
+    "ros.video.other.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
     {"v", wire::protocol::kProtocolVersion},
@@ -437,10 +437,10 @@ TEST(StreamControlPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStat
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
-    {"kind", "configured_source"},
+    {"kind", "other_video"},
     {"name", "/sources/front"},
     {"status", "active"},
-    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.configured_source.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "ros.video.other.%2Fsources%2Ffront"}}},
   });
   expected["subscriptions"].push_back({
     {"kind", "topic"},

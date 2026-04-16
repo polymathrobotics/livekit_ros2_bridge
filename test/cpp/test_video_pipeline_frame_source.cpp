@@ -32,8 +32,8 @@ namespace
 VideoStreamSpec makeTestSpec()
 {
   VideoStreamSpec spec;
-  spec.stream_key = "configured_source:test";
-  spec.track_name = "configured_source.test";
+  spec.stream_key = "other_video:test";
+  spec.track_name = "ros.video.other.test";
   spec.input_kind = VideoInputKind::ConfiguredSource;
   spec.ingest_mode = kConfiguredSourceIngestMode;
   spec.config_id = "test";

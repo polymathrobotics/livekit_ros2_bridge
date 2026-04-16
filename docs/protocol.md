@@ -94,7 +94,7 @@ Request body:
       }
     },
     {
-      "kind": "configured_source",
+      "kind": "other_video",
       "name": "front_camera"
     }
   ]
@@ -105,9 +105,9 @@ Behavior:
 
 - `subscriptions` is required and must be an array
 - each subscription entry must be an object with string `kind` and `name` fields
-- `kind` must be `topic` or `configured_source`
+- `kind` must be `topic` or `other_video`
 - `topic` names normalize as ROS resource names
-- `configured_source` names address configured entries from `video.other.<id>`
+- `other_video` names address configured entries from `video.other.<id>`
 - `delivery_preferences` is optional and must be an object when present
 - `delivery_preferences.interval_ms` is optional and must be an integer when present
 - `interval_ms: 0` means no preference
@@ -169,7 +169,7 @@ Envelope rules:
 
 Active statuses always include:
 
-- `kind`: `topic` or `configured_source`
+- `kind`: `topic` or `other_video`
 - `name`
 - `status`: `active`
 
@@ -218,22 +218,22 @@ Video deliveries use deterministic track names:
 
 ```json
 {
-  "kind": "configured_source",
+  "kind": "other_video",
   "name": "front_camera",
   "status": "active",
   "delivery": {
     "kind": "video",
-    "track_name": "ros.video.configured_source.front_camera"
+    "track_name": "ros.video.other.front_camera"
   }
 }
 ```
 
 Notes:
 
-- `configured_source` targets always use video delivery
+- other video targets always use video delivery
 - ROS topics use video delivery only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`
 - video `track_name` is deterministic and stable for the target name
-- configured-source video track names percent-encode any byte outside RFC 3986 unreserved characters
+- other video track names percent-encode any byte outside RFC 3986 unreserved characters
 
 ## Delivery and sharing model
 
@@ -241,12 +241,12 @@ Notes:
 | --- | --- | --- | --- |
 | Non-video ROS topic | normalized topic name and unique graph type | data | one ROS subscription and one data track per normalized topic |
 | ROS video topic | normalized topic name, unique graph type, and matching video topic entry | video | one in-process video stream per resolved `stream_key` |
-| Configured source | matching `video.other.*` entry | video | one in-process video stream per resolved `stream_key` |
+| Other video | matching `video.other.*` entry | video | one in-process video stream per resolved `stream_key` |
 
 Important behavior:
 
 - topic subscriptions use `access.rules.subscribe.*`
-- `configured_source` targets do not use subscribe rules; they are controlled by which `video_other_ids` and `video.other.*` entries exist
+- other video targets do not use subscribe rules; they are controlled by which `video_other_ids` and `video.other.*` entries exist
 - the bridge never guesses when topic type resolution is ambiguous
 - when the last requester lease disappears, the shared data track or video stream is torn down
 

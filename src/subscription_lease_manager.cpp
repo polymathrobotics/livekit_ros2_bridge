@@ -80,7 +80,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
   statuses.reserve(heartbeat.subscriptions.size());
 
   for (const auto & demand : heartbeat.subscriptions) {
-    // `configured_source` targets name bridge-owned config entries rather than ROS graph
+    // `other_video` targets name bridge-owned config entries rather than ROS graph
     // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
     if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name))
     {

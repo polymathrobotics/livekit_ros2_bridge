@@ -41,7 +41,7 @@ const char * targetKindString(SubscriptionTargetKind kind)
     case SubscriptionTargetKind::Topic:
       return "topic";
     case SubscriptionTargetKind::ConfiguredSource:
-      return "configured_source";
+      return "other_video";
   }
 
   throw std::invalid_argument("subscription target kind is invalid");
@@ -52,7 +52,7 @@ std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind
   if (kind == "topic") {
     return SubscriptionTargetKind::Topic;
   }
-  if (kind == "configured_source") {
+  if (kind == "other_video") {
     return SubscriptionTargetKind::ConfiguredSource;
   }
 
@@ -187,7 +187,7 @@ void parseDemandTarget(const nlohmann::json & entry, SubscriptionDemand & demand
 
   const auto parsed_kind = targetKindFromString(trim(kind_it->get_ref<const std::string &>()));
   if (!parsed_kind.has_value()) {
-    throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'configured_source'");
+    throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'other_video'");
   }
 
   demand.kind = *parsed_kind;
@@ -207,7 +207,7 @@ void parseDemandTarget(const nlohmann::json & entry, SubscriptionDemand & demand
 
   demand.name = trim(raw_name);
   if (demand.name.empty()) {
-    throw std::invalid_argument("heartbeat subscription configured_source name must trim to a non-empty name");
+    throw std::invalid_argument("heartbeat subscription other video name must trim to a non-empty name");
   }
 }
 
@@ -317,7 +317,7 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
     }
 
     // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and
-    // configured_source identifiers may share the same text, so name alone would alias
+    // other-video identifiers may share the same text, so name alone would alias
     // distinct protocol targets.
     const auto [it, inserted] = index_by_target.emplace(
       std::string(targetKindString(demand.kind)) + ":" + demand.name, heartbeat.subscriptions.size());

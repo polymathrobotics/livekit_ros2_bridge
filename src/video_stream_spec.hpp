@@ -27,7 +27,7 @@ inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
 inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
-inline constexpr char kConfiguredSourceIngestMode[] = "configured_source";
+inline constexpr char kConfiguredSourceIngestMode[] = "other_video";
 
 enum class VideoInputKind
 {
@@ -39,7 +39,7 @@ struct VideoStreamSpec
 {
   // Resolved runtime inputs for one shared video stream instance.
   // Stable video runtime key derived from the canonical topic/source identifier:
-  // "topic:<normalized topic>" or "configured_source:<trimmed configured source name>".
+  // "topic:<normalized topic>" or "other_video:<trimmed configured source name>".
   std::string stream_key;
   // Stable LiveKit track name derived from the same canonical identifier as stream_key.
   // ROS topics keep the legacy slash/colon-to-dot mapping that existing subscribers already use,
@@ -80,7 +80,7 @@ std::string videoInputKindToString(VideoInputKind kind);
 VideoStreamSpec resolveRosVideoTopicSpec(
   const VideoStreamConfig & config, const std::string & topic, const std::string & interface_type);
 // Trims the configured source name before lookup. The resulting track name percent-encodes that canonical name
-// because configured-source identifiers are free-form strings, not normalized ROS resource paths.
+// because other-video identifiers are free-form strings, not normalized ROS resource paths.
 VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name);
 
 }  // namespace livekit_ros2_bridge

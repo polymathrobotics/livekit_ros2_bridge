@@ -33,7 +33,7 @@ The bridge uses three kinds of LiveKit surfaces:
 The bridge has two delivery modes:
 
 - non-video ROS topics are delivered as raw CDR bytes on a LiveKit data track
-- ROS image topics(`sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`) and `configured_source` targets are delivered as LiveKit video tracks
+- ROS image topics(`sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`) and other video targets are delivered as LiveKit video tracks
 
 This means your client needs different expectations for each:
 

@@ -203,8 +203,8 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecTrimsConfiguredSourceN
 
   const auto spec = resolveConfiguredVideoSourceSpec(config, "  front_camera  ");
 
-  EXPECT_EQ(spec.stream_key, "configured_source:front_camera");
-  EXPECT_EQ(spec.track_name, "ros.video.configured_source.front_camera");
+  EXPECT_EQ(spec.stream_key, "other_video:front_camera");
+  EXPECT_EQ(spec.track_name, "ros.video.other.front_camera");
   EXPECT_EQ(spec.source_name, "front_camera");
   EXPECT_EQ(spec.input_kind, VideoInputKind::ConfiguredSource);
   EXPECT_EQ(spec.ingest_mode, kConfiguredSourceIngestMode);
@@ -224,7 +224,7 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecPercentEncodesTrackNam
 
   const auto spec = resolveConfiguredVideoSourceSpec(config, "/sources/front:rgb%");
 
-  EXPECT_EQ(spec.track_name, "ros.video.configured_source.%2Fsources%2Ffront%3Argb%25");
+  EXPECT_EQ(spec.track_name, "ros.video.other.%2Fsources%2Ffront%3Argb%25");
 }
 
 TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecRejectsInvalidNames)
@@ -233,9 +233,9 @@ TEST(VideoStreamSpecTest, ResolveConfiguredVideoSourceSpecRejectsInvalidNames)
 
   expectThrowsWithMessage<std::invalid_argument>(
     [&]() { (void)resolveConfiguredVideoSourceSpec(config, "sources/missing"); },
-    "Unknown configured video source 'sources/missing'.");
+    "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveConfiguredVideoSourceSpec(config, " \t\n "); }, "Invalid configured source name.");
+    [&]() { (void)resolveConfiguredVideoSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
 }  // namespace

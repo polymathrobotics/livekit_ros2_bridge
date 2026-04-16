@@ -28,9 +28,9 @@ namespace
 {
 
 constexpr char kTopicKeyPrefix[] = "topic";
-constexpr char kConfiguredSourceKeyPrefix[] = "configured_source";
+constexpr char kConfiguredSourceKeyPrefix[] = "other_video";
 constexpr char kTopicTrackPrefix[] = "ros.video.";
-constexpr char kConfiguredSourceTrackPrefix[] = "ros.video.configured_source.";
+constexpr char kConfiguredSourceTrackPrefix[] = "ros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 constexpr char kUnnamedTrackSuffix[] = "unnamed";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");
@@ -96,7 +96,7 @@ bool isUnreservedTrackByte(unsigned char byte)
          byte == '.' || byte == '_' || byte == '~';
 }
 
-// Configured source names are free-form identifiers, so percent-encode reserved bytes
+// Other-video names are free-form identifiers, so percent-encode reserved bytes
 // to keep the client-visible track suffix reversible and avoid dot-mapping collisions.
 std::string encodeConfiguredSourceTrackSuffix(std::string_view name)
 {
@@ -164,7 +164,7 @@ std::string videoInputKindToString(VideoInputKind kind)
   if (kind == VideoInputKind::RosTopic) {
     return "ros_topic";
   }
-  return "configured_source";
+  return "other_video";
 }
 
 VideoStreamSpec resolveRosVideoTopicSpec(
@@ -204,12 +204,12 @@ VideoStreamSpec resolveConfiguredVideoSourceSpec(const VideoStreamConfig & confi
 {
   const std::string name = trim(source_name);
   if (name.empty()) {
-    throw std::invalid_argument("Invalid configured source name.");
+    throw std::invalid_argument("Invalid other video name.");
   }
 
   const auto it = config.configured_sources.find(name);
   if (it == config.configured_sources.end()) {
-    throw std::invalid_argument("Unknown configured video source '" + name + "'.");
+    throw std::invalid_argument("Unknown other video source '" + name + "'.");
   }
 
   const auto & source_config = it->second;

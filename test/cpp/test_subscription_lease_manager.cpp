@@ -909,7 +909,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ConfiguredSourceBypassesRosAccessP
   manager.handleHeartbeat("requester-1", makeHeartbeat({makeConfiguredSourceDemand("/sources/front")}));
 
   const auto status = extractPublishedStatusEntry(*state_, "requester-1");
-  expectStatusEntry(status, "configured_source", "/sources/front", "active");
+  expectStatusEntry(status, "other_video", "/sources/front", "active");
   const auto & delivery = status["delivery"];
   EXPECT_EQ(delivery["kind"], "video");
   EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
@@ -926,10 +926,10 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingConfiguredSourceReturnsErro
   expectPublishedError(
     *state_,
     "requester-1",
-    "configured_source",
+    "other_video",
     "/sources/missing",
     "not_found",
-    "Unknown configured video source '/sources/missing'.");
+    "Unknown other video source '/sources/missing'.");
 }
 
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscriptionStatusEnvelope)

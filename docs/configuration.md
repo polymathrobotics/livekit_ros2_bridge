@@ -65,7 +65,7 @@ Behavior notes:
 
 - deny rules win over allow rules
 - rules are global and name-based, not requester-specific
-- `configured_source` targets do not use `access.rules.subscribe.*`; they are controlled by `video_other_ids` and `video.other.*`
+- other video targets do not use `access.rules.subscribe.*`; they are controlled by `video_other_ids` and `video.other.*`
 - a forbidden topic subscription is reported as `forbidden` in `ros.subscriptions.status`
 
 Pattern notes:
@@ -162,9 +162,9 @@ Other video notes:
 
 Lookup notes:
 
-- clients request these sources with `kind: "configured_source"` and the source id as `name`
+- clients request these sources with `kind: "other_video"` and the source id as `name`
 - lookup trims only surrounding whitespace from the requested name
-- configured source track names percent-encode bytes outside RFC 3986 unreserved characters
+- other video track names percent-encode bytes outside RFC 3986 unreserved characters
 - other video sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_other_ids` and `video.other.*`
 
 ### Profiling
@@ -234,7 +234,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    - leave `video.publish.*` and per-source `publish.*` unset unless you need to force codec, bitrate, framerate, or simulcast behavior
    - other video sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_other_ids`
 
-3. Request the source by id from the client with `kind: "configured_source"`.
+3. Request the source by id from the client with `kind: "other_video"`.
 
    ```json
    {
@@ -242,11 +242,11 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
      "type": "ros.subscriptions.heartbeat",
      "subscriptions": [
        {
-         "kind": "configured_source",
+         "kind": "other_video",
          "name": "front_rtsp"
        },
        {
-         "kind": "configured_source",
+         "kind": "other_video",
          "name": "usb_cam"
        }
      ]
@@ -257,6 +257,6 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
 
    - the `name` is the trimmed source id
    - an active entry reports `delivery.kind: "video"`
-   - the track name is deterministic, for example `ros.video.configured_source.front_rtsp`
+   - the track name is deterministic, for example `ros.video.other.front_rtsp`
    - if the source id contains reserved bytes, the track-name suffix is percent-encoded
    - if a client asks for a source that does not exist, the bridge reports `not_found`
