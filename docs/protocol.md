@@ -564,3 +564,22 @@ Most integrations follow this order:
 8. Subscribe to the announced LiveKit data track or video publication.
 
 For a first integration, start with one service-call path or one topic-subscription path. Once that works, add more interface types, video, and broader policy rules.
+
+## ROS 2 Command Mapping (informative)
+
+This bridge does not mirror the ROS 2 CLI directly. Request-response work uses LiveKit RPCs, one-shot topic writes use LiveKit data-packet topics, and streaming deliveries arrive on LiveKit data or video tracks.
+
+| Common ROS 2 command / mental model | Bridge protocol surface(s) | What changes in LiveKit |
+| --- | --- | --- |
+| `ros2 topic list` | RPC `ros.topics.list` | Returns the allowed ROS topics the caller may use, including each topic's interface type. |
+| `ros2 service list` | RPC `ros.services.list` | Returns the allowed ROS services the caller may use, including each service's interface type. |
+| `ros2 interface show <type>` | RPC `ros.interfaces.get` | Clients fetch raw ROS interface definitions here before they encode or decode ROS CDR payloads. |
+| `ros2 service call /service Type ...` | RPC `ros.services.call` | Request and response bodies use the shared JSON CDR envelope with base64 payload bytes, not ROS CLI text formatting. |
+| `ros2 topic pub /topic Type ...` | Data-packet topic `ros.topics.publish` | This is a best-effort one-message write path for small allowed publishes. The bridge sends no acknowledgement packet. |
+| `ros2 topic echo /topic` for a non-video topic | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit data track | The heartbeat requests the subscription, the status packet reports whether it became active and names the track, and the track carries raw ROS CDR bytes. |
+| Subscribing to an image topic such as `/camera/image_raw` | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | ROS image topics may resolve to video delivery instead of a data track when the bridge treats the topic as video. |
+| Subscribing to a configured non-ROS video source | Data-packet topic `ros.subscriptions.heartbeat` with `kind: "other_video"` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | There is no direct ROS CLI equivalent for `other_video`; it addresses a configured bridge-owned video source. |
+| `ros2 action *` | No protocol equivalent | ROS actions are not supported by this package today. |
+| `ros2 param *` | No protocol equivalent | ROS parameter get and set are not supported by this package today. |
+
+The easy-to-miss part is that `ros.subscriptions.heartbeat` and `ros.subscriptions.status` are bridge-specific control-plane messages, not standard ROS messages. For non-video topics, the announced LiveKit data track carries raw ROS CDR bytes rather than JSON, and clients should use the `track_name` reported in `ros.subscriptions.status` instead of treating track naming as a separate discovery flow.
