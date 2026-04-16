@@ -47,15 +47,15 @@ struct SubscriptionHeartbeat
   std::vector<SubscriptionDemand> subscriptions;
 };
 
-// Delivery mode reported in control-path subscription status. Runtime stream concepts keep
-// `stream` naming when they refer to shared runtime resources.
+// Delivery mode reported in subscription-status control-plane messages. Runtime stream concepts
+// keep `stream` naming when they refer to shared runtime resources.
 enum class SubscriptionDeliveryKind
 {
   kData,
   kVideo,
 };
 
-// Active control-path subscription status object reported on `ros.subscriptions.status`.
+// Active subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -80,7 +80,7 @@ enum class SubscriptionStatusErrorReason
   kNotFound,
 };
 
-// Error control-path subscription status object reported on `ros.subscriptions.status`.
+// Error subscription status object reported on `ros.subscriptions.status`.
 struct SubscriptionErrorStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;

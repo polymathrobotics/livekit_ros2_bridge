@@ -21,7 +21,7 @@
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a `ros.topics.publish` request carried in a LiveKit data packet.
+/// Parsed form of a ROS publish request carried on a LiveKit data-packet topic.
 struct TopicPublishRequest
 {
   /// Normalized absolute topic name.

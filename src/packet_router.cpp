@@ -58,7 +58,7 @@ PacketRouter::PacketRouter(
 
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
-  if (packet.topic == wire::protocol::kControlTopicPublish) {
+  if (packet.topic == wire::protocol::kRosTopicPublishTopic) {
     // Unlike heartbeats, publish requests have no session-based requester recovery path
     // downstream, so anonymous packets are rejected at the protocol boundary.
     if (packet.requester_identity.empty()) {
@@ -81,7 +81,7 @@ void PacketRouter::handle(const IncomingPacket & packet) const
         .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-  } else if (packet.topic == wire::protocol::kControlSubscriptionsHeartbeat) {
+  } else if (packet.topic == wire::protocol::kSubscriptionsHeartbeatTopic) {
     try {
       nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
       auto heartbeat = wire::subscriptions::parseHeartbeat(body);

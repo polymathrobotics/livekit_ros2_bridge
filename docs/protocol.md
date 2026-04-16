@@ -9,8 +9,8 @@ Unless a section or subsection is labeled informative, it is normative. Examples
 This specification defines the external contract between a client and the bridge:
 
 - LiveKit RPC methods exposed by the bridge
-- LiveKit control-topic packets accepted by the bridge
-- LiveKit status packets and media deliveries emitted by the bridge
+- LiveKit data-packet topics accepted by the bridge
+- LiveKit data-packet topic messages and media deliveries emitted by the bridge
 - shared request, response, authorization, and delivery semantics
 
 A conforming client MUST follow the request and response schemas and the behavioral rules in this document. Clients MUST NOT rely on behavior that this document does not specify.
@@ -23,8 +23,10 @@ Terms used throughout this document:
 
 - bridge: the `livekit_ros2_bridge` participant in the LiveKit room
 - caller: the client making an RPC request
-- requester: the client sending a control-topic packet or owning a subscription lease
-- control topic: a LiveKit data-topic message exchanged outside the RPC surface
+- requester: the client sending a message on a LiveKit data-packet topic or owning a subscription lease
+- data-packet topic: the LiveKit topic string attached to a `publishData` packet outside the RPC surface
+- control-plane message: a bridge-directed message about subscription lease or status state
+- ROS publish request: a bridge-accepted request that publishes one message to a ROS topic
 - data track: a LiveKit data publication carrying raw ROS CDR bytes
 - video track: a LiveKit video publication carrying a ROS-backed or GStreamer-backed stream
 - normalized name: a ROS resource name after the bridge has converted it to absolute-style form for validation and policy checks
@@ -32,15 +34,15 @@ Terms used throughout this document:
 
 ## Protocol Surfaces
 
-| Surface | Name | Direction | Purpose |
-| --- | --- | --- | --- |
-| Control topic | `ros.topics.publish` | caller -> bridge | Best-effort ROS topic publication |
-| Control topic | `ros.subscriptions.heartbeat` | caller -> bridge | Request and renew subscriptions |
-| Control topic | `ros.subscriptions.status` | bridge -> caller | Per-subscription status |
-| RPC | `ros.services.call` | caller <-> bridge | Call an authorized ROS service |
-| RPC | `ros.interfaces.get` | caller <-> bridge | Fetch interface definitions |
-| RPC | `ros.services.list` | caller <-> bridge | List authorized ROS services |
-| RPC | `ros.topics.list` | caller <-> bridge | List authorized ROS topics |
+| Surface | Name | Role | Direction | Purpose |
+| --- | --- | --- | --- | --- |
+| Data-Packet Topic | `ros.topics.publish` | ROS Publish Request | caller -> bridge | Best-effort ROS topic publication |
+| Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | caller -> bridge | Request and renew subscriptions |
+| Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | bridge -> caller | Per-subscription status |
+| RPC | `ros.services.call` | Request-Response | caller <-> bridge | Call an authorized ROS service |
+| RPC | `ros.interfaces.get` | Request-Response | caller <-> bridge | Fetch interface definitions |
+| RPC | `ros.services.list` | Request-Response | caller <-> bridge | List authorized ROS services |
+| RPC | `ros.topics.list` | Request-Response | caller <-> bridge | List authorized ROS topics |
 
 ## Shared Wire Rules
 
@@ -89,9 +91,9 @@ Requirements:
 
 If a client asks to publish `cmd_vel`, the bridge normalizes that name before it validates the request or checks publish policy. If the normalized name is empty, the request is invalid. If the normalized name is valid but not allowed by publish policy, the bridge drops the packet.
 
-## Control Topic: `ros.topics.publish`
+## Data-Packet Topic: `ros.topics.publish`
 
-`ros.topics.publish` is a best-effort write path for small allowed ROS topic publications.
+`ros.topics.publish` is a ROS publish request on a LiveKit data-packet topic. It is a best-effort write path for small allowed ROS topic publications.
 
 ### Example Request (informative)
 
@@ -118,11 +120,11 @@ If a client asks to publish `cmd_vel`, the bridge normalizes that name before it
 
 ### Notes (informative)
 
-This path is intended for command-style writes, not for building a high-volume transport on top of control topics.
+This path targets a ROS publisher, not the bridge control plane. It is intended for command-style writes, not for building a high-volume transport on top of data-packet topics.
 
-## Control Topic: `ros.subscriptions.heartbeat`
+## Data-Packet Topic: `ros.subscriptions.heartbeat`
 
-`ros.subscriptions.heartbeat` requests and renews topic or video subscriptions.
+`ros.subscriptions.heartbeat` is a control-plane request on a LiveKit data-packet topic. It requests and renews topic or video subscriptions.
 
 ### Example Request (informative)
 
@@ -178,9 +180,9 @@ Requirements:
 
 One practical pattern is for a browser tab to send a heartbeat with both `requester_identity` and `session_id`, then continue using the same `session_id` if later user-data packets omit identity. The lease lasts 45 seconds, so the client needs to keep heartbeating before that lease expires.
 
-## Control Topic: `ros.subscriptions.status`
+## Data-Packet Topic: `ros.subscriptions.status`
 
-`ros.subscriptions.status` reports the result of a non-empty heartbeat.
+`ros.subscriptions.status` is a control-plane status message on a LiveKit data-packet topic. It reports the result of a non-empty heartbeat.
 
 ### Example Response (informative)
 
@@ -501,9 +503,9 @@ If a browser refreshes but sends another valid heartbeat before the old lease ex
 
 ## Error Model
 
-Control topics and RPCs fail differently:
+Data-packet topics and RPCs fail differently:
 
-- malformed control packets, unsupported control topics, and anonymous publish requests are dropped after logging
+- malformed `ros.topics.publish` packets, unsupported data-packet topics, and anonymous publish requests are dropped after logging
 - malformed subscription heartbeats are dropped after logging
 - well-formed subscription heartbeats report per-target failures through `ros.subscriptions.status`
 - RPC failures surface through LiveKit RPC errors

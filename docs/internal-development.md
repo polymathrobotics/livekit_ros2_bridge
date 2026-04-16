@@ -35,15 +35,17 @@ Use these words and phrases consistently in `livekit_ros2_bridge`.
 - `cdr`: Payload encoding only. Never the transport.
 - `config`: Startup configuration loaded from parameters. It does not change while the bridge is running.
 - `connection`: The bridge's connection to a LiveKit room, including reconnect handling.
-- `control message`: A bridge protocol message sent on a LiveKit data-packet topic. Use it for heartbeats, status, and topic publish requests, not for streamed ROS topic data.
-- `data packet`: LiveKit `publishData` payload. The bridge uses data packets for control messages and topic publish requests.
+- `control-plane message`: A bridge protocol message sent on a LiveKit data-packet topic for subscription heartbeats and status. Do not use it for `ros.topics.publish` or streamed ROS topic data.
+- `data packet`: LiveKit `publishData` payload. The bridge uses data packets for control-plane messages and ROS publish requests.
+- `data-packet topic`: The topic string attached to a LiveKit `publishData` packet.
 - `demand`: One requested subscription carried inside a heartbeat.
 - `drain`: Run or empty queued work on the owning thread.
-- `heartbeat`: Control message that renews one requester's subscription leases.
+- `heartbeat`: Control-plane message that renews one requester's subscription leases.
 - `inflight`: Active unresolved requests that count against a quota.
 - `lease`: A time-limited claim that keeps a subscription alive.
 - `participant`: LiveKit room member.
 - `payload`: Message envelope and serialization helpers.
+- `ROS publish request`: A bridge protocol message on a LiveKit data-packet topic that asks the bridge to publish one ROS message to a named ROS topic.
 - `quiesce`: Stop admitting new callbacks while letting already-started work finish.
 - `registry`: Shared manager that owns deduplicated resources.
 - `resource`: Real ROS graph entity used for lookup or access checks.

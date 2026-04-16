@@ -86,7 +86,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   subscription_lease_gc_timer_ = node_.create_wall_timer(
     kLeaseGcInterval, [this]() { submitToExecutor([this]() { subscription_lease_manager_->pruneExpiredLeases(); }); });
 
-  // Build ingress and control-plane handlers before the room starts delivering callbacks.
+  // Build ingress handlers for data-packet topics and RPCs before the room starts delivering callbacks.
   packet_router_ = std::make_unique<PacketRouter>(
     node_.get_clock(),
     [this](std::function<void()> work) { submitToExecutor(std::move(work)); },

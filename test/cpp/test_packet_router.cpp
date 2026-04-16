@@ -112,7 +112,7 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, wire::protocol::kControlSubscriptionsStatus);
+  EXPECT_EQ(packet.topic, wire::protocol::kSubscriptionsStatusTopic);
   EXPECT_EQ(packet.recipient_identities, (std::vector<std::string>{requester_identity}));
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
@@ -167,8 +167,7 @@ TEST_F(PacketRouterTest, RoutesHeartbeatPacketsViaSubscriptionLeaseManager)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(
-    packet_router_->handle(makePacket(heartbeatPayload(), wire::protocol::kControlSubscriptionsHeartbeat)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(heartbeatPayload(), wire::protocol::kSubscriptionsHeartbeatTopic)));
 
   ASSERT_EQ(room_connection_->state->published_data_track_names.size(), 1U);
   const auto envelope = extractSinglePublishedStatusEnvelope(*room_connection_->state, "participant-1");
@@ -193,7 +192,7 @@ TEST_F(PacketRouterTest, RoutesPublishPacketsViaRosTopicPublisher)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kControlTopicPublish)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kRosTopicPublishTopic)));
 
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -205,7 +204,7 @@ TEST_F(PacketRouterTest, RejectsInvalidHeartbeatPayloadsWithoutDispatch)
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
   const auto expect_rejected_heartbeat = [this](const std::string & payload) {
-    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kControlSubscriptionsHeartbeat)));
+    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kSubscriptionsHeartbeatTopic)));
     EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
     EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
   };
@@ -234,7 +233,7 @@ TEST_F(PacketRouterTest, RejectsInvalidPublishPacketsWithoutDispatch)
                                          const std::string & payload,
                                          const std::string & requester_identity = "participant-1") {
     EXPECT_NO_THROW(
-      packet_router_->handle(makePacket(payload, wire::protocol::kControlTopicPublish, requester_identity)));
+      packet_router_->handle(makePacket(payload, wire::protocol::kRosTopicPublishTopic, requester_identity)));
 
     executor.spin_some();
     EXPECT_FALSE(received_message.has_value());

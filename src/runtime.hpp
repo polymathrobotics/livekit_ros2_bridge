@@ -45,9 +45,9 @@ class VideoProfilingRegistry;
 ///
 /// Construction is eager rather than lazy:
 ///
-/// 1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `ControlPacketRouter`.
+/// 1. `Runtime` builds `RosExecutorQueue`, `DataTrackPublisher`, `RosTopicPublisher`, `SubscriptionRegistry`, `SubscriptionHeartbeatProcessor`, `RosServiceCaller`, `RpcRouter`, and `PacketRouter`.
 /// 2. It creates a one-second lease GC timer. That timer also hops back through `submitExecutorWork()`.
-/// 3. It starts `RoomConnection` with callbacks for connection reset, participant disconnect, and incoming control packets.
+/// 3. It starts `RoomConnection` with callbacks for connection reset, participant disconnect, and incoming data-packet-topic messages.
 /// 4. After the connection thread is running, it registers the LiveKit RPC methods.
 ///
 /// That order matters. The ROS-side helpers exist before the connection can emit callbacks, and the RPC surface is not exposed until the runtime has everything needed to serve those calls.

@@ -194,8 +194,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_service_call_payloads test/cpp/test_service_call_payloads.cpp)
   target_link_libraries(test_service_call_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
-  ament_add_gtest(test_stream_control_payloads test/cpp/test_stream_control_payloads.cpp)
-  target_link_libraries(test_stream_control_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
+  ament_add_gtest(test_subscription_payloads test/cpp/test_subscription_payloads.cpp)
+  target_link_libraries(test_subscription_payloads ${PROJECT_NAME} nlohmann_json::nlohmann_json)
 
   ament_add_gtest(test_subscription_qos test/cpp/test_subscription_qos.cpp)
   target_link_libraries(test_subscription_qos ${PROJECT_NAME})
@@ -254,7 +254,7 @@ if(BUILD_TESTING)
     test_runtime_config
     test_scope_exit
     test_service_call_payloads
-    test_stream_control_payloads
+    test_subscription_payloads
     test_subscription_lease_manager
     test_subscription_qos
     test_topic_publish_request

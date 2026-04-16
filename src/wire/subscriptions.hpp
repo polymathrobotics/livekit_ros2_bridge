@@ -22,7 +22,7 @@
 #include "core/subscriptions.hpp"
 #include "nlohmann/json_fwd.hpp"
 
-// Control-path subscription heartbeats carry lease-backed demands and report status. RPC
+// Subscription control-plane messages carry lease-backed demands and report status. RPC
 // request/response naming stays separate for RPC payloads such as service calls.
 namespace livekit_ros2_bridge::wire::subscriptions
 {
@@ -32,7 +32,7 @@ const char * targetKindString(SubscriptionTargetKind kind);
 std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind);
 const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind);
 
-/// Parse one control heartbeat body from `ros.subscriptions.request`.
+/// Parse one subscription control-plane heartbeat body from `ros.subscriptions.heartbeat`.
 /// `session_id` is optional and trimmed; missing, null, or blank values are treated as absent.
 /// `subscriptions` is required. `topic` names are normalized as ROS resource names, while
 /// `other_video` names are only trimmed because they are bridge-defined identifiers.

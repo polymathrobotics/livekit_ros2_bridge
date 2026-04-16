@@ -1,6 +1,6 @@
 # livekit_ros2_bridge
 
-`livekit_ros2_bridge` is a ROS 2 package that joins a LiveKit room as a ROS-aware participant. It gives LiveKit clients a way request topic or video subscriptions, fetch interface definitions, call ROS services, and publish small ROS topic messages.
+`livekit_ros2_bridge` is a ROS 2 package that joins a LiveKit room as a ROS-aware participant. It gives LiveKit clients a way to request topic or video subscriptions, fetch interface definitions, call ROS services, and publish small ROS topic messages.
 
 The core mental model is:
 
@@ -17,18 +17,18 @@ The core mental model is:
 The bridge uses three kinds of LiveKit surfaces:
 
 - RPCs for request-response flows such as listing resources, fetching interface definitions, and calling services
-- control topics for best-effort commands and subscription lease renewal
+- data-packet topics for ROS publish requests and subscription control-plane messages
 - tracks for ongoing delivery of ROS topic data or video
 
-| Surface | Name | Purpose |
-| --- | --- | --- |
-| Control topic | `ros.topics.publish` | Best-effort ROS topic publication |
-| Control topic | `ros.subscriptions.heartbeat` | Request and renew topic or video subscriptions |
-| Control topic | `ros.subscriptions.status` | the named LiveKit tracks of what the bridge actually made available after a heartbeat |
-| RPC | `ros.services.call` | Call an authorized ROS service |
-| RPC | `ros.services.list` | List authorized ROS services |
-| RPC | `ros.topics.list` | List authorized ROS topics |
-| RPC | `ros.interfaces.get` | Fetch ROS interface definitions |
+| Surface | Name | Role | Purpose |
+| --- | --- | --- | --- |
+| Data-Packet Topic | `ros.topics.publish` | ROS Publish Request | Best-effort ROS topic publication |
+| Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | Request and renew topic or video subscriptions |
+| Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | The named LiveKit tracks of what the bridge actually made available after a heartbeat |
+| RPC | `ros.services.call` | Request-Response | Call an authorized ROS service |
+| RPC | `ros.services.list` | Request-Response | List authorized ROS services |
+| RPC | `ros.topics.list` | Request-Response | List authorized ROS topics |
+| RPC | `ros.interfaces.get` | Request-Response | Fetch ROS interface definitions |
 
 The bridge has two delivery modes:
 
