@@ -79,14 +79,15 @@ std::optional<std::string> parseQuery(const Json & body)
   }
 }
 
-std::string serializeEntries(std::string_view key, const std::vector<ResourceEntry> & entries)
+std::string serializeEntries(
+  std::string_view collection_key, std::string_view resource_key, const std::vector<ResourceEntry> & entries)
 {
   Json resources = Json::array();
   for (const auto & entry : entries) {
-    resources.push_back({{"name", entry.name}, {"interface_type", entry.interface_type}});
+    resources.push_back({{resource_key, entry.name}, {"interface_type", entry.interface_type}});
   }
 
-  return Json{{key, std::move(resources)}}.dump();
+  return Json{{collection_key, std::move(resources)}}.dump();
 }
 
 }  // namespace
@@ -117,12 +118,12 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc)
 
 std::string serializeServices(const std::vector<ResourceEntry> & entries)
 {
-  return serializeEntries("services", entries);
+  return serializeEntries("services", "service", entries);
 }
 
 std::string serializeTopics(const std::vector<ResourceEntry> & entries)
 {
-  return serializeEntries("topics", entries);
+  return serializeEntries("topics", "name", entries);
 }
 
 }  // namespace wire::resources

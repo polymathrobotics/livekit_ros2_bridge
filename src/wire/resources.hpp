@@ -54,7 +54,7 @@ ResourceListRequest parse(const std::string & payload);
 /// human-readable exception text.
 std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 
-/// Serialize services as `{ "services": [{ "name", "interface_type" }, ...] }` in caller order.
+/// Serialize services as `{ "services": [{ "service", "interface_type" }, ...] }` in caller order.
 /// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
 /// the single `interface_type` wire shape before calling this helper.
 std::string serializeServices(const std::vector<ResourceEntry> & entries);

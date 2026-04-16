@@ -15,7 +15,6 @@
 #include "rpc_router.hpp"
 
 #include <array>
-#include <chrono>
 #include <exception>
 #include <future>
 #include <map>
@@ -271,7 +270,6 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
     // normalized service name for any later router-level error log.
     const std::string service = request.service;
     try {
-      const auto start = std::chrono::steady_clock::now();
       // First hop onto the ROS executor thread to create the client/request with
       // node-affine APIs, then wait on the returned service-call future here.
       auto submit_future = ros_executor_queue_.submit(
@@ -281,9 +279,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
       auto result_future = submit_future.get();
 
       auto response = result_future.get();
-      const int elapsed_ms = static_cast<int>(
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
-      return wire::services::serialize(response.service, response.interface_type, response.response, elapsed_ms);
+      return wire::services::serialize(response.service, response.interface_type, response.response);
     } catch (const std::exception & exc) {
       throwLoggedError(kServiceCallRpc, invocation, exc, std::string_view(service));
     }

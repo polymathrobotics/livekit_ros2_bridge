@@ -137,16 +137,12 @@ std::optional<std::string_view> invalidRequestField(const std::exception & error
 }
 
 std::string serialize(
-  const std::string & service,
-  const std::string & interface_type,
-  const std::vector<std::uint8_t> & response,
-  int elapsed_ms)
+  const std::string & service, const std::string & interface_type, const std::vector<std::uint8_t> & response)
 {
   return Json{
-    {"ok", true},
-    {"service", Json{{"name", service}, {"interface_type", interface_type}}},
+    {"service", service},
+    {"interface_type", interface_type},
     {"response", cdr::serialize(response)},
-    {"elapsed_ms", elapsed_ms},
   }
     .dump();
 }

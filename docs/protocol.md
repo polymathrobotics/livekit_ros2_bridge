@@ -433,69 +433,6 @@ Video deliveries use deterministic track names.
 
 This path targets a ROS publisher, not the bridge control plane. It is intended for command-style writes, not a high-volume transport over data-packet topics.
 
-## RPC: `ros2.service.call`
-
-### Purpose
-
-`ros2.service.call` performs an authorized ROS request-response operation.
-
-### Example Request
-
-```json
-{
-  "service": "/my_service",
-  "interface_type": "std_srvs/srv/Trigger",
-  "request": {
-    "content_type": "application/x-ros-cdr",
-    "payload_base64": "AAECAw=="
-  },
-  "timeout_ms": 1000
-}
-```
-
-### Example Response
-
-```json
-{
-  "ok": true,
-  "service": {
-    "name": "/my_service",
-    "interface_type": "std_srvs/srv/Trigger"
-  },
-  "response": {
-    "content_type": "application/x-ros-cdr",
-    "payload_base64": "AAECAw=="
-  },
-  "elapsed_ms": 12
-}
-```
-
-### Request Requirements
-
-- `service` and `request` MUST be present.
-- `service` MUST [normalize](#versioning-and-terminology) to a non-empty ROS service name.
-- `request.payload_base64` MUST decode to a non-empty byte vector.
-- `interface_type` is optional; if omitted or blank, the bridge MUST require exactly one graph-advertised service type.
-- `timeout_ms`, when present, MUST be an integer.
-- Values `<= 0` MUST NOT disable timeouts; they MUST fall back to the bridge default of `2000` ms.
-- Anonymous calls MUST be rejected (see [Error Model](#error-model)).
-- The bridge MUST check authorization against `access.rules.service.*` after request parsing and before issuing the ROS request.
-- Each `caller_identity` MUST be limited to at most `4` in-flight service calls.
-- Some failures MAY happen after acceptance: timeout, client disconnect, session reset, or shutdown.
-
-### Response Requirements
-
-- A successful response MUST be a JSON object with `ok`, `service`, `response`, and `elapsed_ms`.
-- `ok` MUST be `true`.
-- `service.name` MUST be the [normalized](#versioning-and-terminology) ROS service name the bridge actually invoked.
-- `service.interface_type` MUST be the exact interface type the bridge used.
-- `response` MUST use the [ROS Payload Envelope](#ros-payload-envelope).
-- `elapsed_ms` MUST be a non-negative integer measured by the bridge.
-
-### Notes
-
-Clients that omit `interface_type` should be prepared for ambiguity to fail the call.
-
 ## RPC: `ros2.interface.show`
 
 ### Purpose
@@ -546,6 +483,63 @@ Clients that omit `interface_type` should be prepared for ambiguity to fail the 
 
 This method lets a client obtain message and service definitions before serializing or deserializing CDR payloads. Despite the singular command-style name, the request is batch-oriented so clients can fetch multiple definitions in one round-trip.
 
+## RPC: `ros2.service.call`
+
+### Purpose
+
+`ros2.service.call` performs an authorized ROS request-response operation.
+
+### Example Request
+
+```json
+{
+  "service": "/my_service",
+  "interface_type": "std_srvs/srv/Trigger",
+  "request": {
+    "content_type": "application/x-ros-cdr",
+    "payload_base64": "AAECAw=="
+  },
+  "timeout_ms": 1000
+}
+```
+
+### Example Response
+
+```json
+{
+  "service": "/my_service",
+  "interface_type": "std_srvs/srv/Trigger",
+  "response": {
+    "content_type": "application/x-ros-cdr",
+    "payload_base64": "AAECAw=="
+  }
+}
+```
+
+### Request Requirements
+
+- `service` and `request` MUST be present.
+- `service` MUST [normalize](#versioning-and-terminology) to a non-empty ROS service name.
+- `request.payload_base64` MUST decode to a non-empty byte vector.
+- `interface_type` is optional; if omitted or blank, the bridge MUST require exactly one graph-advertised service type.
+- `timeout_ms`, when present, MUST be an integer.
+- Values `<= 0` MUST NOT disable timeouts; they MUST fall back to the bridge default of `2000` ms.
+- Anonymous calls MUST be rejected (see [Error Model](#error-model)).
+- The bridge MUST check authorization against `access.rules.service.*` after request parsing and before issuing the ROS request.
+- Each `caller_identity` MUST be limited to at most `4` in-flight service calls.
+- Some failures MAY happen after acceptance: timeout, client disconnect, session reset, or shutdown.
+
+### Response Requirements
+
+- A successful response MUST be a JSON object with `service`, `interface_type`, and `response`.
+- `service` MUST be the [normalized](#versioning-and-terminology) ROS service name the bridge actually invoked.
+- `interface_type` MUST be the exact interface type the bridge used.
+- `response` MUST use the [ROS Payload Envelope](#ros-payload-envelope).
+
+### Notes
+
+Clients that omit `interface_type` should be prepared for ambiguity to fail the call.
+
 ## RPC: `ros2.service.list`
 
 ### Purpose
@@ -567,7 +561,7 @@ This method lets a client obtain message and service definitions before serializ
 {
   "services": [
     {
-      "name": "/my_service",
+      "service": "/my_service",
       "interface_type": "std_srvs/srv/Trigger"
     }
   ]
@@ -587,7 +581,7 @@ This method lets a client obtain message and service definitions before serializ
 ### Response Requirements
 
 - A successful response MUST be a JSON object with a `services` array.
-- Each entry MUST include `name` and `interface_type`.
+- Each entry MUST include `service` and `interface_type`.
 - `services` MAY be empty when no authorized resource matches.
 
 ## RPC: `ros2.topic.list`

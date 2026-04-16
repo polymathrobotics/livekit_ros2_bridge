@@ -56,14 +56,11 @@ ServiceCallRequest parse(const std::string & payload);
 std::optional<std::string_view> invalidRequestField(const std::exception & error);
 
 /// Serialize a successful service-call response as
-/// `{ "ok": true, "service": { "name", "interface_type" }, "response": <cdr>, "elapsed_ms": ... }`.
+/// `{ "service": "...", "interface_type": "...", "response": <cdr> }`.
 /// Callers should pass the service metadata that was actually used to execute the request so the
 /// response reflects any name normalization or late interface-type resolution performed downstream.
 std::string serialize(
-  const std::string & service,
-  const std::string & interface_type,
-  const std::vector<std::uint8_t> & response,
-  int elapsed_ms);
+  const std::string & service, const std::string & interface_type, const std::vector<std::uint8_t> & response);
 
 }  // namespace wire::services
 

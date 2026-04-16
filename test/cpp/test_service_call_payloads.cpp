@@ -126,15 +126,14 @@ TEST(ServiceCallPayloadsTest, RejectsInvalidRequestFieldsWithFieldContext)
 TEST(ServiceCallPayloadsTest, SerializesResponse)
 {
   const auto payload =
-    wire::services::serialize("/set_bool", "std_srvs/srv/SetBool", std::vector<std::uint8_t>{0x01, 0x02}, 42);
+    wire::services::serialize("/set_bool", "std_srvs/srv/SetBool", std::vector<std::uint8_t>{0x01, 0x02});
 
   EXPECT_EQ(
     nlohmann::json::parse(payload),
     nlohmann::json({
-      {"ok", true},
-      {"service", {{"name", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}}},
+      {"service", "/set_bool"},
+      {"interface_type", "std_srvs/srv/SetBool"},
       {"response", wire::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02})},
-      {"elapsed_ms", 42},
     }));
 }
 

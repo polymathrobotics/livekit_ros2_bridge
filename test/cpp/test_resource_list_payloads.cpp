@@ -88,8 +88,8 @@ TEST(ResourceListPayloadsTest, SerializesServices)
     nlohmann::json({
       {"services",
        nlohmann::json::array({
-         {{"name", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}},
-         {{"name", "/trigger"}, {"interface_type", "std_srvs/srv/Trigger"}},
+         {{"service", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}},
+         {{"service", "/trigger"}, {"interface_type", "std_srvs/srv/Trigger"}},
        })},
     }));
 

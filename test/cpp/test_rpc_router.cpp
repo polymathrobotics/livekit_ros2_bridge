@@ -384,9 +384,10 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   ASSERT_TRUE(rpc_response.has_value());
 
   const auto body = nlohmann::json::parse(*rpc_response);
-  EXPECT_TRUE(body["ok"].get<bool>());
-  EXPECT_EQ(body["service"]["name"].get<std::string>(), "/rpc_router/set_bool");
-  EXPECT_EQ(body["service"]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
+  EXPECT_EQ(body["service"].get<std::string>(), "/rpc_router/set_bool");
+  EXPECT_EQ(body["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
+  EXPECT_FALSE(body.contains("ok"));
+  EXPECT_FALSE(body.contains("elapsed_ms"));
 
   const auto response_payload = wire::cdr::parse(body, "response");
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(response_payload);
@@ -454,7 +455,7 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["services"].size(), 1U);
-  EXPECT_EQ(body["services"][0]["name"].get<std::string>(), "/rpc_router/allowed_service");
+  EXPECT_EQ(body["services"][0]["service"].get<std::string>(), "/rpc_router/allowed_service");
   EXPECT_EQ(body["services"][0]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
 }
 
