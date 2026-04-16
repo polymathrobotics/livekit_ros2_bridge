@@ -85,10 +85,10 @@ TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidAr
 TEST(InterfacePayloadsTest, RejectsInvalidJsonAndNonObjectRequests)
 {
   expectInvalidArgument(
-    []() { (void)wire::interfaces::parse("{"); }, "Invalid JSON in interfaces get request", "payload");
+    []() { (void)wire::interfaces::parse("{"); }, "Invalid JSON in interface show request", "payload");
   expectInvalidArgument(
     []() { (void)wire::interfaces::parse(R"(["sensor_msgs/msg/BatteryState"])"); },
-    "Interfaces get request must be a JSON object");
+    "Interface show request must be a JSON object");
 }
 
 TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)

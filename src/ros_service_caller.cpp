@@ -418,7 +418,7 @@ RosServiceCaller::~RosServiceCaller()
   shutdown();
 }
 
-// ros.services.call spans both sides of the runtime boundary.
+// ros2.service.call spans both sides of the runtime boundary.
 //
 // Phase 1 happens here on the ROS executor: resolve the service type, create
 // or reuse the rcl client, deserialize the request, and call

@@ -53,20 +53,20 @@ struct RpcMethod
 constexpr RpcMethod kServiceCallRpc{
   wire::protocol::kRpcServiceCall,
 };
-constexpr RpcMethod kInterfacesGetRpc{
-  wire::protocol::kRpcInterfacesGet,
+constexpr RpcMethod kInterfaceShowRpc{
+  wire::protocol::kRpcInterfaceShow,
 };
-constexpr RpcMethod kServicesListRpc{
-  wire::protocol::kRpcServicesList,
+constexpr RpcMethod kServiceListRpc{
+  wire::protocol::kRpcServiceList,
 };
-constexpr RpcMethod kTopicsListRpc{
-  wire::protocol::kRpcTopicsList,
+constexpr RpcMethod kTopicListRpc{
+  wire::protocol::kRpcTopicList,
 };
 constexpr std::array<const char *, 4> kRpcNames{
   kServiceCallRpc.name,
-  kInterfacesGetRpc.name,
-  kServicesListRpc.name,
-  kTopicsListRpc.name,
+  kInterfaceShowRpc.name,
+  kServiceListRpc.name,
+  kTopicListRpc.name,
 };
 
 template <typename EventT>
@@ -233,9 +233,9 @@ bool RpcRouter::registerRpcs(RoomConnection & connection)
 
   register_method(kServiceCallRpc.name, [this](const RpcInvocation & invocation) { return callService(invocation); });
   register_method(
-    kInterfacesGetRpc.name, [this](const RpcInvocation & invocation) { return getInterfaces(invocation); });
-  register_method(kServicesListRpc.name, [this](const RpcInvocation & invocation) { return listServices(invocation); });
-  register_method(kTopicsListRpc.name, [this](const RpcInvocation & invocation) { return listTopics(invocation); });
+    kInterfaceShowRpc.name, [this](const RpcInvocation & invocation) { return getInterfaces(invocation); });
+  register_method(kServiceListRpc.name, [this](const RpcInvocation & invocation) { return listServices(invocation); });
+  register_method(kTopicListRpc.name, [this](const RpcInvocation & invocation) { return listTopics(invocation); });
 
   return all_registered;
 }
@@ -292,7 +292,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
 
 std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invocation)
 {
-  return withCallerIdentity(kInterfacesGetRpc, invocation, [&invocation]() {
+  return withCallerIdentity(kInterfaceShowRpc, invocation, [&invocation]() {
     try {
       auto interface_types = wire::interfaces::parse(invocation.payload);
 
@@ -311,14 +311,14 @@ std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invoca
       }
       return wire::interfaces::serialize(definitions);
     } catch (const std::exception & exc) {
-      throwLoggedError(kInterfacesGetRpc, invocation, exc);
+      throwLoggedError(kInterfaceShowRpc, invocation, exc);
     }
   });
 }
 
 std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocation)
 {
-  return withCallerIdentity(kServicesListRpc, invocation, [this, &invocation]() {
+  return withCallerIdentity(kServiceListRpc, invocation, [this, &invocation]() {
     try {
       auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
@@ -327,14 +327,14 @@ std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocat
       });
       return wire::resources::serializeServices(future.get());
     } catch (const std::exception & exc) {
-      throwLoggedError(kServicesListRpc, invocation, exc);
+      throwLoggedError(kServiceListRpc, invocation, exc);
     }
   });
 }
 
 std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocation)
 {
-  return withCallerIdentity(kTopicsListRpc, invocation, [this, &invocation]() {
+  return withCallerIdentity(kTopicListRpc, invocation, [this, &invocation]() {
     try {
       auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
@@ -343,7 +343,7 @@ std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocatio
       });
       return wire::resources::serializeTopics(future.get());
     } catch (const std::exception & exc) {
-      throwLoggedError(kTopicsListRpc, invocation, exc);
+      throwLoggedError(kTopicListRpc, invocation, exc);
     }
   });
 }

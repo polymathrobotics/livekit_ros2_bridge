@@ -54,12 +54,12 @@ Notes:
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `access.rules.publish.allow` | `[]` | array of ROS resource patterns | Allowlist for `ros.topics.publish`. Empty allowlist allows nothing. |
-| `access.rules.publish.deny` | `[]` | array of ROS resource patterns | Denylist for `ros.topics.publish` |
-| `access.rules.subscribe.allow` | `[]` | array of ROS resource patterns | Allowlist for topic subscriptions and `ros.topics.list`. Empty allowlist allows nothing. |
-| `access.rules.subscribe.deny` | `[]` | array of ROS resource patterns | Denylist for topic subscriptions and `ros.topics.list` |
-| `access.rules.service.allow` | `[]` | array of ROS resource patterns | Allowlist for `ros.services.call` and `ros.services.list`. Empty allowlist allows nothing. |
-| `access.rules.service.deny` | `[]` | array of ROS resource patterns | Denylist for `ros.services.call` and `ros.services.list` |
+| `access.rules.publish.allow` | `[]` | array of ROS resource patterns | Allowlist for `ros2.topic.pub`. Empty allowlist allows nothing. |
+| `access.rules.publish.deny` | `[]` | array of ROS resource patterns | Denylist for `ros2.topic.pub` |
+| `access.rules.subscribe.allow` | `[]` | array of ROS resource patterns | Allowlist for topic subscriptions and `ros2.topic.list`. Empty allowlist allows nothing. |
+| `access.rules.subscribe.deny` | `[]` | array of ROS resource patterns | Denylist for topic subscriptions and `ros2.topic.list` |
+| `access.rules.service.allow` | `[]` | array of ROS resource patterns | Allowlist for `ros2.service.call` and `ros2.service.list`. Empty allowlist allows nothing. |
+| `access.rules.service.deny` | `[]` | array of ROS resource patterns | Denylist for `ros2.service.call` and `ros2.service.list` |
 
 Behavior notes:
 

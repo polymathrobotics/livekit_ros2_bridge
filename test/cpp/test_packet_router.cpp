@@ -192,7 +192,7 @@ TEST_F(PacketRouterTest, RoutesPublishPacketsViaRosTopicPublisher)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kRosTopicPublishTopic)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kTopicPubTopic)));
 
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -232,8 +232,7 @@ TEST_F(PacketRouterTest, RejectsInvalidPublishPacketsWithoutDispatch)
   const auto expect_rejected_publish = [this, &executor, &received_message](
                                          const std::string & payload,
                                          const std::string & requester_identity = "participant-1") {
-    EXPECT_NO_THROW(
-      packet_router_->handle(makePacket(payload, wire::protocol::kRosTopicPublishTopic, requester_identity)));
+    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kTopicPubTopic, requester_identity)));
 
     executor.spin_some();
     EXPECT_FALSE(received_message.has_value());
@@ -241,6 +240,28 @@ TEST_F(PacketRouterTest, RejectsInvalidPublishPacketsWithoutDispatch)
 
   expect_rejected_publish("{");
   expect_rejected_publish(publishPayload(), "");
+}
+
+TEST_F(PacketRouterTest, DropsLegacyPublishTopicWithoutDispatch)
+{
+  initRouter(makeAccessPolicy({"/battery/cmd"}));
+
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("packet_router_legacy_publish_observer"));
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  [[maybe_unused]] auto subscription = observer->create_subscription<sensor_msgs::msg::BatteryState>(
+    "/battery/cmd", rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+  executor.add_node(observer);
+  ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
+
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), "ros.topics.publish")));
+
+  executor.spin_some();
+  EXPECT_FALSE(received_message.has_value());
 }
 
 TEST_F(PacketRouterTest, DropsUnsupportedTopicsWithoutDispatch)

@@ -36,13 +36,17 @@ Terms used throughout this document:
 
 | Surface | Name | Role | Direction | Purpose |
 | --- | --- | --- | --- | --- |
-| Data-Packet Topic | `ros.topics.publish` | ROS Publish Request | caller -> bridge | Best-effort ROS topic publication |
+| Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | caller -> bridge | Best-effort ROS topic publication |
 | Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | caller -> bridge | Request and renew subscriptions |
 | Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | bridge -> caller | Per-subscription status |
-| RPC | `ros.services.call` | Request-Response | caller <-> bridge | Call an authorized ROS service |
-| RPC | `ros.interfaces.get` | Request-Response | caller <-> bridge | Fetch interface definitions |
-| RPC | `ros.services.list` | Request-Response | caller <-> bridge | List authorized ROS services |
-| RPC | `ros.topics.list` | Request-Response | caller <-> bridge | List authorized ROS topics |
+| RPC | `ros2.service.call` | Request-Response | caller <-> bridge | Call an authorized ROS service |
+| RPC | `ros2.interface.show` | Request-Response | caller <-> bridge | Fetch interface definitions |
+| RPC | `ros2.service.list` | Request-Response | caller <-> bridge | List authorized ROS services |
+| RPC | `ros2.topic.list` | Request-Response | caller <-> bridge | List authorized ROS topics |
+
+The `ros2.*` RPC and data-packet names intentionally mirror the corresponding ROS 2 CLI command
+names. Their payloads do not mirror ROS CLI text, flags, or YAML; they remain the bridge's
+JSON/CDR protocol defined in this document.
 
 ## Shared Wire Rules
 
@@ -69,9 +73,9 @@ Requirements:
 
 The same envelope shape is used for:
 
-- `ros.topics.publish.message`
-- `ros.services.call.request`
-- `ros.services.call.response`
+- `ros2.topic.pub.message`
+- `ros2.service.call.request`
+- `ros2.service.call.response`
 
 ## Identity, Authorization, and Name Normalization
 
@@ -80,20 +84,20 @@ Requirements:
 - ROS names MUST be normalized to absolute-style names before validation and policy checks
 - if normalization produces an empty name, the request MUST be treated as invalid
 - anonymous RPC calls MUST be rejected up front
-- anonymous `ros.topics.publish` packets MUST be dropped
+- anonymous `ros2.topic.pub` packets MUST be dropped
 - anonymous `ros.subscriptions.heartbeat` packets MUST be accepted only through the `session_id` fallback defined in this document
-- `ros.topics.publish` MUST check authorization against `access.rules.publish.*`
-- `ros.services.call` and `ros.services.list` MUST check authorization against `access.rules.service.*`
-- topic subscriptions and `ros.topics.list` MUST check authorization against `access.rules.subscribe.*`
+- `ros2.topic.pub` MUST check authorization against `access.rules.publish.*`
+- `ros2.service.call` and `ros2.service.list` MUST check authorization against `access.rules.service.*`
+- topic subscriptions and `ros2.topic.list` MUST check authorization against `access.rules.subscribe.*`
 - `other_video` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by configured `video_other_ids` and `video.other.*` entries
 
 ### Example (informative)
 
 If a client asks to publish `cmd_vel`, the bridge normalizes that name before it validates the request or checks publish policy. If the normalized name is empty, the request is invalid. If the normalized name is valid but not allowed by publish policy, the bridge drops the packet.
 
-## Data-Packet Topic: `ros.topics.publish`
+## Data-Packet Topic: `ros2.topic.pub`
 
-`ros.topics.publish` is a ROS publish request on a LiveKit data-packet topic. It is a best-effort write path for small allowed ROS topic publications.
+`ros2.topic.pub` is a ROS publish request on a LiveKit data-packet topic. It is a best-effort write path for small allowed ROS topic publications.
 
 ### Example Request (informative)
 
@@ -306,9 +310,9 @@ Requirements:
 }
 ```
 
-## RPC: `ros.services.call`
+## RPC: `ros2.service.call`
 
-`ros.services.call` performs an authorized ROS request-response operation.
+`ros2.service.call` performs an authorized ROS request-response operation.
 
 ### Example Request (informative)
 
@@ -357,9 +361,9 @@ Requirements:
 
 Clients that omit `interface_type` should do so only when they are prepared for ambiguity to fail the call.
 
-## RPC: `ros.interfaces.get`
+## RPC: `ros2.interface.show`
 
-`ros.interfaces.get` returns interface definitions needed to encode or decode ROS payloads.
+`ros2.interface.show` returns interface definitions needed to encode or decode ROS payloads.
 
 ### Example Request (informative)
 
@@ -397,10 +401,11 @@ Clients that omit `interface_type` should do so only when they are prepared for 
 ### Notes (informative)
 
 This method exists so a client can obtain message and service definitions before it tries to serialize or deserialize CDR payloads.
+Despite the singular command-style name, the JSON request remains batch-oriented so clients can fetch multiple interface definitions in one round-trip.
 
-## RPC: `ros.services.list`
+## RPC: `ros2.service.list`
 
-`ros.services.list` lists authorized ROS services.
+`ros2.service.list` lists authorized ROS services.
 
 ### Example Request (informative)
 
@@ -433,9 +438,9 @@ This method exists so a client can obtain message and service definitions before
 - `query` MUST match substrings in either the resource name or the interface type
 - resources with zero or multiple interface types MUST be skipped instead of being returned ambiguously
 
-## RPC: `ros.topics.list`
+## RPC: `ros2.topic.list`
 
-`ros.topics.list` lists authorized ROS topics.
+`ros2.topic.list` lists authorized ROS topics.
 
 ### Example Request (informative)
 
@@ -505,7 +510,7 @@ If a browser refreshes but sends another valid heartbeat before the old lease ex
 
 Data-packet topics and RPCs fail differently:
 
-- malformed `ros.topics.publish` packets, unsupported data-packet topics, and anonymous publish requests are dropped after logging
+- malformed `ros2.topic.pub` packets, unsupported data-packet topics, and anonymous publish requests are dropped after logging
 - malformed subscription heartbeats are dropped after logging
 - well-formed subscription heartbeats report per-target failures through `ros.subscriptions.status`
 - RPC failures surface through LiveKit RPC errors
@@ -527,10 +532,10 @@ The bridge MUST map `std::invalid_argument` and `std::out_of_range` to `2400`. E
 
 One common request-response path looks like this:
 
-1. Call `ros.services.list` to discover an allowed service.
-2. Call `ros.interfaces.get` for the service type.
+1. Call `ros2.service.list` to discover an allowed service.
+2. Call `ros2.interface.show` for the service type.
 3. Serialize the request payload as ROS CDR.
-4. Call `ros.services.call`.
+4. Call `ros2.service.call`.
 5. Decode the returned ROS CDR response payload.
 
 ### Topic Subscription Flow (informative)
@@ -555,10 +560,10 @@ One common non-ROS video path looks like this:
 Most integrations follow this order:
 
 1. Join the same LiveKit room as the bridge.
-2. Call `ros.topics.list` and `ros.services.list` to discover only the resources your policy allows.
-3. Call `ros.interfaces.get` for the message and service types your client needs to encode or decode.
-4. Use `ros.services.call` for request-response operations.
-5. Send `ros.topics.publish` packets for small allowed topic writes.
+2. Call `ros2.topic.list` and `ros2.service.list` to discover only the resources your policy allows.
+3. Call `ros2.interface.show` for the message and service types your client needs to encode or decode.
+4. Use `ros2.service.call` for request-response operations.
+5. Send `ros2.topic.pub` packets for small allowed topic writes.
 6. Send `ros.subscriptions.heartbeat` on a regular cadence to request topic or video subscriptions.
 7. Read `ros.subscriptions.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
 8. Subscribe to the announced LiveKit data track or video publication.
@@ -567,15 +572,15 @@ For a first integration, start with one service-call path or one topic-subscript
 
 ## ROS 2 Command Mapping (informative)
 
-This bridge does not mirror the ROS 2 CLI directly. Request-response work uses LiveKit RPCs, one-shot topic writes use LiveKit data-packet topics, and streaming deliveries arrive on LiveKit data or video tracks.
+This bridge mirrors the ROS 2 CLI at the entrypoint-name level, not at the payload-format level. Request-response work uses LiveKit RPCs, one-shot topic writes use LiveKit data-packet topics, and streaming deliveries arrive on LiveKit data or video tracks.
 
 | Common ROS 2 command / mental model | Bridge protocol surface(s) | What changes in LiveKit |
 | --- | --- | --- |
-| `ros2 topic list` | RPC `ros.topics.list` | Returns the allowed ROS topics the caller may use, including each topic's interface type. |
-| `ros2 service list` | RPC `ros.services.list` | Returns the allowed ROS services the caller may use, including each service's interface type. |
-| `ros2 interface show <type>` | RPC `ros.interfaces.get` | Clients fetch raw ROS interface definitions here before they encode or decode ROS CDR payloads. |
-| `ros2 service call /service Type ...` | RPC `ros.services.call` | Request and response bodies use the shared JSON CDR envelope with base64 payload bytes, not ROS CLI text formatting. |
-| `ros2 topic pub /topic Type ...` | Data-packet topic `ros.topics.publish` | This is a best-effort one-message write path for small allowed publishes. The bridge sends no acknowledgement packet. |
+| `ros2 topic list` | RPC `ros2.topic.list` | Returns the allowed ROS topics the caller may use, including each topic's interface type. |
+| `ros2 service list` | RPC `ros2.service.list` | Returns the allowed ROS services the caller may use, including each service's interface type. |
+| `ros2 interface show <type>` | RPC `ros2.interface.show` | Clients fetch raw ROS interface definitions here before they encode or decode ROS CDR payloads. The request body still supports batching via `interface_types`. |
+| `ros2 service call /service Type ...` | RPC `ros2.service.call` | Request and response bodies use the shared JSON CDR envelope with base64 payload bytes, not ROS CLI text formatting. |
+| `ros2 topic pub /topic Type ...` | Data-packet topic `ros2.topic.pub` | This is a best-effort one-message write path for small allowed publishes. The bridge sends no acknowledgement packet. |
 | `ros2 topic echo /topic` for a non-video topic | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit data track | The heartbeat requests the subscription, the status packet reports whether it became active and names the track, and the track carries raw ROS CDR bytes. |
 | Subscribing to an image topic such as `/camera/image_raw` | Data-packet topic `ros.subscriptions.heartbeat` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | ROS image topics may resolve to video delivery instead of a data track when the bridge treats the topic as video. |
 | Subscribing to a configured non-ROS video source | Data-packet topic `ros.subscriptions.heartbeat` with `kind: "other_video"` -> data-packet topic `ros.subscriptions.status` -> LiveKit video track | There is no direct ROS CLI equivalent for `other_video`; it addresses a configured bridge-owned video source. |

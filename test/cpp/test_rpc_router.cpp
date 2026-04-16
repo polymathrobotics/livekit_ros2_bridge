@@ -201,9 +201,9 @@ TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
   };
 
   expectUnauthorized(wire::protocol::kRpcServiceCall);
-  expectUnauthorized(wire::protocol::kRpcInterfacesGet);
-  expectUnauthorized(wire::protocol::kRpcServicesList);
-  expectUnauthorized(wire::protocol::kRpcTopicsList);
+  expectUnauthorized(wire::protocol::kRpcInterfaceShow);
+  expectUnauthorized(wire::protocol::kRpcServiceList);
+  expectUnauthorized(wire::protocol::kRpcTopicList);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
@@ -249,7 +249,7 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        wire::protocol::kRpcInterfacesGet,
+        wire::protocol::kRpcInterfaceShow,
         RpcInvocation{
           "participant-1",
           R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
@@ -264,7 +264,7 @@ TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicates
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
-    wire::protocol::kRpcInterfacesGet,
+    wire::protocol::kRpcInterfaceShow,
     RpcInvocation{
       "participant-1",
       R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})",
@@ -298,8 +298,8 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
       "limit must be a positive integer");
   };
 
-  expectInvalidLimit(wire::protocol::kRpcServicesList);
-  expectInvalidLimit(wire::protocol::kRpcTopicsList);
+  expectInvalidLimit(wire::protocol::kRpcServiceList);
+  expectInvalidLimit(wire::protocol::kRpcTopicList);
 }
 
 TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
@@ -309,7 +309,7 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   RosExecutorQueue queue(*node);
   RosServiceCaller caller(*node);
   FakeRoomConnection connection;
-  connection.state->rejected_rpc_methods = {wire::protocol::kRpcServicesList};
+  connection.state->rejected_rpc_methods = {wire::protocol::kRpcServiceList};
 
   {
     RpcRouter router(*node, AccessPolicy(), queue, caller);
@@ -318,15 +318,15 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 
     const std::vector<std::string> expected_methods = {
       wire::protocol::kRpcServiceCall,
-      wire::protocol::kRpcInterfacesGet,
-      wire::protocol::kRpcServicesList,
-      wire::protocol::kRpcTopicsList,
+      wire::protocol::kRpcInterfaceShow,
+      wire::protocol::kRpcServiceList,
+      wire::protocol::kRpcTopicList,
     };
     EXPECT_EQ(connection.state->registered_rpc_methods, expected_methods);
     EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceCall), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcInterfacesGet), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServicesList), 0U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcTopicsList), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcInterfaceShow), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceList), 0U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcTopicList), 1U);
 
     router.unregisterRpcs(connection);
 
@@ -336,6 +336,17 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 
   caller.shutdown();
   queue.shutdown();
+}
+
+TEST(RpcRouterTest, LegacyRpcNamesAreNotRegistered)
+{
+  test_support::ScopedRclcppInit init;
+  RpcRouterHarness harness;
+
+  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.services.call"), 0U);
+  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.interfaces.get"), 0U);
+  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.services.list"), 0U);
+  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.topics.list"), 0U);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
@@ -430,7 +441,7 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      wire::protocol::kRpcServicesList,
+      wire::protocol::kRpcServiceList,
       RpcInvocation{
         "participant-1",
         R"({"query":"rpc_router"})",
@@ -466,7 +477,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
 
   auto handler_future = std::async(std::launch::async, [&]() {
     return harness.invokeRpc(
-      wire::protocol::kRpcTopicsList,
+      wire::protocol::kRpcTopicList,
       RpcInvocation{
         "participant-1",
         R"({"query":"BatteryState","limit":1})",

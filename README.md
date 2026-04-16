@@ -22,22 +22,25 @@ The bridge uses three kinds of LiveKit surfaces:
 
 | Surface | Name | Role | Purpose |
 | --- | --- | --- | --- |
-| Data-Packet Topic | `ros.topics.publish` | ROS Publish Request | Best-effort ROS topic publication |
+| Data-Packet Topic | `ros2.topic.pub` | ROS Publish Request | Best-effort ROS topic publication |
 | Data-Packet Topic | `ros.subscriptions.heartbeat` | Control-Plane Request | Request and renew topic or video subscriptions |
 | Data-Packet Topic | `ros.subscriptions.status` | Control-Plane Status | The named LiveKit tracks of what the bridge actually made available after a heartbeat |
-| RPC | `ros.services.call` | Request-Response | Call an authorized ROS service |
-| RPC | `ros.services.list` | Request-Response | List authorized ROS services |
-| RPC | `ros.topics.list` | Request-Response | List authorized ROS topics |
-| RPC | `ros.interfaces.get` | Request-Response | Fetch ROS interface definitions |
+| RPC | `ros2.service.call` | Request-Response | Call an authorized ROS service |
+| RPC | `ros2.service.list` | Request-Response | List authorized ROS services |
+| RPC | `ros2.topic.list` | Request-Response | List authorized ROS topics |
+| RPC | `ros2.interface.show` | Request-Response | Fetch ROS interface definitions |
 
 The bridge has two delivery modes:
 
 - non-video ROS topics are delivered as raw CDR bytes on a LiveKit data track
 - ROS image topics(`sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`) and other video targets are delivered as LiveKit video tracks
 
+The `ros2.*` names mirror the corresponding ROS 2 CLI commands, but request and response bodies
+still use the bridge's JSON/CDR protocol rather than CLI text, flags, or YAML.
+
 This means your client needs different expectations for each:
 
-- data-track subscriptions need interface definitions from `ros.interfaces.get`
+- data-track subscriptions need interface definitions from `ros2.interface.show`
 - video subscriptions depend on `video_topic_ids`, `video_other_ids`, and the matching `video.topics.*` / `video.other.*` configuration
 
 The full contract lives in [docs/protocol.md](./docs/protocol.md).

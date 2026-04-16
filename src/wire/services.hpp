@@ -24,7 +24,7 @@
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a `ros.services.call` request body.
+/// Parsed form of a `ros2.service.call` request body.
 struct ServiceCallRequest
 {
   /// Normalized absolute ROS service name.

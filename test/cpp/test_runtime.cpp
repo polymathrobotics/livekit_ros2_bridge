@@ -62,9 +62,9 @@ const std::vector<std::string> & expectedRpcMethods()
 {
   static const std::vector<std::string> methods{
     wire::protocol::kRpcServiceCall,
-    wire::protocol::kRpcInterfacesGet,
-    wire::protocol::kRpcServicesList,
-    wire::protocol::kRpcTopicsList,
+    wire::protocol::kRpcInterfaceShow,
+    wire::protocol::kRpcServiceList,
+    wire::protocol::kRpcTopicList,
   };
   return methods;
 }
@@ -313,7 +313,7 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   RuntimeConfig config = loadRuntimeConfig(node->get_node_parameters_interface());
   auto room_connection = std::make_unique<FakeRoomConnection>();
   auto state = room_connection->state;
-  state->rejected_rpc_methods = {wire::protocol::kRpcInterfacesGet};
+  state->rejected_rpc_methods = {wire::protocol::kRpcInterfaceShow};
 
   try {
     Runtime runtime(*node, std::move(room_connection), std::move(config));
@@ -386,7 +386,7 @@ TEST_F(RuntimeTest, IncomingPacketPublishesAfterExecutorDispatch)
   harness.fake_room_connection->emitIncomingPacket(
     IncomingPacket{
       std::vector<std::uint8_t>(payload.begin(), payload.end()),
-      wire::protocol::kRosTopicPublishTopic,
+      wire::protocol::kTopicPubTopic,
       "participant-1",
     });
 

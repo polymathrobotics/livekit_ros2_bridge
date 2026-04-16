@@ -58,7 +58,7 @@ std::vector<std::string> parse(const std::string & payload)
   Json body;
   try {
     body = wire::detail::parseJsonObject(
-      payload, "Invalid JSON in interfaces get request", "Interfaces get request must be a JSON object");
+      payload, "Invalid JSON in interface show request", "Interface show request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("payload", exc.what());
   }

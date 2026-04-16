@@ -25,7 +25,7 @@
 namespace livekit_ros2_bridge::wire::interfaces
 {
 
-/// Parse an interfaces-get request body of the form
+/// Parse a `ros2.interface.show` request body of the form
 /// `{ "interface_types": ["pkg/msg/Type", ...] }`.
 /// Entries are trimmed, must stay non-empty, and are returned in request order.
 /// Duplicate entries are preserved; de-duplication, if desired, happens at the caller boundary.

@@ -23,7 +23,7 @@ namespace livekit_ros2_bridge
 
 /// One ROS interface definition entry returned to a remote caller.
 /// Wire-format note: wire::interfaces::serialize() maps these members directly to the
-/// `ros.interfaces.get` JSON response keys.
+/// `ros2.interface.show` JSON response keys.
 // TODO: decouple serialization, make an explicit json object.
 struct InterfaceDefinition
 {

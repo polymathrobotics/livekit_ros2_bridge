@@ -58,7 +58,7 @@ PacketRouter::PacketRouter(
 
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
-  if (packet.topic == wire::protocol::kRosTopicPublishTopic) {
+  if (packet.topic == wire::protocol::kTopicPubTopic) {
     // Unlike heartbeats, publish requests have no session-based requester recovery path
     // downstream, so anonymous packets are rejected at the protocol boundary.
     if (packet.requester_identity.empty()) {
