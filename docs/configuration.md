@@ -4,21 +4,30 @@ The bridge reads ROS parameters once at node startup and builds one immutable ru
 
 If a change affects LiveKit connection settings, access rules, QoS override matching, or video source resolution, restart the node. Reconnect alone is not enough.
 
-## Table of contents
+## Contents
 
 - [Reference](#reference)
-- [Common scenarios](#common-scenarios) - how-to section at the bottom
-- [Set up RTSP or physical-device video inputs](#set-up-rtsp-or-physical-device-video-inputs)
+  - [LiveKit auth](#livekit-auth)
+  - [Watchdog](#watchdog)
+  - [Access rules](#access-rules)
+  - [Video](#video)
+    - [Defaults](#defaults)
+    - [ROS topic rules](#ros-topic-rules)
+    - [Configured sources](#configured-sources)
+  - [Video profiling](#video-profiling)
+  - [QoS overrides](#qos-overrides)
+- [Common scenarios](#common-scenarios)
+  - [RTSP or device inputs](#rtsp-or-device-inputs)
 
 ## Reference
 
-### LiveKit connection and authentication
+### LiveKit auth
 
-| Setting | Default | Required | Allowed values | Notes |
+| Parameter | Default | Required | Allowed values | Notes |
 | --- | --- | --- | --- | --- |
 | `livekit.url` | `""` | yes | non-empty string | LiveKit server URL |
 | `livekit.token` | `""` | yes* | string | Startup token for the bridge participant. If non-empty, it wins over `LIVEKIT_TOKEN`. |
-| `LIVEKIT_TOKEN` | unset | yes* | string | Fallback startup token when `livekit.token` is empty |
+| `LIVEKIT_TOKEN` | unset | yes* | string | Fallback startup token from the `LIVEKIT_TOKEN` environment variable when `livekit.token` is empty |
 
 \* One of `livekit.token` or `LIVEKIT_TOKEN` must be non-empty.
 
@@ -26,10 +35,9 @@ Notes:
 
 - startup fails if `livekit.url` is empty
 - startup fails if both token sources are empty
-- the resolved startup token is reused when the bridge creates a fresh room connection
-- if that token expires later, reconnect attempts fail until something outside the bridge restarts it with a fresh token
+- `LIVEKIT_TOKEN` is an environment variable, not a ROS parameter
 
-### Health watchdog
+### Watchdog
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
@@ -38,15 +46,9 @@ Notes:
 
 Notes:
 
-- the default 10-minute timeout is intentional because long outages can outlive LiveKit's reconnect-token window
-- the default 10-minute timeout also comfortably exceeds the current upstream LiveKit C++ SDK reconnect budget: the SDK tries up to 10 reconnect attempts, each of which can spend about 5 seconds opening signal, 5 seconds waiting for the reconnect response, and 15 seconds waiting for ICE, so it can give up after roughly 250 seconds before the bridge watchdog takes over
-- that LiveKit reconnect budget is an SDK default, not a bridge parameter exposed in this configuration file
-- the recovery timeout starts at startup before the first successful LiveKit connection
-- the recovery timeout is cleared after a successful connection
-- each reconnect episode arms a fresh recovery timeout
 - when the recovery timeout expires, the bridge logs the failure, shuts down, and exits non-zero
-- clean shutdown does not trigger the watchdog
-- missing required startup settings still fail immediately during config load without waiting for the watchdog
+- the default 10-minute timeout is intentional because long outages can outlive LiveKit's reconnect-token window
+- the upstream LiveKit C++ SDK makes up to 10 reconnect attempts and then stops, usually after roughly 4 minutes, so the bridge watchdog does not force an earlier exit than the SDK's own reconnect loop
 
 ### Access rules
 
@@ -59,14 +61,6 @@ Notes:
 | `access.rules.service.allow` | `[]` | array of ROS resource patterns | Allowlist for `ros.services.call` and `ros.services.list`. Empty allowlist allows nothing. |
 | `access.rules.service.deny` | `[]` | array of ROS resource patterns | Denylist for `ros.services.call` and `ros.services.list` |
 
-Pattern notes:
-
-- `*` matches the entire operation
-- `/foo/bar` matches exactly `/foo/bar`
-- `/foo/*` matches descendants under `/foo`
-- names are normalized before matching: surrounding whitespace is trimmed, repeated `/` collapses, a missing leading `/` is added, and trailing `/` is removed except for `/`
-- empty strings in the arrays are ignored
-
 Behavior notes:
 
 - deny rules win over allow rules
@@ -74,44 +68,17 @@ Behavior notes:
 - `configured_source` targets do not use `access.rules.subscribe.*`; they are controlled by `video_configured_source_ids` and `video.configured_sources.*`
 - a forbidden topic subscription is reported as `forbidden` in `ros.subscriptions.status`
 
-### Subscriber QoS overrides
+Pattern notes:
 
-| Parameter | Default | Allowed values | Notes |
-| --- | --- | --- | --- |
-| `subscription_qos_overrides_ids` | `[]` | array of ids | QoS override ids to load from `subscription.qos_overrides.<id>.*` |
-| `subscription.qos_overrides.<id>.pattern` | `""` | ROS topic pattern | Required in practice for each referenced id |
-| `subscription.qos_overrides.<id>.reliability` | `auto` | `auto`, `reliable`, `best_effort` | Reliability override for matching topics |
-| `subscription.qos_overrides.<id>.durability` | `auto` | `auto`, `volatile`, `transient_local` | Durability override for matching topics |
+- `*` matches the entire operation
+- `/foo/bar` matches exactly `/foo/bar`
+- `/foo/*` matches descendants under `/foo` but not `/foo` itself
+- names are normalized before matching: surrounding whitespace is trimmed, repeated `/` collapses, a missing leading `/` is added, and trailing `/` is removed except for `/`
+- empty strings in the arrays are ignored
 
-Resolution notes:
+### Video
 
-- overrides apply only to ROS topic subscriptions
-- they affect both data-track subscriptions and ROS video topic subscriptions
-- if multiple overrides match, the longest matching pattern wins
-- same-length ties keep declaration order
-- each QoS axis resolves independently: explicit override, then visible publisher QoS, then the subscription-class base QoS
-- without a matching override, the bridge only infers `reliability` and `durability` from visible publishers
-- if publishers disagree, the bridge chooses the weaker compatible policy for that axis
-- publisher `unknown` and `system_default` policies do not contribute to inference
-- data-track subscriptions start from `KeepLast(2)`
-- ROS video topic subscriptions start from `KeepLast(1)`
-- QoS is resolved only when the shared subscription is created or recreated later; it is not live-reconciled after that
-
-### Video entry lists
-
-| Parameter | Default | Allowed values | Notes |
-| --- | --- | --- | --- |
-| `video_topic_rule_ids` | `[]` | array of ids | ROS video rule ids defined under `video.topic_rules.<id>.*` |
-| `video_configured_source_ids` | `[]` | array of ids | Configured source ids defined under `video.configured_sources.<id>.*` |
-
-Notes:
-
-- these id lists stay at the root because `generate_parameter_library` 0.6 in the current distro matrix cannot move them cleanly under `video.topic_rules.ids` and `video.configured_sources.ids` yet
-- duplicate ids in either list are rejected at startup
-- each listed id must have matching generated parameters under its `video.topic_rules.<id>.*` or `video.configured_sources.<id>.*` entry
-- configured source ids are trimmed for lookup, so surrounding whitespace is ignored but names such as `/front_rtsp` and `/front_rtsp/` remain distinct
-
-### Global video publish defaults
+#### Defaults
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
@@ -120,16 +87,20 @@ Notes:
 | `video.publish.max_framerate` | `0.0` | double `>= 0.0` | Global LiveKit max framerate |
 | `video.publish.simulcast` | `auto` | `auto`, `enabled`, `disabled` | Global LiveKit simulcast setting |
 
-Notes:
+Publish default notes:
 
+- these defaults expose the same publish controls described in LiveKit's [video track configuration guide](https://docs.livekit.io/transport/media/advanced/) and C++ [`TrackPublishOptions` reference](https://docs.livekit.io/reference/client-sdk-cpp/structlivekit_1_1TrackPublishOptions.html); the bridge forwards them directly when it publishes a video track
 - these defaults apply to ROS video topic rules, configured sources, and the built-in ROS fallback rule
 - `auto` or `0` means "use LiveKit SDK default behavior" for that field
 - entry-level overrides merge per field with these global defaults
 
-### ROS video topic rules
+#### ROS topic rules
+
+These rules apply to ROS topics, not configured sources.
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
+| `video_topic_rule_ids` | `[]` | array of ids | ROS video rule ids defined under `video.topic_rules.<id>.*` |
 | `video.topic_rules.<id>.pattern` | none | ROS topic pattern | Required topic pattern for this rule |
 | `video.topic_rules.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after bridge-managed ROS ingress |
 | `video.topic_rules.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
@@ -139,6 +110,9 @@ Notes:
 
 Rule notes:
 
+- duplicate ids in `video_topic_rule_ids` are rejected at startup
+- every entry under `video.topic_rules.<id>.*` must have a matching id in `video_topic_rule_ids`
+- `video_topic_rule_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
 - all matching rules are considered
 - the longest matching pattern wins
 - same-length ties keep declaration order
@@ -161,10 +135,11 @@ Supported ROS video inputs:
 - for `sensor_msgs/msg/Image`, supported encodings are `mono8`, `mono16`, `rgb8`, `bgr8`, `rgba8`, `bgra8`, `yuv422`, and `yuv422_yuy2`
 - for `sensor_msgs/msg/CompressedImage`, supported payloads are JPEG and PNG, including image_transport-style format strings that name `jpeg`, `jpg`, or `png`
 
-### Configured video sources
+#### Configured sources
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
+| `video_configured_source_ids` | `[]` | array of ids | Configured source ids defined under `video.configured_sources.<id>.*` |
 | `video.configured_sources.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
 | `video.configured_sources.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the configured ingress |
 | `video.configured_sources.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
@@ -174,8 +149,11 @@ Supported ROS video inputs:
 
 Source notes:
 
+- duplicate ids in `video_configured_source_ids` are rejected at startup
+- every entry under `video.configured_sources.<id>.*` must have a matching id in `video_configured_source_ids`
+- `video_configured_source_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
 - `source` is required and must be non-empty after trimming
-- `source` should start with the ingress stage, such as RTSP, V4L2, or a test source
+- `source` should start with a concrete ingress element such as `uridecodebin`, `v4l2src`, or `videotestsrc`
 - `transform` is optional and sits between your ingress and the bridge-owned tail
 - the bridge always appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
@@ -189,7 +167,7 @@ Lookup notes:
 - configured source track names percent-encode bytes outside RFC 3986 unreserved characters
 - configured sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_configured_source_ids` and `video.configured_sources.*`
 
-### Debug video profiling
+### Video profiling
 
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
@@ -203,9 +181,32 @@ Notes:
 - profiling is configured at startup only
 - when enabled, the bridge logs the profiling config, emits periodic summaries, and flushes the trace file on shutdown
 
+### QoS overrides
+
+| Parameter | Default | Allowed values | Notes |
+| --- | --- | --- | --- |
+| `subscription_qos_overrides_ids` | `[]` | array of ids | QoS override ids to load from `subscription.qos_overrides.<id>.*` |
+| `subscription.qos_overrides.<id>.pattern` | `""` | ROS topic pattern | Required for each referenced id |
+| `subscription.qos_overrides.<id>.reliability` | `auto` | `auto`, `reliable`, `best_effort` | Reliability override for matching topics |
+| `subscription.qos_overrides.<id>.durability` | `auto` | `auto`, `volatile`, `transient_local` | Durability override for matching topics |
+
+Resolution notes:
+
+- overrides apply only to ROS topic subscriptions
+- they affect both data-track subscriptions and ROS video topic subscriptions
+- if multiple overrides match, the longest matching pattern wins
+- same-length ties keep declaration order
+- each QoS axis resolves independently: explicit override, then visible publisher QoS, then the subscription-class base QoS
+- without a matching override, the bridge only infers `reliability` and `durability` from visible publishers
+- if publishers disagree, the bridge chooses the weaker compatible policy for that axis
+- publisher `unknown` and `system_default` policies do not contribute to inference
+- data-track subscriptions start from `KeepLast(2)`
+- ROS video topic subscriptions start from `KeepLast(1)`
+- QoS is resolved only when the shared subscription is created or recreated later; it is not live-reconciled after that
+
 ## Common scenarios
 
-### Set up RTSP or physical-device video inputs
+### RTSP or device inputs
 
 Use `video.configured_sources.*` when the bridge should ingest video directly from GStreamer instead of subscribing to an existing ROS `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage` topic.
 
