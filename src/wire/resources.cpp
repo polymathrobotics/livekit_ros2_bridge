@@ -123,7 +123,7 @@ std::string serializeServices(const std::vector<ResourceEntry> & entries)
 
 std::string serializeTopics(const std::vector<ResourceEntry> & entries)
 {
-  return serializeEntries("topics", "name", entries);
+  return serializeEntries("topics", "topic", entries);
 }
 
 }  // namespace wire::resources

@@ -605,7 +605,7 @@ Clients that omit `interface_type` should be prepared for ambiguity to fail the 
 {
   "topics": [
     {
-      "name": "/camera/image_raw",
+      "topic": "/camera/image_raw",
       "interface_type": "sensor_msgs/msg/Image"
     }
   ]
@@ -625,7 +625,7 @@ Clients that omit `interface_type` should be prepared for ambiguity to fail the 
 ### Response Requirements
 
 - A successful response MUST be a JSON object with a `topics` array.
-- Each entry MUST include `name` and `interface_type`.
+- Each entry MUST include `topic` and `interface_type`.
 - `topics` MAY be empty when no authorized resource matches.
 
 ## Informative: `ros2` CLI Mapping

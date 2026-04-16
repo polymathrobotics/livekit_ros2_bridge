@@ -108,7 +108,7 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
     nlohmann::json({
       {"topics",
        nlohmann::json::array({
-         {{"name", "/camera/image_raw"}, {"interface_type", "sensor_msgs/msg/Image"}},
+         {{"topic", "/camera/image_raw"}, {"interface_type", "sensor_msgs/msg/Image"}},
        })},
     }));
 

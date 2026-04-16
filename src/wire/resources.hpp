@@ -59,7 +59,7 @@ std::optional<std::string_view> invalidRequestField(const std::exception & exc);
 /// the single `interface_type` wire shape before calling this helper.
 std::string serializeServices(const std::vector<ResourceEntry> & entries);
 
-/// Serialize topics as `{ "topics": [{ "name", "interface_type" }, ...] }` in caller order.
+/// Serialize topics as `{ "topics": [{ "topic", "interface_type" }, ...] }` in caller order.
 /// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph entries to
 /// the single `interface_type` wire shape before calling this helper.
 std::string serializeTopics(const std::vector<ResourceEntry> & entries);

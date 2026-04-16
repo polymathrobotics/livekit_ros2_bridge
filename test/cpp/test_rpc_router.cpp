@@ -491,7 +491,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["topics"].size(), 1U);
-  EXPECT_EQ(body["topics"][0]["name"].get<std::string>(), "/rpc_router/visible_topic");
+  EXPECT_EQ(body["topics"][0]["topic"].get<std::string>(), "/rpc_router/visible_topic");
   EXPECT_EQ(body["topics"][0]["interface_type"].get<std::string>(), "sensor_msgs/msg/BatteryState");
 }
 
