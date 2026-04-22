@@ -26,6 +26,7 @@
 #include "access_policy.hpp"
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node.hpp"
+#include "ros_node_interfaces.hpp"
 #include "topic_publish_request.hpp"
 #include "utils/event_throttle.hpp"
 #include "utils/lru_cache.hpp"
@@ -41,6 +42,8 @@ class RosTopicPublisher final
 public:
   RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy);
   RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics);
+  RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy);
+  RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy, std::size_t max_topics);
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.
@@ -68,7 +71,7 @@ private:
 
   static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
 
-  rclcpp::Node & node_;
+  PublisherNodeInterfaces interfaces_;
   AccessPolicy access_policy_;
   // Terminal lifecycle bit shared with in-flight publish() calls. publish()
   // rechecks it before reusing or updating cache state so shutdown() does not

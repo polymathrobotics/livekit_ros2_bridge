@@ -18,14 +18,10 @@
 #include <mutex>
 #include <string>
 
+#include "ros_node_interfaces.hpp"
 #include "video_profiling.hpp"
 #include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
-
-namespace rclcpp
-{
-class Node;
-}  // namespace rclcpp
 
 namespace livekit_ros2_bridge
 {
@@ -42,7 +38,7 @@ class VideoStreamInstance final : public VideoStreamLifecycleObserver
 {
 public:
   VideoStreamInstance(
-    rclcpp::Node & node,
+    SubscriptionNodeInterfaces interfaces,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
@@ -73,7 +69,7 @@ public:
   void onPushFailed(const std::string & error) override;
 
 private:
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
   VideoStreamSpec spec_;
   // Borrowed bridge-wide QoS overrides; the owner must outlive this instance.
   const SubscriptionQosConfig * qos_config_;

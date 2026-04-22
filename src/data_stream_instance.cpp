@@ -20,8 +20,8 @@
 #include <utility>
 
 #include "data_stream_registry.hpp"
+#include "rclcpp/create_generic_subscription.hpp"
 #include "rclcpp/logging.hpp"
-#include "rclcpp/node.hpp"
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
 #include "subscription_qos.hpp"
@@ -57,15 +57,15 @@ std::string makeDataTrackName(const std::string & topic)
 DataStreamInstance::DataStreamInstance(
   std::string topic,
   std::string interface_type,
-  rclcpp::Node & node,
+  SubscriptionNodeInterfaces interfaces,
   RoomConnection & room_connection,
   DataStreamRegistry & registry,
   QuiesceGate & callback_gate,
   const SubscriptionQosConfig * qos_config)
-: node_(node)
+: interfaces_(std::move(interfaces))
 , topic_(std::move(topic))
 , interface_type_(std::move(interface_type))
-, publisher_(room_connection, makeDataTrackName(topic_), node_.get_clock())
+, publisher_(room_connection, makeDataTrackName(topic_), interfaces_.clock)
 , registry_(registry)
 , qos_config_(qos_config)
 , gate_generation_(callback_gate.currentGeneration())
@@ -166,7 +166,7 @@ DataStreamInstance::State DataStreamInstance::state() const
 void DataStreamInstance::subscribe()
 {
   const rclcpp::QoS base_qos(kSubscriptionDepth);
-  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(node_, topic_, base_qos, qos_config_);
+  const ResolvedSubscriptionQos qos = resolveSubscriptionQos(interfaces_.graph, topic_, base_qos, qos_config_);
 
   LogEvent(kLogger, "subscription_qos_resolved")
     .field("resource", topic_)
@@ -187,7 +187,8 @@ void DataStreamInstance::subscribe()
   // The gate rejects old-session callbacks before they touch shared state, and the weak pointer
   // keeps a late callback from extending the instance lifetime past teardown.
   const std::weak_ptr<DataStreamInstance> weak = weak_from_this();
-  subscription_ = node_.create_generic_subscription(
+  subscription_ = rclcpp::create_generic_subscription(
+    interfaces_.topics,
     topic_,
     interface_type_,
     qos.qos,
@@ -231,7 +232,7 @@ void DataStreamInstance::forwardMessage(const rclcpp::SerializedMessage & messag
       .field("resource", topic_)
       .field("track_name", trackName())
       .field("error", exc.what())
-      .warnThrottle(*node_.get_clock(), kLogThrottle);
+      .warnThrottle(*interfaces_.clock, kLogThrottle);
   }
 }
 

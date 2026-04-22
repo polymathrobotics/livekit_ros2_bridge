@@ -19,6 +19,7 @@
 
 #include "access_policy.hpp"
 #include "rclcpp/node.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
@@ -38,6 +39,11 @@ public:
     const AccessPolicy & access_policy,
     RosExecutorQueue & ros_executor_queue,
     RosServiceCaller & ros_service_caller);
+  RpcRouter(
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    const AccessPolicy & access_policy,
+    RosExecutorQueue & ros_executor_queue,
+    RosServiceCaller & ros_service_caller);
 
   // Registers every supported RPC. Returns false if any registration fails, but
   // successful handlers remain installed until unregisterRpcs() is called.
@@ -49,12 +55,12 @@ public:
   void unregisterRpcs(RoomConnection & connection);
 
 private:
-  rclcpp::Node & node_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Copy the policy so registered callbacks do not depend on the caller
   // retaining the original config object for the life of the room connection.
   AccessPolicy access_policy_;
   // Borrowed ROS helpers captured by registered callbacks; unregisterRpcs()
-  // must run before either helper or node_ is destroyed.
+  // must run before either helper or graph_ is destroyed.
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
 

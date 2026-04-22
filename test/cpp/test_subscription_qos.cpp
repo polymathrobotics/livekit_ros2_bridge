@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <optional>
+
 #include "gtest/gtest.h"
 #include "subscription_qos.hpp"
 
@@ -121,7 +123,7 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
 
   SubscriptionQosConfig config;
   config.topic_overrides = {
-    {"camera", "/camera/front", SubscriptionQosReliabilityMode::kBestEffort, SubscriptionQosDurabilityMode::kAuto},
+    {"camera", "/camera/front", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt},
   };
 
   const ResolvedSubscriptionQos without_publisher_durability = resolveSubscriptionQos(
@@ -157,8 +159,8 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUses
 
   SubscriptionQosConfig config;
   config.topic_overrides = {
-    {"root", "/*", SubscriptionQosReliabilityMode::kBestEffort, SubscriptionQosDurabilityMode::kAuto},
-    {"camera", "/camera/*", SubscriptionQosReliabilityMode::kAuto, SubscriptionQosDurabilityMode::kTransientLocal},
+    {"root", "/*", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt},
+    {"camera", "/camera/*", std::nullopt, rclcpp::DurabilityPolicy::TransientLocal},
   };
 
   const std::vector<PublisherQos> publishers{

@@ -28,13 +28,22 @@
 namespace livekit_ros2_bridge
 {
 
+class Node::Impl final
+{
+public:
+  explicit Impl(Node & node)
+  : runtime_(node, createRoomConnection(), loadRuntimeConfig(node.get_node_parameters_interface()))
+  {}
+
+private:
+  Runtime runtime_;
+};
+
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   try {
-    RuntimeConfig config = loadRuntimeConfig(get_node_parameters_interface());
-    auto room_connection = createRoomConnection();
-    runtime_ = std::make_unique<Runtime>(*this, std::move(room_connection), std::move(config));
+    pimpl_ = std::make_unique<Impl>(*this);
   } catch (...) {
     LogEvent(get_logger(), "node_startup_failed")
       .field("reason", "runtime_initialization_failed")
@@ -44,12 +53,7 @@ Node::Node(const rclcpp::NodeOptions & options)
   }
 }
 
-Node::~Node()
-{
-  // Tear Runtime down before the component reports shutdown complete so its teardown can still use
-  // this node's logger and interfaces.
-  runtime_.reset();
-}
+Node::~Node() = default;
 
 }  // namespace livekit_ros2_bridge
 

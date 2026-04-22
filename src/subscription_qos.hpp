@@ -15,29 +15,16 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "rclcpp/node.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/qos.hpp"
 
 namespace livekit_ros2_bridge
 {
-
-enum class SubscriptionQosReliabilityMode
-{
-  kAuto,
-  kReliable,
-  kBestEffort
-};
-
-enum class SubscriptionQosDurabilityMode
-{
-  kAuto,
-  kVolatile,
-  kTransientLocal
-};
 
 struct TopicSubscriptionQosOverride
 {
@@ -45,8 +32,8 @@ struct TopicSubscriptionQosOverride
   // Normalized topic pattern. If multiple overrides match, the longest pattern
   // wins; equal-length ties preserve config order.
   std::string pattern;
-  SubscriptionQosReliabilityMode reliability = SubscriptionQosReliabilityMode::kAuto;
-  SubscriptionQosDurabilityMode durability = SubscriptionQosDurabilityMode::kAuto;
+  std::optional<rclcpp::ReliabilityPolicy> reliability;
+  std::optional<rclcpp::DurabilityPolicy> durability;
 };
 
 struct SubscriptionQosConfig
@@ -105,7 +92,7 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 // Convenience overload that snapshots publisher QoS from the ROS graph before
 // applying the same precedence rules as the vector-based overload.
 ResolvedSubscriptionQos resolveSubscriptionQos(
-  const rclcpp::Node & node,
+  const rclcpp::node_interfaces::NodeGraphInterface::SharedPtr & graph,
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config);

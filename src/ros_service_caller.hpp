@@ -21,10 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace rclcpp
-{
-class Node;
-}  // namespace rclcpp
+#include "ros_node_interfaces.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -47,6 +44,7 @@ public:
   };
 
   explicit RosServiceCaller(rclcpp::Node & node);
+  explicit RosServiceCaller(ServiceNodeInterfaces interfaces);
 
   ~RosServiceCaller();
 

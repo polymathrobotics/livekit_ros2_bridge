@@ -21,12 +21,9 @@
 #include <unordered_map>
 
 #include "core/subscriptions.hpp"
+#include "rclcpp/node.hpp"
+#include "ros_node_interfaces.hpp"
 #include "video_stream_config.hpp"
-
-namespace rclcpp
-{
-class Node;
-}  // namespace rclcpp
 
 namespace livekit_ros2_bridge
 {
@@ -60,6 +57,12 @@ public:
     const SubscriptionQosConfig * qos_config = nullptr,
     VideoProfilingRegistry * profiling_registry = nullptr,
     const VideoStreamConfig * video_stream_config = nullptr);
+  VideoStreamRegistry(
+    SubscriptionNodeInterfaces interfaces,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * qos_config = nullptr,
+    VideoProfilingRegistry * profiling_registry = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr);
   ~VideoStreamRegistry();
 
   // Resolves one subscription-facing target into the stable shared runtime identity used for
@@ -83,7 +86,7 @@ private:
   VideoStreamSpec resolveSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
 
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
   // Optional non-owning QoS config forwarded into new stream instances.
   const SubscriptionQosConfig * qos_config_;

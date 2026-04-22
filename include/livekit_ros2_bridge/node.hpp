@@ -21,9 +21,6 @@
 
 namespace livekit_ros2_bridge
 {
-
-class Runtime;
-
 // Thin ROS component boundary that translates parameterized startup into one Runtime instance.
 // Construction is eager: configuration loading and runtime startup both happen in the
 // constructor, and failures are surfaced by throwing instead of leaving a partially started
@@ -32,14 +29,13 @@ class Node final : public rclcpp::Node
 {
 public:
   explicit Node(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
-  // Defined out-of-line so shutdown can reset runtime_ while the rclcpp::Node base and its
-  // interfaces are still alive.
+  // Defined out-of-line so the opaque implementation is destroyed while the rclcpp::Node base and
+  // its interfaces are still alive.
   ~Node() override;
 
 private:
-  // Runtime keeps references into this node, so Node tears it down explicitly from the
-  // destructor body while rclcpp state needed during shutdown is still alive.
-  std::unique_ptr<Runtime> runtime_;
+  class Impl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace livekit_ros2_bridge

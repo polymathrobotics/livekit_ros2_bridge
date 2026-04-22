@@ -22,11 +22,11 @@
 #include <string>
 
 #include "data_track_publisher.hpp"
+#include "ros_node_interfaces.hpp"
 
 namespace rclcpp
 {
 class GenericSubscription;
-class Node;
 class SerializedMessage;
 }  // namespace rclcpp
 
@@ -191,13 +191,13 @@ private:
   DataStreamInstance(
     std::string topic,
     std::string interface_type,
-    rclcpp::Node & node,
+    SubscriptionNodeInterfaces interfaces,
     RoomConnection & room_connection,
     DataStreamRegistry & registry,
     QuiesceGate & callback_gate,
     const SubscriptionQosConfig * qos_config);
 
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
 
   std::string topic_;
   std::string interface_type_;

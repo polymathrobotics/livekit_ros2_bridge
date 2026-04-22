@@ -25,6 +25,7 @@
 
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "ros_node_interfaces.hpp"
 
 namespace livekit_ros2_bridge::test_support
 {

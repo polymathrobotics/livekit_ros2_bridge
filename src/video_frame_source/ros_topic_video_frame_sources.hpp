@@ -18,7 +18,7 @@
 #include <optional>
 #include <string>
 
-#include "rclcpp/node.hpp"
+#include "ros_node_interfaces.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
@@ -50,7 +50,7 @@ class RawRosVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   RawRosVideoFrameSource(
-    rclcpp::Node & node,
+    SubscriptionNodeInterfaces interfaces,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
@@ -61,7 +61,7 @@ public:
   void shutdown() override;
 
 private:
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
@@ -79,7 +79,7 @@ class CompressedRosVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   CompressedRosVideoFrameSource(
-    rclcpp::Node & node,
+    SubscriptionNodeInterfaces interfaces,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
@@ -90,7 +90,7 @@ public:
   void shutdown() override;
 
 private:
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;

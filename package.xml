@@ -12,6 +12,7 @@
 
   <depend>generate_parameter_library</depend>
   <depend>libssl-dev</depend>
+  <depend>magic_enum</depend>
   <depend>nlohmann-json-dev</depend>
   <depend>rclcpp_components</depend>
   <depend>ament_index_cpp</depend>

@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -105,8 +106,8 @@ void expectSubscriptionQosOverrideEq(
   const TopicSubscriptionQosOverride & actual,
   const char * id,
   const char * pattern,
-  SubscriptionQosReliabilityMode reliability,
-  SubscriptionQosDurabilityMode durability)
+  std::optional<rclcpp::ReliabilityPolicy> reliability,
+  std::optional<rclcpp::DurabilityPolicy> durability)
 {
   EXPECT_EQ(actual.id, id);
   EXPECT_EQ(actual.pattern, pattern);
@@ -308,14 +309,14 @@ TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosEntriesLoadFromUnifiedParams)
     config.subscription_qos.topic_overrides[0],
     "camera",
     "/camera/*",
-    SubscriptionQosReliabilityMode::kBestEffort,
-    SubscriptionQosDurabilityMode::kAuto);
+    rclcpp::ReliabilityPolicy::BestEffort,
+    std::nullopt);
   expectSubscriptionQosOverrideEq(
     config.subscription_qos.topic_overrides[1],
     "front",
     "/camera/front",
-    SubscriptionQosReliabilityMode::kAuto,
-    SubscriptionQosDurabilityMode::kTransientLocal);
+    std::nullopt,
+    rclcpp::DurabilityPolicy::TransientLocal);
 }
 
 TEST_F(RuntimeConfigTest, SubscriptionQosOverrideNormalizesPattern)

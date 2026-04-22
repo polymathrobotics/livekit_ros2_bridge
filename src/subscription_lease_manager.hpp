@@ -28,6 +28,7 @@
 #include "core/subscriptions.hpp"
 #include "data_stream_registry.hpp"
 #include "rclcpp/node.hpp"
+#include "ros_node_interfaces.hpp"
 #include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge
@@ -47,6 +48,14 @@ public:
 
   SubscriptionLeaseManager(
     rclcpp::Node & node,
+    RoomConnection & room_connection,
+    AccessPolicy access_policy,
+    DataStreamRegistry & data_stream_registry,
+    VideoStreamRegistry & video_stream_registry,
+    Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
+
+  SubscriptionLeaseManager(
+    GraphNodeInterfaces interfaces,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
     DataStreamRegistry & data_stream_registry,
@@ -100,7 +109,7 @@ private:
     const Subscription & subscription, Clock::time_point reference_time);
   static bool isVideoSubscription(const Subscription & subscription);
 
-  rclcpp::Node & node_;
+  GraphNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
   DataStreamRegistry & data_stream_registry_;

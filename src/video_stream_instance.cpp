@@ -34,7 +34,7 @@ namespace
 const auto kLogger = rclcpp::get_logger("video_stream_instance");
 
 std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
-  rclcpp::Node & node,
+  SubscriptionNodeInterfaces interfaces,
   const VideoStreamSpec & spec,
   const SubscriptionQosConfig * qos_config,
   VideoTrackPublisher & publisher,
@@ -44,12 +44,12 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
 }  // namespace
 
 VideoStreamInstance::VideoStreamInstance(
-  rclcpp::Node & node,
+  SubscriptionNodeInterfaces interfaces,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
   std::shared_ptr<VideoStreamProfiler> profiler)
-: node_(node)
+: interfaces_(std::move(interfaces))
 , spec_(std::move(spec))
 , qos_config_(qos_config)
 , profiler_(std::move(profiler))
@@ -75,7 +75,7 @@ std::string VideoStreamInstance::start()
     }
 
     if (!source_) {
-      source_ = makeVideoFrameSource(node_, spec_, qos_config_, *publisher_, *this, profiler_);
+      source_ = makeVideoFrameSource(interfaces_, spec_, qos_config_, *publisher_, *this, profiler_);
     }
     // Hold a shared ref across the unlocked start() call so concurrent shutdown can
     // detach source_ without destroying the source underneath this invocation.
@@ -214,7 +214,7 @@ namespace
 {
 
 std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
-  rclcpp::Node & node,
+  SubscriptionNodeInterfaces interfaces,
   const VideoStreamSpec & spec,
   const SubscriptionQosConfig * qos_config,
   VideoTrackPublisher & publisher,
@@ -226,10 +226,11 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   }
   if (spec.input_kind == VideoInputKind::RosTopic) {
     if (spec.ingest_mode == kRawImageIngestMode) {
-      return std::make_shared<RawRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
+      return std::make_shared<RawRosVideoFrameSource>(interfaces, spec, qos_config, publisher, observer, profiler);
     }
     if (spec.ingest_mode == kCompressedImageIngestMode) {
-      return std::make_shared<CompressedRosVideoFrameSource>(node, spec, qos_config, publisher, observer, profiler);
+      return std::make_shared<CompressedRosVideoFrameSource>(
+        interfaces, spec, qos_config, publisher, observer, profiler);
     }
   }
 

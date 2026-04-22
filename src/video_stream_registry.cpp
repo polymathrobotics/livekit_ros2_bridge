@@ -44,16 +44,26 @@ const VideoStreamConfig & defaultVideoStreamConfig()
 }  // namespace
 
 VideoStreamRegistry::VideoStreamRegistry(
+  SubscriptionNodeInterfaces interfaces,
+  RoomConnection & room_connection,
+  const SubscriptionQosConfig * qos_config,
+  VideoProfilingRegistry * profiling_registry,
+  const VideoStreamConfig * video_stream_config)
+: interfaces_(std::move(interfaces))
+, room_connection_(room_connection)
+, qos_config_(qos_config)
+, profiling_registry_(profiling_registry)
+, video_stream_config_(video_stream_config)
+{}
+
+VideoStreamRegistry::VideoStreamRegistry(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   const SubscriptionQosConfig * qos_config,
   VideoProfilingRegistry * profiling_registry,
   const VideoStreamConfig * video_stream_config)
-: node_(node)
-, room_connection_(room_connection)
-, qos_config_(qos_config)
-, profiling_registry_(profiling_registry)
-, video_stream_config_(video_stream_config)
+: VideoStreamRegistry(
+    makeRosNodeInterfaces(node).subscription(), room_connection, qos_config, profiling_registry, video_stream_config)
 {}
 
 VideoStreamRegistry::~VideoStreamRegistry()
@@ -102,7 +112,7 @@ void VideoStreamRegistry::start(
       instance = it->second;
     } else {
       const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
-      instance = std::make_shared<VideoStreamInstance>(node_, room_connection_, spec, qos_config_, profiler);
+      instance = std::make_shared<VideoStreamInstance>(interfaces_, room_connection_, spec, qos_config_, profiler);
       instances_.emplace(spec.stream_key, instance);
     }
   }

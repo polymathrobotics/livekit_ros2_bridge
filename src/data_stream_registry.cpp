@@ -31,10 +31,15 @@ const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.data_stream_registr
 }  // namespace
 
 DataStreamRegistry::DataStreamRegistry(
-  rclcpp::Node & node, RoomConnection & room_connection, const SubscriptionQosConfig * qos_config)
-: node_(node)
+  SubscriptionNodeInterfaces interfaces, RoomConnection & room_connection, const SubscriptionQosConfig * qos_config)
+: interfaces_(std::move(interfaces))
 , room_connection_(room_connection)
 , qos_config_(qos_config)
+{}
+
+DataStreamRegistry::DataStreamRegistry(
+  rclcpp::Node & node, RoomConnection & room_connection, const SubscriptionQosConfig * qos_config)
+: DataStreamRegistry(makeRosNodeInterfaces(node).subscription(), room_connection, qos_config)
 {}
 
 DataStreamRegistry::~DataStreamRegistry()
@@ -56,7 +61,7 @@ void DataStreamRegistry::create(const std::string & topic, const std::string & i
   }
 
   auto instance = std::shared_ptr<DataStreamInstance>(
-    new DataStreamInstance(topic, interface_type, node_, room_connection_, *this, callback_gate_, qos_config_));
+    new DataStreamInstance(topic, interface_type, interfaces_, room_connection_, *this, callback_gate_, qos_config_));
   instance->subscribe();
 
   const std::string track_name = instance->trackName();

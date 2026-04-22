@@ -21,6 +21,7 @@
 
 #include "data_stream_instance.hpp"
 #include "rclcpp/node.hpp"
+#include "ros_node_interfaces.hpp"
 #include "utils/quiesce_gate.hpp"
 
 namespace livekit_ros2_bridge
@@ -36,6 +37,10 @@ class DataStreamRegistry final
 public:
   DataStreamRegistry(
     rclcpp::Node & node, RoomConnection & room_connection, const SubscriptionQosConfig * qos_config = nullptr);
+  DataStreamRegistry(
+    SubscriptionNodeInterfaces interfaces,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * qos_config = nullptr);
   ~DataStreamRegistry();
 
   void create(const std::string & topic, const std::string & interface_type);
@@ -56,7 +61,7 @@ public:
 private:
   using InstanceMap = std::unordered_map<std::string, std::shared_ptr<DataStreamInstance>>;
 
-  rclcpp::Node & node_;
+  SubscriptionNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
   const SubscriptionQosConfig * qos_config_;
   QuiesceGate callback_gate_;

@@ -30,8 +30,8 @@
 #include <vector>
 
 #include "rcl/client.h"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/logging.hpp"
-#include "rclcpp/node.hpp"
 #include "rclcpp/serialization.hpp"
 #include "rclcpp/timer.hpp"
 #include "rclcpp/typesupport_helpers.hpp"
@@ -327,8 +327,8 @@ struct RosServiceCaller::Impl
   using InflightMap = std::unordered_map<InflightKey, InflightCall, InflightKeyHash>;
   using InflightIter = InflightMap::iterator;
 
-  explicit Impl(rclcpp::Node & node)
-  : node(node)
+  explicit Impl(ServiceNodeInterfaces interfaces)
+  : interfaces(std::move(interfaces))
   {}
 
   CachedServiceClient::TypeSupport & getServiceTypeSupport(const std::string & interface_type);
@@ -386,7 +386,7 @@ struct RosServiceCaller::Impl
     return inflight_calls.erase(it);
   }
 
-  rclcpp::Node & node;
+  ServiceNodeInterfaces interfaces;
   // CachedServiceClient stores a raw pointer into type_supports, so clients
   // must be destroyed before the backing type-support cache is cleared.
   std::unordered_map<std::string, std::unique_ptr<CachedServiceClient>> cached_clients;
@@ -409,8 +409,12 @@ struct RosServiceCaller::Impl
   EventThrottle late_response_throttle{kLogThrottle};
 };
 
+RosServiceCaller::RosServiceCaller(ServiceNodeInterfaces interfaces)
+: impl_(std::make_unique<Impl>(std::move(interfaces)))
+{}
+
 RosServiceCaller::RosServiceCaller(rclcpp::Node & node)
-: impl_(std::make_unique<Impl>(node))
+: RosServiceCaller(makeRosNodeInterfaces(node).service())
 {}
 
 RosServiceCaller::~RosServiceCaller()
@@ -458,10 +462,10 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   try {
     try {
-      interface_type =
-        request.interface_type.empty()
-          ? requireSingleInterfaceType(impl_->node.get_service_names_and_types(), request.service, "service")
-          : request.interface_type;
+      interface_type = request.interface_type.empty()
+                         ? requireSingleInterfaceType(
+                             impl_->interfaces.graph->get_service_names_and_types(), request.service, "service")
+                         : request.interface_type;
     } catch (const std::exception & exc) {
       logServiceCallRejected(request, requester, interface_type, "interface_type_resolution_failed", exc);
       throw;
@@ -551,7 +555,8 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   if (impl_->poll_timer == nullptr) {
     auto * impl = impl_.get();
-    impl_->poll_timer = impl_->node.create_wall_timer(kPollInterval, [impl]() { impl->poll(); });
+    impl_->poll_timer = rclcpp::create_wall_timer(
+      kPollInterval, [impl]() { impl->poll(); }, nullptr, impl_->interfaces.base.get(), impl_->interfaces.timers.get());
   }
   return future;
 }
@@ -645,7 +650,7 @@ CachedServiceClient & RosServiceCaller::Impl::getClient(const std::string & serv
     return *it->second;
   }
 
-  auto * rcl_node = node.get_node_base_interface()->get_rcl_node_handle();
+  auto * rcl_node = interfaces.base->get_rcl_node_handle();
   auto & type_support = getServiceTypeSupport(interface_type);
   auto entry = std::make_unique<CachedServiceClient>(service, interface_type, type_support, rcl_node);
   auto & ref = *entry;

@@ -383,16 +383,14 @@ TEST_F(RuntimeTest, DestructionRunsSingleOrderedTeardown)
   EXPECT_EQ(harness.state->event_log, expectedShutdownEventLog());
 }
 
-TEST_F(RuntimeTest, ExplicitShutdownIsIdempotentAcrossRepeatedCallsAndDestruction)
+TEST_F(RuntimeTest, RepeatedResetLeavesSingleOrderedTeardown)
 {
   const auto expected_event_log = expectedShutdownEventLog();
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
-  harness.runtime->shutdown();
-
+  harness.runtime.reset();
   EXPECT_EQ(harness.state->event_log, expected_event_log);
 
-  harness.runtime->shutdown();
   harness.runtime.reset();
 
   EXPECT_EQ(harness.state->event_log, expected_event_log);

@@ -43,18 +43,34 @@ constexpr const char * kLeaseExpiredReason = "lease_expired";
 }  // namespace
 
 SubscriptionLeaseManager::SubscriptionLeaseManager(
+  GraphNodeInterfaces interfaces,
+  RoomConnection & room_connection,
+  AccessPolicy access_policy,
+  DataStreamRegistry & data_stream_registry,
+  VideoStreamRegistry & video_stream_registry,
+  Clock::duration heartbeat_lease_duration)
+: interfaces_(std::move(interfaces))
+, room_connection_(room_connection)
+, access_policy_(std::move(access_policy))
+, data_stream_registry_(data_stream_registry)
+, video_stream_registry_(video_stream_registry)
+, heartbeat_lease_duration_(heartbeat_lease_duration)
+{}
+
+SubscriptionLeaseManager::SubscriptionLeaseManager(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   AccessPolicy access_policy,
   DataStreamRegistry & data_stream_registry,
   VideoStreamRegistry & video_stream_registry,
   Clock::duration heartbeat_lease_duration)
-: node_(node)
-, room_connection_(room_connection)
-, access_policy_(std::move(access_policy))
-, data_stream_registry_(data_stream_registry)
-, video_stream_registry_(video_stream_registry)
-, heartbeat_lease_duration_(heartbeat_lease_duration)
+: SubscriptionLeaseManager(
+    makeRosNodeInterfaces(node).graphOnly(),
+    room_connection,
+    std::move(access_policy),
+    data_stream_registry,
+    video_stream_registry,
+    heartbeat_lease_duration)
 {}
 
 void SubscriptionLeaseManager::handleHeartbeat(
@@ -133,7 +149,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
       .field("requester_identity", resolved_identity)
       .fieldOr("session_id", heartbeat.session_id.value_or(""), "<absent>")
       .field("error", exc.what())
-      .warnThrottle(*node_.get_clock(), kLogThrottle);
+      .warnThrottle(*interfaces_.clock, kLogThrottle);
   }
 }
 
@@ -149,7 +165,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
       LogEvent(kLogger, "heartbeat_dropped")
         .field("reason", "anonymous_requester_without_resolvable_client_session")
         .fieldOr("session_id", session_id.value_or(""), "<absent>")
-        .warnThrottle(*node_.get_clock(), kLogThrottle);
+        .warnThrottle(*interfaces_.clock, kLogThrottle);
 
       return std::nullopt;
     }
@@ -157,7 +173,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
     LogEvent(kLogger, "heartbeat_client_session_fallback")
       .field("requester_identity", it->second.requester_identity)
       .fieldOr("session_id", session_id.value_or(""), "<absent>")
-      .warnThrottle(*node_.get_clock(), kLogThrottle);
+      .warnThrottle(*interfaces_.clock, kLogThrottle);
 
     return it->second.requester_identity;
   }
@@ -260,7 +276,8 @@ SubscriptionStatus SubscriptionLeaseManager::create(
 
   try {
     if (demand.kind == SubscriptionTargetKind::Topic) {
-      subscription.interface_type = requireSingleInterfaceType(node_.get_topic_names_and_types(), demand.name, "topic");
+      subscription.interface_type =
+        requireSingleInterfaceType(interfaces_.graph->get_topic_names_and_types(), demand.name, "topic");
     }
     subscription.leases.emplace(requester_identity, lease);
 

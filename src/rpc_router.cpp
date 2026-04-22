@@ -215,7 +215,15 @@ RpcRouter::RpcRouter(
   const AccessPolicy & access_policy,
   RosExecutorQueue & ros_executor_queue,
   RosServiceCaller & ros_service_caller)
-: node_(node)
+: RpcRouter(node.get_node_graph_interface(), access_policy, ros_executor_queue, ros_service_caller)
+{}
+
+RpcRouter::RpcRouter(
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  const AccessPolicy & access_policy,
+  RosExecutorQueue & ros_executor_queue,
+  RosServiceCaller & ros_service_caller)
+: graph_(std::move(graph))
 , access_policy_(access_policy)
 , ros_executor_queue_(ros_executor_queue)
 , ros_service_caller_(ros_service_caller)
@@ -319,7 +327,7 @@ std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocat
       auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
         return filterResourceEntries(
-          node_.get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
+          graph_->get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
       });
       return wire::resources::serializeServices(future.get());
     } catch (const std::exception & exc) {
@@ -335,7 +343,7 @@ std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocatio
       auto request = wire::resources::parse(invocation.payload);
       auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
         return filterResourceEntries(
-          node_.get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
+          graph_->get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
       });
       return wire::resources::serializeTopics(future.get());
     } catch (const std::exception & exc) {

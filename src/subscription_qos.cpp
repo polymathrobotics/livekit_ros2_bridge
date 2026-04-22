@@ -15,6 +15,7 @@
 #include "subscription_qos.hpp"
 
 #include <optional>
+#include <stdexcept>
 
 #include "rclcpp/version.h"
 #include "utils/ros_resource_name_utils.hpp"
@@ -109,19 +110,15 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   // axis; otherwise we consume publisher QoS only when it exposes a concrete
   // policy for that same axis. When publishers disagree, prefer the weaker
   // compatible policy so one subscription can attach to every known publisher.
-  if (match != nullptr && match->reliability != SubscriptionQosReliabilityMode::kAuto) {
-    resolved.qos.reliability(
-      match->reliability == SubscriptionQosReliabilityMode::kBestEffort ? rclcpp::ReliabilityPolicy::BestEffort
-                                                                        : rclcpp::ReliabilityPolicy::Reliable);
+  if (match != nullptr && match->reliability.has_value()) {
+    resolved.qos.reliability(*match->reliability);
   } else if (reliability.resolved_policy.has_value()) {
     resolved.qos.reliability(*reliability.resolved_policy);
     resolved.used_publisher_qos = true;
   }
 
-  if (match != nullptr && match->durability != SubscriptionQosDurabilityMode::kAuto) {
-    resolved.qos.durability(
-      match->durability == SubscriptionQosDurabilityMode::kTransientLocal ? rclcpp::DurabilityPolicy::TransientLocal
-                                                                          : rclcpp::DurabilityPolicy::Volatile);
+  if (match != nullptr && match->durability.has_value()) {
+    resolved.qos.durability(*match->durability);
   } else if (durability.resolved_policy.has_value()) {
     resolved.qos.durability(*durability.resolved_policy);
     resolved.used_publisher_qos = true;
@@ -137,12 +134,18 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 }
 
 ResolvedSubscriptionQos resolveSubscriptionQos(
-  const rclcpp::Node & node, std::string_view topic, const rclcpp::QoS & base_qos, const SubscriptionQosConfig * config)
+  const rclcpp::node_interfaces::NodeGraphInterface::SharedPtr & graph,
+  std::string_view topic,
+  const rclcpp::QoS & base_qos,
+  const SubscriptionQosConfig * config)
 {
   std::vector<PublisherQos> publishers;
+  if (graph == nullptr) {
+    throw std::invalid_argument("subscription QoS graph interface is null");
+  }
   // Resolve against a single graph snapshot. The publisher set may change
   // immediately after this query, but we keep one consistent view per call.
-  const auto publisher_infos = node.get_publishers_info_by_topic(std::string(topic));
+  const auto publisher_infos = graph->get_publishers_info_by_topic(std::string(topic));
   publishers.reserve(publisher_infos.size());
   for (const auto & info : publisher_infos) {
     const auto & qos = info.qos_profile();

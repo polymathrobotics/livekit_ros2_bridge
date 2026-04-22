@@ -176,14 +176,18 @@ private:
   size_t pending_wakes_ = 0U;
 };
 
-RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
-: callback_group_(node.get_node_base_interface()->get_default_callback_group())
-, waitables_(node.get_node_waitables_interface())
-, log_clock_(node.get_clock())
+RosExecutorQueue::RosExecutorQueue(ExecutorNodeInterfaces interfaces)
+: callback_group_(interfaces.base->get_default_callback_group())
+, waitables_(std::move(interfaces.waitables))
+, log_clock_(std::move(interfaces.clock))
 {
-  waitable_ = std::make_shared<DrainWaitable>(*this, node.get_node_base_interface()->get_context());
+  waitable_ = std::make_shared<DrainWaitable>(*this, interfaces.base->get_context());
   waitables_->add_waitable(waitable_, callback_group_);
 }
+
+RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
+: RosExecutorQueue(makeRosNodeInterfaces(node).executor())
+{}
 
 RosExecutorQueue::~RosExecutorQueue()
 {

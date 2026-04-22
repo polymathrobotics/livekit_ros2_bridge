@@ -14,6 +14,8 @@
 
 #include "runtime_config.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -23,6 +25,13 @@
 #include <unordered_set>
 #include <vector>
 
+#if __has_include(<magic_enum/magic_enum.hpp>)
+  #include <magic_enum/magic_enum.hpp>
+#elif __has_include(<magic_enum.hpp>)
+  #include <magic_enum.hpp>
+#else
+  #error "magic_enum header not found"
+#endif
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/parameter.hpp"
@@ -106,73 +115,80 @@ std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char
   return normalized;
 }
 
-SubscriptionQosReliabilityMode parseSubscriptionQosReliability(const std::string & raw_mode)
+std::string toPascalCaseToken(std::string token)
 {
-  if (raw_mode == "auto") {
-    return SubscriptionQosReliabilityMode::kAuto;
-  }
-  if (raw_mode == "reliable") {
-    return SubscriptionQosReliabilityMode::kReliable;
-  }
-  if (raw_mode == "best_effort") {
-    return SubscriptionQosReliabilityMode::kBestEffort;
+  std::transform(token.begin(), token.end(), token.begin(), [](unsigned char ch) {
+    if (ch == '-' || ch == ' ') {
+      return '_';
+    }
+    return static_cast<char>(std::tolower(ch));
+  });
+
+  bool uppercase_next = true;
+  std::string normalized;
+  normalized.reserve(token.size());
+  for (const char ch : token) {
+    if (ch == '_') {
+      uppercase_next = true;
+      continue;
+    }
+    normalized.push_back(uppercase_next ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch);
+    uppercase_next = false;
   }
 
-  throw std::runtime_error("unsupported subscription.qos reliability mode '" + raw_mode + "'");
+  return normalized;
 }
 
-SubscriptionQosDurabilityMode parseSubscriptionQosDurability(const std::string & raw_mode)
+template <typename EnumT>
+EnumT parseEnumToken(std::string token, const std::string & field_name)
 {
-  if (raw_mode == "auto") {
-    return SubscriptionQosDurabilityMode::kAuto;
+  const std::string raw_token = token;
+  if (const auto parsed = magic_enum::enum_cast<EnumT>(toPascalCaseToken(std::move(token))); parsed.has_value()) {
+    return *parsed;
   }
-  if (raw_mode == "volatile") {
-    return SubscriptionQosDurabilityMode::kVolatile;
-  }
-  if (raw_mode == "transient_local") {
-    return SubscriptionQosDurabilityMode::kTransientLocal;
-  }
+  throw std::runtime_error("unsupported " + field_name + " '" + raw_token + "'");
+}
 
-  throw std::runtime_error("unsupported subscription.qos durability mode '" + raw_mode + "'");
+std::optional<rclcpp::ReliabilityPolicy> parseSubscriptionQosReliability(const std::string & raw_mode)
+{
+  const std::string mode = trim(raw_mode);
+  if (mode == "auto") {
+    return std::nullopt;
+  }
+  const auto parsed = parseEnumToken<rclcpp::ReliabilityPolicy>(mode, "subscription.qos reliability mode");
+  switch (parsed) {
+    case rclcpp::ReliabilityPolicy::Reliable:
+    case rclcpp::ReliabilityPolicy::BestEffort:
+      return parsed;
+    default:
+      throw std::runtime_error("unsupported subscription.qos reliability mode '" + mode + "'");
+  }
+}
+
+std::optional<rclcpp::DurabilityPolicy> parseSubscriptionQosDurability(const std::string & raw_mode)
+{
+  const std::string mode = trim(raw_mode);
+  if (mode == "auto") {
+    return std::nullopt;
+  }
+  const auto parsed = parseEnumToken<rclcpp::DurabilityPolicy>(mode, "subscription.qos durability mode");
+  switch (parsed) {
+    case rclcpp::DurabilityPolicy::Volatile:
+    case rclcpp::DurabilityPolicy::TransientLocal:
+      return parsed;
+    default:
+      throw std::runtime_error("unsupported subscription.qos durability mode '" + mode + "'");
+  }
 }
 
 VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
 {
-  if (raw_codec == "auto") {
-    return VideoPublishCodec::Auto;
-  }
-  if (raw_codec == "vp8") {
-    return VideoPublishCodec::Vp8;
-  }
-  if (raw_codec == "h264") {
-    return VideoPublishCodec::H264;
-  }
-  if (raw_codec == "av1") {
-    return VideoPublishCodec::Av1;
-  }
-  if (raw_codec == "vp9") {
-    return VideoPublishCodec::Vp9;
-  }
-  if (raw_codec == "h265") {
-    return VideoPublishCodec::H265;
-  }
-
-  throw std::runtime_error("unsupported " + field_name + " '" + raw_codec + "'");
+  return parseEnumToken<VideoPublishCodec>(raw_codec, field_name);
 }
 
 VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
 {
-  if (raw_simulcast == "auto") {
-    return VideoPublishSimulcast::Auto;
-  }
-  if (raw_simulcast == "enabled") {
-    return VideoPublishSimulcast::Enabled;
-  }
-  if (raw_simulcast == "disabled") {
-    return VideoPublishSimulcast::Disabled;
-  }
-
-  throw std::runtime_error("unsupported " + field_name + " '" + raw_simulcast + "'");
+  return parseEnumToken<VideoPublishSimulcast>(raw_simulcast, field_name);
 }
 
 VideoPublishConfig parseVideoPublishConfig(const Params & params)

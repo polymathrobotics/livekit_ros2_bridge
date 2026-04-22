@@ -58,7 +58,7 @@ TEST(RosExecutorQueueTest, ReturnsResultFromSubmittedWork)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
   auto future = queue.submit([]() { return 42; });
 
   const auto result = executor.spin_until_future_complete(future, std::chrono::seconds(1));
@@ -72,7 +72,7 @@ TEST(RosExecutorQueueTest, RejectsNewWorkAfterShutdown)
   test_support::ScopedRclcppInit init;
   auto node = makeNode("ros_executor_queue_shutdown_test");
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
   queue.shutdown();
 
   auto future = queue.submit([]() {});
@@ -87,7 +87,7 @@ TEST(RosExecutorQueueTest, ContinuesDrainingQueuedWorkAfterTaskThrows)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
 
   auto failed_task = queue.submit([]() -> int { throw std::runtime_error("task failed"); });
   auto trailing_task = queue.submit([]() { return 7; });
@@ -106,7 +106,7 @@ TEST(RosExecutorQueueTest, ShutdownWaitsForActiveDrainWorkAndRejectsQueuedOrLate
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
   std::promise<void> active_task_started_promise;
   auto active_task_started = active_task_started_promise.get_future();
   std::promise<void> release_active_task_promise;
@@ -158,7 +158,7 @@ TEST(RosExecutorQueueTest, ShutdownFromActiveDrainWorkDoesNotDeadlock)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
   std::atomic<bool> queued_task_ran{false};
 
   std::thread executor_thread([&executor]() { executor.spin(); });
@@ -184,7 +184,7 @@ TEST(RosExecutorQueueTest, ExecutesTasksInSubmissionOrder)
   executor.add_node(node);
 
   std::vector<int> execution_order;
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
 
   queue.submit([&]() { execution_order.push_back(1); });
   queue.submit([&]() { execution_order.push_back(2); });
@@ -205,7 +205,7 @@ TEST(RosExecutorQueueTest, ExecutesWorkSubmittedFromActiveDrainWork)
   executor.add_node(node);
 
   std::vector<int> execution_order;
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
   std::promise<void> nested_task_ran_promise;
   auto nested_task_ran = nested_task_ran_promise.get_future();
 
@@ -231,7 +231,7 @@ TEST(RosExecutorQueueTest, WakesExecutorForWorkSubmittedWhileSpinning)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  RosExecutorQueue queue(*node);
+  RosExecutorQueue queue(makeRosNodeInterfaces(*node).executor());
 
   std::promise<void> spin_started_promise;
   auto spin_started = spin_started_promise.get_future();
