@@ -8,11 +8,20 @@ on:  # yamllint disable-line
       - main
 
 jobs:
-  docker_build_and_test_matrix:
+  docker_build_and_test:
+    name: docker_build_and_test_${{ matrix.distro }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - humble
+          - jazzy
+          - kilted
+          - rolling
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - run: docker buildx bake --file docker/bake.hcl --print ci-test
-      - name: Run docker build and test matrix
-        run: docker buildx bake --file docker/bake.hcl --progress=plain ci-test
+      - run: docker buildx bake --file docker/bake.hcl --print test-${{ matrix.distro }}
+      - name: Run docker build and test ${{ matrix.distro }}
+        run: docker buildx bake --file docker/bake.hcl --progress=plain test-${{ matrix.distro }}
