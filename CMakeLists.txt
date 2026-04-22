@@ -94,7 +94,6 @@ target_link_libraries(livekit_ros2_bridge_ros PRIVATE
 )
 
 add_library(livekit_ros2_bridge_livekit STATIC
-  src/data_track_publisher.cpp
   src/room_connection.cpp
   src/video_track_publisher.cpp
 )
@@ -108,9 +107,8 @@ target_link_libraries(livekit_ros2_bridge_livekit PRIVATE
 )
 
 add_library(livekit_ros2_bridge_streams STATIC
-  src/data_stream_registry.cpp
-  src/data_stream_instance.cpp
   src/packet_router.cpp
+  src/data_track_publisher.cpp
   src/rpc_router.cpp
   src/subscription_lease_manager.cpp
   src/video_frame_source/other_video_frame_source.cpp
@@ -193,8 +191,6 @@ if(BUILD_TESTING)
   livekit_ros2_bridge_add_test(test_base64 test/cpp/test_base64.cpp)
   livekit_ros2_bridge_add_test(test_lru_cache test/cpp/test_lru_cache.cpp)
   livekit_ros2_bridge_add_test(test_data_track_publisher test/cpp/test_data_track_publisher.cpp)
-  livekit_ros2_bridge_add_test(test_data_stream_instance test/cpp/test_data_stream_instance.cpp)
-  livekit_ros2_bridge_add_test(test_data_stream_registry test/cpp/test_data_stream_registry.cpp)
   livekit_ros2_bridge_add_test(test_packet_router test/cpp/test_packet_router.cpp)
   livekit_ros2_bridge_add_test(
     test_subscription_lease_manager

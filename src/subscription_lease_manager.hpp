@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -26,7 +27,6 @@
 
 #include "access_policy.hpp"
 #include "core/subscriptions.hpp"
-#include "data_stream_registry.hpp"
 #include "rclcpp/node.hpp"
 #include "ros_node_interfaces.hpp"
 #include "utils/event_throttle.hpp"
@@ -34,7 +34,9 @@
 namespace livekit_ros2_bridge
 {
 
+class DataTrackPublisher;
 class RoomConnection;
+struct SubscriptionQosConfig;
 class VideoStreamRegistry;
 
 // Maps heartbeat-driven subscription demands onto shared data/video runtimes, tracks requester
@@ -50,16 +52,16 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
-    DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry & video_stream_registry,
+    const SubscriptionQosConfig * qos_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
 
   SubscriptionLeaseManager(
-    GraphNodeInterfaces interfaces,
+    SubscriptionNodeInterfaces interfaces,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
-    DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry & video_stream_registry,
+    const SubscriptionQosConfig * qos_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
 
@@ -94,6 +96,7 @@ private:
     std::string name;
     std::string interface_type;
     std::map<std::string, Lease> leases;
+    std::shared_ptr<DataTrackPublisher> data_publisher;
   };
 
   struct ExpiredLeaseRemoval
@@ -110,11 +113,11 @@ private:
     const Subscription & subscription, Clock::time_point reference_time);
   static bool isVideoSubscription(const Subscription & subscription);
 
-  GraphNodeInterfaces interfaces_;
+  SubscriptionNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
-  DataStreamRegistry & data_stream_registry_;
   VideoStreamRegistry & video_stream_registry_;
+  const SubscriptionQosConfig * qos_config_;
   Clock::duration heartbeat_lease_duration_;
 
   std::atomic<bool> is_shutdown_{false};
@@ -125,6 +128,7 @@ private:
 
   std::optional<std::string> resolveIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
+  DataTrackPublisher & requireDataPublisher(const Subscription & subscription) const;
   SubscriptionStatus create(
     const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus renew(Subscription & subscription, const std::string & requester_identity, const Lease & lease);

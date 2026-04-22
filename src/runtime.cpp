@@ -25,7 +25,6 @@
 #include <thread>
 #include <utility>
 
-#include "data_stream_registry.hpp"
 #include "packet_router.hpp"
 #include "rclcpp/create_timer.hpp"
 #include "ros_executor_queue.hpp"
@@ -160,7 +159,6 @@ public:
   , ros_executor_queue_(interfaces_.executor())
   , ros_topic_publisher_(interfaces_.publisher(), config_.access_policy)
   , ros_service_caller_(interfaces_.service())
-  , data_stream_registry_(interfaces_.subscription(), room_connection_.connection(), &config_.subscription_qos)
   , profiling_registry_(
       config_.profiling.enabled
         ? std::optional<VideoProfilingRegistry>(std::in_place, interfaces_.logger, config_.profiling)
@@ -172,11 +170,11 @@ public:
       profiling_registry_ ? &*profiling_registry_ : nullptr,
       &config_.video_stream)
   , subscription_lease_manager_(
-      interfaces_.graphOnly(),
+      interfaces_.subscription(),
       room_connection_.connection(),
       config_.access_policy,
-      data_stream_registry_,
-      video_stream_registry_)
+      video_stream_registry_,
+      &config_.subscription_qos)
   , packet_router_(
       interfaces_.clock,
       [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
@@ -463,7 +461,6 @@ private:
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;
-  DataStreamRegistry data_stream_registry_;
   std::optional<VideoProfilingRegistry> profiling_registry_;
   VideoStreamRegistry video_stream_registry_;
   SubscriptionLeaseManager subscription_lease_manager_;

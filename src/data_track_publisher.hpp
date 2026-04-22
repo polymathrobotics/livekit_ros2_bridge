@@ -14,52 +14,63 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <functional>
 #include <memory>
 #include <string>
 
-#include "rclcpp/clock.hpp"
-
-namespace livekit
-{
-class LocalDataTrack;
-}  // namespace livekit
+#include "ros_node_interfaces.hpp"
 
 namespace livekit_ros2_bridge
 {
 
+struct SubscriptionQosConfig;
 class RoomConnection;
 
-// SubscriptionLeaseManager coordinates shared leases, DataStreamRegistry owns each topic-level ROS
-// data runtime, and DataTrackPublisher only owns the LiveKit data-track publications.
+// Owns one deterministic LiveKit data-track publication backed by one ROS subscription.
 class DataTrackPublisher final
 {
 public:
-  // Called after LiveKit returns a new track but before this publisher adopts it. Returning false
-  // rejects that publish generation, reclaims the just-published track, and leaves any previously
-  // active track untouched.
-  using AcceptHandler = std::function<bool(std::size_t generation)>;
+  static std::shared_ptr<DataTrackPublisher> create(
+    std::string topic,
+    std::string interface_type,
+    SubscriptionNodeInterfaces interfaces,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * qos_config);
 
-  // Called when a publish attempt cannot produce an active track for this publisher, including
-  // publish exceptions and exceptions escaping AcceptHandler. A false AcceptHandler result is
-  // treated as a stale completion rather than a failure signal.
-  using FailHandler = std::function<void()>;
+  ~DataTrackPublisher();
 
-  DataTrackPublisher(RoomConnection & connection, std::string name, rclcpp::Clock::SharedPtr clock);
+  DataTrackPublisher(const DataTrackPublisher &) = delete;
+  DataTrackPublisher & operator=(const DataTrackPublisher &) = delete;
+  DataTrackPublisher(DataTrackPublisher &&) = delete;
+  DataTrackPublisher & operator=(DataTrackPublisher &&) = delete;
 
-  void publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail);
-  void write(const std::uint8_t * cdr, std::size_t size);
-  void unpublish();
+  void publish();
+  int intervalMs() const;
+  bool isPublished() const;
+  void republish();
+  void setIntervalMs(int interval_ms);
+  const std::string & name() const;
 
 private:
+  class Publication;
+
+  DataTrackPublisher(
+    std::string topic,
+    std::string interface_type,
+    SubscriptionNodeInterfaces interfaces,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * qos_config);
+
+  SubscriptionNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
-  std::string name_;
-  rclcpp::Clock::SharedPtr log_clock_;
-  // Only the currently accepted publication lives here. Rejected or failed replacement attempts
-  // are reclaimed before this handle changes, and unpublish() clears it before touching LiveKit.
-  std::shared_ptr<livekit::LocalDataTrack> track_;
+  const SubscriptionQosConfig * qos_config_;
+
+  std::string topic_;
+  std::string interface_type_;
+  std::string track_name_;
+
+  int interval_ms_ = 0;
+  bool publish_failed_ = false;
+  std::unique_ptr<Publication> publication_;
 };
 
 }  // namespace livekit_ros2_bridge

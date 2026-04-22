@@ -14,25 +14,48 @@
 
 #include "data_track_publisher.hpp"
 
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <exception>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
-#include "livekit/data_track_error.h"
-#include "livekit/local_data_track.h"
+#include "rclcpp/create_generic_subscription.hpp"
 #include "rclcpp/logging.hpp"
+#include "rclcpp/qos.hpp"
+#include "rclcpp/serialized_message.hpp"
 #include "room_connection.hpp"
+#include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
+#include "utils/quiesce_gate.hpp"
+#include "utils/scope_exit.hpp"
+#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 namespace
 {
-const auto kLogger = rclcpp::get_logger("data_track_publisher");
-constexpr auto kLogThrottle = std::chrono::seconds(5);
 
-const char * dataTrackPushReason(DataTrackPushErrorCode code)
+constexpr std::size_t kSubscriptionDepth = 2U;
+constexpr auto kLogThrottle = std::chrono::seconds(5);
+const auto kLogger = rclcpp::get_logger("data_track_publisher");
+
+std::string makeTrackName(const std::string & topic)
+{
+  std::string name = "lkros.data";
+  name.reserve(name.size() + topic.size());
+  for (char ch : topic) {
+    name.push_back(ch == '/' ? '.' : ch);
+  }
+  return name;
+}
+
+const char * pushReason(DataTrackPushErrorCode code)
 {
   switch (code) {
     case DataTrackPushErrorCode::kUnknown:
@@ -49,118 +72,270 @@ const char * dataTrackPushReason(DataTrackPushErrorCode code)
   return "unknown";
 }
 
-// Cleanup runs on explicit teardown and on rejected/failed publish paths, so it logs and
-// swallows unpublish errors instead of letting recovery cascade into caller state handling.
-void tryUnpublishTrack(
-  RoomConnection & connection, const std::string & name, const std::shared_ptr<livekit::LocalDataTrack> & track)
+}  // namespace
+
+class DataTrackPublisher::Publication final
 {
-  if (track == nullptr) {
+public:
+  using Clock = std::chrono::steady_clock;
+
+  struct Throttle
+  {
+    bool allows(Clock::time_point now)
+    {
+      if (interval_ms == 0) {
+        return true;
+      }
+
+      if (!last_delivery_at) {
+        last_delivery_at = now;
+        return true;
+      }
+
+      if (now - *last_delivery_at < std::chrono::milliseconds(interval_ms)) {
+        return false;
+      }
+
+      last_delivery_at = now;
+      return true;
+    }
+
+    int interval_ms = 0;
+    std::optional<Clock::time_point> last_delivery_at;
+  };
+
+  Publication(
+    std::string topic,
+    std::string interface_type,
+    std::string track_name,
+    int interval_ms,
+    SubscriptionNodeInterfaces interfaces,
+    RoomConnection & room_connection,
+    const SubscriptionQosConfig * qos_config)
+  : interfaces_(std::move(interfaces))
+  , room_connection_(room_connection)
+  , qos_config_(qos_config)
+  , topic_(std::move(topic))
+  , interface_type_(std::move(interface_type))
+  , track_name_(std::move(track_name))
+  , gate_(std::make_shared<QuiesceGate>())
+  , track_(room_connection_.publishDataTrack(track_name_))
+  {
+    if (track_ == nullptr) {
+      throw std::runtime_error("LiveKit returned a null data track.");
+    }
+
+    throttle_.interval_ms = interval_ms;
+    try {
+      subscribe();
+    } catch (...) {
+      unpublishTrack();
+      throw;
+    }
+  }
+
+  ~Publication()
+  {
+    gate_->close();
+    subscription_.reset();
+    unpublishTrack();
+  }
+
+  Publication(const Publication &) = delete;
+  Publication & operator=(const Publication &) = delete;
+  Publication(Publication &&) = delete;
+  Publication & operator=(Publication &&) = delete;
+
+  void setIntervalMs(int interval_ms)
+  {
+    throttle_.interval_ms = interval_ms;
+  }
+
+private:
+  void unpublishTrack()
+  {
+    if (track_ == nullptr) {
+      return;
+    }
+
+    try {
+      room_connection_.unpublishDataTrack(track_);
+    } catch (...) {
+      LogEvent(kLogger, "data_track_unpublish_failed")
+        .field("track_name", track_name_)
+        .fieldException("error", std::current_exception())
+        .warn();
+    }
+  }
+
+  void subscribe()
+  {
+    const rclcpp::QoS base_qos(kSubscriptionDepth);
+    const ResolvedSubscriptionQos qos = resolveSubscriptionQos(interfaces_.graph, topic_, base_qos, qos_config_);
+    const std::size_t gate_generation = gate_->currentGeneration();
+
+    LogEvent(kLogger, "subscription_qos_resolved")
+      .field("resource", topic_)
+      .field("delivery", wire::protocol::kDeliveryKindData)
+      .field("interface_type", interface_type_)
+      .field("publisher_count", qos.publisher_count)
+      .field("source", subscriptionQosSourceString(qos.source))
+      .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
+      .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+      .fieldIf(qos.used_publisher_qos, "used_publisher_qos", true)
+      .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
+      .fieldIf(qos.mixed_durability, "mixed_durability", true)
+      .fieldIfNotEmpty("override_id", qos.override_id)
+      .fieldIfNotEmpty("override_pattern", qos.override_pattern)
+      .info();
+
+    subscription_ = rclcpp::create_generic_subscription(
+      interfaces_.topics,
+      topic_,
+      interface_type_,
+      qos.qos,
+      [this, gate = gate_, generation = gate_generation](std::shared_ptr<rclcpp::SerializedMessage> message) {
+        // `this` is only touched after the generation gate admits the callback; teardown closes
+        // the gate first so queued callbacks from a prior publication self-reject before dereferencing.
+        if (message == nullptr || !gate->tryEnter(generation)) {
+          return;
+        }
+        ScopeExit leave_gate([&gate]() { gate->leave(); });
+        pushMessage(*message);
+      });
+  }
+
+  void pushMessage(const rclcpp::SerializedMessage & message)
+  {
+    if (!throttle_.allows(Clock::now())) {
+      return;
+    }
+
+    const auto & cdr = message.get_rcl_serialized_message();
+    const auto result =
+      room_connection_.tryPushDataTrack(track_, std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length));
+    if (result) {
+      return;
+    }
+
+    const auto & error = result.error();
+    if (error.code == DataTrackPushErrorCode::kQueueFull) {
+      LogEvent(kLogger, "data_track_delivery_dropped")
+        .field("resource", topic_)
+        .field("track_name", track_name_)
+        .field("reason", "queue_full")
+        .warnThrottle(*interfaces_.clock, kLogThrottle);
+      return;
+    }
+
+    LogEvent(kLogger, "data_track_push_failed")
+      .field("resource", topic_)
+      .field("track_name", track_name_)
+      .field("reason", pushReason(error.code))
+      .fieldOr("error", error.message)
+      .warnThrottle(*interfaces_.clock, kLogThrottle);
+  }
+
+  SubscriptionNodeInterfaces interfaces_;
+  RoomConnection & room_connection_;
+  const SubscriptionQosConfig * qos_config_;
+
+  std::string topic_;
+  std::string interface_type_;
+  std::string track_name_;
+
+  std::shared_ptr<QuiesceGate> gate_;
+  std::shared_ptr<livekit::LocalDataTrack> track_;
+  std::shared_ptr<rclcpp::GenericSubscription> subscription_;
+  Throttle throttle_;
+};
+
+std::shared_ptr<DataTrackPublisher> DataTrackPublisher::create(
+  std::string topic,
+  std::string interface_type,
+  SubscriptionNodeInterfaces interfaces,
+  RoomConnection & room_connection,
+  const SubscriptionQosConfig * qos_config)
+{
+  return std::shared_ptr<DataTrackPublisher>(new DataTrackPublisher(
+    std::move(topic), std::move(interface_type), std::move(interfaces), room_connection, qos_config));
+}
+
+DataTrackPublisher::DataTrackPublisher(
+  std::string topic,
+  std::string interface_type,
+  SubscriptionNodeInterfaces interfaces,
+  RoomConnection & room_connection,
+  const SubscriptionQosConfig * qos_config)
+: interfaces_(std::move(interfaces))
+, room_connection_(room_connection)
+, qos_config_(qos_config)
+, topic_(std::move(topic))
+, interface_type_(std::move(interface_type))
+, track_name_(makeTrackName(topic_))
+{}
+
+DataTrackPublisher::~DataTrackPublisher() = default;
+
+void DataTrackPublisher::publish()
+{
+  if (publication_ != nullptr) {
     return;
   }
 
+  if (publish_failed_) {
+    LogEvent(kLogger, "data_track_pending")
+      .field("resource", topic_)
+      .field("track_name", track_name_)
+      .field("reason", "retry_after_publish_failure")
+      .info();
+  }
+
   try {
-    connection.unpublishDataTrack(track);
+    publication_ = std::make_unique<Publication>(
+      topic_, interface_type_, track_name_, interval_ms_, interfaces_, room_connection_, qos_config_);
+    publish_failed_ = false;
+    LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", track_name_).info();
   } catch (...) {
-    LogEvent(kLogger, "data_track_unpublish_failed")
-      .field("track_name", name)
+    publish_failed_ = true;
+    LogEvent(kLogger, "data_track_publish_error")
+      .field("resource", topic_)
+      .field("track_name", track_name_)
+      .field("stage", "activate_publication")
       .fieldException("error", std::current_exception())
       .warn();
   }
 }
-}  // namespace
 
-DataTrackPublisher::DataTrackPublisher(RoomConnection & connection, std::string name, rclcpp::Clock::SharedPtr clock)
-: room_connection_(connection)
-, name_(std::move(name))
-, log_clock_(std::move(clock))
-{}
-
-void DataTrackPublisher::publish(std::size_t generation, const AcceptHandler & on_accept, const FailHandler & on_fail)
+int DataTrackPublisher::intervalMs() const
 {
-  std::shared_ptr<livekit::LocalDataTrack> track;
-  try {
-    track = room_connection_.publishDataTrack(name_);
-  } catch (...) {
-    const auto exception = std::current_exception();
-    on_fail();
-    LogEvent(kLogger, "data_track_publish_error")
-      .field("track_name", name_)
-      .field("stage", "room_publish")
-      .fieldException("error", exception)
-      .warn();
-    return;
-  }
-
-  // Publish completion races with lease expiry, reset, and same-topic resubscribe. The registry
-  // accepts only the current generation for this track name, so stale completions are reclaimed
-  // immediately instead of leaving an orphaned LiveKit track behind.
-  try {
-    if (on_accept(generation)) {
-      track_ = std::move(track);
-      return;
-    }
-  } catch (...) {
-    const auto exception = std::current_exception();
-    tryUnpublishTrack(room_connection_, name_, track);
-    on_fail();
-    LogEvent(kLogger, "data_track_publish_error")
-      .field("track_name", name_)
-      .field("stage", "registry_accept")
-      .fieldException("error", exception)
-      .warn();
-    return;
-  }
-
-  LogEvent(kLogger, "data_track_publish_reclaimed")
-    .field("track_name", name_)
-    .field("generation", generation)
-    .field("reason", "stale_registry_state")
-    .info();
-  tryUnpublishTrack(room_connection_, name_, track);
+  return interval_ms_;
 }
 
-void DataTrackPublisher::write(const std::uint8_t * cdr, std::size_t size)
+bool DataTrackPublisher::isPublished() const
 {
-  if (track_ == nullptr) {
-    return;
-  }
-
-  // Copy into an owning buffer before handing the payload to LiveKit; callers usually pass ROS
-  // serialization storage whose lifetime ends with the current subscription callback.
-  auto result = room_connection_.tryPushDataTrack(track_, std::vector<std::uint8_t>(cdr, cdr + size));
-  if (result) {
-    return;
-  }
-
-  const auto & error = result.error();
-  if (error.code == DataTrackPushErrorCode::kQueueFull) {
-    // Forwarding ROS CDR payloads is intentionally best-effort. Dropping here keeps the ROS
-    // subscription callback non-blocking even when the participant is not draining the LiveKit
-    // queue.
-    LogEvent(kLogger, "data_track_delivery_dropped")
-      .field("track_name", name_)
-      .field("reason", "queue_full")
-      .warnThrottle(*log_clock_, kLogThrottle);
-    return;
-  }
-
-  LogEvent(kLogger, "data_track_push_failed")
-    .field("track_name", name_)
-    .field("reason", dataTrackPushReason(error.code))
-    .fieldOr("error", error.message)
-    .warnThrottle(*log_clock_, kLogThrottle);
+  return publication_ != nullptr;
 }
 
-void DataTrackPublisher::unpublish()
+void DataTrackPublisher::republish()
 {
-  if (track_ == nullptr) {
+  publication_.reset();
+  publish();
+}
+
+void DataTrackPublisher::setIntervalMs(int interval_ms)
+{
+  interval_ms_ = interval_ms;
+  if (publication_ == nullptr) {
     return;
   }
 
-  // Clear the local handle before calling into LiveKit so repeated unpublish() calls stay
-  // idempotent and later writes cannot target a track we are trying to tear down.
-  auto track = std::move(track_);
-  tryUnpublishTrack(room_connection_, name_, track);
+  publication_->setIntervalMs(interval_ms);
+}
+
+const std::string & DataTrackPublisher::name() const
+{
+  return track_name_;
 }
 
 }  // namespace livekit_ros2_bridge
