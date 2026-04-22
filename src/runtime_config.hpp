@@ -37,9 +37,9 @@ struct RuntimeConfig
   {
     bool watchdog_enabled = true;
     // Maximum time the bridge may spend trying to recover connectivity before
-    // Runtime requests process shutdown. The 10-minute default matches the
-    // LiveKit reconnect-token window for long outages.
-    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::minutes(10)};
+    // Runtime requests process shutdown. The 2-minute default keeps recovery
+    // bounded without waiting for the full SDK reconnect budget.
+    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::minutes(2)};
   };
 
   LiveKitConfig livekit;

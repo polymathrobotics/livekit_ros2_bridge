@@ -208,6 +208,20 @@ public:
     }
   }
 
+  void emitReconnecting(const std::string & reason) const
+  {
+    if (state->callbacks.on_reconnecting) {
+      state->callbacks.on_reconnecting(reason);
+    }
+  }
+
+  void emitReconnected() const
+  {
+    if (state->callbacks.on_reconnected) {
+      state->callbacks.on_reconnected();
+    }
+  }
+
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
     if (state->callbacks.on_remote_participant_disconnected) {

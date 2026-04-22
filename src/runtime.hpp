@@ -21,6 +21,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "rclcpp/node.hpp"
 #include "rclcpp/timer.hpp"
@@ -85,6 +86,7 @@ private:
   std::atomic<bool> shutting_down_{false};
   std::mutex watchdog_mutex_;
   std::optional<SteadyClock::time_point> watchdog_deadline_;
+  std::optional<SteadyClock::time_point> watchdog_unhealthy_since_;
 
   std::unique_ptr<RoomConnection> room_connection_;
   std::unique_ptr<RosExecutorQueue> ros_executor_queue_;
@@ -110,7 +112,11 @@ private:
   void onRoomIncomingPacket(const IncomingPacket & packet);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
   void onRoomReconnectRequested(const std::string & reason);
+  void onRoomReconnecting(const std::string & reason);
+  void onRoomReconnected();
   void onRoomConnectionReset();
+  void setWatchdogHealthy(std::string_view reason);
+  void setWatchdogUnhealthy(std::string_view reason);
 
   // Funnels RoomConnection ingress back onto the ROS executor queue so ROS-facing state changes
   // stay ordered with session reset and teardown. Work accepted before shutdown may still execute

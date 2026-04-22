@@ -154,6 +154,13 @@ struct RoomEventCallbacks
   // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
   std::function<void(const std::string &)> on_reconnect_requested;
 
+  // Called once when the SDK begins an in-place reconnect episode without yet requiring this
+  // wrapper to tear the room down and create a new connection.
+  std::function<void(const std::string &)> on_reconnecting;
+
+  // Called when the SDK recovers from an in-place reconnect episode and the room is healthy again.
+  std::function<void()> on_reconnected;
+
   // Called after a connected room connection has been torn down and any per-connection state
   // should be rebuilt on the next connect. Final stop() does not fire this callback.
   std::function<void()> on_connection_reset;

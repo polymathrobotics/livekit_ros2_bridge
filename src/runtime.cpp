@@ -57,7 +57,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
 
   // Preflight: arm shutdown watchdog monitoring before transport startup begins.
   if (config_.health.watchdog_enabled) {
-    watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
+    setWatchdogUnhealthy("startup_connect_pending");
     watchdog_timer_ = node_.create_wall_timer(kWatchdogEvaluationInterval, [this]() { checkWatchdog(); });
   }
 
@@ -108,15 +108,17 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   }
 
   // Expose the full LiveKit room callback surface only after every ingress path above is ready.
-  room_connection_->start(
-    config_.livekit,
-    RoomEventCallbacks{
-      std::bind(&Runtime::onRoomConnected, this),
-      std::bind(&Runtime::onRoomIncomingPacket, this, std::placeholders::_1),
-      std::bind(&Runtime::onRoomRemoteParticipantDisconnected, this, std::placeholders::_1),
-      std::bind(&Runtime::onRoomReconnectRequested, this, std::placeholders::_1),
-      std::bind(&Runtime::onRoomConnectionReset, this),
-    });
+  RoomEventCallbacks callbacks;
+  callbacks.on_connected = std::bind(&Runtime::onRoomConnected, this);
+  callbacks.on_incoming_packet_received = std::bind(&Runtime::onRoomIncomingPacket, this, std::placeholders::_1);
+  callbacks.on_remote_participant_disconnected =
+    std::bind(&Runtime::onRoomRemoteParticipantDisconnected, this, std::placeholders::_1);
+  callbacks.on_reconnect_requested = std::bind(&Runtime::onRoomReconnectRequested, this, std::placeholders::_1);
+  callbacks.on_reconnecting = std::bind(&Runtime::onRoomReconnecting, this, std::placeholders::_1);
+  callbacks.on_reconnected = std::bind(&Runtime::onRoomReconnected, this);
+  callbacks.on_connection_reset = std::bind(&Runtime::onRoomConnectionReset, this);
+
+  room_connection_->start(config_.livekit, std::move(callbacks));
 }
 
 Runtime::~Runtime()
@@ -186,10 +188,7 @@ void Runtime::onRoomConnected()
     return;
   }
 
-  if (config_.health.watchdog_enabled) {
-    std::lock_guard<std::mutex> lock(watchdog_mutex_);
-    watchdog_deadline_.reset();
-  }
+  setWatchdogHealthy("room_connected");
 
   LogEvent(node_.get_logger(), "runtime_ready").info();
 }
@@ -235,13 +234,12 @@ void Runtime::onRoomReconnectRequested(const std::string & reason)
     return;
   }
 
-  if (config_.health.watchdog_enabled) {
-    std::lock_guard<std::mutex> lock(watchdog_mutex_);
-    watchdog_deadline_ = SteadyClock::now() + config_.health.watchdog_recovery_timeout;
-  }
+  const std::string_view disconnect_reason =
+    reason.empty() ? std::string_view("connection_lost") : std::string_view(reason);
+  setWatchdogUnhealthy(disconnect_reason);
 
   LogEvent log =
-    LogEvent(node_.get_logger(), "runtime_disconnect_observed").fieldOr("disconnect_reason", reason, "connection_lost");
+    LogEvent(node_.get_logger(), "runtime_disconnect_observed").field("disconnect_reason", disconnect_reason);
 
   if (!config_.health.watchdog_enabled) {
     log.info();
@@ -250,6 +248,21 @@ void Runtime::onRoomReconnectRequested(const std::string & reason)
 
   log.field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
   log.warn();
+}
+
+void Runtime::onRoomReconnecting(const std::string & reason)
+{
+  onRoomReconnectRequested(reason);
+}
+
+void Runtime::onRoomReconnected()
+{
+  if (shutting_down_.load()) {
+    return;
+  }
+
+  setWatchdogHealthy("room_reconnected");
+  LogEvent(node_.get_logger(), "runtime_ready").info();
 }
 
 void Runtime::onRoomConnectionReset()
@@ -302,6 +315,64 @@ void Runtime::submitToExecutor(std::function<void()> work)
       .field("count", count)
       .warn();
   }
+}
+
+void Runtime::setWatchdogHealthy(std::string_view reason)
+{
+  if (!config_.health.watchdog_enabled) {
+    return;
+  }
+
+  std::optional<double> unhealthy_duration_seconds;
+  const auto now = SteadyClock::now();
+  {
+    std::lock_guard<std::mutex> lock(watchdog_mutex_);
+    if (watchdog_unhealthy_since_.has_value()) {
+      unhealthy_duration_seconds = std::chrono::duration<double>(now - *watchdog_unhealthy_since_).count();
+    }
+    watchdog_deadline_.reset();
+    watchdog_unhealthy_since_.reset();
+  }
+
+  if (!unhealthy_duration_seconds.has_value()) {
+    return;
+  }
+
+  LogEvent(node_.get_logger(), "runtime_watchdog_healthy")
+    .fieldOr("reason", reason, "unknown")
+    .field("unhealthy_duration_seconds", *unhealthy_duration_seconds)
+    .info();
+}
+
+void Runtime::setWatchdogUnhealthy(std::string_view reason)
+{
+  if (!config_.health.watchdog_enabled) {
+    return;
+  }
+
+  bool transitioned = false;
+  const auto now = SteadyClock::now();
+  {
+    std::lock_guard<std::mutex> lock(watchdog_mutex_);
+    watchdog_deadline_ = now + config_.health.watchdog_recovery_timeout;
+    if (!watchdog_unhealthy_since_.has_value()) {
+      watchdog_unhealthy_since_ = now;
+      transitioned = true;
+    }
+  }
+
+  if (!transitioned) {
+    return;
+  }
+
+  LogEvent event = LogEvent(node_.get_logger(), "runtime_watchdog_unhealthy")
+                     .fieldOr("reason", reason, "unknown")
+                     .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
+  if (reason == "startup_connect_pending") {
+    event.info();
+    return;
+  }
+  event.warn();
 }
 
 void Runtime::checkWatchdog()

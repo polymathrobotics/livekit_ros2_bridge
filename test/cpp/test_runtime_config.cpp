@@ -171,7 +171,7 @@ TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
     loadRuntimeConfigForNode("startup_config_watchdog_defaults", makeStaticTokenOptions());
 
   EXPECT_TRUE(default_config.health.watchdog_enabled);
-  EXPECT_EQ(default_config.health.watchdog_recovery_timeout, std::chrono::minutes(10));
+  EXPECT_EQ(default_config.health.watchdog_recovery_timeout, std::chrono::minutes(2));
 
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("health.watchdog.enabled", false);

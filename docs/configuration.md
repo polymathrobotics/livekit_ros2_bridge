@@ -42,13 +42,12 @@ Notes:
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
 | `health.watchdog.enabled` | `true` | `true`, `false` | Enables shutdown after the recovery timeout expires |
-| `health.watchdog.recovery_timeout_seconds` | `600.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity before it exits |
+| `health.watchdog.recovery_timeout_seconds` | `120.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity before it exits |
 
 Notes:
 
 - when the recovery timeout expires, the bridge logs the failure, shuts down, and exits non-zero
-- the default 10-minute timeout is intentional because long outages can outlive LiveKit's reconnect-token window
-- the upstream LiveKit C++ SDK makes up to 10 reconnect attempts and then stops, usually after roughly 4 minutes, so the bridge watchdog does not force an earlier exit than the SDK's own reconnect loop
+- the default 2-minute timeout is intentionally shorter than the SDK reconnect budget so orchestration can recycle the bridge sooner
 
 ### Access rules
 

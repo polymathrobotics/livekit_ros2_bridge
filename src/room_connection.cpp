@@ -403,7 +403,13 @@ public:
       participant_disconnects_enabled_ = event.state == livekit::ConnectionState::Connected;
     }
 
-    if (event.state != livekit::ConnectionState::Disconnected) {
+    if (event.state == livekit::ConnectionState::Connected) {
+      notifyReconnected();
+      return;
+    }
+
+    if (event.state == livekit::ConnectionState::Reconnecting) {
+      notifyReconnecting("connection_state_reconnecting");
       return;
     }
 
@@ -417,6 +423,24 @@ public:
       participant_disconnects_enabled_ = false;
     }
     requestReconnect("room_disconnected");
+  }
+
+  void onReconnecting(livekit::Room &, const livekit::ReconnectingEvent &) override
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      participant_disconnects_enabled_ = false;
+    }
+    notifyReconnecting("room_reconnecting");
+  }
+
+  void onReconnected(livekit::Room &, const livekit::ReconnectedEvent &) override
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      participant_disconnects_enabled_ = true;
+    }
+    notifyReconnected();
   }
 
   void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
@@ -554,6 +578,7 @@ private:
       // binds against this connection's local participant under the same mutex.
       ++room_generation_;
       room_ = std::move(room);
+      reconnecting_ = false;
       reconnect_reason_.reset();
       participant_disconnects_enabled_ = true;
       for (const auto & entry : rpc_handlers_) {
@@ -593,6 +618,7 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       participant_disconnects_enabled_ = false;
+      reconnecting_ = false;
       room = std::move(room_);
       if (room != nullptr) {
         ++room_generation_;
@@ -654,6 +680,52 @@ private:
     }
 
     on_reconnect(reconnect_reason);
+  }
+
+  void notifyReconnecting(const char * reason)
+  {
+    std::string reconnect_reason = reason;
+    bool already_reconnecting = false;
+    std::function<void(const std::string &)> on_reconnecting;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      already_reconnecting = reconnecting_;
+      if (!already_reconnecting) {
+        reconnecting_ = true;
+        on_reconnecting = callbacks_.on_reconnecting;
+      }
+    }
+
+    if (already_reconnecting) {
+      return;
+    }
+
+    LogEvent(kLogger, "room_reconnecting").field("reason", reason).warn();
+    if (!on_reconnecting) {
+      return;
+    }
+
+    on_reconnecting(reconnect_reason);
+  }
+
+  void notifyReconnected()
+  {
+    std::function<void()> on_reconnected;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!reconnecting_) {
+        return;
+      }
+      reconnecting_ = false;
+      on_reconnected = callbacks_.on_reconnected;
+    }
+
+    LogEvent(kLogger, "room_reconnected").info();
+    if (!on_reconnected) {
+      return;
+    }
+
+    on_reconnected();
   }
 
   bool registerRpcLocked(const std::string & method)
@@ -723,6 +795,9 @@ private:
   // Guards runtime-facing disconnect callbacks so transient reconnect churn does not look like a
   // requester disappearing permanently.
   bool participant_disconnects_enabled_ = false;
+  // Tracks one SDK-owned reconnect episode so runtime-facing health callbacks only fire once per
+  // transport disruption and clear when the room recovers in place.
+  bool reconnecting_ = false;
 
   // Bumped whenever the active room changes or is cleared so in-flight video operations cannot
   // repopulate handle state across reconnect boundaries.

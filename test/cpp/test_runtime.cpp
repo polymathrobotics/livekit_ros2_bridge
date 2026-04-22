@@ -192,6 +192,8 @@ TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
   EXPECT_EQ(harness.state->rpc_handlers.size(), expectedRpcMethods().size());
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnecting));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_remote_participant_disconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_packet_received));
@@ -251,6 +253,27 @@ TEST_F(RuntimeTest, WatchdogExitsWhenRecoveryTimeoutExpires)
     ".*");
 }
 
+TEST_F(RuntimeTest, WatchdogExitsWhenSdkReconnectNeverRecovers)
+{
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) {
+          harness.fake_room_connection->emitConnected();
+          harness.fake_room_connection->emitReconnecting("room_reconnecting");
+        },
+        kWatchdogObservationWindow,
+        kRuntimeScenarioTimedOutWithoutWatchdog);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
+}
+
 TEST_F(RuntimeTest, WatchdogClearsRecoveryTimeoutAfterRecovery)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
@@ -265,6 +288,28 @@ TEST_F(RuntimeTest, WatchdogClearsRecoveryTimeoutAfterRecovery)
           harness.fake_room_connection->emitConnected();
           harness.fake_room_connection->emitReconnectRequested("room_disconnected");
           harness.fake_room_connection->emitConnected();
+        },
+        kHealthyConnectionObservationWindow,
+        kRuntimeScenarioCompleted);
+    },
+    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
+    ".*");
+}
+
+TEST_F(RuntimeTest, WatchdogClearsSdkReconnectTimeoutAfterRecovery)
+{
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) {
+          harness.fake_room_connection->emitConnected();
+          harness.fake_room_connection->emitReconnecting("room_reconnecting");
+          harness.fake_room_connection->emitReconnected();
         },
         kHealthyConnectionObservationWindow,
         kRuntimeScenarioCompleted);
