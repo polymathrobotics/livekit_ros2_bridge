@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -80,6 +81,21 @@ std::vector<std::string> expectedShutdownEventLog()
   return event_log;
 }
 
+std::size_t requireEventIndex(const std::vector<std::string> & event_log, const std::string & event)
+{
+  const auto it = std::find(event_log.begin(), event_log.end(), event);
+  EXPECT_NE(it, event_log.end());
+  return it == event_log.end() ? event_log.size() : static_cast<std::size_t>(std::distance(event_log.begin(), it));
+}
+
+void expectRpcUnregistersBeforeStop(const FakeRoomConnectionState & state)
+{
+  const std::size_t stop_index = requireEventIndex(state.event_log, "stop");
+  for (const auto & method : expectedRpcMethods()) {
+    EXPECT_LT(requireEventIndex(state.event_log, "unregister:" + method), stop_index);
+  }
+}
+
 rclcpp::NodeOptions makeBaseOptions()
 {
   rclcpp::NodeOptions options;
@@ -102,6 +118,26 @@ std::vector<std::uint8_t> serializeMessage(const MessageT & message)
   serialization.serialize_message(&message, &serialized);
   const auto & rcl_msg = serialized.get_rcl_serialized_message();
   return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
+}
+
+template <typename PublisherT, typename MessageT>
+bool publishUntil(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<PublisherT> & publisher,
+  const MessageT & message,
+  const std::function<bool()> & predicate,
+  std::chrono::milliseconds timeout = std::chrono::seconds(2))
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    publisher->publish(message);
+    executor.spin_some();
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(kRuntimeTestPollInterval);
+  }
+  return predicate();
 }
 
 nlohmann::json extractSinglePublishedStatusEnvelope(
@@ -394,6 +430,99 @@ TEST_F(RuntimeTest, RepeatedResetLeavesSingleOrderedTeardown)
   harness.runtime.reset();
 
   EXPECT_EQ(harness.state->event_log, expected_event_log);
+}
+
+TEST_F(RuntimeTest, DataTrackTeardownHappensBeforeRoomStop)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
+
+  auto harness = makeRuntimeHarness(options);
+
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_data_shutdown_observer"));
+  [[maybe_unused]] auto publisher =
+    observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  executor.add_node(observer);
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
+
+  const std::string heartbeat =
+    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
+  harness.fake_room_connection->emitIncomingPacket(
+    IncomingPacket{
+      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
+      wire::protocol::kBridgeHeartbeatTopic,
+      "participant-1",
+    });
+
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
+  const std::string track_name = harness.state->published_data_track_names.front();
+
+  harness.runtime.reset();
+
+  expectRpcUnregistersBeforeStop(*harness.state);
+  EXPECT_LT(
+    requireEventIndex(harness.state->event_log, "unpublish_data_track"),
+    requireEventIndex(harness.state->event_log, "stop"));
+  EXPECT_EQ(harness.state->unpublished_data_track_names, (std::vector<std::string>{track_name}));
+}
+
+TEST_F(RuntimeTest, VideoTrackTeardownHappensBeforeRoomStop)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/camera/front"});
+
+  auto harness = makeRuntimeHarness(options);
+
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_video_shutdown_observer"));
+  auto publisher = observer->create_publisher<sensor_msgs::msg::Image>("/camera/front", rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  executor.add_node(observer);
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
+
+  const std::string heartbeat = R"({"subscriptions":[{"kind":"topic","name":"/camera/front"}]})";
+  harness.fake_room_connection->emitIncomingPacket(
+    IncomingPacket{
+      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
+      wire::protocol::kBridgeHeartbeatTopic,
+      "participant-1",
+    });
+
+  sensor_msgs::msg::Image image;
+  image.header.stamp.sec = 1;
+  image.width = 2;
+  image.height = 2;
+  image.step = 6;
+  image.encoding = "rgb8";
+  image.data = {
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+  };
+  ASSERT_TRUE(publishUntil(
+    executor, publisher, image, [&]() { return harness.state->published_video_track_names.size() == 1U; }));
+  const std::string track_name = harness.state->published_video_track_names.front();
+
+  harness.runtime.reset();
+
+  expectRpcUnregistersBeforeStop(*harness.state);
+  EXPECT_LT(
+    requireEventIndex(harness.state->event_log, "unpublish_video_track:" + track_name),
+    requireEventIndex(harness.state->event_log, "stop"));
+  EXPECT_EQ(harness.state->unpublished_video_track_names, (std::vector<std::string>{track_name}));
 }
 
 TEST_F(RuntimeTest, IncomingPacketPublishesAfterExecutorDispatch)

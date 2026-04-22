@@ -73,6 +73,11 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
     heartbeat_lease_duration)
 {}
 
+SubscriptionLeaseManager::~SubscriptionLeaseManager()
+{
+  shutdown();
+}
+
 void SubscriptionLeaseManager::handleHeartbeat(
   const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat)
 {
@@ -650,7 +655,7 @@ void SubscriptionLeaseManager::shutdown()
       .info();
   }
 
-  data_stream_registry_.shutdown();
+  data_stream_registry_.resetSessionState();
 
   for (auto & [subscription_key, subscription] : owned_subscriptions) {
     (void)subscription_key;

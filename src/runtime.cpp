@@ -14,6 +14,7 @@
 
 #include "runtime.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <functional>
@@ -33,9 +34,7 @@
 #include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
 #include "subscription_lease_manager.hpp"
-#include "utils/event_throttle.hpp"
 #include "utils/log_event.hpp"
-#include "utils/scope_exit.hpp"
 #include "video_profiling.hpp"
 #include "video_stream_registry.hpp"
 
@@ -49,6 +48,103 @@ constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr auto kWatchdogEvaluationInterval = std::chrono::milliseconds(250);
 constexpr auto kShutdownExitDelay = std::chrono::milliseconds(100);
 
+class CallbackAdmission final
+{
+public:
+  bool close()
+  {
+    bool expected = false;
+    return closed_.compare_exchange_strong(expected, true);
+  }
+
+  bool isClosed() const
+  {
+    return closed_.load();
+  }
+
+private:
+  std::atomic<bool> closed_{false};
+};
+
+class ShutdownLogScope final
+{
+public:
+  explicit ShutdownLogScope(rclcpp::Logger logger)
+  : logger_(std::move(logger))
+  {}
+
+  void begin()
+  {
+    if (started_) {
+      return;
+    }
+
+    started_ = true;
+    LogEvent(logger_, "runtime_shutdown_start").info();
+  }
+
+  ~ShutdownLogScope()
+  {
+    if (!started_) {
+      return;
+    }
+
+    LogEvent(logger_, "runtime_shutdown_complete").info();
+  }
+
+private:
+  rclcpp::Logger logger_;
+  bool started_ = false;
+};
+
+class ScopedRoomConnection final
+{
+public:
+  explicit ScopedRoomConnection(std::unique_ptr<RoomConnection> connection)
+  : connection_(std::move(connection))
+  {}
+
+  ~ScopedRoomConnection()
+  {
+    if (connection_ != nullptr) {
+      connection_->stop();
+    }
+  }
+
+  RoomConnection & connection() const
+  {
+    return *connection_;
+  }
+
+private:
+  std::unique_ptr<RoomConnection> connection_;
+};
+
+class ScopedRpcRegistration final
+{
+public:
+  ScopedRpcRegistration() = default;
+
+  ~ScopedRpcRegistration()
+  {
+    if (router_ == nullptr || connection_ == nullptr) {
+      return;
+    }
+
+    router_->unregisterRpcs(*connection_);
+  }
+
+  void arm(RpcRouter & router, RoomConnection & connection)
+  {
+    router_ = &router;
+    connection_ = &connection;
+  }
+
+private:
+  RpcRouter * router_ = nullptr;
+  RoomConnection * connection_ = nullptr;
+};
+
 }  // namespace
 
 class Runtime::Impl final
@@ -57,25 +153,30 @@ public:
   using SteadyClock = std::chrono::steady_clock;
 
   Impl(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
-  : interfaces_(makeRosNodeInterfaces(node))
+  : shutdown_log_scope_(node.get_logger())
+  , interfaces_(makeRosNodeInterfaces(node))
   , config_(std::move(config))
   , room_connection_(std::move(connection))
   , ros_executor_queue_(interfaces_.executor())
   , ros_topic_publisher_(interfaces_.publisher(), config_.access_policy)
   , ros_service_caller_(interfaces_.service())
-  , data_stream_registry_(interfaces_.subscription(), *room_connection_, &config_.subscription_qos)
+  , data_stream_registry_(interfaces_.subscription(), room_connection_.connection(), &config_.subscription_qos)
   , profiling_registry_(
       config_.profiling.enabled
         ? std::optional<VideoProfilingRegistry>(std::in_place, interfaces_.logger, config_.profiling)
         : std::nullopt)
   , video_stream_registry_(
       interfaces_.subscription(),
-      *room_connection_,
+      room_connection_.connection(),
       &config_.subscription_qos,
       profiling_registry_ ? &*profiling_registry_ : nullptr,
       &config_.video_stream)
   , subscription_lease_manager_(
-      interfaces_.graphOnly(), *room_connection_, config_.access_policy, data_stream_registry_, video_stream_registry_)
+      interfaces_.graphOnly(),
+      room_connection_.connection(),
+      config_.access_policy,
+      data_stream_registry_,
+      video_stream_registry_)
   , packet_router_(
       interfaces_.clock,
       [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
@@ -87,13 +188,6 @@ public:
       .fieldOr("url", config_.livekit.url, "<unset>")
       .field("token_present", !config_.livekit.access_token.empty())
       .info();
-
-    bool startup_complete = false;
-    ScopeExit rollback([this, &startup_complete]() {
-      if (!startup_complete) {
-        teardown();
-      }
-    });
 
     if (config_.health.watchdog_enabled) {
       setWatchdogUnhealthy("startup_connect_pending");
@@ -122,7 +216,9 @@ public:
       interfaces_.base.get(),
       interfaces_.timers.get());
 
-    if (!rpc_router_.registerRpcs(*room_connection_)) {
+    const bool rpcs_registered = rpc_router_.registerRpcs(room_connection_.connection());
+    rpc_registration_.arm(rpc_router_, room_connection_.connection());
+    if (!rpcs_registered) {
       LogEvent(interfaces_.logger, "runtime_startup_failed")
         .fieldOr("url", config_.livekit.url, "<unset>")
         .field("token_present", !config_.livekit.access_token.empty())
@@ -141,13 +237,27 @@ public:
     callbacks.on_reconnected = std::bind(&Impl::onRoomReconnected, this);
     callbacks.on_connection_reset = std::bind(&Impl::onRoomConnectionReset, this);
 
-    room_connection_->start(config_.livekit, std::move(callbacks));
-    startup_complete = true;
+    room_connection_.connection().start(config_.livekit, std::move(callbacks));
   }
 
   ~Impl()
   {
-    teardown();
+    if (!callback_admission_.close()) {
+      return;
+    }
+
+    shutdown_log_scope_.begin();
+
+    subscription_lease_gc_timer_.reset();
+    watchdog_timer_.reset();
+    video_profile_summary_timer_.reset();
+
+    ros_executor_queue_.shutdown();
+
+    if (profiling_registry_) {
+      profiling_registry_->logSummaries();
+      profiling_registry_->flushTrace();
+    }
   }
 
   Impl(const Impl &) = delete;
@@ -156,38 +266,9 @@ public:
   Impl & operator=(Impl &&) = delete;
 
 private:
-  void teardown()
-  {
-    if (shutting_down_.exchange(true)) {
-      return;
-    }
-
-    LogEvent(interfaces_.logger, "runtime_shutdown_start").info();
-
-    subscription_lease_gc_timer_.reset();
-    watchdog_timer_.reset();
-    video_profile_summary_timer_.reset();
-
-    rpc_router_.unregisterRpcs(*room_connection_);
-    room_connection_->stop();
-    ros_executor_queue_.shutdown();
-    subscription_lease_manager_.shutdown();
-    data_stream_registry_.shutdown();
-    video_stream_registry_.shutdown();
-    ros_service_caller_.shutdown();
-    ros_topic_publisher_.shutdown();
-
-    if (profiling_registry_) {
-      profiling_registry_->logSummaries();
-      profiling_registry_->flushTrace();
-    }
-
-    LogEvent(interfaces_.logger, "runtime_shutdown_complete").info();
-  }
-
   void onRoomConnected()
   {
-    if (shutting_down_.load()) {
+    if (callback_admission_.isClosed()) {
       return;
     }
 
@@ -197,7 +278,7 @@ private:
 
   void onRoomIncomingPacket(const IncomingPacket & packet)
   {
-    if (shutting_down_.load()) {
+    if (callback_admission_.isClosed()) {
       LogEvent(interfaces_.logger, "packet_dropped")
         .field("reason", "shutdown")
         .field("topic", packet.topic)
@@ -211,6 +292,10 @@ private:
 
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)
   {
+    if (callback_admission_.isClosed()) {
+      return;
+    }
+
     submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity)]() {
       subscription_lease_manager_.onRemoteParticipantDisconnected(remote_participant_identity);
       ros_service_caller_.cancelCallsForRequester(remote_participant_identity);
@@ -219,7 +304,7 @@ private:
 
   void onRoomReconnectRequested(const std::string & reason)
   {
-    if (shutting_down_.load()) {
+    if (callback_admission_.isClosed()) {
       return;
     }
 
@@ -246,7 +331,7 @@ private:
 
   void onRoomReconnected()
   {
-    if (shutting_down_.load()) {
+    if (callback_admission_.isClosed()) {
       return;
     }
 
@@ -256,6 +341,10 @@ private:
 
   void onRoomConnectionReset()
   {
+    if (callback_admission_.isClosed()) {
+      return;
+    }
+
     submitToExecutor([this]() {
       subscription_lease_manager_.resetSessionState();
       ros_service_caller_.resetSessionState();
@@ -264,31 +353,11 @@ private:
 
   void submitToExecutor(std::function<void()> work)
   {
-    if (shutting_down_.load()) {
-      if (const std::size_t count = executor_shutdown_enqueue_drop_.recordAndTakePendingCount(); count > 0U) {
-        LogEvent(interfaces_.logger, "executor_work_dropped")
-          .field("reason", "shutdown")
-          .field("stage", "enqueue")
-          .field("count", count)
-          .warn();
-      }
+    if (callback_admission_.isClosed()) {
       return;
     }
 
-    (void)ros_executor_queue_.submit([this, work = std::move(work)]() mutable {
-      if (shutting_down_.load()) {
-        if (const std::size_t count = executor_shutdown_execute_drop_.recordAndTakePendingCount(); count > 0U) {
-          LogEvent(interfaces_.logger, "executor_work_dropped")
-            .field("reason", "shutdown")
-            .field("stage", "execute")
-            .field("count", count)
-            .warn();
-        }
-        return;
-      }
-
-      work();
-    });
+    (void)ros_executor_queue_.submit([work = std::move(work)]() mutable { work(); });
   }
 
   void setWatchdogHealthy(std::string_view reason)
@@ -351,7 +420,7 @@ private:
 
   void checkWatchdog()
   {
-    if (shutting_down_.load()) {
+    if (callback_admission_.isClosed()) {
       return;
     }
 
@@ -366,7 +435,7 @@ private:
       }
     }
 
-    if (shutting_down_.exchange(true)) {
+    if (!callback_admission_.close()) {
       return;
     }
 
@@ -383,13 +452,14 @@ private:
     std::_Exit(EXIT_FAILURE);
   }
 
+  ShutdownLogScope shutdown_log_scope_;
   RosNodeInterfaces interfaces_;
   RuntimeConfig config_;
-  std::atomic<bool> shutting_down_{false};
+  CallbackAdmission callback_admission_;
   std::mutex watchdog_mutex_;
   std::optional<SteadyClock::time_point> watchdog_deadline_;
   std::optional<SteadyClock::time_point> watchdog_unhealthy_since_;
-  std::unique_ptr<RoomConnection> room_connection_;
+  ScopedRoomConnection room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;
@@ -399,11 +469,10 @@ private:
   SubscriptionLeaseManager subscription_lease_manager_;
   PacketRouter packet_router_;
   RpcRouter rpc_router_;
+  ScopedRpcRegistration rpc_registration_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
   rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
-  EventThrottle executor_shutdown_enqueue_drop_{std::chrono::seconds(5)};
-  EventThrottle executor_shutdown_execute_drop_{std::chrono::seconds(5)};
 };
 
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)

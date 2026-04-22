@@ -811,6 +811,37 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
   spin_thread.join();
 }
 
+TEST(SubscriptionLeaseManagerTest, ShutdownLeavesDataStreamRegistryReusable)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_shutdown_reuse_test");
+  FakeRoomConnection session;
+  const std::string topic = "/battery/shutdown_reuse";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+  (void)publisher;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+
+  VideoStreamRegistry video_stream_registry(*node, session);
+  DataStreamRegistry data_stream_registry(*node, session);
+  auto registry = makeLeaseManager(*node, session, data_stream_registry, video_stream_registry);
+  const auto active =
+    sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
+  const std::string track_name = active["delivery"]["track_name"].get<std::string>();
+
+  registry.shutdown();
+
+  data_stream_registry.create(topic, "sensor_msgs/msg/BatteryState");
+  data_stream_registry.start(topic);
+
+  const auto * reopened = data_stream_registry.find(topic);
+  ASSERT_NE(reopened, nullptr);
+  EXPECT_EQ(reopened->trackName(), track_name);
+  EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{track_name, track_name}));
+}
+
 TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
 {
   ScopedRclcppInit init;

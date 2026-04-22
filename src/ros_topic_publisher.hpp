@@ -44,6 +44,7 @@ public:
   RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics);
   RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy);
   RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy, std::size_t max_topics);
+  ~RosTopicPublisher();
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.

@@ -61,6 +61,7 @@ public:
     DataStreamRegistry & data_stream_registry,
     VideoStreamRegistry & video_stream_registry,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
+  ~SubscriptionLeaseManager();
 
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
 

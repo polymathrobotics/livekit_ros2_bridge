@@ -58,6 +58,11 @@ RosTopicPublisher::RosTopicPublisher(
 , publishers_(max_topics)
 {}
 
+RosTopicPublisher::~RosTopicPublisher()
+{
+  shutdown();
+}
+
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)
 {
   const std::string & topic = request.topic;
