@@ -14,10 +14,26 @@
 
 #pragma once
 
+#include <atomic>
+#include <functional>
 #include <memory>
+#include <string>
 
+#include "connection_watchdog.hpp"
+#include "packet_router.hpp"
+#include "rclcpp/clock.hpp"
+#include "rclcpp/logger.hpp"
 #include "rclcpp/node.hpp"
+#include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_timers_interface.hpp"
+#include "rclcpp/timer.hpp"
+#include "ros_executor_queue.hpp"
+#include "ros_service_caller.hpp"
+#include "ros_topic_publisher.hpp"
+#include "rpc_router.hpp"
 #include "runtime_config.hpp"
+#include "subscription_lease_manager.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -34,8 +50,59 @@ public:
   Runtime & operator=(Runtime &&) = delete;
 
 private:
-  class Impl;
-  std::unique_ptr<Impl> impl_;
+  class ShutdownLogScope final
+  {
+  public:
+    explicit ShutdownLogScope(rclcpp::Logger logger);
+    void begin();
+    ~ShutdownLogScope();
+
+  private:
+    rclcpp::Logger logger_;
+    bool started_ = false;
+  };
+
+  class ScopedRoomConnection final
+  {
+  public:
+    explicit ScopedRoomConnection(std::unique_ptr<RoomConnection> connection);
+    ~ScopedRoomConnection();
+
+    RoomConnection & connection() const;
+
+  private:
+    std::unique_ptr<RoomConnection> connection_;
+  };
+
+  void onRoomConnected();
+  void onRoomIncomingPacket(const IncomingPacket & packet);
+  void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
+  void onRoomReconnectRequested(const std::string & reason);
+  void onRoomReconnecting(const std::string & reason);
+  void onRoomReconnected();
+  void onRoomConnectionReset();
+  void submitToExecutor(std::function<void()> work);
+
+  bool closeCallbacks();
+  bool callbacksClosed() const;
+
+  ShutdownLogScope shutdown_log_scope_;
+  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers_;
+  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Logger logger_;
+  RuntimeConfig config_;
+  std::atomic<bool> callbacks_closed_{false};
+  ScopedRoomConnection room_connection_;
+  RosExecutorQueue ros_executor_queue_;
+  RosTopicPublisher ros_topic_publisher_;
+  RosServiceCaller ros_service_caller_;
+  SubscriptionLeaseManager subscription_lease_manager_;
+  PacketRouter packet_router_;
+  RpcRouter rpc_router_;
+  rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
+  ConnectionWatchdog watchdog_;
 };
 
 }  // namespace livekit_ros2_bridge
