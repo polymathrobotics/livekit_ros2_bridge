@@ -53,6 +53,8 @@ Node::Node(const rclcpp::NodeOptions & options)
   }
 }
 
+// Keep the destructor out-of-line so the opaque implementation is torn down while the
+// rclcpp::Node base and its interfaces are still alive.
 Node::~Node() = default;
 
 }  // namespace livekit_ros2_bridge
