@@ -15,6 +15,7 @@
 #pragma once
 
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <exception>
 #include <functional>
@@ -23,6 +24,7 @@
 #include <mutex>
 #include <queue>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -33,7 +35,6 @@
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
 #include "utils/log_event.hpp"
-#include "utils/reentrant_quiesce_gate.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -135,12 +136,18 @@ private:
   // drain() is allowed to finish.
   bool shutdown_ = false;
 
-  // Used so shutdown() can wait for an in-progress drain without deadlocking
-  // when shutdown itself is called from the executor thread running drain().
-  ReentrantQuiesceGate drain_gate_;
+  // Tracks the single active drain section so shutdown() can wait for work
+  // already running on another thread without deadlocking when shutdown is
+  // called by the drain owner itself.
+  std::condition_variable drain_idle_;
+  bool drain_active_ = false;
+  std::thread::id drain_owner_thread_id_{};
 
   void drain();
   void wake();
+  bool tryBeginDrain();
+  void finishDrain();
+  void awaitDrainIdle();
 };
 
 }  // namespace livekit_ros2_bridge

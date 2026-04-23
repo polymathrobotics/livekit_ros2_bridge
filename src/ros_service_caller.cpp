@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -25,6 +26,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -44,7 +46,6 @@
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
-#include "utils/reentrant_quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
 #include "utils/serialized_message.hpp"
 #include "wire/services.hpp"
@@ -343,6 +344,11 @@ struct RosServiceCaller::Impl
   void poll();
   void drainResponses();
   void clearCachedServiceState();
+  bool isPollOpen();
+  void closePoll();
+  bool tryBeginPoll();
+  void finishPoll();
+  void awaitPollIdle();
 
   template <typename ShouldFailFn>
   void failMatchingCalls(
@@ -406,10 +412,14 @@ struct RosServiceCaller::Impl
   rclcpp::TimerBase::SharedPtr poll_timer;
   std::mutex poll_callback_mutex;
   std::mutex type_support_load_callback_mutex;
-  // shutdown() closes this gate and waits for any active poll() callback
+  // shutdown() closes poll entry and waits for any active poll() callback
   // before clearing timers or caches. Reentrancy matters because shutdown()
   // may be triggered from within poll().
-  ReentrantQuiesceGate poll_gate;
+  std::mutex poll_lifecycle_mutex;
+  std::condition_variable poll_idle;
+  bool poll_closed = false;
+  bool poll_active = false;
+  std::thread::id poll_owner_thread_id{};
   std::function<void()> on_poll_enter;
   std::function<void()> on_poll_exit;
   std::function<void(const std::string &)> on_type_support_load;
@@ -452,7 +462,7 @@ std::future<RosServiceCaller::ServiceCallResponse> RosServiceCaller::call(
 
   std::string interface_type;
 
-  if (!impl_->poll_gate.isOpen()) {
+  if (!impl_->isPollOpen()) {
     const std::runtime_error exc("Service caller is shut down.");
     logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
     promise.set_exception(std::make_exception_ptr(exc));
@@ -589,8 +599,8 @@ void RosServiceCaller::resetSessionState()
 
 void RosServiceCaller::shutdown()
 {
-  impl_->poll_gate.close();
-  impl_->poll_gate.awaitIdle();
+  impl_->closePoll();
+  impl_->awaitPollIdle();
 
   impl_->poll_timer.reset();
 
@@ -694,7 +704,7 @@ void RosServiceCaller::Impl::releaseInflightSlot(const std::string & requester)
 
 void RosServiceCaller::Impl::poll()
 {
-  if (!poll_gate.tryEnter()) {
+  if (!tryBeginPoll()) {
     return;
   }
 
@@ -711,7 +721,7 @@ void RosServiceCaller::Impl::poll()
     if (on_exit) {
       on_exit();
     }
-    poll_gate.leave();
+    finishPoll();
   });
 
   if (on_enter) {
@@ -728,6 +738,48 @@ void RosServiceCaller::Impl::poll()
   }
 
   poll_timer.reset();
+}
+
+bool RosServiceCaller::Impl::isPollOpen()
+{
+  std::lock_guard<std::mutex> lock(poll_lifecycle_mutex);
+  return !poll_closed;
+}
+
+void RosServiceCaller::Impl::closePoll()
+{
+  std::lock_guard<std::mutex> lock(poll_lifecycle_mutex);
+  poll_closed = true;
+}
+
+bool RosServiceCaller::Impl::tryBeginPoll()
+{
+  std::lock_guard<std::mutex> lock(poll_lifecycle_mutex);
+  if (poll_closed || poll_active) {
+    return false;
+  }
+
+  poll_active = true;
+  poll_owner_thread_id = std::this_thread::get_id();
+  return true;
+}
+
+void RosServiceCaller::Impl::finishPoll()
+{
+  {
+    std::lock_guard<std::mutex> lock(poll_lifecycle_mutex);
+    poll_active = false;
+    poll_owner_thread_id = std::thread::id{};
+  }
+
+  poll_idle.notify_all();
+}
+
+void RosServiceCaller::Impl::awaitPollIdle()
+{
+  const auto caller_thread_id = std::this_thread::get_id();
+  std::unique_lock<std::mutex> lock(poll_lifecycle_mutex);
+  poll_idle.wait(lock, [this, caller_thread_id]() { return !poll_active || poll_owner_thread_id == caller_thread_id; });
 }
 
 void RosServiceCaller::Impl::drainResponses()

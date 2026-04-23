@@ -207,7 +207,7 @@ void RosExecutorQueue::shutdown()
     lock.unlock();
     // A concurrent shutdown() already took ownership of teardown; only wait
     // for any in-progress drain to finish before returning.
-    drain_gate_.awaitIdle();
+    awaitDrainIdle();
     return;
   }
 
@@ -219,7 +219,6 @@ void RosExecutorQueue::shutdown()
   lock.unlock();
 
   const std::size_t canceled_count = queued_tasks.size();
-  drain_gate_.close();
 
   if (waitable != nullptr && waitables != nullptr && callback_group != nullptr) {
     waitables->remove_waitable(waitable, callback_group);
@@ -240,15 +239,15 @@ void RosExecutorQueue::shutdown()
 
   // Already-started drain work runs to completion; only tasks still in the
   // moved-out task snapshot above are canceled during shutdown.
-  drain_gate_.awaitIdle();
+  awaitDrainIdle();
 }
 
 void RosExecutorQueue::drain()
 {
-  if (!drain_gate_.tryEnter()) {
+  if (!tryBeginDrain()) {
     return;
   }
-  ScopeExit finish_drain([this]() { drain_gate_.leave(); });
+  ScopeExit finish_drain([this]() { finishDrain(); });
 
   // Keep draining until the queue is empty so tasks submitted from active
   // queue work are consumed by the same executor wakeup.
@@ -275,6 +274,37 @@ void RosExecutorQueue::drain()
         .error();
     }
   }
+}
+
+bool RosExecutorQueue::tryBeginDrain()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (shutdown_ || drain_active_) {
+    return false;
+  }
+
+  drain_active_ = true;
+  drain_owner_thread_id_ = std::this_thread::get_id();
+  return true;
+}
+
+void RosExecutorQueue::finishDrain()
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    drain_active_ = false;
+    drain_owner_thread_id_ = std::thread::id{};
+  }
+
+  drain_idle_.notify_all();
+}
+
+void RosExecutorQueue::awaitDrainIdle()
+{
+  const auto caller_thread_id = std::this_thread::get_id();
+  std::unique_lock<std::mutex> lock(mutex_);
+  drain_idle_.wait(
+    lock, [this, caller_thread_id]() { return !drain_active_ || drain_owner_thread_id_ == caller_thread_id; });
 }
 
 void RosExecutorQueue::wake()

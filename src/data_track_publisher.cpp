@@ -15,10 +15,12 @@
 #include "data_track_publisher.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -31,7 +33,6 @@
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
-#include "utils/quiesce_gate.hpp"
 #include "utils/scope_exit.hpp"
 #include "wire/protocol.hpp"
 
@@ -104,6 +105,139 @@ public:
     std::optional<Clock::time_point> last_delivery_at;
   };
 
+  // Shared state touched by the subscription callback. Holding this separately
+  // from Publication lets the callback capture a weak_ptr and self-reject once
+  // Publication has closed the gate during teardown.
+  class State final
+  {
+  public:
+    State(
+      std::string topic,
+      std::string track_name,
+      int interval_ms,
+      rclcpp::Clock::SharedPtr clock,
+      RoomConnection & room_connection)
+    : clock_(std::move(clock))
+    , room_connection_(room_connection)
+    , topic_(std::move(topic))
+    , track_name_(std::move(track_name))
+    , track_(room_connection_.publishDataTrack(track_name_))
+    {
+      if (track_ == nullptr) {
+        throw std::runtime_error("LiveKit returned a null data track.");
+      }
+      throttle_.interval_ms = interval_ms;
+    }
+
+    State(const State &) = delete;
+    State & operator=(const State &) = delete;
+    State(State &&) = delete;
+    State & operator=(State &&) = delete;
+
+    void closeAndWait()
+    {
+      std::unique_lock<std::mutex> lock(lifecycle_mutex_);
+      is_closed_ = true;
+      idle_.wait(lock, [this]() { return active_callbacks_ == 0U; });
+    }
+
+    bool tryEnter()
+    {
+      std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+      if (is_closed_) {
+        return false;
+      }
+
+      ++active_callbacks_;
+      return true;
+    }
+
+    void leave()
+    {
+      {
+        std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+        if (active_callbacks_ == 0U) {
+          return;
+        }
+        --active_callbacks_;
+      }
+
+      idle_.notify_all();
+    }
+
+    void setIntervalMs(int interval_ms)
+    {
+      std::lock_guard<std::mutex> lock(throttle_mutex_);
+      throttle_.interval_ms = interval_ms;
+    }
+
+    void pushMessage(const rclcpp::SerializedMessage & message)
+    {
+      {
+        std::lock_guard<std::mutex> lock(throttle_mutex_);
+        if (!throttle_.allows(Clock::now())) {
+          return;
+        }
+      }
+
+      const auto & cdr = message.get_rcl_serialized_message();
+      const auto result = room_connection_.tryPushDataTrack(
+        track_, std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length));
+      if (result) {
+        return;
+      }
+
+      const auto & error = result.error();
+      if (error.code == DataTrackPushErrorCode::kQueueFull) {
+        LogEvent(kLogger, "data_track_delivery_dropped")
+          .field("resource", topic_)
+          .field("track_name", track_name_)
+          .field("reason", "queue_full")
+          .warnThrottle(*clock_, kLogThrottle);
+        return;
+      }
+
+      LogEvent(kLogger, "data_track_push_failed")
+        .field("resource", topic_)
+        .field("track_name", track_name_)
+        .field("reason", pushReason(error.code))
+        .fieldOr("error", error.message)
+        .warnThrottle(*clock_, kLogThrottle);
+    }
+
+    void unpublishTrack()
+    {
+      if (track_ == nullptr) {
+        return;
+      }
+
+      try {
+        room_connection_.unpublishDataTrack(track_);
+        track_.reset();
+      } catch (...) {
+        LogEvent(kLogger, "data_track_unpublish_failed")
+          .field("track_name", track_name_)
+          .fieldException("error", std::current_exception())
+          .warn();
+      }
+    }
+
+  private:
+    rclcpp::Clock::SharedPtr clock_;
+    RoomConnection & room_connection_;
+    std::string topic_;
+    std::string track_name_;
+    std::shared_ptr<livekit::LocalDataTrack> track_;
+
+    std::mutex lifecycle_mutex_;
+    std::condition_variable idle_;
+    bool is_closed_ = false;
+    std::size_t active_callbacks_ = 0U;
+
+    std::mutex throttle_mutex_;
+    Throttle throttle_;
+  };
+
   Publication(
     std::string topic,
     std::string interface_type,
@@ -116,33 +250,24 @@ public:
     const SubscriptionQosConfig * qos_config)
   : topics_(std::move(topics))
   , graph_(std::move(graph))
-  , clock_(std::move(clock))
-  , room_connection_(room_connection)
   , qos_config_(qos_config)
   , topic_(std::move(topic))
   , interface_type_(std::move(interface_type))
-  , track_name_(std::move(track_name))
-  , gate_(std::make_shared<QuiesceGate>())
-  , track_(room_connection_.publishDataTrack(track_name_))
+  , state_(std::make_shared<State>(topic_, std::move(track_name), interval_ms, std::move(clock), room_connection))
   {
-    if (track_ == nullptr) {
-      throw std::runtime_error("LiveKit returned a null data track.");
-    }
-
-    throttle_.interval_ms = interval_ms;
     try {
       subscribe();
     } catch (...) {
-      unpublishTrack();
+      state_->unpublishTrack();
       throw;
     }
   }
 
   ~Publication()
   {
-    gate_->close();
+    state_->closeAndWait();
     subscription_.reset();
-    unpublishTrack();
+    state_->unpublishTrack();
   }
 
   Publication(const Publication &) = delete;
@@ -152,31 +277,14 @@ public:
 
   void setIntervalMs(int interval_ms)
   {
-    throttle_.interval_ms = interval_ms;
+    state_->setIntervalMs(interval_ms);
   }
 
 private:
-  void unpublishTrack()
-  {
-    if (track_ == nullptr) {
-      return;
-    }
-
-    try {
-      room_connection_.unpublishDataTrack(track_);
-    } catch (...) {
-      LogEvent(kLogger, "data_track_unpublish_failed")
-        .field("track_name", track_name_)
-        .fieldException("error", std::current_exception())
-        .warn();
-    }
-  }
-
   void subscribe()
   {
     const rclcpp::QoS base_qos(kSubscriptionDepth);
     const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, topic_, base_qos, qos_config_);
-    const std::size_t gate_generation = gate_->currentGeneration();
 
     LogEvent(kLogger, "subscription_qos_resolved")
       .field("resource", topic_)
@@ -198,62 +306,25 @@ private:
       topic_,
       interface_type_,
       qos.qos,
-      [this, gate = gate_, generation = gate_generation](std::shared_ptr<rclcpp::SerializedMessage> message) {
-        // `this` is only touched after the generation gate admits the callback; teardown closes
-        // the gate first so queued callbacks from a prior publication self-reject before dereferencing.
-        if (message == nullptr || !gate->tryEnter(generation)) {
+      [weak_state = std::weak_ptr<State>(state_)](std::shared_ptr<rclcpp::SerializedMessage> message) {
+        const auto state = weak_state.lock();
+        if (message == nullptr || state == nullptr || !state->tryEnter()) {
           return;
         }
-        ScopeExit leave_gate([&gate]() { gate->leave(); });
-        pushMessage(*message);
+        ScopeExit leave_state([&state]() { state->leave(); });
+        state->pushMessage(*message);
       });
-  }
-
-  void pushMessage(const rclcpp::SerializedMessage & message)
-  {
-    if (!throttle_.allows(Clock::now())) {
-      return;
-    }
-
-    const auto & cdr = message.get_rcl_serialized_message();
-    const auto result =
-      room_connection_.tryPushDataTrack(track_, std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length));
-    if (result) {
-      return;
-    }
-
-    const auto & error = result.error();
-    if (error.code == DataTrackPushErrorCode::kQueueFull) {
-      LogEvent(kLogger, "data_track_delivery_dropped")
-        .field("resource", topic_)
-        .field("track_name", track_name_)
-        .field("reason", "queue_full")
-        .warnThrottle(*clock_, kLogThrottle);
-      return;
-    }
-
-    LogEvent(kLogger, "data_track_push_failed")
-      .field("resource", topic_)
-      .field("track_name", track_name_)
-      .field("reason", pushReason(error.code))
-      .fieldOr("error", error.message)
-      .warnThrottle(*clock_, kLogThrottle);
   }
 
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
-  rclcpp::Clock::SharedPtr clock_;
-  RoomConnection & room_connection_;
   const SubscriptionQosConfig * qos_config_;
 
   std::string topic_;
   std::string interface_type_;
-  std::string track_name_;
 
-  std::shared_ptr<QuiesceGate> gate_;
-  std::shared_ptr<livekit::LocalDataTrack> track_;
+  std::shared_ptr<State> state_;
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
-  Throttle throttle_;
 };
 
 std::shared_ptr<DataTrackPublisher> DataTrackPublisher::create(

@@ -215,8 +215,6 @@ if(BUILD_TESTING)
   livekit_ros2_bridge_add_test(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
   livekit_ros2_bridge_add_test(test_log_event test/cpp/test_log_event.cpp)
   livekit_ros2_bridge_add_test(test_node test/cpp/test_node.cpp ${std_srvs_TARGETS})
-  livekit_ros2_bridge_add_test(test_quiesce_guard test/cpp/test_quiesce_guard.cpp)
-  livekit_ros2_bridge_add_test(test_reentrant_quiesce_guard test/cpp/test_reentrant_quiesce_guard.cpp)
   livekit_ros2_bridge_add_test(
     test_resource_list_payloads
     test/cpp/test_resource_list_payloads.cpp
