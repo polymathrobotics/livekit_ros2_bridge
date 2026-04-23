@@ -24,7 +24,7 @@
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
 #include "video_profiling.hpp"
-#include "video_stream_config.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {

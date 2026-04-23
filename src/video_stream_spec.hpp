@@ -14,11 +14,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
-
-#include "video_stream_config.hpp"
+#include <unordered_map>
+#include <vector>
 
 namespace livekit_ros2_bridge
 {
@@ -28,6 +29,65 @@ inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/Compres
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
 inline constexpr char kOtherVideoIngestMode[] = "other_video";
+
+enum class VideoPublishCodec
+{
+  Auto,
+  Vp8,
+  H264,
+  Av1,
+  Vp9,
+  H265,
+};
+
+enum class VideoPublishSimulcast
+{
+  Auto,
+  Enabled,
+  Disabled,
+};
+
+struct VideoPublishConfig
+{
+  VideoPublishCodec codec = VideoPublishCodec::Auto;
+  std::uint64_t max_bitrate_bps = 0;
+  double max_framerate = 0.0;
+  VideoPublishSimulcast simulcast = VideoPublishSimulcast::Auto;
+};
+
+// Declared config for one ROS topic rule before it is resolved into a stream spec.
+struct RosVideoTopicRule
+{
+  std::string pattern;
+  std::string rule_id;
+  std::string transform_fragment;
+  VideoPublishConfig publish_config;
+};
+
+// Declared config for one other video source before it is resolved into a stream spec.
+struct OtherVideoSource
+{
+  std::string ingress_fragment;
+  std::string transform_fragment;
+  VideoPublishConfig publish_config;
+};
+
+// Declared video configuration. Stream specs resolve from this config, instances own the shared
+// live runtime, publishers own one LiveKit publication, and sources produce frames into a sink.
+struct VideoStreamConfig
+{
+  std::vector<RosVideoTopicRule> ros_topic_rules;
+  // Keyed by the trimmed other-video-source name used during stream-spec resolution.
+  std::unordered_map<std::string, OtherVideoSource> other_video_sources;
+  VideoPublishConfig default_publish_config;
+};
+
+inline VideoStreamConfig makeDefaultVideoStreamConfig()
+{
+  VideoStreamConfig stream_config;
+  stream_config.ros_topic_rules.push_back({"/*", "default_ros", "", stream_config.default_publish_config});
+  return stream_config;
+}
 
 enum class VideoInputKind
 {
