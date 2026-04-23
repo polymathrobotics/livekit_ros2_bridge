@@ -51,12 +51,6 @@ public:
 class NoOpLifecycleObserver final : public VideoStreamLifecycleObserver
 {
 public:
-  void onTrackPublished(int, int, bool) override
-  {}
-
-  void onTrackUnpublish() override
-  {}
-
   void onSampleUnpackFailed(const std::string &) override
   {}
 
@@ -82,7 +76,7 @@ public:
 
   ~TestableVideoPipelineFrameSource() override
   {
-    shutdown();
+    close();
   }
 
   void startPipeline(const std::string & description, bool require_appsrc)
@@ -151,7 +145,7 @@ TEST_F(VideoPipelineFrameSourceTest, StartCapturesRequiredAppSrcHandle)
   source->startPipeline("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 
   EXPECT_TRUE(source->hasAppSrc());
-  source->shutdown();
+  source->close();
 }
 
 TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
@@ -160,10 +154,10 @@ TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
   spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
 
   auto source = std::make_shared<OtherVideoFrameSource>(spec, sink_, observer_);
-  source->start();
-  source->start();
-  source->shutdown();
-  source->shutdown();
+  source->activate();
+  source->activate();
+  source->close();
+  source->close();
 }
 
 }  // namespace

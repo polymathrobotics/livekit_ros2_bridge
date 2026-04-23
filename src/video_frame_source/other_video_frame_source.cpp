@@ -45,6 +45,16 @@ OtherVideoFrameSource::OtherVideoFrameSource(
     })
 {}
 
+OtherVideoFrameSource::~OtherVideoFrameSource()
+{
+  close();
+}
+
+void OtherVideoFrameSource::activate()
+{
+  activateFixedPipeline();
+}
+
 std::string OtherVideoFrameSource::fixedPipelineDescription() const
 {
   return buildVideoPipelineDescription(spec_.ingress_fragment, spec_.transform_fragment);

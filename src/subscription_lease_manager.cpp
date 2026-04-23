@@ -18,6 +18,7 @@
 #include <chrono>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -27,8 +28,11 @@
 #include "room_connection.hpp"
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
-#include "video_stream_registry.hpp"
+#include "utils/ros_resource_name_utils.hpp"
+#include "utils/trim.hpp"
+#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
+#include "video_track_publisher.hpp"
 #include "wire/protocol.hpp"
 #include "wire/subscriptions.hpp"
 
@@ -41,20 +45,60 @@ namespace
 const auto kLogger = rclcpp::get_logger("subscription_lease_manager");
 constexpr const char * kLeaseExpiredReason = "lease_expired";
 
+const VideoStreamConfig & defaultVideoStreamConfig()
+{
+  static const VideoStreamConfig kDefaultConfig = makeDefaultVideoStreamConfig();
+  return kDefaultConfig;
+}
+
+std::string makeSubscriptionKey(SubscriptionTargetKind kind, const std::string & name)
+{
+  const auto kind_string = wire::subscriptions::targetKindString(kind);
+  std::string key;
+  key.reserve(std::char_traits<char>::length(kind_string) + 1U + name.size());
+  key.append(kind_string);
+  key.push_back(':');
+  key.append(name);
+  return key;
+}
+
+std::string normalizeDemandLookupName(SubscriptionTargetKind kind, const std::string & name)
+{
+  if (kind == SubscriptionTargetKind::Topic) {
+    const std::string normalized_name = normalizeRosResourceName(name);
+    if (normalized_name.empty()) {
+      throw std::invalid_argument("Invalid ROS topic.");
+    }
+    return normalized_name;
+  }
+
+  if (kind == SubscriptionTargetKind::OtherVideo) {
+    const std::string trimmed_name = trim(name);
+    if (trimmed_name.empty()) {
+      throw std::invalid_argument("Invalid other video name.");
+    }
+    return trimmed_name;
+  }
+
+  return name;
+}
+
 }  // namespace
 
 SubscriptionLeaseManager::SubscriptionLeaseManager(
   SubscriptionNodeInterfaces interfaces,
   RoomConnection & room_connection,
   AccessPolicy access_policy,
-  VideoStreamRegistry & video_stream_registry,
   const SubscriptionQosConfig * qos_config,
+  VideoProfilingRegistry * profiling_registry,
+  const VideoStreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
 : interfaces_(std::move(interfaces))
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
-, video_stream_registry_(video_stream_registry)
 , qos_config_(qos_config)
+, profiling_registry_(profiling_registry)
+, video_stream_config_(video_stream_config)
 , heartbeat_lease_duration_(heartbeat_lease_duration)
 {}
 
@@ -62,15 +106,17 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   rclcpp::Node & node,
   RoomConnection & room_connection,
   AccessPolicy access_policy,
-  VideoStreamRegistry & video_stream_registry,
   const SubscriptionQosConfig * qos_config,
+  VideoProfilingRegistry * profiling_registry,
+  const VideoStreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
 : SubscriptionLeaseManager(
     makeRosNodeInterfaces(node).subscription(),
     room_connection,
     std::move(access_policy),
-    video_stream_registry,
     qos_config,
+    profiling_registry,
+    video_stream_config,
     heartbeat_lease_duration)
 {}
 
@@ -205,6 +251,30 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
   return requester_identity;
 }
 
+const VideoStreamConfig & SubscriptionLeaseManager::videoStreamConfig() const
+{
+  return video_stream_config_ == nullptr ? defaultVideoStreamConfig() : *video_stream_config_;
+}
+
+VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
+  SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
+{
+  switch (kind) {
+    case SubscriptionTargetKind::Topic:
+      return resolveRosVideoTopicSpec(videoStreamConfig(), name, interface_type);
+    case SubscriptionTargetKind::OtherVideo:
+      return resolveOtherVideoSourceSpec(videoStreamConfig(), name);
+  }
+
+  throw std::invalid_argument("video stream request kind is invalid");
+}
+
+std::shared_ptr<VideoTrackPublisher> SubscriptionLeaseManager::createVideoPublisher(const VideoStreamSpec & spec)
+{
+  const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
+  return VideoTrackPublisher::create(interfaces_, room_connection_, spec, qos_config_, profiler);
+}
+
 DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscription & subscription) const
 {
   if (subscription.data_publisher == nullptr) {
@@ -212,6 +282,35 @@ DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscr
   }
 
   return *subscription.data_publisher;
+}
+
+VideoTrackPublisher & SubscriptionLeaseManager::requireVideoPublisher(const Subscription & subscription) const
+{
+  if (subscription.video_publisher == nullptr) {
+    throw std::logic_error("video subscription invariant violated: video publisher is required");
+  }
+
+  return *subscription.video_publisher;
+}
+
+SubscriptionLeaseManager::ResolvedDemand SubscriptionLeaseManager::resolveDemand(
+  const SubscriptionDemand & demand) const
+{
+  ResolvedDemand resolved;
+  resolved.target_kind = demand.kind;
+  resolved.canonical_name = normalizeDemandLookupName(demand.kind, demand.name);
+  resolved.subscription_key = makeSubscriptionKey(demand.kind, resolved.canonical_name);
+
+  if (demand.kind == SubscriptionTargetKind::Topic) {
+    resolved.interface_type =
+      requireSingleInterfaceType(interfaces_.graph->get_topic_names_and_types(), resolved.canonical_name, "topic");
+    if (!classifyRosVideoIngestMode(resolved.interface_type).has_value()) {
+      return resolved;
+    }
+  }
+
+  resolved.video_spec = resolveVideoSpec(demand.kind, resolved.canonical_name, resolved.interface_type);
+  return resolved;
 }
 
 SubscriptionStatus SubscriptionLeaseManager::ensure(
@@ -229,12 +328,12 @@ SubscriptionStatus SubscriptionLeaseManager::ensure(
 
   const int preferred_interval_ms = std::max(demand.preferred_interval_ms.value_or(0), 0);
   const Lease lease{preferred_interval_ms, expiry};
-
-  if (auto * subscription = find(demand.kind, demand.name)) {
-    return renew(*subscription, requester_identity, lease);
+  const auto lookup_key = makeSubscriptionKey(demand.kind, normalizeDemandLookupName(demand.kind, demand.name));
+  if (auto subscription_it = subscriptions_.find(lookup_key); subscription_it != subscriptions_.end()) {
+    return renew(subscription_it->second, requester_identity, lease);
   }
 
-  return create(demand, requester_identity, lease);
+  return create(resolveDemand(demand), requester_identity, lease);
 }
 
 SubscriptionStatus SubscriptionLeaseManager::renew(
@@ -245,7 +344,6 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     subscription.leases[requester_identity] = lease;
 
     if (isVideoSubscription(subscription)) {
-      video_stream_registry_.start(subscription.target_kind, subscription.name, subscription.interface_type);
       return status(subscription);
     }
 
@@ -279,48 +377,40 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
 }
 
 SubscriptionStatus SubscriptionLeaseManager::create(
-  const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease)
+  const ResolvedDemand & demand, const std::string & requester_identity, const Lease & lease)
 {
   Subscription subscription;
-  subscription.target_kind = demand.kind;
-  subscription.name = demand.name;
+  subscription.target_kind = demand.target_kind;
+  subscription.name = demand.canonical_name;
+  subscription.interface_type = demand.interface_type;
 
   try {
-    if (demand.kind == SubscriptionTargetKind::Topic) {
-      subscription.interface_type =
-        requireSingleInterfaceType(interfaces_.graph->get_topic_names_and_types(), demand.name, "topic");
-    }
     subscription.leases.emplace(requester_identity, lease);
 
-    if (isVideoSubscription(subscription)) {
-      video_stream_registry_.start(demand.kind, demand.name, subscription.interface_type);
+    if (demand.video_spec.has_value()) {
+      subscription.video_publisher = createVideoPublisher(*demand.video_spec);
     } else {
       subscription.data_publisher = DataTrackPublisher::create(
-        demand.name, subscription.interface_type, interfaces_, room_connection_, qos_config_);
+        demand.canonical_name, subscription.interface_type, interfaces_, room_connection_, qos_config_);
       subscription.data_publisher->setIntervalMs(appliedIntervalMs(subscription.leases));
       subscription.data_publisher->publish();
     }
   } catch (...) {
-    LogEvent(kLogger, "subscription_renew_failed")
-      .field("resource", demand.name)
-      .field("kind", wire::subscriptions::targetKindString(demand.kind))
+    LogEvent(kLogger, "subscription_create_failed")
+      .field("resource", demand.canonical_name)
+      .field("kind", wire::subscriptions::targetKindString(demand.target_kind))
       .field("requester_identity", requester_identity)
       .fieldException("error", std::current_exception())
       .warn();
     throw;
   }
 
-  // TODO: put this before the start calls
-  auto subscription_it =
-    subscriptions_
-      .emplace(
-        std::string(wire::subscriptions::targetKindString(demand.kind)) + ":" + demand.name, std::move(subscription))
-      .first;
+  auto subscription_it = subscriptions_.emplace(demand.subscription_key, std::move(subscription)).first;
 
   SubscriptionStatus result = status(subscription_it->second);
   LogEvent(kLogger, "subscription_created")
-    .field("resource", demand.name)
-    .field("kind", wire::subscriptions::targetKindString(demand.kind))
+    .field("resource", subscription_it->second.name)
+    .field("kind", wire::subscriptions::targetKindString(demand.target_kind))
     .field("delivery", wire::subscriptions::deliveryKindString(result.delivery_kind))
     .field("requester_identity", requester_identity)
     .info();
@@ -416,14 +506,14 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
 SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
   SubscriptionTargetKind kind, const std::string & name)
 {
-  auto it = subscriptions_.find(std::string(wire::subscriptions::targetKindString(kind)) + ":" + name);
+  auto it = subscriptions_.find(makeSubscriptionKey(kind, name));
   return it == subscriptions_.end() ? nullptr : &it->second;
 }
 
 const SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
   SubscriptionTargetKind kind, const std::string & name) const
 {
-  const auto it = subscriptions_.find(std::string(wire::subscriptions::targetKindString(kind)) + ":" + name);
+  const auto it = subscriptions_.find(makeSubscriptionKey(kind, name));
   return it == subscriptions_.end() ? nullptr : &it->second;
 }
 
@@ -460,14 +550,10 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
     return status;
   }
 
-  const auto video =
-    video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
-  if (!video.has_value()) {
-    throw std::logic_error("video subscription invariant violated: video stream is required");
-  }
+  const auto & video_spec = requireVideoPublisher(subscription).spec();
   status.delivery_kind = SubscriptionDeliveryKind::kVideo;
-  status.track_name = video->track_name;
-  status.degraded_reason = video->degraded_reason;
+  status.track_name = video_spec.track_name;
+  status.degraded_reason = video_spec.degraded_reason.value_or("");
   return status;
 }
 
@@ -581,20 +667,16 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
     return;
   }
 
-  const auto video =
-    video_stream_registry_.find(subscription.target_kind, subscription.name, subscription.interface_type);
-  if (!video.has_value()) {
-    throw std::logic_error("video subscription invariant violated: video stream is required");
-  }
+  const auto & video_spec = requireVideoPublisher(subscription).spec();
   if (log_destroy) {
     LogEvent(kLogger, "subscription_destroyed")
       .field("resource", subscription.name)
       .field("kind", wire::subscriptions::targetKindString(subscription.target_kind))
-      .field("stream_key", video->stream_key)
-      .field("track_name", video->track_name)
+      .field("stream_key", video_spec.stream_key)
+      .field("track_name", video_spec.track_name)
       .info();
   }
-  video_stream_registry_.stop(subscription.target_kind, subscription.name, subscription.interface_type);
+  subscription.video_publisher.reset();
 }
 
 void SubscriptionLeaseManager::shutdown()

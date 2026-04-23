@@ -26,29 +26,27 @@ class VideoFrameSink
 public:
   virtual ~VideoFrameSink() = default;
 
-  virtual void write(
-    int frame_width, int frame_height, std::vector<std::uint8_t> i420_frame, std::int64_t frame_timestamp_us) = 0;
+  virtual void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
 };
 
-// VideoStreamInstance owns one frame source on the input side and wires it to a
-// VideoTrackPublisher through this sink interface. Sources produce frames into the sink.
+// A video subscription runtime owns one frame source on the input side and wires it
+// to a VideoTrackPublisher through this sink interface. Sources produce frames into the sink.
 class VideoFrameSource
 {
 public:
   virtual ~VideoFrameSource() = default;
 
-  virtual void start() = 0;
-  virtual void shutdown() = 0;
+  virtual void close() = 0;
 };
 
+// Frame sources report transient ingress/egress failures through this observer so the
+// publisher can log and account for them. Track publish/unpublish events are not part of
+// this interface because they originate from the publisher itself.
 class VideoStreamLifecycleObserver
 {
 public:
   virtual ~VideoStreamLifecycleObserver() = default;
 
-  virtual void onTrackPublished(int width, int height, bool republished) = 0;
-  // Called immediately before the current published track is unpublished.
-  virtual void onTrackUnpublish() = 0;
   virtual void onSampleUnpackFailed(const std::string & error) = 0;
   virtual void onCaptureFailed(const std::string & error) = 0;
   virtual void onPipelineFailed(const std::string & reason) = 0;

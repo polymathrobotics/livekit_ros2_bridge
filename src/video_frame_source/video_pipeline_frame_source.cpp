@@ -34,7 +34,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_pipeline_frame_source");
 constexpr char kAppSinkName[] = "bridge_video_sink";
 
 struct PackedI420Frame
@@ -219,7 +219,7 @@ VideoPipelineFrameSource::VideoPipelineFrameSource(
 
 VideoPipelineFrameSource::~VideoPipelineFrameSource() = default;
 
-void VideoPipelineFrameSource::start()
+void VideoPipelineFrameSource::activateFixedPipeline()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -231,14 +231,14 @@ void VideoPipelineFrameSource::start()
   }
 
   if (!restart_config_.has_value()) {
-    throw std::logic_error("Video pipeline source start() requires a fixed restart config.");
+    throw std::logic_error("Video pipeline source activation requires a fixed restart config.");
   }
 
   const auto & config = restart_config_.value();
   startPipelineLocked(fixedPipelineDescription(), config.require_appsrc);
 }
 
-void VideoPipelineFrameSource::shutdown()
+void VideoPipelineFrameSource::close()
 {
   PipelineHandles handles;
   bool recovery_pending = false;
@@ -512,7 +512,7 @@ void VideoPipelineFrameSource::recoverAfterFailure()
   }
 
   // Serialize teardown and replacement startup with the base mutex so
-  // shutdown() or producer-side reconfiguration never observes half-installed
+  // close() or producer-side reconfiguration never observes half-installed
   // pipeline members during recovery.
   auto handles = takePipelineLocked();
   teardown(handles.pipeline, handles.appsrc, handles.appsink);

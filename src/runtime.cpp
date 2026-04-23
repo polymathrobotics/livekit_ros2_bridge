@@ -35,7 +35,6 @@
 #include "subscription_lease_manager.hpp"
 #include "utils/log_event.hpp"
 #include "video_profiling.hpp"
-#include "video_stream_registry.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -163,18 +162,13 @@ public:
       config_.profiling.enabled
         ? std::optional<VideoProfilingRegistry>(std::in_place, interfaces_.logger, config_.profiling)
         : std::nullopt)
-  , video_stream_registry_(
-      interfaces_.subscription(),
-      room_connection_.connection(),
-      &config_.subscription_qos,
-      profiling_registry_ ? &*profiling_registry_ : nullptr,
-      &config_.video_stream)
   , subscription_lease_manager_(
       interfaces_.subscription(),
       room_connection_.connection(),
       config_.access_policy,
-      video_stream_registry_,
-      &config_.subscription_qos)
+      &config_.subscription_qos,
+      profiling_registry_ ? &*profiling_registry_ : nullptr,
+      &config_.video_stream)
   , packet_router_(
       interfaces_.clock,
       [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
@@ -462,7 +456,6 @@ private:
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;
   std::optional<VideoProfilingRegistry> profiling_registry_;
-  VideoStreamRegistry video_stream_registry_;
   SubscriptionLeaseManager subscription_lease_manager_;
   PacketRouter packet_router_;
   RpcRouter rpc_router_;

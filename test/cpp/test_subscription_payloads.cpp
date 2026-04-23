@@ -319,7 +319,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
     {"kind", "topic"},
     {"name", "/camera/front"},
     {"status", "error"},
-    {"error", {{"reason", "unavailable"}, {"message", "Video stream registry is unavailable."}}},
+    {"error", {{"reason", "unavailable"}, {"message", "Video stream is unavailable."}}},
   });
   expected["subscriptions"].push_back({
     {"kind", "other_video"},
@@ -340,7 +340,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
           SubscriptionTargetKind::Topic,
           "/camera/front",
           SubscriptionStatusErrorReason::kUnavailable,
-          "Video stream registry is unavailable."),
+          "Video stream is unavailable."),
         makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",

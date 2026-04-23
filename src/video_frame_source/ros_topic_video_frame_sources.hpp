@@ -56,9 +56,10 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+  ~RawRosVideoFrameSource() override;
 
-  void start() override;
-  void shutdown() override;
+  void activate();
+  void close() override;
 
 private:
   SubscriptionNodeInterfaces interfaces_;
@@ -85,9 +86,10 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+  ~CompressedRosVideoFrameSource() override;
 
-  void start() override;
-  void shutdown() override;
+  void activate();
+  void close() override;
 
 private:
   SubscriptionNodeInterfaces interfaces_;

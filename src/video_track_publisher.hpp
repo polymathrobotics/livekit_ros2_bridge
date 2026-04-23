@@ -17,10 +17,10 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <vector>
 
 #include "room_connection.hpp"
+#include "ros_node_interfaces.hpp"
 #include "video_profiling.hpp"
 #include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
@@ -33,50 +33,61 @@ class VideoSource;
 namespace livekit_ros2_bridge
 {
 
-// Owned by a VideoStreamInstance. The paired VideoFrameSource handles input
-// normalization, and this publisher owns at most one LiveKit video publication
-// at a time, replacing it when frame dimensions change.
-class VideoTrackPublisher final : public VideoFrameSink
+struct SubscriptionQosConfig;
+
+// Owns one video subscription runtime: the paired VideoFrameSource on ingress and
+// one lazily republished LiveKit video track on egress.
+class VideoTrackPublisher final : public VideoFrameSink, private VideoStreamLifecycleObserver
 {
 public:
-  VideoTrackPublisher(
+  static std::shared_ptr<VideoTrackPublisher> create(
+    SubscriptionNodeInterfaces interfaces,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
-    VideoStreamLifecycleObserver & observer,
+    const SubscriptionQosConfig * qos_config,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
+  // Test-only: construct a publisher without a frame source so the publish/unpublish
+  // flow can be exercised via direct write() calls.
+  VideoTrackPublisher(
+    RoomConnection & room_connection, VideoStreamSpec spec, std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+
+  ~VideoTrackPublisher();
+
+  VideoTrackPublisher(const VideoTrackPublisher &) = delete;
+  VideoTrackPublisher & operator=(const VideoTrackPublisher &) = delete;
+  VideoTrackPublisher(VideoTrackPublisher &&) = delete;
+  VideoTrackPublisher & operator=(VideoTrackPublisher &&) = delete;
+
+  const VideoStreamSpec & spec() const
+  {
+    return spec_;
+  }
+
   void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override;
-  void shutdown();
 
 private:
-  struct PublishedDimensions
-  {
-    int width = 0;
-    int height = 0;
+  class Publication;
 
-    bool matches(int candidate_width, int candidate_height) const noexcept
-    {
-      return width == candidate_width && height == candidate_height;
-    }
-  };
+  // Frame sources may fire these from ROS, GStreamer, or LiveKit worker threads,
+  // including after close() has started.
+  void onSampleUnpackFailed(const std::string & error) override;
+  void onCaptureFailed(const std::string & error) override;
+  void onPipelineFailed(const std::string & reason) override;
+  void onRestartFailed(const std::string & error) override;
+  void onPushFailed(const std::string & error) override;
+
+  void close();
 
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
-
-  // Callbacks run inline on whichever thread calls write()/shutdown(). write()
-  // notifies only after the new publication state is committed under mutex_;
-  // shutdown() notifies after closed state is visible and after releasing it.
-  VideoStreamLifecycleObserver & observer_;
-
   std::shared_ptr<VideoStreamProfiler> profiler_;
+
   std::mutex mutex_;
   bool is_closed_ = false;
-  bool has_published_ = false;
-  std::shared_ptr<livekit::VideoSource> source_;
-  std::shared_ptr<VideoTrackHandle> track_;
-  std::optional<PublishedDimensions> published_dimensions_;
-
-  void ensureTrack(int width, int height, const std::optional<std::int64_t> & timestamp_us);
+  bool was_published_ = false;
+  std::shared_ptr<VideoFrameSource> frame_source_;
+  std::unique_ptr<Publication> publication_;
 };
 
 }  // namespace livekit_ros2_bridge

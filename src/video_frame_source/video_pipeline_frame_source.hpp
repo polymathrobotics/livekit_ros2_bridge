@@ -63,11 +63,7 @@ public:
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
 
-  // Default lifecycle for fixed-pipeline sources whose launch string can be
-  // rebuilt from canonical source state. Sources with extra producer state
-  // override these.
-  void start() override;
-  void shutdown() override;
+  void close() override;
 
 protected:
   // Moves the live GStreamer handles out of member state while mutex_ is held
@@ -91,8 +87,8 @@ protected:
   VideoStreamLifecycleObserver & observer_;
   std::shared_ptr<VideoStreamProfiler> profiler_;
   const std::optional<RestartConfig> restart_config_;
-  // Guards lifecycle flags and GStreamer handle ownership across start(),
-  // shutdown(), appsink callbacks, bus callbacks, and recovery.
+  // Guards lifecycle flags and GStreamer handle ownership across activation,
+  // close(), appsink callbacks, bus callbacks, and recovery.
   std::mutex mutex_;
   bool is_shutdown_ = false;
   // Coalesces repeated EOS/ERROR notifications so only one async recovery path
@@ -107,6 +103,9 @@ protected:
   // Resets subclass-specific bookkeeping and atomically transfers the current
   // pipeline handles out of the object. Caller must hold mutex_.
   [[nodiscard]] PipelineHandles takePipelineLocked();
+  // Starts the fixed pipeline defined by fixedPipelineDescription(). Concrete sources call this
+  // once after construction when they should own an active pipeline immediately.
+  void activateFixedPipeline();
   // Caller must hold mutex_. Parses `pipeline_description`, validates the named
   // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
   void startPipelineLocked(const std::string & description, bool require_appsrc = false);

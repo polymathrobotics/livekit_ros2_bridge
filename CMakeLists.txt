@@ -95,7 +95,6 @@ target_link_libraries(livekit_ros2_bridge_ros PRIVATE
 
 add_library(livekit_ros2_bridge_livekit STATIC
   src/room_connection.cpp
-  src/video_track_publisher.cpp
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_livekit)
 target_link_libraries(livekit_ros2_bridge_livekit PRIVATE
@@ -115,12 +114,12 @@ add_library(livekit_ros2_bridge_streams STATIC
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
   src/video_profiling.cpp
-  src/video_stream_instance.cpp
-  src/video_stream_registry.cpp
+  src/video_track_publisher.cpp
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_streams)
 target_link_libraries(livekit_ros2_bridge_streams PRIVATE
   ${sensor_msgs_TARGETS}
+  LiveKit::livekit
   PkgConfig::gstreamer
   PkgConfig::gstreamer-app
   PkgConfig::gstreamer-video
@@ -255,7 +254,6 @@ if(BUILD_TESTING)
     ${test_msgs_TARGETS}
   )
   livekit_ros2_bridge_add_test(test_video_stream_spec test/cpp/test_video_stream_spec.cpp)
-  livekit_ros2_bridge_add_test(test_video_stream_registry test/cpp/test_video_stream_registry.cpp)
   livekit_ros2_bridge_add_test(test_video_profiling test/cpp/test_video_profiling.cpp)
   livekit_ros2_bridge_add_test(
     test_video_pipeline_frame_source

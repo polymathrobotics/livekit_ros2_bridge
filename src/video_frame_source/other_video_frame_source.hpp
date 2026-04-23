@@ -31,6 +31,9 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+  ~OtherVideoFrameSource() override;
+
+  void activate();
 
 protected:
   std::string fixedPipelineDescription() const override;

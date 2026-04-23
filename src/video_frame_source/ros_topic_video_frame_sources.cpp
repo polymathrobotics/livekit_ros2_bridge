@@ -37,7 +37,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_stream_registry");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.ros_topic_video_frame_source");
 
 const char * gstVideoFormatName(GstVideoFormat format)
 {
@@ -213,7 +213,12 @@ RawRosVideoFrameSource::RawRosVideoFrameSource(
 , qos_config_(qos_config)
 {}
 
-void RawRosVideoFrameSource::start()
+RawRosVideoFrameSource::~RawRosVideoFrameSource()
+{
+  close();
+}
+
+void RawRosVideoFrameSource::activate()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -244,7 +249,7 @@ void RawRosVideoFrameSource::start()
     });
 }
 
-void RawRosVideoFrameSource::shutdown()
+void RawRosVideoFrameSource::close()
 {
   PipelineHandles handles;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription;
@@ -383,7 +388,12 @@ CompressedRosVideoFrameSource::CompressedRosVideoFrameSource(
 , qos_config_(qos_config)
 {}
 
-void CompressedRosVideoFrameSource::start()
+CompressedRosVideoFrameSource::~CompressedRosVideoFrameSource()
+{
+  close();
+}
+
+void CompressedRosVideoFrameSource::activate()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -414,7 +424,7 @@ void CompressedRosVideoFrameSource::start()
     });
 }
 
-void CompressedRosVideoFrameSource::shutdown()
+void CompressedRosVideoFrameSource::close()
 {
   PipelineHandles handles;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription;

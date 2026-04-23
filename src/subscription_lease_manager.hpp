@@ -30,6 +30,7 @@
 #include "rclcpp/node.hpp"
 #include "ros_node_interfaces.hpp"
 #include "utils/event_throttle.hpp"
+#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -37,7 +38,8 @@ namespace livekit_ros2_bridge
 class DataTrackPublisher;
 class RoomConnection;
 struct SubscriptionQosConfig;
-class VideoStreamRegistry;
+class VideoTrackPublisher;
+class VideoProfilingRegistry;
 
 // Maps heartbeat-driven subscription demands onto shared data/video runtimes, tracks requester
 // leases, and publishes subscription status back to the requester.
@@ -52,16 +54,18 @@ public:
     rclcpp::Node & node,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
-    VideoStreamRegistry & video_stream_registry,
     const SubscriptionQosConfig * qos_config = nullptr,
+    VideoProfilingRegistry * profiling_registry = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
 
   SubscriptionLeaseManager(
     SubscriptionNodeInterfaces interfaces,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
-    VideoStreamRegistry & video_stream_registry,
     const SubscriptionQosConfig * qos_config = nullptr,
+    VideoProfilingRegistry * profiling_registry = nullptr,
+    const VideoStreamConfig * video_stream_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
 
@@ -97,12 +101,22 @@ private:
     std::string interface_type;
     std::map<std::string, Lease> leases;
     std::shared_ptr<DataTrackPublisher> data_publisher;
+    std::shared_ptr<VideoTrackPublisher> video_publisher;
   };
 
   struct ExpiredLeaseRemoval
   {
     std::string requester_identity;
     Clock::time_point expiry;
+  };
+
+  struct ResolvedDemand
+  {
+    SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
+    std::string canonical_name;
+    std::string subscription_key;
+    std::string interface_type;
+    std::optional<VideoStreamSpec> video_spec;
   };
 
   using SubscriptionMap = std::unordered_map<std::string, Subscription>;
@@ -116,8 +130,9 @@ private:
   SubscriptionNodeInterfaces interfaces_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
-  VideoStreamRegistry & video_stream_registry_;
   const SubscriptionQosConfig * qos_config_;
+  VideoProfilingRegistry * profiling_registry_;
+  const VideoStreamConfig * video_stream_config_;
   Clock::duration heartbeat_lease_duration_;
 
   std::atomic<bool> is_shutdown_{false};
@@ -128,9 +143,14 @@ private:
 
   std::optional<std::string> resolveIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
+  const VideoStreamConfig & videoStreamConfig() const;
+  VideoStreamSpec resolveVideoSpec(
+    SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
+  std::shared_ptr<VideoTrackPublisher> createVideoPublisher(const VideoStreamSpec & spec);
   DataTrackPublisher & requireDataPublisher(const Subscription & subscription) const;
-  SubscriptionStatus create(
-    const SubscriptionDemand & demand, const std::string & requester_identity, const Lease & lease);
+  VideoTrackPublisher & requireVideoPublisher(const Subscription & subscription) const;
+  ResolvedDemand resolveDemand(const SubscriptionDemand & demand) const;
+  SubscriptionStatus create(const ResolvedDemand & demand, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus renew(Subscription & subscription, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus ensure(
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
