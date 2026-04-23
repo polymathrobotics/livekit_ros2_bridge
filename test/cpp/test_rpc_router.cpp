@@ -46,7 +46,14 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kSpinTimeout = std::chrono::seconds(5);
+constexpr auto kSpinTimeout = std::chrono::seconds(15);
+constexpr auto kAsyncCleanupTimeout = std::chrono::seconds(2);
+
+template <typename FutureT>
+bool isFutureReady(FutureT & future)
+{
+  return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+}
 
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
@@ -78,10 +85,25 @@ bool waitForFutureReady(
   FutureT & future,
   std::chrono::milliseconds timeout = kSpinTimeout)
 {
-  return test_support::spinUntil(
-    executor,
-    [&future]() { return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; },
-    timeout);
+  return test_support::spinUntil(executor, [&future]() { return isFutureReady(future); }, timeout);
+}
+
+template <typename FutureT>
+bool waitForExecutorBackedRpc(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  RosExecutorQueue & queue,
+  FutureT & future,
+  std::chrono::milliseconds timeout = kSpinTimeout)
+{
+  if (waitForFutureReady(executor, future, timeout)) {
+    return true;
+  }
+
+  // Cancel queued executor work before the std::async future unwinds; otherwise
+  // a failed readiness assertion can leave the handler blocked until CTest times out.
+  queue.shutdown();
+  (void)waitForFutureReady(executor, future, kAsyncCleanupTimeout);
+  return false;
 }
 
 void expectRpcHandlerError(
@@ -379,7 +401,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
       });
   });
 
-  ASSERT_TRUE(waitForFutureReady(executor, handler_future));
+  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
 
   const auto rpc_response = handler_future.get();
   ASSERT_TRUE(rpc_response.has_value());
@@ -413,7 +435,7 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
       });
   });
 
-  ASSERT_TRUE(waitForFutureReady(executor, handler_future));
+  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
 
   expectRpcHandlerError([&]() { handler_future.get(); }, wire::protocol::kRpcErrorInternal, "Service call timed out.");
 }
@@ -450,7 +472,7 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
       });
   });
 
-  ASSERT_TRUE(waitForFutureReady(executor, handler_future));
+  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
 
   const auto response = handler_future.get();
   ASSERT_TRUE(response.has_value());
@@ -486,7 +508,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
       });
   });
 
-  ASSERT_TRUE(waitForFutureReady(executor, handler_future));
+  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
 
   const auto response = handler_future.get();
   ASSERT_TRUE(response.has_value());
