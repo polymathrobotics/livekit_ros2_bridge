@@ -131,6 +131,7 @@ target_link_libraries(livekit_ros2_bridge_streams PRIVATE
 add_library(${PROJECT_NAME} SHARED
   src/node.cpp
   src/runtime.cpp
+  src/connection_watchdog.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"

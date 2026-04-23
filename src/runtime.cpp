@@ -16,15 +16,12 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <functional>
-#include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <string_view>
-#include <thread>
 #include <utility>
 
+#include "connection_watchdog.hpp"
 #include "packet_router.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/create_timer.hpp"
@@ -46,8 +43,6 @@ namespace
 {
 
 constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
-constexpr auto kWatchdogEvaluationInterval = std::chrono::milliseconds(250);
-constexpr auto kShutdownExitDelay = std::chrono::milliseconds(100);
 
 class CallbackAdmission final
 {
@@ -151,8 +146,6 @@ private:
 class Runtime::Impl final
 {
 public:
-  using SteadyClock = std::chrono::steady_clock;
-
   Impl(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
   : shutdown_log_scope_(node.get_logger())
   , base_(node.get_node_base_interface())
@@ -180,17 +173,12 @@ public:
       subscription_lease_manager_,
       ros_topic_publisher_)
   , rpc_router_(graph_, config_.access_policy, ros_executor_queue_, ros_service_caller_)
+  , watchdog_(config_.health, base_, timers_, logger_, [this]() { return callback_admission_.close(); })
   {
     LogEvent(logger_, "runtime_startup_begin")
       .fieldOr("url", config_.livekit.url, "<unset>")
       .field("token_present", !config_.livekit.access_token.empty())
       .info();
-
-    if (config_.health.watchdog_enabled) {
-      setWatchdogUnhealthy("startup_connect_pending");
-      watchdog_timer_ = rclcpp::create_wall_timer(
-        kWatchdogEvaluationInterval, [this]() { checkWatchdog(); }, nullptr, base_.get(), timers_.get());
-    }
 
     subscription_lease_gc_timer_ = rclcpp::create_wall_timer(
       kLeaseGcInterval,
@@ -232,7 +220,6 @@ public:
     shutdown_log_scope_.begin();
 
     subscription_lease_gc_timer_.reset();
-    watchdog_timer_.reset();
 
     ros_executor_queue_.shutdown();
   }
@@ -249,7 +236,7 @@ private:
       return;
     }
 
-    setWatchdogHealthy("room_connected");
+    watchdog_.markHealthy("room_connected");
     LogEvent(logger_, "runtime_ready").info();
   }
 
@@ -287,7 +274,7 @@ private:
 
     const std::string_view disconnect_reason =
       reason.empty() ? std::string_view("connection_lost") : std::string_view(reason);
-    setWatchdogUnhealthy(disconnect_reason);
+    watchdog_.markUnhealthy(disconnect_reason);
 
     LogEvent log = LogEvent(logger_, "runtime_disconnect_observed").field("disconnect_reason", disconnect_reason);
 
@@ -311,7 +298,7 @@ private:
       return;
     }
 
-    setWatchdogHealthy("room_reconnected");
+    watchdog_.markHealthy("room_reconnected");
     LogEvent(logger_, "runtime_ready").info();
   }
 
@@ -336,98 +323,6 @@ private:
     (void)ros_executor_queue_.submit([work = std::move(work)]() mutable { work(); });
   }
 
-  void setWatchdogHealthy(std::string_view reason)
-  {
-    if (!config_.health.watchdog_enabled) {
-      return;
-    }
-
-    std::optional<double> unhealthy_duration_seconds;
-    const auto now = SteadyClock::now();
-    {
-      std::lock_guard<std::mutex> lock(watchdog_mutex_);
-      if (watchdog_unhealthy_since_.has_value()) {
-        unhealthy_duration_seconds = std::chrono::duration<double>(now - *watchdog_unhealthy_since_).count();
-      }
-      watchdog_deadline_.reset();
-      watchdog_unhealthy_since_.reset();
-    }
-
-    if (!unhealthy_duration_seconds.has_value()) {
-      return;
-    }
-
-    LogEvent(logger_, "runtime_watchdog_healthy")
-      .fieldOr("reason", reason, "unknown")
-      .field("unhealthy_duration_seconds", *unhealthy_duration_seconds)
-      .info();
-  }
-
-  void setWatchdogUnhealthy(std::string_view reason)
-  {
-    if (!config_.health.watchdog_enabled) {
-      return;
-    }
-
-    bool transitioned = false;
-    const auto now = SteadyClock::now();
-    {
-      std::lock_guard<std::mutex> lock(watchdog_mutex_);
-      watchdog_deadline_ = now + config_.health.watchdog_recovery_timeout;
-      if (!watchdog_unhealthy_since_.has_value()) {
-        watchdog_unhealthy_since_ = now;
-        transitioned = true;
-      }
-    }
-
-    if (!transitioned) {
-      return;
-    }
-
-    LogEvent event = LogEvent(logger_, "runtime_watchdog_unhealthy")
-                       .fieldOr("reason", reason, "unknown")
-                       .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
-    if (reason == "startup_connect_pending") {
-      event.info();
-      return;
-    }
-    event.warn();
-  }
-
-  void checkWatchdog()
-  {
-    if (callback_admission_.isClosed()) {
-      return;
-    }
-
-    const auto now = SteadyClock::now();
-    {
-      std::lock_guard<std::mutex> lock(watchdog_mutex_);
-      if (!watchdog_deadline_.has_value()) {
-        return;
-      }
-      if (now < *watchdog_deadline_) {
-        return;
-      }
-    }
-
-    if (!callback_admission_.close()) {
-      return;
-    }
-
-    LogEvent(logger_, "runtime_watchdog_triggered")
-      .field("disconnect_reason", "recovery_timeout")
-      .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0)
-      .error();
-
-    if (rclcpp::ok()) {
-      rclcpp::shutdown();
-    }
-
-    std::this_thread::sleep_for(kShutdownExitDelay);
-    std::_Exit(EXIT_FAILURE);
-  }
-
   ShutdownLogScope shutdown_log_scope_;
   rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
@@ -436,9 +331,6 @@ private:
   rclcpp::Logger logger_;
   RuntimeConfig config_;
   CallbackAdmission callback_admission_;
-  std::mutex watchdog_mutex_;
-  std::optional<SteadyClock::time_point> watchdog_deadline_;
-  std::optional<SteadyClock::time_point> watchdog_unhealthy_since_;
   ScopedRoomConnection room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;
@@ -448,7 +340,7 @@ private:
   RpcRouter rpc_router_;
   ScopedRpcRegistration rpc_registration_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
-  rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  ConnectionWatchdog watchdog_;
 };
 
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
