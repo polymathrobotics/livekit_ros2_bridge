@@ -21,7 +21,7 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "wire/cdr.hpp"
-#include "wire/detail/json_object_parser.hpp"
+#include "wire/detail/json_fields.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -58,15 +58,14 @@ TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & p
   TopicPublishRequest request;
   try {
     request.topic = normalizeRosResourceName(
-      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
+      wire::detail::requiredTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected").field("reason", "invalid_topic").debug();
     throw;
   }
 
   try {
-    request.interface_type =
-      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "interface_type", kInterfaceTypeError);
+    request.interface_type = wire::detail::requiredTrimmedStringField(body, "interface_type", kInterfaceTypeError);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_interface_type")

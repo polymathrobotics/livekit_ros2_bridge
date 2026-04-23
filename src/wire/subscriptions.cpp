@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 #include "rclcpp/logging.hpp"
@@ -29,7 +30,7 @@
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
-#include "wire/detail/json_object_parser.hpp"
+#include "wire/detail/json_fields.hpp"
 #include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge::wire::subscriptions
@@ -286,8 +287,8 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_target;
-  heartbeat.session_id = wire::detail::parseOptionalNonEmptyTrimmedStringField(
-    body, "session_id", "heartbeat session_id must be a string", true);
+  heartbeat.session_id =
+    wire::detail::optionalTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
 
   const auto subscriptions_it = body.find("subscriptions");
   if (subscriptions_it == body.end()) {

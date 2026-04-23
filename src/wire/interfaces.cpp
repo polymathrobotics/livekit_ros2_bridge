@@ -21,7 +21,7 @@
 #include <utility>
 
 #include "nlohmann/json.hpp"
-#include "wire/detail/json_object_parser.hpp"
+#include "wire/detail/json_fields.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -57,20 +57,14 @@ std::vector<std::string> parse(const std::string & payload)
 {
   Json body;
   try {
-    body = wire::detail::parseJsonObject(
+    body = wire::detail::parseObjectPayload(
       payload, "Invalid JSON in interface show request", "Interface show request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("payload", exc.what());
   }
 
   try {
-    return wire::detail::parseRequiredNonEmptyTrimmedStringArrayField(
-      body,
-      "interface_types",
-      "interface_types must be an array",
-      "interface_types entries must be strings",
-      "interface_types entries must not be empty",
-      "interface_types must not be empty");
+    return wire::detail::requiredTrimmedStringArrayField(body, "interface_types");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("interface_types", exc.what());
   }

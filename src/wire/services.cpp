@@ -21,7 +21,7 @@
 #include "nlohmann/json.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "wire/cdr.hpp"
-#include "wire/detail/json_object_parser.hpp"
+#include "wire/detail/json_fields.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -56,8 +56,7 @@ std::string parseService(const Json & body)
   // Canonicalize at the protocol boundary so policy checks and downstream caches do not have to
   // reason about multiple spellings of the same ROS service name.
   try {
-    return normalizeRosResourceName(
-      wire::detail::parseRequiredNonEmptyTrimmedStringField(body, "service", "service is required"));
+    return normalizeRosResourceName(wire::detail::requiredTrimmedStringField(body, "service", "service is required"));
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("service", exc.what());
   }
@@ -68,8 +67,7 @@ std::string parseInterfaceType(const Json & body)
   // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
   // than "use an empty interface type".
   try {
-    return wire::detail::parseOptionalNonEmptyTrimmedStringField(
-             body, "interface_type", "interface_type must be a string")
+    return wire::detail::optionalTrimmedStringField(body, "interface_type", "interface_type must be a string")
       .value_or("");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("interface_type", exc.what());
@@ -113,7 +111,7 @@ ServiceCallRequest parse(const std::string & payload)
 {
   Json body;
   try {
-    body = wire::detail::parseJsonObject(
+    body = wire::detail::parseObjectPayload(
       payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidFieldArgument("payload", exc.what());

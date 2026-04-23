@@ -19,7 +19,7 @@
 #include <stdexcept>
 
 #include "nlohmann/json.hpp"
-#include "wire/detail/json_object_parser.hpp"
+#include "wire/detail/json_fields.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -73,7 +73,7 @@ std::optional<std::string> parseQuery(const Json & body)
 {
   // Normalize blank and null queries to "no filter".
   try {
-    return wire::detail::parseOptionalNonEmptyTrimmedStringField(body, "query", "query must be a string", true);
+    return wire::detail::optionalTrimmedStringField(body, "query", "query must be a string", true);
   } catch (const std::invalid_argument & exc) {
     throw InvalidRequest("query", exc.what());
   }
@@ -99,7 +99,8 @@ ResourceListRequest parse(const std::string & payload)
 {
   Json body;
   try {
-    body = wire::detail::parseJsonObject(payload, "Invalid JSON in list request", "List request must be a JSON object");
+    body =
+      wire::detail::parseObjectPayload(payload, "Invalid JSON in list request", "List request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw InvalidRequest("payload", exc.what());
   }
