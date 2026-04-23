@@ -17,11 +17,11 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -45,15 +45,6 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-
-constexpr auto kSpinTimeout = std::chrono::seconds(15);
-constexpr auto kAsyncCleanupTimeout = std::chrono::seconds(2);
-
-template <typename FutureT>
-bool isFutureReady(FutureT & future)
-{
-  return future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
-}
 
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
@@ -79,33 +70,6 @@ MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
   return message;
 }
 
-template <typename FutureT>
-bool waitForFutureReady(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  FutureT & future,
-  std::chrono::milliseconds timeout = kSpinTimeout)
-{
-  return test_support::spinUntil(executor, [&future]() { return isFutureReady(future); }, timeout);
-}
-
-template <typename FutureT>
-bool waitForExecutorBackedRpc(
-  rclcpp::executors::SingleThreadedExecutor & executor,
-  RosExecutorQueue & queue,
-  FutureT & future,
-  std::chrono::milliseconds timeout = kSpinTimeout)
-{
-  if (waitForFutureReady(executor, future, timeout)) {
-    return true;
-  }
-
-  // Cancel queued executor work before the std::async future unwinds; otherwise
-  // a failed readiness assertion can leave the handler blocked until CTest times out.
-  queue.shutdown();
-  (void)waitForFutureReady(executor, future, kAsyncCleanupTimeout);
-  return false;
-}
-
 void expectRpcHandlerError(
   const std::function<void()> & action,
   std::uint32_t expected_code,
@@ -121,6 +85,27 @@ void expectRpcHandlerError(
     }
   }
 }
+
+class ScopedExecutorThread
+{
+public:
+  explicit ScopedExecutorThread(rclcpp::executors::SingleThreadedExecutor & executor)
+  : executor_(executor)
+  , thread_([this]() { executor_.spin(); })
+  {}
+
+  ~ScopedExecutorThread()
+  {
+    executor_.cancel();
+    if (thread_.joinable()) {
+      thread_.join();
+    }
+  }
+
+private:
+  rclcpp::executors::SingleThreadedExecutor & executor_;
+  std::thread thread_;
+};
 
 std::string nextNodeName(const std::string & prefix)
 {
@@ -392,18 +377,13 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
     return harness.node->get_service_names_and_types().count("/rpc_router/set_bool") > 0U;
   }));
 
-  auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.invokeRpc(
-      wire::protocol::kRpcServiceCall,
-      RpcInvocation{
-        "participant-1",
-        makeSetBoolRequestPayload("/rpc_router/set_bool", true),
-      });
-  });
-
-  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
-
-  const auto rpc_response = handler_future.get();
+  ScopedExecutorThread executor_thread(executor);
+  const auto rpc_response = harness.invokeRpc(
+    wire::protocol::kRpcServiceCall,
+    RpcInvocation{
+      "participant-1",
+      makeSetBoolRequestPayload("/rpc_router/set_bool", true),
+    });
   ASSERT_TRUE(rpc_response.has_value());
 
   const auto body = nlohmann::json::parse(*rpc_response);
@@ -426,18 +406,18 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(harness.node);
 
-  auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.invokeRpc(
-      wire::protocol::kRpcServiceCall,
-      RpcInvocation{
-        "participant-1",
-        makeSetBoolRequestPayload("/no_such_service", true, 200),
-      });
-  });
-
-  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
-
-  expectRpcHandlerError([&]() { handler_future.get(); }, wire::protocol::kRpcErrorInternal, "Service call timed out.");
+  ScopedExecutorThread executor_thread(executor);
+  expectRpcHandlerError(
+    [&]() {
+      harness.invokeRpc(
+        wire::protocol::kRpcServiceCall,
+        RpcInvocation{
+          "participant-1",
+          makeSetBoolRequestPayload("/no_such_service", true, 200),
+        });
+    },
+    wire::protocol::kRpcErrorInternal,
+    "Service call timed out.");
 }
 
 TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
@@ -463,18 +443,13 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
     return services.count("/rpc_router/allowed_service") > 0U && services.count("/rpc_router/blocked_service") > 0U;
   }));
 
-  auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.invokeRpc(
-      wire::protocol::kRpcServiceList,
-      RpcInvocation{
-        "participant-1",
-        R"({"query":"rpc_router"})",
-      });
-  });
-
-  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
-
-  const auto response = handler_future.get();
+  ScopedExecutorThread executor_thread(executor);
+  const auto response = harness.invokeRpc(
+    wire::protocol::kRpcServiceList,
+    RpcInvocation{
+      "participant-1",
+      R"({"query":"rpc_router"})",
+    });
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["services"].size(), 1U);
@@ -499,18 +474,13 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
     return topics.count("/rpc_router/a_blocked_topic") > 0U && topics.count("/rpc_router/visible_topic") > 0U;
   }));
 
-  auto handler_future = std::async(std::launch::async, [&]() {
-    return harness.invokeRpc(
-      wire::protocol::kRpcTopicList,
-      RpcInvocation{
-        "participant-1",
-        R"({"query":"BatteryState","limit":1})",
-      });
-  });
-
-  ASSERT_TRUE(waitForExecutorBackedRpc(executor, harness.queue, handler_future));
-
-  const auto response = handler_future.get();
+  ScopedExecutorThread executor_thread(executor);
+  const auto response = harness.invokeRpc(
+    wire::protocol::kRpcTopicList,
+    RpcInvocation{
+      "participant-1",
+      R"({"query":"BatteryState","limit":1})",
+    });
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["topics"].size(), 1U);
