@@ -110,7 +110,6 @@ add_library(livekit_ros2_bridge_streams STATIC
   src/data_track_publisher.cpp
   src/rpc_router.cpp
   src/subscription_lease_manager.cpp
-  src/video_frame_source/other_video_frame_source.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
   src/video_profiling.cpp

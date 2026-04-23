@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -24,7 +25,6 @@
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "room_connection.hpp"
 #include "video_profiling.hpp"
-#include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit
@@ -36,6 +36,39 @@ namespace livekit_ros2_bridge
 {
 
 struct SubscriptionQosConfig;
+
+// A video subscription runtime owns one frame source on the input side and wires it to a
+// VideoTrackPublisher through a sink. Sources produce frames into the sink.
+class VideoFrameSource
+{
+public:
+  virtual ~VideoFrameSource() = default;
+
+  virtual void close() = 0;
+};
+
+class VideoFrameSink
+{
+public:
+  virtual ~VideoFrameSink() = default;
+
+  virtual void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
+};
+
+// Frame sources report transient ingress/egress failures through this observer so the
+// publisher can log and account for them. Track publish/unpublish events are not part of
+// this interface because they originate from the publisher itself.
+class VideoStreamLifecycleObserver
+{
+public:
+  virtual ~VideoStreamLifecycleObserver() = default;
+
+  virtual void onSampleUnpackFailed(const std::string & error) = 0;
+  virtual void onCaptureFailed(const std::string & error) = 0;
+  virtual void onPipelineFailed(const std::string & reason) = 0;
+  virtual void onRestartFailed(const std::string & error) = 0;
+  virtual void onPushFailed(const std::string & error) = 0;
+};
 
 // Owns one video subscription runtime: the paired VideoFrameSource on ingress and
 // one lazily republished LiveKit video track on egress.

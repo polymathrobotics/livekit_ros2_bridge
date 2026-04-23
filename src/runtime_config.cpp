@@ -40,6 +40,7 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
+#include "video_pipeline_description.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -50,8 +51,6 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.runtime_config");
 constexpr char kUnsetLogValue[] = "<unset>";
-constexpr char kBridgeVideoAppSrcName[] = "bridge_video_src";
-constexpr char kBridgeVideoAppSinkName[] = "bridge_video_sink";
 constexpr char kLivekitTokenEnvVar[] = "LIVEKIT_TOKEN";
 
 std::string resolveLivekitAccessToken(const Params & params)
@@ -230,24 +229,6 @@ VideoPublishConfig parseVideoPublishConfig(
   return config;
 }
 
-std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment)
-{
-  std::string pipeline = ingress_fragment;
-  if (!transform_fragment.empty()) {
-    pipeline += " ! ";
-    pipeline += transform_fragment;
-  }
-  pipeline += " ! queue max-size-buffers=2 leaky=downstream";
-  pipeline += " ! videoconvert";
-  // Keep validation aligned with the runtime pipeline: the bridge-owned tail
-  // always normalizes frames to I420 before handing them to LiveKit.
-  pipeline += " ! video/x-raw,format=I420";
-  pipeline += " ! appsink name=";
-  pipeline += kBridgeVideoAppSinkName;
-  pipeline += " sync=false drop=true max-buffers=1 emit-signals=false";
-  return pipeline;
-}
-
 struct EndpointCounts
 {
   guint appsrc_count = 0;
@@ -321,15 +302,15 @@ EndpointCounts countPipelineEndpoints(const std::string & context, GstElement * 
       ++counts.appsink_count;
     }
 
-    if (element_name == kBridgeVideoAppSrcName) {
+    if (element_name == kBridgeAppSrcName) {
       if (!is_appsrc) {
-        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSrcName + "'");
+        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeAppSrcName + "'");
       }
       ++counts.bridge_appsrc_count;
     }
-    if (element_name == kBridgeVideoAppSinkName) {
+    if (element_name == kBridgeAppSinkName) {
       if (!is_appsink) {
-        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeVideoAppSinkName + "'");
+        throw std::runtime_error(context + " must not reuse reserved element name '" + kBridgeAppSinkName + "'");
       }
       ++counts.bridge_appsink_count;
     }
@@ -341,12 +322,12 @@ EndpointCounts countPipelineEndpoints(const std::string & context, GstElement * 
 }
 
 void validateVideoPipelineDescription(
-  const std::string & context, const std::string & pipeline_description, const EndpointLayout & layout)
+  const std::string & context, const std::string & description, const EndpointLayout & layout)
 {
   ensureGstreamerInitialized();
 
   GError * raw_error = nullptr;
-  GstElementPtr pipeline(gst_parse_launch(pipeline_description.c_str(), &raw_error));
+  GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
   GErrorPtr error(raw_error);
   // gst_parse_launch can return both an error and a partially built bin. Check
   // endpoint ownership first so appsrc/appsink misuse is reported even if
@@ -418,25 +399,23 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
   // Topic-entry transforms are middle fragments only. Wrap them in a synthetic
   // bridge-owned ingress so validation exercises the same ownership shape the
   // runtime will assemble around a ROS subscription.
-  const std::string validation_ingress = "appsrc name=" + std::string{kBridgeVideoAppSrcName} +
-                                         " is-live=true block=false format=time do-timestamp=true"
-                                         " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
+  const std::string synthetic_ingress = "appsrc name=" + std::string{kBridgeAppSrcName} +
+                                        " is-live=true block=false format=time do-timestamp=true"
+                                        " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
   for (const auto & entry_id : params.video_topic_ids) {
     const auto & entry = requireUniqueEntry(
       seen_topic_ids, entry_id, params.video.topics.video_topic_ids_map, "video topic id", "video topic");
 
     const std::string rule_context = "video topic '" + entry_id + "'";
     const std::string pattern = normalizeRosResourcePattern(entry.pattern, "video topic");
-    const std::string transform_fragment = trim(entry.transform);
+    const std::string transform = trim(entry.transform);
     validateVideoPipelineDescription(
-      rule_context + " transform",
-      buildVideoPipelineDescription(validation_ingress, transform_fragment),
-      kRosTopicRuleEndpointLayout);
+      rule_context + " transform", buildPipelineDescription(synthetic_ingress, transform), kRosTopicRuleEndpointLayout);
 
     RosVideoTopicRule rule;
     rule.pattern = pattern;
     rule.rule_id = entry_id;
-    rule.transform_fragment = transform_fragment;
+    rule.transform_fragment = transform;
     rule.publish_config = parseVideoPublishConfig(entry, rule_context, config.default_publish_config);
     config.ros_topic_rules.push_back(std::move(rule));
   }
@@ -446,15 +425,13 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
       seen_other_ids, entry_id, params.video.other.video_other_ids_map, "other video id", "other video source");
 
     const std::string source_context = "other video source '" + entry_id + "'";
-    const std::string ingress_fragment = trim(entry.source);
-    if (ingress_fragment.empty()) {
+    const std::string ingress = trim(entry.source);
+    if (ingress.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
-    const std::string transform_fragment = trim(entry.transform);
+    const std::string transform = trim(entry.transform);
     validateVideoPipelineDescription(
-      source_context,
-      buildVideoPipelineDescription(ingress_fragment, transform_fragment),
-      kOtherVideoSourceEndpointLayout);
+      source_context, buildPipelineDescription(ingress, transform), kOtherVideoSourceEndpointLayout);
 
     // Other video sources are keyed by the trimmed requested name. Only
     // surrounding whitespace is ignored; slash and colon variants stay distinct.
@@ -467,8 +444,8 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     }
 
     OtherVideoSource source;
-    source.ingress_fragment = ingress_fragment;
-    source.transform_fragment = transform_fragment;
+    source.ingress_fragment = ingress;
+    source.transform_fragment = transform;
     source.publish_config = parseVideoPublishConfig(entry, source_context, config.default_publish_config);
     config.other_video_sources.emplace(other_video_source_name, std::move(source));
   }

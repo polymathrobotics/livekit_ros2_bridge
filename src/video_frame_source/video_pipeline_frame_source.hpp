@@ -25,19 +25,16 @@
 #include <string>
 
 #include "utils/gstreamer_raii.hpp"
+#include "video_pipeline_description.hpp"
 #include "video_profiling.hpp"
-#include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
+#include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-inline constexpr char kVideoAppSrcName[] = "bridge_video_src";
-
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
-
-std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment);
 
 class VideoPipelineFrameSource : public VideoFrameSource, public std::enable_shared_from_this<VideoPipelineFrameSource>
 {
@@ -64,6 +61,10 @@ public:
   ~VideoPipelineFrameSource() override;
 
   void close() override;
+
+  // Starts the fixed pipeline derived from spec_. Concrete sources call this
+  // once after construction when they should own an active pipeline immediately.
+  void activateFixedPipeline();
 
 protected:
   // Moves the live GStreamer handles out of member state while mutex_ is held
@@ -103,15 +104,9 @@ protected:
   // Resets subclass-specific bookkeeping and atomically transfers the current
   // pipeline handles out of the object. Caller must hold mutex_.
   [[nodiscard]] PipelineHandles takePipelineLocked();
-  // Starts the fixed pipeline defined by fixedPipelineDescription(). Concrete sources call this
-  // once after construction when they should own an active pipeline immediately.
-  void activateFixedPipeline();
-  // Caller must hold mutex_. Parses `pipeline_description`, validates the named
+  // Caller must hold mutex_. Parses `description`, validates the named
   // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
   void startPipelineLocked(const std::string & description, bool require_appsrc = false);
-  // Fixed-pipeline sources override this to derive the restart description
-  // from canonical state instead of caching a second copy beside `spec_`.
-  virtual std::string fixedPipelineDescription() const;
 
   virtual void resetLocked();
 
@@ -120,6 +115,13 @@ private:
   void onBusMessage(GstMessage * message);
   void handleFailure(const std::string & reason);
   void recoverAfterFailure();
+  std::string fixedDescription() const;
 };
+
+std::shared_ptr<VideoFrameSource> makeOtherVideoFrameSource(
+  VideoStreamSpec spec,
+  VideoFrameSink & sink,
+  VideoStreamLifecycleObserver & observer,
+  std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
 
 }  // namespace livekit_ros2_bridge

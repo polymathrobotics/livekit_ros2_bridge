@@ -30,6 +30,7 @@
 #include "sensor_msgs/image_encodings.hpp"
 #include "utils/log_event.hpp"
 #include "utils/trim.hpp"
+#include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -324,17 +325,17 @@ void RawRosVideoFrameSource::startLocked(const FrameLayout & layout)
     throw std::runtime_error("Unsupported GStreamer video format.");
   }
 
-  std::string ingress_fragment = "appsrc name=";
-  ingress_fragment += kVideoAppSrcName;
-  ingress_fragment += " is-live=true block=false format=time do-timestamp=true";
-  ingress_fragment += " caps=video/x-raw,format=";
-  ingress_fragment += format_name;
-  ingress_fragment += ",width=";
-  ingress_fragment += std::to_string(layout.width);
-  ingress_fragment += ",height=";
-  ingress_fragment += std::to_string(layout.height);
-  ingress_fragment += ",framerate=0/1";
-  startPipelineLocked(buildVideoPipelineDescription(ingress_fragment, spec_.transform_fragment), true);
+  std::string ingress = "appsrc name=";
+  ingress += kBridgeAppSrcName;
+  ingress += " is-live=true block=false format=time do-timestamp=true";
+  ingress += " caps=video/x-raw,format=";
+  ingress += format_name;
+  ingress += ",width=";
+  ingress += std::to_string(layout.width);
+  ingress += ",height=";
+  ingress += std::to_string(layout.height);
+  ingress += ",framerate=0/1";
+  startPipelineLocked(buildPipelineDescription(ingress, spec_.transform_fragment), true);
   layout_ = layout;
 }
 
@@ -498,20 +499,20 @@ void CompressedRosVideoFrameSource::onImage(const sensor_msgs::msg::CompressedIm
 
 void CompressedRosVideoFrameSource::startLocked(CompressedImageCodec codec)
 {
-  std::string ingress_fragment = "appsrc name=";
-  ingress_fragment += kVideoAppSrcName;
-  ingress_fragment += " is-live=true block=false format=time do-timestamp=true";
+  std::string ingress = "appsrc name=";
+  ingress += kBridgeAppSrcName;
+  ingress += " is-live=true block=false format=time do-timestamp=true";
   switch (codec) {
     case CompressedImageCodec::kJpeg:
-      ingress_fragment += " caps=image/jpeg ! jpegdec";
+      ingress += " caps=image/jpeg ! jpegdec";
       break;
     case CompressedImageCodec::kPng:
-      ingress_fragment += " caps=image/png ! pngdec";
+      ingress += " caps=image/png ! pngdec";
       break;
     default:
       throw std::logic_error("Unsupported compressed image codec.");
   }
-  startPipelineLocked(buildVideoPipelineDescription(ingress_fragment, spec_.transform_fragment), true);
+  startPipelineLocked(buildPipelineDescription(ingress, spec_.transform_fragment), true);
   codec_ = codec;
 }
 

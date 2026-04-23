@@ -25,8 +25,8 @@
 #include "rclcpp/logging.hpp"
 #include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
-#include "video_frame_source/other_video_frame_source.hpp"
 #include "video_frame_source/ros_topic_video_frame_sources.hpp"
+#include "video_frame_source/video_pipeline_frame_source.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -47,9 +47,7 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   const std::shared_ptr<VideoStreamProfiler> & profiler)
 {
   if (spec.input_kind == VideoInputKind::OtherVideoSource) {
-    auto source = std::make_shared<OtherVideoFrameSource>(spec, sink, observer, profiler);
-    source->activate();
-    return source;
+    return makeOtherVideoFrameSource(spec, sink, observer, profiler);
   }
   if (spec.input_kind == VideoInputKind::RosTopic) {
     if (spec.ingest_mode == kRawImageIngestMode) {

@@ -20,8 +20,8 @@
 
 #include "gtest/gtest.h"
 #include "utils/gstreamer_raii.hpp"
-#include "video_frame_source/other_video_frame_source.hpp"
 #include "video_frame_source/video_pipeline_frame_source.hpp"
+#include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -153,9 +153,7 @@ TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
   VideoStreamSpec spec = makeTestSpec();
   spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
 
-  auto source = std::make_shared<OtherVideoFrameSource>(spec, sink_, observer_);
-  source->activate();
-  source->activate();
+  auto source = makeOtherVideoFrameSource(spec, sink_, observer_);
   source->close();
   source->close();
 }

@@ -16,8 +16,10 @@
 
 #include <gst/video/video.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <thread>
@@ -27,6 +29,7 @@
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
+#include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -35,7 +38,7 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_pipeline_frame_source");
-constexpr char kAppSinkName[] = "bridge_video_sink";
+constexpr auto kOtherVideoRestartDelay = std::chrono::milliseconds(250);
 
 struct PackedI420Frame
 {
@@ -184,26 +187,6 @@ PackedI420Frame packI420Frame(GstSample * sample)
 
 }  // namespace
 
-std::string buildVideoPipelineDescription(const std::string & ingress_fragment, const std::string & transform_fragment)
-{
-  std::string pipeline = ingress_fragment;
-  if (!transform_fragment.empty()) {
-    pipeline += " ! ";
-    pipeline += transform_fragment;
-  }
-  // Keep only a tiny downstream queue so backpressure drops stale frames
-  // instead of letting latency grow without bound.
-  pipeline += " ! queue max-size-buffers=2 leaky=downstream";
-  pipeline += " ! videoconvert";
-  // Emit encoder-native I420 so LiveKit/WebRTC does not have to do an extra
-  // RGBA->I420 conversion on every captured frame.
-  pipeline += " ! video/x-raw,format=I420";
-  pipeline += " ! appsink name=";
-  pipeline += kAppSinkName;
-  pipeline += " sync=false drop=true max-buffers=1 emit-signals=false";
-  return pipeline;
-}
-
 VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & sink,
@@ -217,7 +200,10 @@ VideoPipelineFrameSource::VideoPipelineFrameSource(
 , restart_config_(std::move(restart_config))
 {}
 
-VideoPipelineFrameSource::~VideoPipelineFrameSource() = default;
+VideoPipelineFrameSource::~VideoPipelineFrameSource()
+{
+  VideoPipelineFrameSource::close();
+}
 
 void VideoPipelineFrameSource::activateFixedPipeline()
 {
@@ -235,7 +221,7 @@ void VideoPipelineFrameSource::activateFixedPipeline()
   }
 
   const auto & config = restart_config_.value();
-  startPipelineLocked(fixedPipelineDescription(), config.require_appsrc);
+  startPipelineLocked(fixedDescription(), config.require_appsrc);
 }
 
 void VideoPipelineFrameSource::close()
@@ -302,22 +288,22 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & descripti
 
   PipelineHandles handles;
   handles.pipeline = std::move(pipeline);
-  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kAppSinkName));
+  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kBridgeAppSinkName));
   if (appsink == nullptr) {
     throw std::runtime_error("Video pipeline did not create the expected appsink.");
   }
   if (!GST_IS_APP_SINK(appsink.get())) {
-    throw std::runtime_error(std::string("Video pipeline named ") + kAppSinkName + " must be a GstAppSink.");
+    throw std::runtime_error(std::string("Video pipeline named ") + kBridgeAppSinkName + " must be a GstAppSink.");
   }
   handles.appsink = GstAppSinkPtr(GST_APP_SINK(appsink.release()));
 
   if (require_appsrc) {
-    GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kVideoAppSrcName));
+    GstElementPtr appsrc(gst_bin_get_by_name(GST_BIN(handles.pipeline.get()), kBridgeAppSrcName));
     if (appsrc == nullptr) {
       throw std::runtime_error("Video pipeline did not create the expected appsrc.");
     }
     if (!GST_IS_APP_SRC(appsrc.get())) {
-      throw std::runtime_error(std::string("Video pipeline named ") + kVideoAppSrcName + " must be a GstAppSrc.");
+      throw std::runtime_error(std::string("Video pipeline named ") + kBridgeAppSrcName + " must be a GstAppSrc.");
     }
     handles.appsrc = GstAppSrcPtr(GST_APP_SRC(appsrc.release()));
   }
@@ -347,9 +333,9 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & descripti
     .info();
 }
 
-std::string VideoPipelineFrameSource::fixedPipelineDescription() const
+std::string VideoPipelineFrameSource::fixedDescription() const
 {
-  throw std::logic_error("Video pipeline source did not provide a fixed pipeline description.");
+  return buildPipelineDescription(spec_.ingress_fragment, spec_.transform_fragment);
 }
 
 void VideoPipelineFrameSource::resetLocked()
@@ -525,10 +511,29 @@ void VideoPipelineFrameSource::recoverAfterFailure()
   }
 
   try {
-    startPipelineLocked(fixedPipelineDescription(), config->require_appsrc);
+    startPipelineLocked(fixedDescription(), config->require_appsrc);
   } catch (const std::exception & exc) {
     observer_.onRestartFailed(exc.what());
   }
+}
+
+std::shared_ptr<VideoFrameSource> makeOtherVideoFrameSource(
+  VideoStreamSpec spec,
+  VideoFrameSink & sink,
+  VideoStreamLifecycleObserver & observer,
+  std::shared_ptr<VideoStreamProfiler> profiler)
+{
+  auto source = std::make_shared<VideoPipelineFrameSource>(
+    std::move(spec),
+    sink,
+    observer,
+    std::move(profiler),
+    VideoPipelineFrameSource::RestartConfig{
+      false,
+      kOtherVideoRestartDelay,
+    });
+  source->activateFixedPipeline();
+  return source;
 }
 
 }  // namespace livekit_ros2_bridge
