@@ -19,6 +19,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace livekit_ros2_bridge
@@ -95,6 +96,30 @@ enum class VideoInputKind
   OtherVideoSource,
 };
 
+enum class RosVideoIngestMode
+{
+  RawImage,
+  CompressedImage,
+};
+
+struct RosVideoInput
+{
+  std::string topic;
+  std::string interface_type;
+  RosVideoIngestMode ingest_mode = RosVideoIngestMode::RawImage;
+  std::string rule_id;
+  std::string transform_fragment;
+};
+
+struct OtherVideoInput
+{
+  std::string name;
+  std::string ingress_fragment;
+  std::string transform_fragment;
+};
+
+using VideoStreamInput = std::variant<RosVideoInput, OtherVideoInput>;
+
 struct VideoStreamSpec
 {
   // Resolved runtime inputs for one shared video stream instance.
@@ -107,32 +132,27 @@ struct VideoStreamSpec
   // This is client-visible in subscription status and should remain stable for a given stream.
   std::string track_name;
 
-  // Set only for ROS-topic sources after ROS resource normalization.
-  std::string ros_topic;
-  // Set only for ROS-topic sources and must resolve via classifyRosVideoIngestMode(...).
-  std::string interface_type;
-
-  // Set only for other video sources after other-video-source-name trimming.
-  std::string other_video_source_name;
-
-  VideoInputKind input_kind = VideoInputKind::RosTopic;
-  std::string ingest_mode;
-  // ROS sources store the matched rule_id; other video sources store the canonical trimmed other-video-source name.
-  std::string config_id;
   // Optional operator-facing detail surfaced when the stream is degraded but still addressable.
   std::optional<std::string> degraded_reason;
 
-  // Other video sources set this to the configured ingress fragment. ROS sources leave it empty.
-  std::string ingress_fragment;
-  // Optional GStreamer transform fragment inserted after ingress and before the bridge-owned tail.
-  std::string transform_fragment;
+  // Source-specific data. The active alternative determines which fields are valid.
+  VideoStreamInput input;
   // Resolved LiveKit publish config after applying any per-entry overrides to video.publish.*.
   VideoPublishConfig publish_config;
 };
 
 // Returns the ingest mode for supported ROS video interface types and std::nullopt for non-video types.
-std::optional<std::string_view> classifyRosVideoIngestMode(std::string_view interface_type);
-std::string videoInputKindToString(VideoInputKind kind);
+std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type);
+std::string_view rosVideoIngestModeToString(RosVideoIngestMode mode);
+std::string_view videoInputKindToString(VideoInputKind kind);
+VideoInputKind videoInputKind(const VideoStreamSpec & spec) noexcept;
+std::string_view videoIngestModeToString(const VideoStreamSpec & spec);
+const RosVideoInput * rosVideoInput(const VideoStreamSpec & spec) noexcept;
+RosVideoInput * rosVideoInput(VideoStreamSpec & spec) noexcept;
+const OtherVideoInput * otherVideoInput(const VideoStreamSpec & spec) noexcept;
+OtherVideoInput * otherVideoInput(VideoStreamSpec & spec) noexcept;
+const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec);
+const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec);
 
 // Normalizes the topic before matching and identifier generation so equivalent ROS spellings collapse to one runtime.
 // The longest rule match wins; same-length matches keep declaration order so config files can express deterministic

@@ -15,6 +15,7 @@
 #include "video_stream_spec.hpp"
 
 #include <stdexcept>
+#include <variant>
 
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
@@ -148,23 +149,86 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
 
 }  // namespace
 
-std::optional<std::string_view> classifyRosVideoIngestMode(std::string_view interface_type)
+std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type)
 {
   if (interface_type == kImageInterfaceType) {
-    return kRawImageIngestMode;
+    return RosVideoIngestMode::RawImage;
   }
   if (interface_type == kCompressedImageInterfaceType) {
-    return kCompressedImageIngestMode;
+    return RosVideoIngestMode::CompressedImage;
   }
   return std::nullopt;
 }
 
-std::string videoInputKindToString(VideoInputKind kind)
+std::string_view rosVideoIngestModeToString(RosVideoIngestMode mode)
+{
+  switch (mode) {
+    case RosVideoIngestMode::RawImage:
+      return kRawImageIngestMode;
+    case RosVideoIngestMode::CompressedImage:
+      return kCompressedImageIngestMode;
+  }
+  return "unknown";
+}
+
+std::string_view videoInputKindToString(VideoInputKind kind)
 {
   if (kind == VideoInputKind::RosTopic) {
     return "ros_topic";
   }
   return "other_video";
+}
+
+VideoInputKind videoInputKind(const VideoStreamSpec & spec) noexcept
+{
+  if (std::holds_alternative<RosVideoInput>(spec.input)) {
+    return VideoInputKind::RosTopic;
+  }
+  return VideoInputKind::OtherVideoSource;
+}
+
+std::string_view videoIngestModeToString(const VideoStreamSpec & spec)
+{
+  if (const auto * input = rosVideoInput(spec); input != nullptr) {
+    return rosVideoIngestModeToString(input->ingest_mode);
+  }
+  return kOtherVideoIngestMode;
+}
+
+const RosVideoInput * rosVideoInput(const VideoStreamSpec & spec) noexcept
+{
+  return std::get_if<RosVideoInput>(&spec.input);
+}
+
+RosVideoInput * rosVideoInput(VideoStreamSpec & spec) noexcept
+{
+  return std::get_if<RosVideoInput>(&spec.input);
+}
+
+const OtherVideoInput * otherVideoInput(const VideoStreamSpec & spec) noexcept
+{
+  return std::get_if<OtherVideoInput>(&spec.input);
+}
+
+OtherVideoInput * otherVideoInput(VideoStreamSpec & spec) noexcept
+{
+  return std::get_if<OtherVideoInput>(&spec.input);
+}
+
+const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec)
+{
+  if (const auto * input = rosVideoInput(spec); input != nullptr) {
+    return *input;
+  }
+  throw std::logic_error("Video stream spec does not contain a ROS video input.");
+}
+
+const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec)
+{
+  if (const auto * input = otherVideoInput(spec); input != nullptr) {
+    return *input;
+  }
+  throw std::logic_error("Video stream spec does not contain an other-video input.");
 }
 
 VideoStreamSpec resolveRosVideoTopicSpec(
@@ -189,13 +253,13 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   VideoStreamSpec spec;
   spec.stream_key = makeStreamKey(kTopicKeyPrefix, normalized_topic);
   spec.track_name = makeTopicTrackName(normalized_topic);
-  spec.input_kind = VideoInputKind::RosTopic;
-  spec.ros_topic = normalized_topic;
-  spec.interface_type = interface_type;
-  spec.ingest_mode = std::string(*ingest_mode);
-
-  spec.config_id = rule.rule_id;
-  spec.transform_fragment = rule.transform_fragment;
+  spec.input = RosVideoInput{
+    normalized_topic,
+    interface_type,
+    *ingest_mode,
+    rule.rule_id,
+    rule.transform_fragment,
+  };
   spec.publish_config = rule.publish_config;
   return spec;
 }
@@ -217,13 +281,11 @@ VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, co
   VideoStreamSpec spec;
   spec.stream_key = makeStreamKey(kOtherVideoKeyPrefix, name);
   spec.track_name = makeOtherVideoTrackName(name);
-  spec.input_kind = VideoInputKind::OtherVideoSource;
-  spec.other_video_source_name = name;
-  spec.config_id = name;
-
-  spec.ingress_fragment = source_config.ingress_fragment;
-  spec.transform_fragment = source_config.transform_fragment;
-  spec.ingest_mode = kOtherVideoIngestMode;
+  spec.input = OtherVideoInput{
+    name,
+    source_config.ingress_fragment,
+    source_config.transform_fragment,
+  };
   spec.publish_config = source_config.publish_config;
 
   return spec;

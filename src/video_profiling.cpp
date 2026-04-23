@@ -173,8 +173,8 @@ EventT && addIdentityFields(EventT && event, const VideoStreamSpec & spec)
 {
   event.field("stream_key", spec.stream_key)
     .field("track_name", spec.track_name)
-    .field("input_kind", videoInputKindToString(spec.input_kind))
-    .field("ingest_mode", spec.ingest_mode);
+    .field("input_kind", videoInputKindToString(videoInputKind(spec)))
+    .field("ingest_mode", videoIngestModeToString(spec));
   return std::forward<EventT>(event);
 }
 
@@ -190,8 +190,9 @@ EventT && addIdentityFields(EventT && event, const VideoStreamProfileSummary & s
 
 bool hasIdentityMismatch(const VideoStreamSpec & active_spec, const VideoStreamSpec & requested_spec)
 {
-  return active_spec.track_name != requested_spec.track_name || active_spec.input_kind != requested_spec.input_kind ||
-         active_spec.ingest_mode != requested_spec.ingest_mode;
+  return active_spec.track_name != requested_spec.track_name ||
+         videoInputKind(active_spec) != videoInputKind(requested_spec) ||
+         videoIngestModeToString(active_spec) != videoIngestModeToString(requested_spec);
 }
 
 template <typename EventT>
@@ -202,14 +203,17 @@ EventT && addIdentityMismatchFields(
     event.field("active_track_name", active_spec.track_name).field("requested_track_name", requested_spec.track_name);
   }
 
-  if (active_spec.input_kind != requested_spec.input_kind) {
-    event.field("active_input_kind", videoInputKindToString(active_spec.input_kind))
-      .field("requested_input_kind", videoInputKindToString(requested_spec.input_kind));
+  const auto active_kind = videoInputKind(active_spec);
+  const auto requested_kind = videoInputKind(requested_spec);
+  if (active_kind != requested_kind) {
+    event.field("active_input_kind", videoInputKindToString(active_kind))
+      .field("requested_input_kind", videoInputKindToString(requested_kind));
   }
 
-  if (active_spec.ingest_mode != requested_spec.ingest_mode) {
-    event.field("active_ingest_mode", active_spec.ingest_mode)
-      .field("requested_ingest_mode", requested_spec.ingest_mode);
+  const auto active_mode = videoIngestModeToString(active_spec);
+  const auto requested_mode = videoIngestModeToString(requested_spec);
+  if (active_mode != requested_mode) {
+    event.field("active_ingest_mode", active_mode).field("requested_ingest_mode", requested_mode);
   }
   return std::forward<EventT>(event);
 }
@@ -873,8 +877,8 @@ std::optional<VideoStreamProfileSummary> VideoStreamProfiler::takeSummary()
   VideoStreamProfileSummary summary;
   summary.stream_key = impl_->spec.stream_key;
   summary.track_name = impl_->spec.track_name;
-  summary.input_kind = videoInputKindToString(impl_->spec.input_kind);
-  summary.ingest_mode = impl_->spec.ingest_mode;
+  summary.input_kind = videoInputKindToString(videoInputKind(impl_->spec));
+  summary.ingest_mode = videoIngestModeToString(impl_->spec);
   summary.frames_in = impl_->frames_in;
   summary.frames_sampled = impl_->frames_sampled;
   summary.frames_captured = impl_->frames_captured;
@@ -988,8 +992,8 @@ std::shared_ptr<VideoStreamProfiler> VideoProfilingRegistry::getOrCreateProfiler
     if (impl_->recorder != nullptr) {
       std::vector<TraceArg> args;
       addTraceArg(args, "track_name", spec.track_name);
-      addTraceArg(args, "input_kind", std::string(videoInputKindToString(spec.input_kind)));
-      addTraceArg(args, "ingest_mode", spec.ingest_mode);
+      addTraceArg(args, "input_kind", std::string(videoInputKindToString(videoInputKind(spec))));
+      addTraceArg(args, "ingest_mode", std::string(videoIngestModeToString(spec)));
       impl_->recorder->recordInstant(
         spec.stream_key, kStreamRegisteredTraceEventName, SteadyClock::now(), std::move(args));
     }

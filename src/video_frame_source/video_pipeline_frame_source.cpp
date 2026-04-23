@@ -357,7 +357,8 @@ void VideoPipelineFrameSource::startPipelineLocked(const std::string & descripti
 
 std::string VideoPipelineFrameSource::fixedDescription() const
 {
-  return buildPipelineDescription(spec_.ingress_fragment, spec_.transform_fragment);
+  const auto & input = requireOtherVideoInput(spec_);
+  return buildPipelineDescription(input.ingress_fragment, input.transform_fragment);
 }
 
 void VideoPipelineFrameSource::resetLocked()
@@ -410,7 +411,7 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
     pts_us = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
   }
   if (profiler_ != nullptr) {
-    if (spec_.input_kind == VideoInputKind::OtherVideoSource) {
+    if (otherVideoInput(spec_) != nullptr) {
       profiler_->noteIngress(VideoStreamProfiler::SteadyClock::now(), pts_us);
     }
     profiler_->noteSample(pts_us);

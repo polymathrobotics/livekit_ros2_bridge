@@ -33,9 +33,13 @@ VideoStreamSpec makeSpec()
   VideoStreamSpec spec;
   spec.stream_key = "topic:/synthetic/front_camera/image_raw";
   spec.track_name = "lkros.video.synthetic.front_camera";
-  spec.ros_topic = "/synthetic/front_camera/image_raw";
-  spec.input_kind = VideoInputKind::RosTopic;
-  spec.ingest_mode = kRawImageIngestMode;
+  spec.input = RosVideoInput{
+    "/synthetic/front_camera/image_raw",
+    kImageInterfaceType,
+    RosVideoIngestMode::RawImage,
+    "test",
+    "",
+  };
   return spec;
 }
 
@@ -101,7 +105,7 @@ TEST(VideoProfilingTest, RegistryCollectsOnlyActiveStreamSummariesAndResetsThem)
   auto idle_spec = makeSpec();
   idle_spec.stream_key = "topic:/synthetic/rear_camera/image_raw";
   idle_spec.track_name = "lkros.video.synthetic.rear_camera";
-  idle_spec.ros_topic = "/synthetic/rear_camera/image_raw";
+  rosVideoInput(idle_spec)->topic = "/synthetic/rear_camera/image_raw";
 
   const auto profiler = registry.getOrCreateProfiler(active_spec);
   const auto idle_profiler = registry.getOrCreateProfiler(idle_spec);
@@ -147,9 +151,7 @@ TEST(VideoProfilingTest, RegistryReusesExistingProfilerForStreamKeyDespiteDiffer
   const auto active_spec = makeSpec();
   auto reused_spec = makeSpec();
   reused_spec.track_name = "lkros.video.other.front_camera";
-  reused_spec.input_kind = VideoInputKind::OtherVideoSource;
-  reused_spec.ingest_mode = kOtherVideoIngestMode;
-  reused_spec.other_video_source_name = "front_camera";
+  reused_spec.input = OtherVideoInput{"front_camera", "", ""};
 
   const auto profiler = registry.getOrCreateProfiler(active_spec);
   const auto reused_profiler = registry.getOrCreateProfiler(reused_spec);
@@ -163,8 +165,8 @@ TEST(VideoProfilingTest, RegistryReusesExistingProfilerForStreamKeyDespiteDiffer
   const auto & summary = summaries.front();
   EXPECT_EQ(summary.stream_key, active_spec.stream_key);
   EXPECT_EQ(summary.track_name, active_spec.track_name);
-  EXPECT_EQ(summary.input_kind, videoInputKindToString(active_spec.input_kind));
-  EXPECT_EQ(summary.ingest_mode, active_spec.ingest_mode);
+  EXPECT_EQ(summary.input_kind, std::string(videoInputKindToString(videoInputKind(active_spec))));
+  EXPECT_EQ(summary.ingest_mode, std::string(videoIngestModeToString(active_spec)));
   EXPECT_EQ(summary.pipeline_start_count, 1U);
 }
 

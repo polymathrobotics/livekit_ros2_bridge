@@ -64,9 +64,9 @@ void expectThrowsWithMessage(Callable && callable, const char * expected_message
 
 TEST(VideoStreamSpecTest, ClassifyRosVideoIngestModeOnlyAcceptsSupportedExactStrings)
 {
-  EXPECT_EQ(classifyRosVideoIngestMode(kImageInterfaceType), kRawImageIngestMode);
+  EXPECT_EQ(classifyRosVideoIngestMode(kImageInterfaceType), RosVideoIngestMode::RawImage);
 
-  EXPECT_EQ(classifyRosVideoIngestMode(kCompressedImageInterfaceType), kCompressedImageIngestMode);
+  EXPECT_EQ(classifyRosVideoIngestMode(kCompressedImageInterfaceType), RosVideoIngestMode::CompressedImage);
   EXPECT_FALSE(classifyRosVideoIngestMode(" sensor_msgs/msg/Image").has_value());
 }
 
@@ -75,21 +75,25 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   const auto config = makeDefaultVideoStreamConfig();
 
   const auto raw_spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto & raw_input = requireRosVideoInput(raw_spec);
   EXPECT_EQ(raw_spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(raw_spec.track_name, "lkros.video.camera.front.image");
-  EXPECT_EQ(raw_spec.ros_topic, "/camera/front/image");
-  EXPECT_EQ(raw_spec.interface_type, kImageInterfaceType);
-  EXPECT_EQ(raw_spec.input_kind, VideoInputKind::RosTopic);
-  EXPECT_EQ(raw_spec.config_id, "default_ros");
-  EXPECT_EQ(raw_spec.ingest_mode, kRawImageIngestMode);
+  EXPECT_EQ(raw_input.topic, "/camera/front/image");
+  EXPECT_EQ(raw_input.interface_type, kImageInterfaceType);
+  EXPECT_EQ(videoInputKind(raw_spec), VideoInputKind::RosTopic);
+  EXPECT_EQ(raw_input.rule_id, "default_ros");
+  EXPECT_EQ(raw_input.ingest_mode, RosVideoIngestMode::RawImage);
+  EXPECT_EQ(videoIngestModeToString(raw_spec), kRawImageIngestMode);
   expectPublishConfigEq(raw_spec.publish_config, config.default_publish_config);
 
   const auto compressed_spec =
     resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
+  const auto & compressed_input = requireRosVideoInput(compressed_spec);
   EXPECT_EQ(compressed_spec.stream_key, "topic:/camera/front/image/compressed");
   EXPECT_EQ(compressed_spec.track_name, "lkros.video.camera.front.image.compressed");
-  EXPECT_EQ(compressed_spec.config_id, "default_ros");
-  EXPECT_EQ(compressed_spec.ingest_mode, kCompressedImageIngestMode);
+  EXPECT_EQ(compressed_input.rule_id, "default_ros");
+  EXPECT_EQ(compressed_input.ingest_mode, RosVideoIngestMode::CompressedImage);
+  EXPECT_EQ(videoIngestModeToString(compressed_spec), kCompressedImageIngestMode);
   expectPublishConfigEq(compressed_spec.publish_config, config.default_publish_config);
 }
 
@@ -103,12 +107,13 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), normalized_rule);
 
   const auto spec = resolveRosVideoTopicSpec(config, "  camera//front/image/  ", kImageInterfaceType);
+  const auto & input = requireRosVideoInput(spec);
 
   EXPECT_EQ(spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(spec.track_name, "lkros.video.camera.front.image");
-  EXPECT_EQ(spec.ros_topic, "/camera/front/image");
-  EXPECT_EQ(spec.config_id, "normalized");
-  EXPECT_EQ(spec.transform_fragment, "videoconvert ! normalized-filter");
+  EXPECT_EQ(input.topic, "/camera/front/image");
+  EXPECT_EQ(input.rule_id, "normalized");
+  EXPECT_EQ(input.transform_fragment, "videoconvert ! normalized-filter");
   expectPublishConfigEq(spec.publish_config, normalized_rule.publish_config);
 }
 
@@ -120,7 +125,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesUnnamedTrackNameForRootTop
 
   EXPECT_EQ(spec.stream_key, "topic:/");
   EXPECT_EQ(spec.track_name, "lkros.video.unnamed");
-  EXPECT_EQ(spec.ros_topic, "/");
+  EXPECT_EQ(requireRosVideoInput(spec).topic, "/");
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsInvalidInput)
@@ -158,7 +163,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
 
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.config_id, "specific");
+  EXPECT_EQ(requireRosVideoInput(spec).rule_id, "specific");
   expectPublishConfigEq(spec.publish_config, specific_rule.publish_config);
 }
 
@@ -174,7 +179,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
 
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.config_id, "first");
+  EXPECT_EQ(requireRosVideoInput(spec).rule_id, "first");
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceholders)
@@ -185,7 +190,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceho
 
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
-  EXPECT_EQ(spec.transform_fragment, "{topic}");
+  EXPECT_EQ(requireRosVideoInput(spec).transform_fragment, "{topic}");
 }
 
 TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
@@ -202,14 +207,15 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
   config.other_video_sources.emplace("front_camera", std::move(source_config));
 
   const auto spec = resolveOtherVideoSourceSpec(config, "  front_camera  ");
+  const auto & input = requireOtherVideoInput(spec);
 
   EXPECT_EQ(spec.stream_key, "other_video:front_camera");
   EXPECT_EQ(spec.track_name, "lkros.video.other.front_camera");
-  EXPECT_EQ(spec.other_video_source_name, "front_camera");
-  EXPECT_EQ(spec.input_kind, VideoInputKind::OtherVideoSource);
-  EXPECT_EQ(spec.ingest_mode, kOtherVideoIngestMode);
-  EXPECT_EQ(spec.ingress_fragment, "videotestsrc is-live=true pattern=black");
-  EXPECT_EQ(spec.transform_fragment, "videobalance saturation=0.0");
+  EXPECT_EQ(input.name, "front_camera");
+  EXPECT_EQ(videoInputKind(spec), VideoInputKind::OtherVideoSource);
+  EXPECT_EQ(videoIngestModeToString(spec), kOtherVideoIngestMode);
+  EXPECT_EQ(input.ingress_fragment, "videotestsrc is-live=true pattern=black");
+  EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
   expectPublishConfigEq(spec.publish_config, expected_publish_config);
 }
 

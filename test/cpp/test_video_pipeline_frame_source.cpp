@@ -39,23 +39,16 @@ VideoStreamSpec makeTestSpec()
   VideoStreamSpec spec;
   spec.stream_key = "other_video:test";
   spec.track_name = "lkros.video.other.test";
-  spec.input_kind = VideoInputKind::OtherVideoSource;
-  spec.ingest_mode = kOtherVideoIngestMode;
-  spec.config_id = "test";
-  spec.other_video_source_name = "test";
+  spec.input = OtherVideoInput{"test", "", ""};
   return spec;
 }
 
-VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type, const char * ingest_mode)
+VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type)
 {
   VideoStreamSpec spec;
   spec.stream_key = "topic:" + topic;
   spec.track_name = "lkros.video.test";
-  spec.input_kind = VideoInputKind::RosTopic;
-  spec.ros_topic = topic;
-  spec.interface_type = interface_type;
-  spec.ingest_mode = ingest_mode;
-  spec.config_id = "test";
+  spec.input = RosVideoInput{topic, interface_type, classifyRosVideoIngestMode(interface_type).value(), "test", ""};
   return spec;
 }
 
@@ -194,7 +187,9 @@ TEST_F(VideoPipelineFrameSourceTest, StartCapturesRequiredAppSrcHandle)
 TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
 {
   VideoStreamSpec spec = makeTestSpec();
-  spec.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  auto * input = otherVideoInput(spec);
+  ASSERT_NE(input, nullptr);
+  input->ingress_fragment = "videotestsrc is-live=true pattern=black";
 
   auto source = makeOtherVideoFrameSource(spec, sink_, observer_);
   source->close();
@@ -221,8 +216,7 @@ void expectRosTopicSourceLifecycleIsIdempotent(
   VideoStreamLifecycleObserver & observer,
   const std::string & node_name,
   const std::string & topic,
-  const char * interface_type,
-  const char * ingest_mode)
+  const char * interface_type)
 {
   test_support::ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>(node_name);
@@ -233,7 +227,7 @@ void expectRosTopicSourceLifecycleIsIdempotent(
     node->get_node_parameters_interface(),
     node->get_node_topics_interface(),
     node->get_node_graph_interface(),
-    makeRosTopicSpec(topic, interface_type, ingest_mode),
+    makeRosTopicSpec(topic, interface_type),
     nullptr,
     sink,
     observer);
@@ -250,12 +244,7 @@ void expectRosTopicSourceLifecycleIsIdempotent(
 TEST_F(VideoPipelineFrameSourceTest, RawRosTopicSourceLifecycleIsIdempotent)
 {
   expectRosTopicSourceLifecycleIsIdempotent(
-    sink_,
-    observer_,
-    "video_pipeline_ros_topic_raw_source_test",
-    "/video_pipeline/raw_image",
-    kImageInterfaceType,
-    kRawImageIngestMode);
+    sink_, observer_, "video_pipeline_ros_topic_raw_source_test", "/video_pipeline/raw_image", kImageInterfaceType);
 }
 
 TEST_F(VideoPipelineFrameSourceTest, CompressedRosTopicSourceLifecycleIsIdempotent)
@@ -265,8 +254,7 @@ TEST_F(VideoPipelineFrameSourceTest, CompressedRosTopicSourceLifecycleIsIdempote
     observer_,
     "video_pipeline_ros_topic_compressed_source_test",
     "/video_pipeline/compressed_image",
-    kCompressedImageInterfaceType,
-    kCompressedImageIngestMode);
+    kCompressedImageInterfaceType);
 }
 
 }  // namespace

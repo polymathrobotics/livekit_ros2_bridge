@@ -46,25 +46,14 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   VideoStreamLifecycleObserver & observer,
   const std::shared_ptr<VideoStreamProfiler> & profiler)
 {
-  if (spec.input_kind == VideoInputKind::OtherVideoSource) {
+  if (otherVideoInput(spec) != nullptr) {
     return makeOtherVideoFrameSource(spec, sink, observer, profiler);
   }
-  if (spec.input_kind == VideoInputKind::RosTopic) {
-    auto source = std::make_shared<RosTopicVideoFrameSource>(
-      std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
-    source->activate();
-    return source;
-  }
 
-  LogEvent(kLogger, "video_stream_activate_failed")
-    .field("stream_key", spec.stream_key)
-    .field("input_kind", videoInputKindToString(spec.input_kind))
-    .field("ingest_mode", spec.ingest_mode)
-    .field("reason", "unsupported_input")
-    .warn();
-  throw std::runtime_error(
-    "Unsupported video input kind/ingest mode combination '" + videoInputKindToString(spec.input_kind) + "/" +
-    spec.ingest_mode + "'.");
+  auto source = std::make_shared<RosTopicVideoFrameSource>(
+    std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
+  source->activate();
+  return source;
 }
 
 }  // namespace

@@ -127,8 +127,9 @@ bool frameLayoutsMatch(const FrameLayout & lhs, const FrameLayout & rhs)
 
 void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & previous_layout, const FrameLayout & layout)
 {
+  const auto & input = requireRosVideoInput(spec);
   LogEvent event(kLogger, "video_stream_input_layout_changed");
-  event.field("stream_key", spec.stream_key).field("topic", spec.ros_topic);
+  event.field("stream_key", spec.stream_key).field("topic", input.topic);
   if (previous_layout.width != layout.width) {
     event.field("previous_width", previous_layout.width).field("width", layout.width);
   }
@@ -185,10 +186,11 @@ GstBufferPtr makeStampedGstBuffer(
 
 void logSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscriptionQos & qos)
 {
+  const auto & input = requireRosVideoInput(spec);
   LogEvent(kLogger, "subscription_qos_resolved")
-    .field("resource", spec.ros_topic)
+    .field("resource", input.topic)
     .field("delivery", "video")
-    .field("interface_type", spec.interface_type)
+    .field("interface_type", input.interface_type)
     .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))
     .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
@@ -227,16 +229,15 @@ RosTopicVideoFrameSource::~RosTopicVideoFrameSource()
 
 RosTopicVideoFrameSource::Mode RosTopicVideoFrameSource::modeFromSpec(const VideoStreamSpec & spec)
 {
-  if (spec.input_kind != VideoInputKind::RosTopic) {
-    throw std::logic_error("RosTopicVideoFrameSource requires a ROS-topic video stream spec.");
+  const auto & input = requireRosVideoInput(spec);
+  switch (input.ingest_mode) {
+    case RosVideoIngestMode::RawImage:
+      return Mode::kRawImage;
+    case RosVideoIngestMode::CompressedImage:
+      return Mode::kCompressedImage;
   }
-  if (spec.ingest_mode == kRawImageIngestMode) {
-    return Mode::kRawImage;
-  }
-  if (spec.ingest_mode == kCompressedImageIngestMode) {
-    return Mode::kCompressedImage;
-  }
-  throw std::runtime_error("Unsupported ROS video ingest mode '" + spec.ingest_mode + "'.");
+  throw std::runtime_error(
+    "Unsupported ROS video ingest mode '" + std::string(rosVideoIngestModeToString(input.ingest_mode)) + "'.");
 }
 
 void RosTopicVideoFrameSource::activate()
@@ -251,7 +252,8 @@ void RosTopicVideoFrameSource::activate()
   }
 
   const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
-  ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, spec_.ros_topic, base_qos, qos_config_);
+  const auto & input = requireRosVideoInput(spec_);
+  ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, input.topic, base_qos, qos_config_);
   logSubscriptionQos(spec_, qos);
 
   // The ROS subscription may still have queued callbacks during shutdown; the
@@ -261,11 +263,7 @@ void RosTopicVideoFrameSource::activate()
   switch (mode_) {
     case Mode::kRawImage:
       raw_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
-        parameters_,
-        topics_,
-        spec_.ros_topic,
-        qos.qos,
-        [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
+        parameters_, topics_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
           if (const auto self = weak_self.lock(); self) {
             self->onRawImage(image);
           }
@@ -275,7 +273,7 @@ void RosTopicVideoFrameSource::activate()
       compressed_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
         parameters_,
         topics_,
-        spec_.ros_topic,
+        input.topic,
         qos.qos,
         [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
           if (const auto self = weak_self.lock(); self) {
@@ -381,7 +379,7 @@ void RosTopicVideoFrameSource::startRawPipelineLocked(const FrameLayout & layout
   ingress += ",height=";
   ingress += std::to_string(layout.height);
   ingress += ",framerate=0/1";
-  startPipelineLocked(buildPipelineDescription(ingress, spec_.transform_fragment), true);
+  startPipelineLocked(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
   layout_ = layout;
 }
 
@@ -445,7 +443,7 @@ void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::Compres
       } else {
         LogEvent(kLogger, "video_stream_input_codec_changed")
           .field("stream_key", spec_.stream_key)
-          .field("topic", spec_.ros_topic)
+          .field("topic", requireRosVideoInput(spec_).topic)
           .field("previous_codec", compressedImageCodecName(*codec_))
           .field("codec", compressedImageCodecName(codec))
           .info();
@@ -480,7 +478,7 @@ void RosTopicVideoFrameSource::startCompressedPipelineLocked(CompressedImageCode
     default:
       throw std::logic_error("Unsupported compressed image codec.");
   }
-  startPipelineLocked(buildPipelineDescription(ingress, spec_.transform_fragment), true);
+  startPipelineLocked(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
   codec_ = codec;
 }
 
