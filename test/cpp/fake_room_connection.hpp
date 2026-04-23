@@ -100,6 +100,11 @@ public:
   : state(std::make_shared<FakeRoomConnectionState>())
   {}
 
+  ~FakeRoomConnection() override
+  {
+    stop();
+  }
+
   void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
     state->started = true;
@@ -192,6 +197,10 @@ public:
 
   void stop() override
   {
+    if (state->stopped) {
+      return;
+    }
+
     state->stopped = true;
     state->event_log.push_back("stop");
     if (state->stop_hook) {

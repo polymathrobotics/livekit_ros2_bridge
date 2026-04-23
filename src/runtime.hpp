@@ -62,18 +62,6 @@ private:
     bool started_ = false;
   };
 
-  class ScopedRoomConnection final
-  {
-  public:
-    explicit ScopedRoomConnection(std::unique_ptr<RoomConnection> connection);
-    ~ScopedRoomConnection();
-
-    RoomConnection & connection() const;
-
-  private:
-    std::unique_ptr<RoomConnection> connection_;
-  };
-
   void onRoomConnected();
   void onRoomIncomingPacket(const IncomingPacket & packet);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
@@ -94,7 +82,7 @@ private:
   rclcpp::Logger logger_;
   RuntimeConfig config_;
   std::atomic<bool> callbacks_closed_{false};
-  ScopedRoomConnection room_connection_;
+  std::unique_ptr<RoomConnection> room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;

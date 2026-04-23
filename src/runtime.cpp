@@ -72,7 +72,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     node.get_node_topics_interface(),
     graph_,
     clock_,
-    room_connection_.connection(),
+    *room_connection_,
     config_.access_policy,
     &config_.subscription_qos,
     &config_.video_stream)
@@ -96,7 +96,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
     base_.get(),
     timers_.get());
 
-  const bool rpcs_registered = rpc_router_.registerRpcs(room_connection_.connection());
+  const bool rpcs_registered = rpc_router_.registerRpcs(*room_connection_);
   if (!rpcs_registered) {
     LogEvent(logger_, "runtime_startup_failed")
       .fieldOr("url", config_.livekit.url, "<unset>")
@@ -116,7 +116,7 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
   callbacks.on_reconnected = std::bind(&Runtime::onRoomReconnected, this);
   callbacks.on_connection_reset = std::bind(&Runtime::onRoomConnectionReset, this);
 
-  room_connection_.connection().start(config_.livekit, std::move(callbacks));
+  room_connection_->start(config_.livekit, std::move(callbacks));
 }
 
 Runtime::~Runtime()
@@ -130,24 +130,6 @@ Runtime::~Runtime()
   subscription_lease_gc_timer_.reset();
 
   ros_executor_queue_.shutdown();
-}
-
-Runtime::ScopedRoomConnection::ScopedRoomConnection(std::unique_ptr<RoomConnection> connection)
-: connection_(std::move(connection))
-{
-  if (connection_ == nullptr) {
-    throw std::runtime_error("Failed to create LiveKit room connection");
-  }
-}
-
-Runtime::ScopedRoomConnection::~ScopedRoomConnection()
-{
-  connection_->stop();
-}
-
-RoomConnection & Runtime::ScopedRoomConnection::connection() const
-{
-  return *connection_;
 }
 
 bool Runtime::closeCallbacks()
