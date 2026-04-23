@@ -50,18 +50,6 @@ public:
   Runtime & operator=(Runtime &&) = delete;
 
 private:
-  class ShutdownLogScope final
-  {
-  public:
-    explicit ShutdownLogScope(rclcpp::Logger logger);
-    void begin();
-    ~ShutdownLogScope();
-
-  private:
-    rclcpp::Logger logger_;
-    bool started_ = false;
-  };
-
   void onRoomConnected();
   void onRoomIncomingPacket(const IncomingPacket & packet);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
@@ -74,7 +62,6 @@ private:
   bool closeCallbacks();
   bool callbacksClosed() const;
 
-  ShutdownLogScope shutdown_log_scope_;
   rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers_;

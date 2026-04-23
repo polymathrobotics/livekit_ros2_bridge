@@ -32,32 +32,8 @@ constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 
 }  // namespace
 
-Runtime::ShutdownLogScope::ShutdownLogScope(rclcpp::Logger logger)
-: logger_(std::move(logger))
-{}
-
-void Runtime::ShutdownLogScope::begin()
-{
-  if (started_) {
-    return;
-  }
-
-  started_ = true;
-  LogEvent(logger_, "runtime_shutdown_start").info();
-}
-
-Runtime::ShutdownLogScope::~ShutdownLogScope()
-{
-  if (!started_) {
-    return;
-  }
-
-  LogEvent(logger_, "runtime_shutdown_complete").info();
-}
-
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
-: shutdown_log_scope_(node.get_logger())
-, base_(node.get_node_base_interface())
+: base_(node.get_node_base_interface())
 , graph_(node.get_node_graph_interface())
 , timers_(node.get_node_timers_interface())
 , clock_(node.get_clock())
@@ -125,7 +101,7 @@ Runtime::~Runtime()
     return;
   }
 
-  shutdown_log_scope_.begin();
+  LogEvent(logger_, "runtime_shutdown_start").info();
 
   subscription_lease_gc_timer_.reset();
 
