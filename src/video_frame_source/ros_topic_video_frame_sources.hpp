@@ -44,8 +44,8 @@ struct FrameLayout
 
 enum class CompressedImageCodec
 {
-  kJpeg,
-  kPng,
+  Jpeg,
+  Png,
 };
 
 class RosTopicVideoFrameSource final : public VideoPipelineFrameSource
@@ -65,24 +65,16 @@ public:
   void close() override;
 
 private:
-  enum class Mode
-  {
-    kRawImage,
-    kCompressedImage,
-  };
-
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
-  Mode mode_;
+  RosVideoIngestMode mode_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
   std::optional<FrameLayout> layout_;
   std::optional<CompressedImageCodec> codec_;
-
-  static Mode modeFromSpec(const VideoStreamSpec & spec);
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);

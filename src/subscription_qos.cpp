@@ -125,9 +125,9 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   }
 
   if (match != nullptr) {
-    resolved.source = SubscriptionQosResolutionSource::kOverride;
+    resolved.source = SubscriptionQosResolutionSource::Override;
   } else if (resolved.used_publisher_qos) {
-    resolved.source = SubscriptionQosResolutionSource::kPublisherQos;
+    resolved.source = SubscriptionQosResolutionSource::PublisherQos;
   }
 
   return resolved;
@@ -157,11 +157,11 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)
 {
   switch (source) {
-    case SubscriptionQosResolutionSource::kFallback:
+    case SubscriptionQosResolutionSource::Fallback:
       return "fallback";
-    case SubscriptionQosResolutionSource::kPublisherQos:
+    case SubscriptionQosResolutionSource::PublisherQos:
       return "publisher_qos";
-    case SubscriptionQosResolutionSource::kOverride:
+    case SubscriptionQosResolutionSource::Override:
       return "override";
   }
 

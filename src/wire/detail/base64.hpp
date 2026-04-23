@@ -27,24 +27,24 @@ namespace livekit_ros2_bridge::wire::detail
 // They intentionally reject lenient variants that some decoders normalize.
 enum class Base64Status
 {
-  kOk,
+  Ok,
   // Input is not canonical padded standard base64: wrong alphabet, misplaced '=',
   // or non-zero pad bits in the final quantum.
-  kInvalidEncoding,
+  InvalidEncoding,
   // Input failed quartet alignment after basic alphabet/padding placement checks, which
   // callers report as a missing-padding validation error.
-  kMissingPadding,
+  MissingPadding,
 };
 
 struct Base64DecodeResult
 {
-  // Populated only when `status == kOk`; failed decodes do not expose partial output.
+  // Populated only when `status == Base64Status::Ok`; failed decodes do not expose partial output.
   std::vector<std::uint8_t> bytes;
-  Base64Status status = Base64Status::kOk;
+  Base64Status status = Base64Status::Ok;
 
   explicit operator bool() const noexcept
   {
-    return status == Base64Status::kOk;
+    return status == Base64Status::Ok;
   }
 };
 
@@ -53,7 +53,7 @@ struct Base64DecodeResult
 std::string encodeBase64(const std::uint8_t * bytes, std::size_t size);
 
 /// Decode padded standard base64 without accepting whitespace or unpadded variants.
-/// Returns `kMissingPadding` separately when the input is not quartet-aligned after
+/// Returns `Base64Status::MissingPadding` separately when the input is not quartet-aligned after
 /// basic validation so higher-level payload parsers can surface a more specific error.
 Base64DecodeResult decodeBase64(std::string_view text);
 

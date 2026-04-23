@@ -258,14 +258,14 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepara
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnlyBody)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::kData, "lkros.data.lidar.points");
+    SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::Data, "lkros.data.lidar.points");
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
   topic_data.applied_interval_ms = 50;
 
   auto other_video = makeStatus(
     SubscriptionTargetKind::OtherVideo,
     "/sources/front",
-    SubscriptionDeliveryKind::kVideo,
+    SubscriptionDeliveryKind::Video,
     "lkros.video.other.%2Fsources%2Ffront");
   other_video.degraded_reason = "source warming up";
 
@@ -334,17 +334,17 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/battery_state",
-          SubscriptionStatusErrorReason::kForbidden,
+          SubscriptionStatusErrorReason::Forbidden,
           "ROS topic '/battery_state' not permitted."),
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/camera/front",
-          SubscriptionStatusErrorReason::kUnavailable,
+          SubscriptionStatusErrorReason::Unavailable,
           "Video stream is unavailable."),
         makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
-          SubscriptionStatusErrorReason::kNotFound,
+          SubscriptionStatusErrorReason::NotFound,
           "Unknown other video source '/sources/missing'."),
       },
       std::nullopt,
@@ -356,7 +356,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAndExpiryMetadata)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "lkros.data.battery_state");
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::Data, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.applied_interval_ms = 100;
 
@@ -392,7 +392,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWithoutSessionId)
 {
   auto topic_data = makeStatus(
-    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::kData, "lkros.data.battery_state");
+    SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::Data, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.applied_interval_ms = 100;
 
@@ -428,7 +428,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   auto other_video = makeStatus(
     SubscriptionTargetKind::OtherVideo,
     "/sources/front",
-    SubscriptionDeliveryKind::kVideo,
+    SubscriptionDeliveryKind::Video,
     "lkros.video.other.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
@@ -456,7 +456,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",
-          SubscriptionStatusErrorReason::kNotFound,
+          SubscriptionStatusErrorReason::NotFound,
           "No ROS types found for topic '/nonexistent_topic'."),
       },
       std::nullopt,

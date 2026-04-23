@@ -51,8 +51,8 @@ struct SubscriptionHeartbeat
 // keep `stream` naming when they refer to shared runtime resources.
 enum class SubscriptionDeliveryKind
 {
-  kData,
-  kVideo,
+  Data,
+  Video,
 };
 
 // Active subscription status object reported on `lkros.status`.
@@ -68,16 +68,16 @@ struct SubscriptionStatus
 
   // Serialized only for `data` delivery as `delivery.interval_ms`.
   int applied_interval_ms = 0;
-  SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::kData;
+  SubscriptionDeliveryKind delivery_kind = SubscriptionDeliveryKind::Data;
   // Serialized for both delivery modes.
   std::string track_name;
 };
 
 enum class SubscriptionStatusErrorReason
 {
-  kForbidden,
-  kUnavailable,
-  kNotFound,
+  Forbidden,
+  Unavailable,
+  NotFound,
 };
 
 // Error subscription status object reported on `lkros.status`.
@@ -85,7 +85,7 @@ struct SubscriptionErrorStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
   std::string name;
-  SubscriptionStatusErrorReason reason = SubscriptionStatusErrorReason::kNotFound;
+  SubscriptionStatusErrorReason reason = SubscriptionStatusErrorReason::NotFound;
   std::string message;
 };
 

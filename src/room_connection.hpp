@@ -122,16 +122,16 @@ private:
 
 enum class DataTrackPushErrorCode
 {
-  kUnknown,
-  kInvalidHandle,
-  kTrackUnpublished,
-  kQueueFull,
-  kInternal,
+  Unknown,
+  InvalidHandle,
+  TrackUnpublished,
+  QueueFull,
+  Internal,
 };
 
 struct DataTrackPushError
 {
-  DataTrackPushErrorCode code = DataTrackPushErrorCode::kUnknown;
+  DataTrackPushErrorCode code = DataTrackPushErrorCode::Unknown;
   std::string message;
 };
 

@@ -221,7 +221,7 @@ public:
   {
     if (track == nullptr) {
       return DataTrackPushResult::failure(
-        DataTrackPushError{DataTrackPushErrorCode::kInvalidHandle, "Local data track is unavailable."});
+        DataTrackPushError{DataTrackPushErrorCode::InvalidHandle, "Local data track is unavailable."});
     }
 
     auto result = track->tryPush(std::move(payload));
@@ -232,10 +232,10 @@ public:
     const auto code = result.error().code;
     return DataTrackPushResult::failure(
       DataTrackPushError{
-        code == livekit::LocalDataTrackTryPushErrorCode::INVALID_HANDLE      ? DataTrackPushErrorCode::kInvalidHandle
-        : code == livekit::LocalDataTrackTryPushErrorCode::TRACK_UNPUBLISHED ? DataTrackPushErrorCode::kTrackUnpublished
-        : code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL        ? DataTrackPushErrorCode::kQueueFull
-                                                                             : DataTrackPushErrorCode::kInternal,
+        code == livekit::LocalDataTrackTryPushErrorCode::INVALID_HANDLE      ? DataTrackPushErrorCode::InvalidHandle
+        : code == livekit::LocalDataTrackTryPushErrorCode::TRACK_UNPUBLISHED ? DataTrackPushErrorCode::TrackUnpublished
+        : code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL        ? DataTrackPushErrorCode::QueueFull
+                                                                             : DataTrackPushErrorCode::Internal,
         result.error().message});
   }
 

@@ -984,7 +984,7 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
   session.state->try_push_data_track_handler = [&push_attempt_count](
                                                  const std::string &, const std::vector<std::uint8_t> &) {
     push_attempt_count.fetch_add(1);
-    return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::kQueueFull, "queue full"});
+    return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::QueueFull, "queue full"});
   };
 
   auto registry = makeLeaseManager(*node, session);

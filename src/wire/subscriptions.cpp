@@ -63,9 +63,9 @@ std::optional<SubscriptionTargetKind> targetKindFromString(std::string_view kind
 const char * deliveryKindString(SubscriptionDeliveryKind delivery_kind)
 {
   switch (delivery_kind) {
-    case SubscriptionDeliveryKind::kData:
+    case SubscriptionDeliveryKind::Data:
       return wire::protocol::kDeliveryKindData;
-    case SubscriptionDeliveryKind::kVideo:
+    case SubscriptionDeliveryKind::Video:
       return wire::protocol::kDeliveryKindVideo;
   }
 
@@ -80,15 +80,15 @@ const auto kLogger = rclcpp::get_logger("wire_subscriptions");
 
 enum class ClampBoundary
 {
-  kNone,
-  kIntMin,
-  kIntMax,
+  None,
+  IntMin,
+  IntMax,
 };
 
 struct ClampedInt
 {
   int value;
-  ClampBoundary boundary = ClampBoundary::kNone;
+  ClampBoundary boundary = ClampBoundary::None;
 };
 
 rclcpp::Clock & logClock()
@@ -100,11 +100,11 @@ rclcpp::Clock & logClock()
 const char * clampBoundaryString(ClampBoundary boundary)
 {
   switch (boundary) {
-    case ClampBoundary::kNone:
+    case ClampBoundary::None:
       return "none";
-    case ClampBoundary::kIntMin:
+    case ClampBoundary::IntMin:
       return "int_min";
-    case ClampBoundary::kIntMax:
+    case ClampBoundary::IntMax:
       return "int_max";
   }
 
@@ -114,11 +114,11 @@ const char * clampBoundaryString(ClampBoundary boundary)
 const char * statusErrorReasonString(SubscriptionStatusErrorReason reason)
 {
   switch (reason) {
-    case SubscriptionStatusErrorReason::kForbidden:
+    case SubscriptionStatusErrorReason::Forbidden:
       return "forbidden";
-    case SubscriptionStatusErrorReason::kUnavailable:
+    case SubscriptionStatusErrorReason::Unavailable:
       return "unavailable";
-    case SubscriptionStatusErrorReason::kNotFound:
+    case SubscriptionStatusErrorReason::NotFound:
       return "not_found";
   }
 
@@ -137,22 +137,22 @@ ClampedInt clampJsonInt(const nlohmann::json & value, const char * error_message
     const auto raw_interval = value.get<std::uint64_t>();
     const auto max_interval = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
     if (raw_interval > max_interval) {
-      return {std::numeric_limits<int>::max(), ClampBoundary::kIntMax};
+      return {std::numeric_limits<int>::max(), ClampBoundary::IntMax};
     }
-    return {static_cast<int>(raw_interval), ClampBoundary::kNone};
+    return {static_cast<int>(raw_interval), ClampBoundary::None};
   }
 
   const auto raw_interval = value.get<std::int64_t>();
   const auto min_interval = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max_interval = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw_interval < min_interval) {
-    return {std::numeric_limits<int>::min(), ClampBoundary::kIntMin};
+    return {std::numeric_limits<int>::min(), ClampBoundary::IntMin};
   }
   if (raw_interval > max_interval) {
-    return {std::numeric_limits<int>::max(), ClampBoundary::kIntMax};
+    return {std::numeric_limits<int>::max(), ClampBoundary::IntMax};
   }
 
-  return {static_cast<int>(raw_interval), ClampBoundary::kNone};
+  return {static_cast<int>(raw_interval), ClampBoundary::None};
 }
 
 std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
@@ -214,8 +214,7 @@ void parseDemandTarget(const nlohmann::json & entry, SubscriptionDemand & demand
 
 nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & status)
 {
-  if (
-    status.delivery_kind != SubscriptionDeliveryKind::kVideo && status.delivery_kind != SubscriptionDeliveryKind::kData)
+  if (status.delivery_kind != SubscriptionDeliveryKind::Video && status.delivery_kind != SubscriptionDeliveryKind::Data)
   {
     LogEvent(kLogger, "subscription_status_serialize_failed")
       .field("kind", targetKindString(status.kind))
@@ -242,7 +241,7 @@ nlohmann::json serializeSubscriptionStatusEntry(const SubscriptionStatus & statu
     {"kind", deliveryKindString(status.delivery_kind)},
     {"track_name", status.track_name},
   };
-  if (status.delivery_kind == SubscriptionDeliveryKind::kData) {
+  if (status.delivery_kind == SubscriptionDeliveryKind::Data) {
     // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
     // LiveKit data track, so the content type is fixed by protocol rather than caller input.
     delivery["content_type"] = wire::protocol::kDataContentTypeCdr;
@@ -308,7 +307,7 @@ SubscriptionHeartbeat parseHeartbeat(const nlohmann::json & body)
     parseDemandTarget(entry, demand);
     if (const auto interval = parseIntervalMs(entry)) {
       demand.preferred_interval_ms = interval->value;
-      if (interval->boundary != ClampBoundary::kNone) {
+      if (interval->boundary != ClampBoundary::None) {
         LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
           .field("kind", targetKindString(demand.kind))
           .field("name", demand.name)

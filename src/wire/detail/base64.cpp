@@ -91,18 +91,18 @@ Base64DecodeResult decodeBase64(std::string_view text)
     }
 
     if (pads != 0U || base64Value(c) < 0) {
-      return {{}, Base64Status::kInvalidEncoding};
+      return {{}, Base64Status::InvalidEncoding};
     }
   }
 
   if (pads > 2U || (pads != 0U && size == 1U)) {
-    return {{}, Base64Status::kInvalidEncoding};
+    return {{}, Base64Status::InvalidEncoding};
   }
 
   // A structurally valid alphabet/padding sequence that is not quartet-aligned is the
   // specific "missing padding" case callers surface separately at the JSON boundary.
   if ((size % 4U) != 0U) {
-    return {{}, Base64Status::kMissingPadding};
+    return {{}, Base64Status::MissingPadding};
   }
 
   // RFC 4648 requires unused bits in the final sextet(s) to be zero. `EVP_DecodeBlock`
@@ -111,7 +111,7 @@ Base64DecodeResult decodeBase64(std::string_view text)
     const int tail = base64Value(text[size - (pads + 1U)]);
     const int pad_mask = (pads == 2U) ? 0x0F : 0x03;
     if (tail < 0 || (tail & pad_mask) != 0) {
-      return {{}, Base64Status::kInvalidEncoding};
+      return {{}, Base64Status::InvalidEncoding};
     }
   }
 
@@ -122,13 +122,13 @@ Base64DecodeResult decodeBase64(std::string_view text)
     static_cast<int>(size));
   if (decoded < 0) {
     LogEvent(kLogger, "base64_decode_failed").field("input_chars", size).error();
-    return {{}, Base64Status::kInvalidEncoding};
+    return {{}, Base64Status::InvalidEncoding};
   }
 
   // `EVP_DecodeBlock` materializes three bytes per quartet; trim the synthetic tail
   // bytes that correspond to validated '=' padding.
   bytes.resize(static_cast<std::size_t>(decoded) - pads);
-  return {std::move(bytes), Base64Status::kOk};
+  return {std::move(bytes), Base64Status::Ok};
 }
 
 }  // namespace livekit_ros2_bridge::wire::detail

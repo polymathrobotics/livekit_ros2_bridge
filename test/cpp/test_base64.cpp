@@ -32,7 +32,7 @@ void expectCanonicalEncoding(std::initializer_list<std::uint8_t> payload, std::s
   EXPECT_EQ(wire::detail::encodeBase64(bytes.data(), bytes.size()), expected);
 
   const wire::detail::Base64DecodeResult result = wire::detail::decodeBase64(expected);
-  ASSERT_EQ(result.status, wire::detail::Base64Status::kOk);
+  ASSERT_EQ(result.status, wire::detail::Base64Status::Ok);
   EXPECT_EQ(result.bytes, bytes);
 }
 
@@ -56,35 +56,35 @@ TEST(Base64Test, EmptyInputEncodesAndDecodesAsEmpty)
   EXPECT_EQ(wire::detail::encodeBase64(nullptr, 0), "");
 
   const wire::detail::Base64DecodeResult result = wire::detail::decodeBase64("");
-  EXPECT_EQ(result.status, wire::detail::Base64Status::kOk);
+  EXPECT_EQ(result.status, wire::detail::Base64Status::Ok);
   EXPECT_TRUE(result.bytes.empty());
 }
 
 TEST(Base64Test, StandardDecodeRejectsMissingPadding)
 {
-  expectDecodeRejected("AAECAw", wire::detail::Base64Status::kMissingPadding);
+  expectDecodeRejected("AAECAw", wire::detail::Base64Status::MissingPadding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsInvalidEncodingSamples)
 {
-  expectDecodeRejected("=", wire::detail::Base64Status::kInvalidEncoding);
-  expectDecodeRejected("AAECAw?=", wire::detail::Base64Status::kInvalidEncoding);
-  expectDecodeRejected("AAECAw==\n", wire::detail::Base64Status::kInvalidEncoding);
+  expectDecodeRejected("=", wire::detail::Base64Status::InvalidEncoding);
+  expectDecodeRejected("AAECAw?=", wire::detail::Base64Status::InvalidEncoding);
+  expectDecodeRejected("AAECAw==\n", wire::detail::Base64Status::InvalidEncoding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsNonCanonicalPaddingPlacements)
 {
-  expectDecodeRejected("A=AA", wire::detail::Base64Status::kInvalidEncoding);
-  expectDecodeRejected("AA=A", wire::detail::Base64Status::kInvalidEncoding);
-  expectDecodeRejected("A===", wire::detail::Base64Status::kInvalidEncoding);
+  expectDecodeRejected("A=AA", wire::detail::Base64Status::InvalidEncoding);
+  expectDecodeRejected("AA=A", wire::detail::Base64Status::InvalidEncoding);
+  expectDecodeRejected("A===", wire::detail::Base64Status::InvalidEncoding);
 }
 
 TEST(Base64Test, StandardDecodeRejectsNonZeroTrailingPadBits)
 {
   // These decode to the same bytes as AQ== and AQI= unless the decoder validates
   // the unused pad bits in the final quantum.
-  expectDecodeRejected("AR==", wire::detail::Base64Status::kInvalidEncoding);
-  expectDecodeRejected("AQJ=", wire::detail::Base64Status::kInvalidEncoding);
+  expectDecodeRejected("AR==", wire::detail::Base64Status::InvalidEncoding);
+  expectDecodeRejected("AQJ=", wire::detail::Base64Status::InvalidEncoding);
 }
 
 }  // namespace

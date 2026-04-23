@@ -58,11 +58,11 @@ std::vector<std::uint8_t> decodePayload(const std::string & base64)
   // The bridge treats padded standard base64 as part of the wire contract so malformed payloads
   // fail here instead of reaching downstream ROS deserialization with ambiguous byte contents.
   switch (auto decoded = detail::decodeBase64(base64); decoded.status) {
-    case detail::Base64Status::kOk:
+    case detail::Base64Status::Ok:
       return std::move(decoded.bytes);
-    case detail::Base64Status::kMissingPadding:
+    case detail::Base64Status::MissingPadding:
       throw std::invalid_argument("payload_base64 must be padded standard base64.");
-    case detail::Base64Status::kInvalidEncoding:
+    case detail::Base64Status::InvalidEncoding:
       throw std::invalid_argument("payload_base64 is not valid base64.");
   }
 

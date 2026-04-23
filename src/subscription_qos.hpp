@@ -51,9 +51,9 @@ struct PublisherQos
 
 enum class SubscriptionQosResolutionSource
 {
-  kFallback,
-  kPublisherQos,
-  kOverride
+  Fallback,
+  PublisherQos,
+  Override
 };
 
 struct ResolvedSubscriptionQos
@@ -62,9 +62,9 @@ struct ResolvedSubscriptionQos
   // durability; all other QoS axes stay as provided by the caller.
   rclcpp::QoS qos{rclcpp::KeepLast(2)};
   // Highest-precedence contributor to the final result. This remains
-  // `kOverride` when a matching override leaves one axis on `kAuto` and
+  // `Override` when a matching override leaves one axis on auto and
   // publisher QoS fills that axis.
-  SubscriptionQosResolutionSource source = SubscriptionQosResolutionSource::kFallback;
+  SubscriptionQosResolutionSource source = SubscriptionQosResolutionSource::Fallback;
   // True when at least one resolved axis came from discovered publisher QoS.
   bool used_publisher_qos = false;
   // Diagnostic flags derived from the discovered publisher set before override
@@ -74,7 +74,7 @@ struct ResolvedSubscriptionQos
   // Number of publisher profiles considered during resolution.
   std::size_t publisher_count = 0;
   // Populated whenever an override matches this topic, even if some axes stay
-  // on `kAuto` and are filled from publisher QoS or the caller's base QoS.
+  // on auto and are filled from publisher QoS or the caller's base QoS.
   std::string override_id;
   std::string override_pattern;
 };

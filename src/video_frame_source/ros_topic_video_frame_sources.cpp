@@ -65,9 +65,9 @@ GstVideoFormat gstFormatFromRosEncoding(const std::string & encoding)
 const char * compressedImageCodecName(CompressedImageCodec codec)
 {
   switch (codec) {
-    case CompressedImageCodec::kJpeg:
+    case CompressedImageCodec::Jpeg:
       return "jpeg";
-    case CompressedImageCodec::kPng:
+    case CompressedImageCodec::Png:
       return "png";
     default:
       return "unknown";
@@ -87,8 +87,8 @@ std::optional<CompressedImageCodec> parseCompressedImageCodec(const std::string 
     }
     std::transform(
       token.begin(), token.end(), token.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (token == "jpeg" || token == "jpg") return CompressedImageCodec::kJpeg;
-    if (token == "png") return CompressedImageCodec::kPng;
+    if (token == "jpeg" || token == "jpg") return CompressedImageCodec::Jpeg;
+    if (token == "png") return CompressedImageCodec::Png;
     return std::nullopt;
   };
 
@@ -209,25 +209,12 @@ RosTopicVideoFrameSource::RosTopicVideoFrameSource(
 , topics_(std::move(topics))
 , graph_(std::move(graph))
 , qos_config_(qos_config)
-, mode_(modeFromSpec(spec_))
+, mode_(requireRosVideoInput(spec_).ingest_mode)
 {}
 
 RosTopicVideoFrameSource::~RosTopicVideoFrameSource()
 {
   close();
-}
-
-RosTopicVideoFrameSource::Mode RosTopicVideoFrameSource::modeFromSpec(const VideoStreamSpec & spec)
-{
-  const auto & input = requireRosVideoInput(spec);
-  switch (input.ingest_mode) {
-    case RosVideoIngestMode::RawImage:
-      return Mode::kRawImage;
-    case RosVideoIngestMode::CompressedImage:
-      return Mode::kCompressedImage;
-  }
-  throw std::runtime_error(
-    "Unsupported ROS video ingest mode '" + std::string(rosVideoIngestModeToString(input.ingest_mode)) + "'.");
 }
 
 void RosTopicVideoFrameSource::activate()
@@ -251,7 +238,7 @@ void RosTopicVideoFrameSource::activate()
   std::weak_ptr<RosTopicVideoFrameSource> weak_self =
     std::static_pointer_cast<RosTopicVideoFrameSource>(shared_from_this());
   switch (mode_) {
-    case Mode::kRawImage:
+    case RosVideoIngestMode::RawImage:
       raw_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
         parameters_, topics_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
           if (const auto self = weak_self.lock(); self) {
@@ -259,7 +246,7 @@ void RosTopicVideoFrameSource::activate()
           }
         });
       return;
-    case Mode::kCompressedImage:
+    case RosVideoIngestMode::CompressedImage:
       compressed_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
         parameters_,
         topics_,
@@ -445,10 +432,10 @@ void RosTopicVideoFrameSource::startCompressedPipelineLocked(CompressedImageCode
   ingress += kBridgeAppSrcName;
   ingress += " is-live=true block=false format=time do-timestamp=true";
   switch (codec) {
-    case CompressedImageCodec::kJpeg:
+    case CompressedImageCodec::Jpeg:
       ingress += " caps=image/jpeg ! jpegdec";
       break;
-    case CompressedImageCodec::kPng:
+    case CompressedImageCodec::Png:
       ingress += " caps=image/png ! pngdec";
       break;
     default:

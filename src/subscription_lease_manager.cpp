@@ -141,7 +141,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
         SubscriptionErrorStatus{
           demand.kind,
           demand.name,
-          SubscriptionStatusErrorReason::kForbidden,
+          SubscriptionStatusErrorReason::Forbidden,
           "ROS topic '" + demand.name + "' not permitted.",
         });
       continue;
@@ -154,7 +154,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
         SubscriptionErrorStatus{
           demand.kind,
           demand.name,
-          SubscriptionStatusErrorReason::kNotFound,
+          SubscriptionStatusErrorReason::NotFound,
           exc.what(),
         });
     }
@@ -526,7 +526,7 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
 
   if (!isVideoSubscription(subscription)) {
     const auto & data_publisher = requireDataPublisher(subscription);
-    status.delivery_kind = SubscriptionDeliveryKind::kData;
+    status.delivery_kind = SubscriptionDeliveryKind::Data;
     if (data_publisher.isPublished()) {
       status.track_name = data_publisher.name();
     }
@@ -535,7 +535,7 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
   }
 
   const auto & video_spec = requireVideoPublisher(subscription).spec();
-  status.delivery_kind = SubscriptionDeliveryKind::kVideo;
+  status.delivery_kind = SubscriptionDeliveryKind::Video;
   status.track_name = video_spec.track_name;
   status.degraded_reason = video_spec.degraded_reason.value_or("");
   return status;

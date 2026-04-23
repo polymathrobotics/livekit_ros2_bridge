@@ -59,15 +59,15 @@ std::string makeTrackName(const std::string & topic)
 const char * pushReason(DataTrackPushErrorCode code)
 {
   switch (code) {
-    case DataTrackPushErrorCode::kUnknown:
+    case DataTrackPushErrorCode::Unknown:
       return "unknown";
-    case DataTrackPushErrorCode::kInvalidHandle:
+    case DataTrackPushErrorCode::InvalidHandle:
       return "invalid_handle";
-    case DataTrackPushErrorCode::kTrackUnpublished:
+    case DataTrackPushErrorCode::TrackUnpublished:
       return "track_unpublished";
-    case DataTrackPushErrorCode::kQueueFull:
+    case DataTrackPushErrorCode::QueueFull:
       return "queue_full";
-    case DataTrackPushErrorCode::kInternal:
+    case DataTrackPushErrorCode::Internal:
       return "internal";
   }
   return "unknown";
@@ -188,7 +188,7 @@ public:
       }
 
       const auto & error = result.error();
-      if (error.code == DataTrackPushErrorCode::kQueueFull) {
+      if (error.code == DataTrackPushErrorCode::QueueFull) {
         LogEvent(kLogger, "data_track_delivery_dropped")
           .field("resource", topic_)
           .field("track_name", track_name_)
