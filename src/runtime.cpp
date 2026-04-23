@@ -116,31 +116,6 @@ private:
   std::unique_ptr<RoomConnection> connection_;
 };
 
-class ScopedRpcRegistration final
-{
-public:
-  ScopedRpcRegistration() = default;
-
-  ~ScopedRpcRegistration()
-  {
-    if (router_ == nullptr || connection_ == nullptr) {
-      return;
-    }
-
-    router_->unregisterRpcs(*connection_);
-  }
-
-  void arm(RpcRouter & router, RoomConnection & connection)
-  {
-    router_ = &router;
-    connection_ = &connection;
-  }
-
-private:
-  RpcRouter * router_ = nullptr;
-  RoomConnection * connection_ = nullptr;
-};
-
 }  // namespace
 
 class Runtime::Impl final
@@ -188,7 +163,6 @@ public:
       timers_.get());
 
     const bool rpcs_registered = rpc_router_.registerRpcs(room_connection_.connection());
-    rpc_registration_.arm(rpc_router_, room_connection_.connection());
     if (!rpcs_registered) {
       LogEvent(logger_, "runtime_startup_failed")
         .fieldOr("url", config_.livekit.url, "<unset>")
@@ -338,7 +312,6 @@ private:
   SubscriptionLeaseManager subscription_lease_manager_;
   PacketRouter packet_router_;
   RpcRouter rpc_router_;
-  ScopedRpcRegistration rpc_registration_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   ConnectionWatchdog watchdog_;
 };

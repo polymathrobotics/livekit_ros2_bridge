@@ -38,25 +38,32 @@ public:
     const AccessPolicy & access_policy,
     RosExecutorQueue & ros_executor_queue,
     RosServiceCaller & ros_service_caller);
+  ~RpcRouter();
+
+  RpcRouter(const RpcRouter &) = delete;
+  RpcRouter & operator=(const RpcRouter &) = delete;
+  RpcRouter(RpcRouter &&) = delete;
+  RpcRouter & operator=(RpcRouter &&) = delete;
 
   // Registers every supported RPC. Returns false if any registration fails, but
-  // successful handlers remain installed until unregisterRpcs() is called.
-  // Registered callbacks borrow this router and its dependencies, so
-  // unregisterRpcs() must run before any of them are destroyed.
+  // successful handlers remain installed until this router is destroyed.
+  // Registered callbacks borrow this router and its dependencies, so the
+  // router must be destroyed before any borrowed dependency, and while the
+  // room connection is still alive.
   bool registerRpcs(RoomConnection & connection);
-  // Best-effort teardown counterpart to registerRpcs(); call before
-  // destroying this router or any borrowed dependency captured by handlers.
-  void unregisterRpcs(RoomConnection & connection);
 
 private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Copy the policy so registered callbacks do not depend on the caller
   // retaining the original config object for the life of the room connection.
   AccessPolicy access_policy_;
-  // Borrowed ROS helpers captured by registered callbacks; unregisterRpcs()
-  // must run before either helper or graph_ is destroyed.
+  // Borrowed ROS helpers captured by registered callbacks; the router must be
+  // destroyed before either helper or graph_ is destroyed.
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
+  RoomConnection * registered_connection_ = nullptr;
+
+  void unregisterRpcs() noexcept;
 
   std::optional<std::string> callService(const RpcInvocation & invocation);
   std::optional<std::string> getInterfaces(const RpcInvocation & invocation);

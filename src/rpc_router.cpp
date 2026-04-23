@@ -221,9 +221,16 @@ RpcRouter::RpcRouter(
 , ros_service_caller_(ros_service_caller)
 {}
 
+RpcRouter::~RpcRouter()
+{
+  unregisterRpcs();
+}
+
 bool RpcRouter::registerRpcs(RoomConnection & connection)
 {
+  registered_connection_ = &connection;
   bool all_registered = true;
+
   const auto register_method = [&](const char * method_name, RpcHandler handler) {
     // Registration is best-effort rather than transactional so one failure
     // does not hide other methods that can still be served on this connection.
@@ -239,10 +246,17 @@ bool RpcRouter::registerRpcs(RoomConnection & connection)
   return all_registered;
 }
 
-void RpcRouter::unregisterRpcs(RoomConnection & connection)
+void RpcRouter::unregisterRpcs() noexcept
 {
+  if (registered_connection_ == nullptr) {
+    return;
+  }
+
+  RoomConnection & connection = *registered_connection_;
+  registered_connection_ = nullptr;
+
   for (const char * method_name : kRpcNames) {
-    connection.unregisterRpc(method_name);
+    (void)connection.unregisterRpc(method_name);
   }
 }
 

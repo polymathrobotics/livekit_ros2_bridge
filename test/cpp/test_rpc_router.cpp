@@ -166,13 +166,6 @@ public:
     router.registerRpcs(connection);
   }
 
-  ~RpcRouterHarness()
-  {
-    router.unregisterRpcs(connection);
-    caller.shutdown();
-    queue.shutdown();
-  }
-
   std::optional<std::string> invokeRpc(const std::string & method, const RpcInvocation & invocation)
   {
     const auto handler_it = connection.state->rpc_handlers.find(method);
@@ -319,28 +312,26 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   FakeRoomConnection connection;
   connection.state->rejected_rpc_methods = {wire::protocol::kRpcServiceList};
 
+  const std::vector<std::string> expected_methods = {
+    wire::protocol::kRpcServiceCall,
+    wire::protocol::kRpcInterfaceShow,
+    wire::protocol::kRpcServiceList,
+    wire::protocol::kRpcTopicList,
+  };
+
   {
     RpcRouter router(node->get_node_graph_interface(), AccessPolicy(), queue, caller);
 
     EXPECT_FALSE(router.registerRpcs(connection));
-
-    const std::vector<std::string> expected_methods = {
-      wire::protocol::kRpcServiceCall,
-      wire::protocol::kRpcInterfaceShow,
-      wire::protocol::kRpcServiceList,
-      wire::protocol::kRpcTopicList,
-    };
     EXPECT_EQ(connection.state->registered_rpc_methods, expected_methods);
     EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceCall), 1U);
     EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcInterfaceShow), 1U);
     EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceList), 0U);
     EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcTopicList), 1U);
-
-    router.unregisterRpcs(connection);
-
-    EXPECT_TRUE(connection.state->rpc_handlers.empty());
-    EXPECT_EQ(connection.state->unregistered_rpc_methods, expected_methods);
   }
+
+  EXPECT_TRUE(connection.state->rpc_handlers.empty());
+  EXPECT_EQ(connection.state->unregistered_rpc_methods, expected_methods);
 
   caller.shutdown();
   queue.shutdown();
