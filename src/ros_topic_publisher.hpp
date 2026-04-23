@@ -15,12 +15,13 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "access_policy.hpp"
@@ -29,8 +30,6 @@
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "topic_publish_request.hpp"
-#include "utils/event_throttle.hpp"
-#include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -61,8 +60,8 @@ public:
   // rclcpp::SerializedMessage. Cold topics must already exist in the ROS graph
   // with exactly one interface type. After the first successful publish, later
   // requests are checked against the cached publisher/type instead of
-  // consulting the graph again, and shutdown() keeps those cached handles from
-  // being recreated once teardown starts.
+  // consulting the graph again. Once the bounded publisher cache is full, new
+  // topics are rejected until shutdown clears the cached handles.
   void publish(const std::string & requester_identity, const TopicPublishRequest & request);
 
   // Idempotently rejects later publish() calls and clears the bridge-owned
@@ -78,8 +77,6 @@ private:
     std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };
 
-  static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
-
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   rclcpp::Clock::SharedPtr clock_;
@@ -88,19 +85,18 @@ private:
   // rechecks it before reusing or updating cache state so shutdown() does not
   // resurrect bridge-owned publishers after teardown begins.
   std::atomic<bool> is_shutdown_{false};
+  std::size_t max_topics_;
   // Cache entries own the bridge's reusable publisher handles. The shared_ptr
-  // lets an in-flight publish finish even if its topic is evicted or
-  // shutdown() clears the cache concurrently.
-  LruCache<std::string, PublisherEntry> publishers_;
+  // lets an in-flight publish finish even if shutdown() clears the cache
+  // concurrently.
+  std::mutex publishers_mutex_;
+  std::unordered_map<std::string, PublisherEntry> publishers_;
   // Test-only seam used to force deterministic failures or shutdown after
   // publisher resolution/creation but immediately before publish().
   std::function<void()> before_publish_handler_;
   // Test-only topic graph provider used to avoid mutating the real ROS graph in
   // narrow unit tests. publish() only consults it on cache misses.
   std::function<std::map<std::string, std::vector<std::string>>()> topic_graph_provider_;
-  // Coalesces bursts of LRU evictions into periodic warnings while preserving
-  // how many evictions were suppressed between log lines.
-  EventThrottle eviction_warning_throttle_{kEvictedPublisherWarningThrottlePeriod};
 };
 
 }  // namespace livekit_ros2_bridge

@@ -272,7 +272,7 @@ TEST(TopicPublisherTest, RejectsDeniedPublishRequests)
   expectTopicNotPublished(harness, topic, received_message);
 }
 
-TEST(TopicPublisherTest, CacheSizeOneEvictsPreviousTopicAndRecreatesItOnReuse)
+TEST(TopicPublisherTest, CacheSizeOneRejectsNewTopicAndKeepsExistingPublisher)
 {
   RosTopicPublisherHarness harness;
   const std::string first_topic = "/battery/first";
@@ -306,18 +306,17 @@ TEST(TopicPublisherTest, CacheSizeOneEvictsPreviousTopicAndRecreatesItOnReuse)
   message.voltage = 47.0F;
   publisher.publish("alice", makeRequest(second_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
-  ASSERT_TRUE(harness.spinUntil([&]() { return second_topic_voltages.size() == 1U; }));
-  EXPECT_NEAR(second_topic_voltages.back(), 47.0F, 1e-6F);
-  ASSERT_TRUE(harness.spinUntil(
-    [&]() { return harness.countPublishers(first_topic) == 0U && harness.countPublishers(second_topic) == 1U; }));
+  EXPECT_FALSE(harness.spinUntil([&]() { return second_topic_voltages.size() == 1U; }, std::chrono::milliseconds(200)));
+  EXPECT_EQ(harness.countPublishers(first_topic), 1U);
+  EXPECT_EQ(harness.countPublishers(second_topic), 0U);
 
   message.voltage = 50.0F;
   publisher.publish("alice", makeRequest(first_topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 2U; }));
   EXPECT_NEAR(first_topic_voltages.back(), 50.0F, 1e-6F);
-  ASSERT_TRUE(harness.spinUntil(
-    [&]() { return harness.countPublishers(first_topic) == 1U && harness.countPublishers(second_topic) == 0U; }));
+  EXPECT_EQ(harness.countPublishers(first_topic), 1U);
+  EXPECT_EQ(harness.countPublishers(second_topic), 0U);
 }
 
 TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)

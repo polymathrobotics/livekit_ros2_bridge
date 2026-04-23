@@ -16,7 +16,9 @@
 
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "rclcpp/create_generic_publisher.hpp"
@@ -57,7 +59,7 @@ RosTopicPublisher::RosTopicPublisher(
 , graph_(std::move(graph))
 , clock_(std::move(clock))
 , access_policy_(std::move(access_policy))
-, publishers_(max_topics)
+, max_topics_(max_topics)
 {}
 
 RosTopicPublisher::~RosTopicPublisher()
@@ -85,14 +87,29 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   std::string type;
   std::shared_ptr<rclcpp::GenericPublisher> publisher;
+
   try {
-    // Cache hits deliberately skip the ROS graph. Once a publish succeeds, the
-    // cached publisher pins the interface type for that topic until eviction or
-    // shutdown clears the entry.
-    if (const auto cached = publishers_.peek(topic); cached.has_value()) {
-      type = cached->type;
-      publisher = cached->publisher;
-    } else {
+    // Cache hits deliberately skip the ROS graph. Once a publish succeeds, a
+    // cached publisher pins the interface type for that topic until shutdown
+    // clears the entry.
+    {
+      std::lock_guard<std::mutex> lock(publishers_mutex_);
+      const auto cached = publishers_.find(topic);
+      if (cached != publishers_.end()) {
+        type = cached->second.type;
+        publisher = cached->second.publisher;
+      } else if (publishers_.size() >= max_topics_) {
+        LogEvent(kLogger, "publish_request_rejected")
+          .field("reason", "publisher_cache_full")
+          .field("topic", topic)
+          .field("requester_identity", requester_identity)
+          .field("max_topics", max_topics_)
+          .warnThrottle(*clock_, kLogThrottle);
+        return;
+      }
+    }
+
+    if (!publisher) {
       const auto topics = topic_graph_provider_ ? topic_graph_provider_() : graph_->get_topic_names_and_types();
       type = requireSingleInterfaceType(topics, topic, "topic");
     }
@@ -146,29 +163,18 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       return;
     }
 
-    // Refresh recency only after a successful publish.
-    if (had_cached_publisher && publishers_.touch(topic)) {
-      return;
-    }
+    if (!had_cached_publisher) {
+      // Cache only after a successful publish. Recheck shutdown and size under
+      // the lock so a racing publish cannot push the map over max_topics_.
+      std::lock_guard<std::mutex> lock(publishers_mutex_);
+      if (is_shutdown_.load()) {
+        return;
+      }
 
-    // Enforce the cap only after the current publish succeeds.
-    const auto evicted = publishers_.insertOrAssign(topic, PublisherEntry{type, std::move(publisher)});
-    if (!evicted.has_value()) {
-      return;
+      if (publishers_.size() < max_topics_) {
+        publishers_.emplace(topic, PublisherEntry{type, std::move(publisher)});
+      }
     }
-
-    const std::size_t evicted_count = eviction_warning_throttle_.recordAndTakePendingCount();
-    if (evicted_count == 0U) {
-      return;
-    }
-
-    LogEvent(kLogger, "publisher_cache_evicted")
-      .field("reason", "max_topics_exceeded")
-      .field("topic", topic)
-      .field("evicted_topic", evicted->key)
-      .field("count", evicted_count)
-      .field("max_topics", static_cast<int>(publishers_.capacity()))
-      .warn();
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_failed")
       .field("reason", "internal")
@@ -188,13 +194,17 @@ void RosTopicPublisher::shutdown()
     return;
   }
 
-  const std::size_t publisher_count = publishers_.size();
+  std::size_t publisher_count = 0U;
+  {
+    std::lock_guard<std::mutex> lock(publishers_mutex_);
+    publisher_count = publishers_.size();
+    publishers_.clear();
+  }
+
   LogEvent(kLogger, "topic_publisher_state_changed")
     .field("reason", "shutdown")
     .field("cached_publishers", publisher_count)
     .info();
-
-  publishers_.clear();
 }
 
 }  // namespace livekit_ros2_bridge
