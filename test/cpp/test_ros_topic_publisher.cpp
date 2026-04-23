@@ -138,6 +138,25 @@ public:
     return *observer_node_;
   }
 
+  RosTopicPublisher makePublisher(AccessPolicy access_policy) const
+  {
+    return RosTopicPublisher(
+      publisher_node_->get_node_topics_interface(),
+      publisher_node_->get_node_graph_interface(),
+      publisher_node_->get_clock(),
+      std::move(access_policy));
+  }
+
+  RosTopicPublisher makePublisher(AccessPolicy access_policy, std::size_t max_topics) const
+  {
+    return RosTopicPublisher(
+      publisher_node_->get_node_topics_interface(),
+      publisher_node_->get_node_graph_interface(),
+      publisher_node_->get_clock(),
+      std::move(access_policy),
+      max_topics);
+  }
+
   bool spinUntil(const std::function<bool()> & predicate, std::chrono::milliseconds timeout = std::chrono::seconds(2))
   {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -219,7 +238,7 @@ TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   message.percentage = 0.75F;
@@ -244,7 +263,7 @@ TEST(TopicPublisherTest, RejectsDeniedPublishRequests)
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({"/battery/allowed"}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({"/battery/allowed"}));
 
   sensor_msgs::msg::BatteryState message;
 
@@ -275,7 +294,7 @@ TEST(TopicPublisherTest, CacheSizeOneEvictsPreviousTopicAndRecreatesItOnReuse)
   ASSERT_TRUE(harness.waitForType(first_topic, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(harness.waitForType(second_topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({"/battery/*"}), 1U);
+  auto publisher = harness.makePublisher(makeAccessPolicy({"/battery/*"}), 1U);
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
@@ -314,7 +333,7 @@ TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
@@ -364,7 +383,7 @@ TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLat
 
   bool fail_first_publish = true;
   bool subscriber_ready = false;
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   publisher.before_publish_handler_ = [&]() {
     subscriber_ready = harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; });
     if (fail_first_publish) {
@@ -396,7 +415,7 @@ TEST(TopicPublisherTest, RejectsRequestsWhoseDeclaredTypeDoesNotMatchTheGraph)
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
   std_msgs::msg::String wrong_message;
 
@@ -410,7 +429,7 @@ TEST(TopicPublisherTest, RejectsRequestsForTopicsMissingFromTheGraph)
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/missing";
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
   sensor_msgs::msg::BatteryState message;
 
@@ -432,7 +451,7 @@ TEST(TopicPublisherTest, RejectsRequestsWhenTopicGraphHasMultipleTypes)
         received_message = message;
       });
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   publisher.topic_graph_provider_ = [topic]() {
     return std::map<std::string, std::vector<std::string>>{
       {topic, {"sensor_msgs/msg/BatteryState", "std_msgs/msg/String"}},
@@ -459,7 +478,7 @@ TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdo
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
@@ -494,7 +513,7 @@ TEST(TopicPublisherTest, ShutdownDuringInFlightFirstPublishDoesNotLeavePublisher
 
   ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
 
-  RosTopicPublisher publisher(harness.publisherNode(), makeAccessPolicy({topic}));
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   publisher.before_publish_handler_ = [&]() {
     EXPECT_TRUE(harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; }));
     publisher.shutdown();

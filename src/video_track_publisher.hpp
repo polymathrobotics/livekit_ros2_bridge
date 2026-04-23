@@ -19,8 +19,10 @@
 #include <mutex>
 #include <vector>
 
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_parameters_interface.hpp"
+#include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "room_connection.hpp"
-#include "ros_node_interfaces.hpp"
 #include "video_profiling.hpp"
 #include "video_stream_runtime.hpp"
 #include "video_stream_spec.hpp"
@@ -41,7 +43,9 @@ class VideoTrackPublisher final : public VideoFrameSink, private VideoStreamLife
 {
 public:
   static std::shared_ptr<VideoTrackPublisher> create(
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,

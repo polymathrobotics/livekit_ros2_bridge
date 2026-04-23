@@ -202,14 +202,18 @@ void logSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscription
 }  // namespace
 
 RawRosVideoFrameSource::RawRosVideoFrameSource(
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
   VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : VideoPipelineFrameSource(std::move(spec), sink, observer, std::move(profiler))
-, interfaces_(std::move(interfaces))
+, parameters_(std::move(parameters))
+, topics_(std::move(topics))
+, graph_(std::move(graph))
 , qos_config_(qos_config)
 {}
 
@@ -230,7 +234,7 @@ void RawRosVideoFrameSource::activate()
   }
 
   const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
-  ResolvedSubscriptionQos qos = resolveSubscriptionQos(interfaces_.graph, spec_.ros_topic, base_qos, qos_config_);
+  ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, spec_.ros_topic, base_qos, qos_config_);
   logSubscriptionQos(spec_, qos);
 
   // The ROS subscription may still have queued callbacks during shutdown; the
@@ -238,11 +242,7 @@ void RawRosVideoFrameSource::activate()
   auto weak_self =
     std::weak_ptr<RawRosVideoFrameSource>(std::static_pointer_cast<RawRosVideoFrameSource>(shared_from_this()));
   subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
-    interfaces_.parameters,
-    interfaces_.topics,
-    spec_.ros_topic,
-    qos.qos,
-    [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
+    parameters_, topics_, spec_.ros_topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
       if (const auto self = weak_self.lock(); self) {
         self->onImage(image);
       }
@@ -377,14 +377,18 @@ void RawRosVideoFrameSource::resetLocked()
 }
 
 CompressedRosVideoFrameSource::CompressedRosVideoFrameSource(
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
   VideoStreamLifecycleObserver & observer,
   std::shared_ptr<VideoStreamProfiler> profiler)
 : VideoPipelineFrameSource(std::move(spec), sink, observer, std::move(profiler))
-, interfaces_(std::move(interfaces))
+, parameters_(std::move(parameters))
+, topics_(std::move(topics))
+, graph_(std::move(graph))
 , qos_config_(qos_config)
 {}
 
@@ -405,7 +409,7 @@ void CompressedRosVideoFrameSource::activate()
   }
 
   const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
-  ResolvedSubscriptionQos qos = resolveSubscriptionQos(interfaces_.graph, spec_.ros_topic, base_qos, qos_config_);
+  ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, spec_.ros_topic, base_qos, qos_config_);
   logSubscriptionQos(spec_, qos);
 
   // The ROS subscription may still have queued callbacks during shutdown; the
@@ -413,8 +417,8 @@ void CompressedRosVideoFrameSource::activate()
   auto weak_self = std::weak_ptr<CompressedRosVideoFrameSource>(
     std::static_pointer_cast<CompressedRosVideoFrameSource>(shared_from_this()));
   subscription_ = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
-    interfaces_.parameters,
-    interfaces_.topics,
+    parameters_,
+    topics_,
     spec_.ros_topic,
     qos.qos,
     [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {

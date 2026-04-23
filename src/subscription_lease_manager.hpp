@@ -27,8 +27,10 @@
 
 #include "access_policy.hpp"
 #include "core/subscriptions.hpp"
-#include "rclcpp/node.hpp"
-#include "ros_node_interfaces.hpp"
+#include "rclcpp/clock.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_parameters_interface.hpp"
+#include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "utils/event_throttle.hpp"
 #include "video_stream_spec.hpp"
 
@@ -51,16 +53,10 @@ public:
   using Clock = std::chrono::steady_clock;
 
   SubscriptionLeaseManager(
-    rclcpp::Node & node,
-    RoomConnection & room_connection,
-    AccessPolicy access_policy,
-    const SubscriptionQosConfig * qos_config = nullptr,
-    VideoProfilingRegistry * profiling_registry = nullptr,
-    const VideoStreamConfig * video_stream_config = nullptr,
-    Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
-
-  SubscriptionLeaseManager(
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
     RoomConnection & room_connection,
     AccessPolicy access_policy,
     const SubscriptionQosConfig * qos_config = nullptr,
@@ -127,7 +123,10 @@ private:
     const Subscription & subscription, Clock::time_point reference_time);
   static bool isVideoSubscription(const Subscription & subscription);
 
-  SubscriptionNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::Clock::SharedPtr clock_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
   const SubscriptionQosConfig * qos_config_;

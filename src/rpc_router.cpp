@@ -211,14 +211,6 @@ std::optional<std::string> withCallerIdentity(
 }  // namespace
 
 RpcRouter::RpcRouter(
-  rclcpp::Node & node,
-  const AccessPolicy & access_policy,
-  RosExecutorQueue & ros_executor_queue,
-  RosServiceCaller & ros_service_caller)
-: RpcRouter(node.get_node_graph_interface(), access_policy, ros_executor_queue, ros_service_caller)
-{}
-
-RpcRouter::RpcRouter(
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   const AccessPolicy & access_policy,
   RosExecutorQueue & ros_executor_queue,

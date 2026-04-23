@@ -86,38 +86,26 @@ std::string normalizeDemandLookupName(SubscriptionTargetKind kind, const std::st
 }  // namespace
 
 SubscriptionLeaseManager::SubscriptionLeaseManager(
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::Clock::SharedPtr clock,
   RoomConnection & room_connection,
   AccessPolicy access_policy,
   const SubscriptionQosConfig * qos_config,
   VideoProfilingRegistry * profiling_registry,
   const VideoStreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
-: interfaces_(std::move(interfaces))
+: parameters_(std::move(parameters))
+, topics_(std::move(topics))
+, graph_(std::move(graph))
+, clock_(std::move(clock))
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
 , qos_config_(qos_config)
 , profiling_registry_(profiling_registry)
 , video_stream_config_(video_stream_config)
 , heartbeat_lease_duration_(heartbeat_lease_duration)
-{}
-
-SubscriptionLeaseManager::SubscriptionLeaseManager(
-  rclcpp::Node & node,
-  RoomConnection & room_connection,
-  AccessPolicy access_policy,
-  const SubscriptionQosConfig * qos_config,
-  VideoProfilingRegistry * profiling_registry,
-  const VideoStreamConfig * video_stream_config,
-  Clock::duration heartbeat_lease_duration)
-: SubscriptionLeaseManager(
-    makeRosNodeInterfaces(node).subscription(),
-    room_connection,
-    std::move(access_policy),
-    qos_config,
-    profiling_registry,
-    video_stream_config,
-    heartbeat_lease_duration)
 {}
 
 SubscriptionLeaseManager::~SubscriptionLeaseManager()
@@ -201,7 +189,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
       .field("requester_identity", resolved_identity)
       .fieldOr("session_id", heartbeat.session_id.value_or(""), "<absent>")
       .field("error", exc.what())
-      .warnThrottle(*interfaces_.clock, kLogThrottle);
+      .warnThrottle(*clock_, kLogThrottle);
   }
 }
 
@@ -217,7 +205,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
       LogEvent(kLogger, "heartbeat_dropped")
         .field("reason", "anonymous_requester_without_resolvable_client_session")
         .fieldOr("session_id", session_id.value_or(""), "<absent>")
-        .warnThrottle(*interfaces_.clock, kLogThrottle);
+        .warnThrottle(*clock_, kLogThrottle);
 
       return std::nullopt;
     }
@@ -225,7 +213,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
     LogEvent(kLogger, "heartbeat_client_session_fallback")
       .field("requester_identity", it->second.requester_identity)
       .fieldOr("session_id", session_id.value_or(""), "<absent>")
-      .warnThrottle(*interfaces_.clock, kLogThrottle);
+      .warnThrottle(*clock_, kLogThrottle);
 
     return it->second.requester_identity;
   }
@@ -272,7 +260,7 @@ VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
 std::shared_ptr<VideoTrackPublisher> SubscriptionLeaseManager::createVideoPublisher(const VideoStreamSpec & spec)
 {
   const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
-  return VideoTrackPublisher::create(interfaces_, room_connection_, spec, qos_config_, profiler);
+  return VideoTrackPublisher::create(parameters_, topics_, graph_, room_connection_, spec, qos_config_, profiler);
 }
 
 DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscription & subscription) const
@@ -303,7 +291,7 @@ SubscriptionLeaseManager::ResolvedDemand SubscriptionLeaseManager::resolveDemand
 
   if (demand.kind == SubscriptionTargetKind::Topic) {
     resolved.interface_type =
-      requireSingleInterfaceType(interfaces_.graph->get_topic_names_and_types(), resolved.canonical_name, "topic");
+      requireSingleInterfaceType(graph_->get_topic_names_and_types(), resolved.canonical_name, "topic");
     if (!classifyRosVideoIngestMode(resolved.interface_type).has_value()) {
       return resolved;
     }
@@ -391,7 +379,7 @@ SubscriptionStatus SubscriptionLeaseManager::create(
       subscription.video_publisher = createVideoPublisher(*demand.video_spec);
     } else {
       subscription.data_publisher = DataTrackPublisher::create(
-        demand.canonical_name, subscription.interface_type, interfaces_, room_connection_, qos_config_);
+        demand.canonical_name, subscription.interface_type, topics_, graph_, clock_, room_connection_, qos_config_);
       subscription.data_publisher->setIntervalMs(appliedIntervalMs(subscription.leases));
       subscription.data_publisher->publish();
     }

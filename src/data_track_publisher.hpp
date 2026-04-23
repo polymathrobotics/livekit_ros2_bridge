@@ -17,7 +17,9 @@
 #include <memory>
 #include <string>
 
-#include "ros_node_interfaces.hpp"
+#include "rclcpp/clock.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_topics_interface.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -32,7 +34,9 @@ public:
   static std::shared_ptr<DataTrackPublisher> create(
     std::string topic,
     std::string interface_type,
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
     RoomConnection & room_connection,
     const SubscriptionQosConfig * qos_config);
 
@@ -56,11 +60,15 @@ private:
   DataTrackPublisher(
     std::string topic,
     std::string interface_type,
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
     RoomConnection & room_connection,
     const SubscriptionQosConfig * qos_config);
 
-  SubscriptionNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::Clock::SharedPtr clock_;
   RoomConnection & room_connection_;
   const SubscriptionQosConfig * qos_config_;
 

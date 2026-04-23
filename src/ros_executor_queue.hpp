@@ -26,12 +26,12 @@
 #include <type_traits>
 #include <utility>
 
+#include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
 #include "rclcpp/logging.hpp"
-#include "rclcpp/node.hpp"
+#include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
-#include "ros_node_interfaces.hpp"
 #include "utils/log_event.hpp"
 #include "utils/reentrant_quiesce_gate.hpp"
 
@@ -46,8 +46,10 @@ namespace livekit_ros2_bridge
 class RosExecutorQueue final
 {
 public:
-  explicit RosExecutorQueue(rclcpp::Node & node);
-  explicit RosExecutorQueue(ExecutorNodeInterfaces interfaces);
+  RosExecutorQueue(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
+    rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables,
+    rclcpp::Clock::SharedPtr clock);
   ~RosExecutorQueue();
 
   // Enqueues work in FIFO order for execution on the executor thread. If

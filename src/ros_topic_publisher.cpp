@@ -39,21 +39,23 @@ const auto kLogger = rclcpp::get_logger("topic_publisher");
 
 }  // namespace
 
-RosTopicPublisher::RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy)
-: RosTopicPublisher(std::move(interfaces), std::move(access_policy), kDefaultMaxTopics)
-{}
-
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy)
-: RosTopicPublisher(makeRosNodeInterfaces(node).publisher(), std::move(access_policy))
-{}
-
-RosTopicPublisher::RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics)
-: RosTopicPublisher(makeRosNodeInterfaces(node).publisher(), std::move(access_policy), max_topics)
+RosTopicPublisher::RosTopicPublisher(
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::Clock::SharedPtr clock,
+  AccessPolicy access_policy)
+: RosTopicPublisher(std::move(topics), std::move(graph), std::move(clock), std::move(access_policy), kDefaultMaxTopics)
 {}
 
 RosTopicPublisher::RosTopicPublisher(
-  PublisherNodeInterfaces interfaces, AccessPolicy access_policy, std::size_t max_topics)
-: interfaces_(std::move(interfaces))
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::Clock::SharedPtr clock,
+  AccessPolicy access_policy,
+  std::size_t max_topics)
+: topics_(std::move(topics))
+, graph_(std::move(graph))
+, clock_(std::move(clock))
 , access_policy_(std::move(access_policy))
 , publishers_(max_topics)
 {}
@@ -76,7 +78,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("reason", "forbidden")
       .field("topic", topic)
       .field("requester_identity", requester_identity)
-      .warnThrottle(*interfaces_.clock, kLogThrottle);
+      .warnThrottle(*clock_, kLogThrottle);
 
     return;
   }
@@ -91,8 +93,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       type = cached->type;
       publisher = cached->publisher;
     } else {
-      const auto topics =
-        topic_graph_provider_ ? topic_graph_provider_() : interfaces_.graph->get_topic_names_and_types();
+      const auto topics = topic_graph_provider_ ? topic_graph_provider_() : graph_->get_topic_names_and_types();
       type = requireSingleInterfaceType(topics, topic, "topic");
     }
 
@@ -106,7 +107,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       .field("requester_identity", requester_identity)
       .field("interface_type", request.interface_type)
       .field("error", exc.what())
-      .warnThrottle(*interfaces_.clock, kLogThrottle);
+      .warnThrottle(*clock_, kLogThrottle);
 
     return;
   }
@@ -125,7 +126,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     if (!publisher) {
       const rclcpp::QoS qos(kPublisherDepth);
-      publisher = rclcpp::create_generic_publisher(interfaces_.topics, topic, type, qos);
+      publisher = rclcpp::create_generic_publisher(topics_, topic, type, qos);
     }
 
     if (before_publish_handler_) {

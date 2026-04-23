@@ -147,6 +147,12 @@ bool waitForService(
     timeout);
 }
 
+RosServiceCaller makeServiceCaller(const std::shared_ptr<rclcpp::Node> & node)
+{
+  return RosServiceCaller(
+    node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_timers_interface());
+}
+
 ServiceCallRequest makeSetBoolRequest(
   const std::string & service, int timeout_ms, std::optional<std::string> interface_type, bool data = true)
 {
@@ -201,7 +207,7 @@ TEST_F(RosServiceCallerTest, CallsServiceAndReturnsResponse)
   executor.add_node(caller_node);
   executor.add_node(server_node);
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto future = caller.call("requester-1", makeSetBoolRequest("/test_set_bool", kResponseSettleTimeoutMs));
 
@@ -240,7 +246,7 @@ TEST_F(RosServiceCallerTest, MatchesConcurrentResponsesByClientAndSequence)
   ASSERT_TRUE(waitForService(executor, *caller_node, "/test_set_bool_alpha"));
   ASSERT_TRUE(waitForService(executor, *caller_node, "/test_set_bool_beta"));
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto alpha_future = caller.call("requester-alpha", makeSetBoolRequest("/test_set_bool_alpha", 1000));
   auto beta_future = caller.call("requester-beta", makeSetBoolRequest("/test_set_bool_beta", 1000, false));
@@ -270,7 +276,7 @@ TEST_F(RosServiceCallerTest, UsesDefaultAndExplicitTimeoutsWhenServiceUnavailabl
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(caller_node);
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   {
     const auto start = std::chrono::steady_clock::now();
@@ -305,7 +311,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_build_failure_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   const auto request = makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs);
   saturateInflightQuota(caller, "requester-1", request, kMaxInflightPerRequester - 1);
@@ -339,7 +345,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallSettl
 
   ASSERT_TRUE(waitForService(executor, *caller_node, "/release_response"));
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_response_release", kStandardRequestTimeoutMs);
   saturateInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
@@ -361,7 +367,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenCallTimes
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(caller_node);
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   const auto holding_request = makeSetBoolRequest("/blocked_timeout_release", kStandardRequestTimeoutMs);
   saturateInflightQuota(caller, "requester-1", holding_request, kMaxInflightPerRequester - 1);
@@ -422,7 +428,7 @@ TEST_F(RosServiceCallerTest, DropsLateTimedOutResponseBeforeSettlingLaterCallOnS
 
   ASSERT_TRUE(waitForService(caller_executor, *caller_node, "/late_timeout_drop"));
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   std::thread caller_spin_thread([&caller_executor]() { caller_executor.spin(); });
   std::thread server_spin_thread([&server_executor]() { server_executor.spin(); });
@@ -485,7 +491,7 @@ TEST_F(RosServiceCallerTest, CancelCallsForRequesterOnlySettlesMatchingRequester
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_scoped_disconnect_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   const auto request = makeSetBoolRequest("/scoped_disconnect_release", kStandardRequestTimeoutMs);
 
@@ -516,7 +522,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesInflightCallsAndReleasesReques
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reset_release_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   const auto request = makeSetBoolRequest("/session_reset_release", kStandardRequestTimeoutMs);
   std::vector<std::future<RosServiceCaller::ServiceCallResponse>> inflight_futures;
@@ -541,7 +547,7 @@ TEST_F(RosServiceCallerTest, RejectsEmptyRequesterIdentity)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_empty_requester_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto anonymous_future = caller.call("", makeSetBoolRequest("/blocked_service", kStandardRequestTimeoutMs));
   ASSERT_EQ(anonymous_future.wait_for(std::chrono::milliseconds(0)), std::future_status::ready);
@@ -568,7 +574,7 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
 
   ASSERT_TRUE(waitForService(executor, *caller_node, "/resolve_test"));
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto future =
     caller.call("requester-1", makeSetBoolRequest("/resolve_test", kResponseSettleTimeoutMs, std::nullopt, false));
@@ -587,7 +593,7 @@ TEST_F(RosServiceCallerTest, RejectsUnresolvableServiceType)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_unresolvable_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   ServiceCallRequest request = makeSetBoolRequest("/no_such_service", 100, std::nullopt, false);
 
@@ -602,7 +608,7 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_invalid_type_cache_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   int type_support_load_attempts = 0;
   caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
@@ -650,7 +656,7 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
 
   ASSERT_TRUE(waitForService(executor, *caller_node, "/session_reset_cache_test"));
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   int type_support_load_attempts = 0;
   caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
@@ -688,7 +694,7 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(caller_node);
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto poll_entered = std::make_shared<std::promise<void>>();
   auto poll_entered_future = poll_entered->get_future();
@@ -747,7 +753,7 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(caller_node);
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   auto shutdown_completed = std::make_shared<std::promise<void>>();
   auto shutdown_completed_future = shutdown_completed->get_future();
@@ -779,7 +785,7 @@ TEST_F(RosServiceCallerTest, RejectsCallAfterShutdown)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_post_shutdown_node");
 
-  RosServiceCaller caller(*caller_node);
+  auto caller = makeServiceCaller(caller_node);
 
   caller.shutdown();
 

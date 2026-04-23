@@ -26,9 +26,13 @@
 #include <utility>
 
 #include "packet_router.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/create_timer.hpp"
+#include "rclcpp/logger.hpp"
+#include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "ros_executor_queue.hpp"
-#include "ros_node_interfaces.hpp"
 #include "ros_service_caller.hpp"
 #include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
@@ -152,31 +156,37 @@ public:
 
   Impl(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
   : shutdown_log_scope_(node.get_logger())
-  , interfaces_(makeRosNodeInterfaces(node))
+  , base_(node.get_node_base_interface())
+  , graph_(node.get_node_graph_interface())
+  , timers_(node.get_node_timers_interface())
+  , clock_(node.get_clock())
+  , logger_(node.get_logger())
   , config_(std::move(config))
   , room_connection_(std::move(connection))
-  , ros_executor_queue_(interfaces_.executor())
-  , ros_topic_publisher_(interfaces_.publisher(), config_.access_policy)
-  , ros_service_caller_(interfaces_.service())
+  , ros_executor_queue_(base_, node.get_node_waitables_interface(), clock_)
+  , ros_topic_publisher_(node.get_node_topics_interface(), graph_, clock_, config_.access_policy)
+  , ros_service_caller_(base_, graph_, timers_)
   , profiling_registry_(
-      config_.profiling.enabled
-        ? std::optional<VideoProfilingRegistry>(std::in_place, interfaces_.logger, config_.profiling)
-        : std::nullopt)
+      config_.profiling.enabled ? std::optional<VideoProfilingRegistry>(std::in_place, logger_, config_.profiling)
+                                : std::nullopt)
   , subscription_lease_manager_(
-      interfaces_.subscription(),
+      node.get_node_parameters_interface(),
+      node.get_node_topics_interface(),
+      graph_,
+      clock_,
       room_connection_.connection(),
       config_.access_policy,
       &config_.subscription_qos,
       profiling_registry_ ? &*profiling_registry_ : nullptr,
       &config_.video_stream)
   , packet_router_(
-      interfaces_.clock,
+      clock_,
       [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
       subscription_lease_manager_,
       ros_topic_publisher_)
-  , rpc_router_(interfaces_.graph, config_.access_policy, ros_executor_queue_, ros_service_caller_)
+  , rpc_router_(graph_, config_.access_policy, ros_executor_queue_, ros_service_caller_)
   {
-    LogEvent(interfaces_.logger, "runtime_startup_begin")
+    LogEvent(logger_, "runtime_startup_begin")
       .fieldOr("url", config_.livekit.url, "<unset>")
       .field("token_present", !config_.livekit.access_token.empty())
       .info();
@@ -184,11 +194,7 @@ public:
     if (config_.health.watchdog_enabled) {
       setWatchdogUnhealthy("startup_connect_pending");
       watchdog_timer_ = rclcpp::create_wall_timer(
-        kWatchdogEvaluationInterval,
-        [this]() { checkWatchdog(); },
-        nullptr,
-        interfaces_.base.get(),
-        interfaces_.timers.get());
+        kWatchdogEvaluationInterval, [this]() { checkWatchdog(); }, nullptr, base_.get(), timers_.get());
     }
 
     if (profiling_registry_) {
@@ -197,21 +203,21 @@ public:
         profiling_registry_->config().summary_interval,
         [this]() { profiling_registry_->logSummaries(); },
         nullptr,
-        interfaces_.base.get(),
-        interfaces_.timers.get());
+        base_.get(),
+        timers_.get());
     }
 
     subscription_lease_gc_timer_ = rclcpp::create_wall_timer(
       kLeaseGcInterval,
       [this]() { submitToExecutor([this]() { subscription_lease_manager_.pruneExpiredLeases(); }); },
       nullptr,
-      interfaces_.base.get(),
-      interfaces_.timers.get());
+      base_.get(),
+      timers_.get());
 
     const bool rpcs_registered = rpc_router_.registerRpcs(room_connection_.connection());
     rpc_registration_.arm(rpc_router_, room_connection_.connection());
     if (!rpcs_registered) {
-      LogEvent(interfaces_.logger, "runtime_startup_failed")
+      LogEvent(logger_, "runtime_startup_failed")
         .fieldOr("url", config_.livekit.url, "<unset>")
         .field("token_present", !config_.livekit.access_token.empty())
         .field("reason", "required_rpc_registration_failed")
@@ -265,17 +271,17 @@ private:
     }
 
     setWatchdogHealthy("room_connected");
-    LogEvent(interfaces_.logger, "runtime_ready").info();
+    LogEvent(logger_, "runtime_ready").info();
   }
 
   void onRoomIncomingPacket(const IncomingPacket & packet)
   {
     if (callback_admission_.isClosed()) {
-      LogEvent(interfaces_.logger, "packet_dropped")
+      LogEvent(logger_, "packet_dropped")
         .field("reason", "shutdown")
         .field("topic", packet.topic)
         .fieldOr("requester_identity", packet.requester_identity)
-        .warnThrottle(*interfaces_.clock, std::chrono::seconds(5));
+        .warnThrottle(*clock_, std::chrono::seconds(5));
       return;
     }
 
@@ -304,8 +310,7 @@ private:
       reason.empty() ? std::string_view("connection_lost") : std::string_view(reason);
     setWatchdogUnhealthy(disconnect_reason);
 
-    LogEvent log =
-      LogEvent(interfaces_.logger, "runtime_disconnect_observed").field("disconnect_reason", disconnect_reason);
+    LogEvent log = LogEvent(logger_, "runtime_disconnect_observed").field("disconnect_reason", disconnect_reason);
 
     if (!config_.health.watchdog_enabled) {
       log.info();
@@ -328,7 +333,7 @@ private:
     }
 
     setWatchdogHealthy("room_reconnected");
-    LogEvent(interfaces_.logger, "runtime_ready").info();
+    LogEvent(logger_, "runtime_ready").info();
   }
 
   void onRoomConnectionReset()
@@ -373,7 +378,7 @@ private:
       return;
     }
 
-    LogEvent(interfaces_.logger, "runtime_watchdog_healthy")
+    LogEvent(logger_, "runtime_watchdog_healthy")
       .fieldOr("reason", reason, "unknown")
       .field("unhealthy_duration_seconds", *unhealthy_duration_seconds)
       .info();
@@ -400,7 +405,7 @@ private:
       return;
     }
 
-    LogEvent event = LogEvent(interfaces_.logger, "runtime_watchdog_unhealthy")
+    LogEvent event = LogEvent(logger_, "runtime_watchdog_unhealthy")
                        .fieldOr("reason", reason, "unknown")
                        .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
     if (reason == "startup_connect_pending") {
@@ -431,7 +436,7 @@ private:
       return;
     }
 
-    LogEvent(interfaces_.logger, "runtime_watchdog_triggered")
+    LogEvent(logger_, "runtime_watchdog_triggered")
       .field("disconnect_reason", "recovery_timeout")
       .field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0)
       .error();
@@ -445,7 +450,11 @@ private:
   }
 
   ShutdownLogScope shutdown_log_scope_;
-  RosNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers_;
+  rclcpp::Clock::SharedPtr clock_;
+  rclcpp::Logger logger_;
   RuntimeConfig config_;
   CallbackAdmission callback_admission_;
   std::mutex watchdog_mutex_;

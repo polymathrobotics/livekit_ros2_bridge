@@ -24,9 +24,10 @@
 #include <vector>
 
 #include "access_policy.hpp"
+#include "rclcpp/clock.hpp"
 #include "rclcpp/generic_publisher.hpp"
-#include "rclcpp/node.hpp"
-#include "ros_node_interfaces.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "topic_publish_request.hpp"
 #include "utils/event_throttle.hpp"
 #include "utils/lru_cache.hpp"
@@ -40,10 +41,17 @@ namespace livekit_ros2_bridge
 class RosTopicPublisher final
 {
 public:
-  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy);
-  RosTopicPublisher(rclcpp::Node & node, AccessPolicy access_policy, std::size_t max_topics);
-  RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy);
-  RosTopicPublisher(PublisherNodeInterfaces interfaces, AccessPolicy access_policy, std::size_t max_topics);
+  RosTopicPublisher(
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
+    AccessPolicy access_policy);
+  RosTopicPublisher(
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
+    AccessPolicy access_policy,
+    std::size_t max_topics);
   ~RosTopicPublisher();
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
@@ -72,7 +80,9 @@ private:
 
   static constexpr auto kEvictedPublisherWarningThrottlePeriod = std::chrono::seconds(5);
 
-  PublisherNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::Clock::SharedPtr clock_;
   AccessPolicy access_policy_;
   // Terminal lifecycle bit shared with in-flight publish() calls. publish()
   // rechecks it before reusing or updating cache state so shutdown() does not

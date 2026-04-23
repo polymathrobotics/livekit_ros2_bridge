@@ -129,10 +129,22 @@ protected:
     room_connection_ = std::make_unique<FakeRoomConnection>();
   }
 
+  void initComponents(const AccessPolicy & access_policy)
+  {
+    subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(
+      node_->get_node_parameters_interface(),
+      node_->get_node_topics_interface(),
+      node_->get_node_graph_interface(),
+      node_->get_clock(),
+      *room_connection_,
+      access_policy);
+    ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(
+      node_->get_node_topics_interface(), node_->get_node_graph_interface(), node_->get_clock(), access_policy);
+  }
+
   void initRouter(const AccessPolicy & access_policy)
   {
-    subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(*node_, *room_connection_, access_policy);
-    ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
+    initComponents(access_policy);
     packet_router_ = std::make_unique<PacketRouter>(
       node_->get_clock(),
       [](std::function<void()> work) { work(); },
@@ -268,9 +280,7 @@ TEST_F(PacketRouterTest, DropsUnsupportedTopicsWithoutDispatch)
 
 TEST_F(PacketRouterTest, ValidatesConstructorDependencies)
 {
-  const AccessPolicy access_policy = makeAccessPolicy();
-  subscription_lease_manager_ = std::make_unique<SubscriptionLeaseManager>(*node_, *room_connection_, access_policy);
-  ros_topic_publisher_ = std::make_unique<RosTopicPublisher>(*node_, access_policy);
+  initComponents(makeAccessPolicy());
 
   EXPECT_THROW(
     PacketRouter(

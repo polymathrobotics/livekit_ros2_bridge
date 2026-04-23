@@ -58,7 +58,13 @@ std::shared_ptr<DataTrackPublisher> createDataTrackPublisher(
   rclcpp::Node & node, FakeRoomConnection & room_connection, const std::string & topic)
 {
   return DataTrackPublisher::create(
-    topic, "sensor_msgs/msg/BatteryState", makeRosNodeInterfaces(node).subscription(), room_connection, nullptr);
+    topic,
+    "sensor_msgs/msg/BatteryState",
+    node.get_node_topics_interface(),
+    node.get_node_graph_interface(),
+    node.get_clock(),
+    room_connection,
+    nullptr);
 }
 
 template <typename PublisherT, typename MessageT>

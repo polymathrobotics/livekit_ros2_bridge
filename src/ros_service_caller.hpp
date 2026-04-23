@@ -21,7 +21,9 @@
 #include <string>
 #include <vector>
 
-#include "ros_node_interfaces.hpp"
+#include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_timers_interface.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -43,8 +45,10 @@ public:
     std::vector<std::uint8_t> response;
   };
 
-  explicit RosServiceCaller(rclcpp::Node & node);
-  explicit RosServiceCaller(ServiceNodeInterfaces interfaces);
+  RosServiceCaller(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers);
 
   ~RosServiceCaller();
 

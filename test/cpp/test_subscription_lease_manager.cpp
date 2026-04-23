@@ -144,16 +144,18 @@ VideoProfilingConfig makeProfilingConfig()
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
+  AccessPolicy access_policy,
   const VideoStreamConfig * video_stream_config = nullptr,
   VideoProfilingRegistry * profiling_registry = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
-  AccessPolicyConfig access_policy_config;
-  access_policy_config.subscribe.allow = {"*"};
   return SubscriptionLeaseManager(
-    node,
+    node.get_node_parameters_interface(),
+    node.get_node_topics_interface(),
+    node.get_node_graph_interface(),
+    node.get_clock(),
     session,
-    AccessPolicy(access_policy_config),
+    std::move(access_policy),
     nullptr,
     profiling_registry,
     video_stream_config,
@@ -163,18 +165,18 @@ SubscriptionLeaseManager makeLeaseManager(
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
-  AccessPolicy access_policy,
   const VideoStreamConfig * video_stream_config = nullptr,
   VideoProfilingRegistry * profiling_registry = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
-  return SubscriptionLeaseManager(
+  AccessPolicyConfig access_policy_config;
+  access_policy_config.subscribe.allow = {"*"};
+  return makeLeaseManager(
     node,
     session,
-    std::move(access_policy),
-    nullptr,
-    profiling_registry,
+    AccessPolicy(access_policy_config),
     video_stream_config,
+    profiling_registry,
     heartbeat_lease_duration);
 }
 

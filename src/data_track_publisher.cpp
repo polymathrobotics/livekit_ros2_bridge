@@ -109,10 +109,14 @@ public:
     std::string interface_type,
     std::string track_name,
     int interval_ms,
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::Clock::SharedPtr clock,
     RoomConnection & room_connection,
     const SubscriptionQosConfig * qos_config)
-  : interfaces_(std::move(interfaces))
+  : topics_(std::move(topics))
+  , graph_(std::move(graph))
+  , clock_(std::move(clock))
   , room_connection_(room_connection)
   , qos_config_(qos_config)
   , topic_(std::move(topic))
@@ -171,7 +175,7 @@ private:
   void subscribe()
   {
     const rclcpp::QoS base_qos(kSubscriptionDepth);
-    const ResolvedSubscriptionQos qos = resolveSubscriptionQos(interfaces_.graph, topic_, base_qos, qos_config_);
+    const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, topic_, base_qos, qos_config_);
     const std::size_t gate_generation = gate_->currentGeneration();
 
     LogEvent(kLogger, "subscription_qos_resolved")
@@ -190,7 +194,7 @@ private:
       .info();
 
     subscription_ = rclcpp::create_generic_subscription(
-      interfaces_.topics,
+      topics_,
       topic_,
       interface_type_,
       qos.qos,
@@ -224,7 +228,7 @@ private:
         .field("resource", topic_)
         .field("track_name", track_name_)
         .field("reason", "queue_full")
-        .warnThrottle(*interfaces_.clock, kLogThrottle);
+        .warnThrottle(*clock_, kLogThrottle);
       return;
     }
 
@@ -233,10 +237,12 @@ private:
       .field("track_name", track_name_)
       .field("reason", pushReason(error.code))
       .fieldOr("error", error.message)
-      .warnThrottle(*interfaces_.clock, kLogThrottle);
+      .warnThrottle(*clock_, kLogThrottle);
   }
 
-  SubscriptionNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::Clock::SharedPtr clock_;
   RoomConnection & room_connection_;
   const SubscriptionQosConfig * qos_config_;
 
@@ -253,21 +259,33 @@ private:
 std::shared_ptr<DataTrackPublisher> DataTrackPublisher::create(
   std::string topic,
   std::string interface_type,
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::Clock::SharedPtr clock,
   RoomConnection & room_connection,
   const SubscriptionQosConfig * qos_config)
 {
   return std::shared_ptr<DataTrackPublisher>(new DataTrackPublisher(
-    std::move(topic), std::move(interface_type), std::move(interfaces), room_connection, qos_config));
+    std::move(topic),
+    std::move(interface_type),
+    std::move(topics),
+    std::move(graph),
+    std::move(clock),
+    room_connection,
+    qos_config));
 }
 
 DataTrackPublisher::DataTrackPublisher(
   std::string topic,
   std::string interface_type,
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::Clock::SharedPtr clock,
   RoomConnection & room_connection,
   const SubscriptionQosConfig * qos_config)
-: interfaces_(std::move(interfaces))
+: topics_(std::move(topics))
+, graph_(std::move(graph))
+, clock_(std::move(clock))
 , room_connection_(room_connection)
 , qos_config_(qos_config)
 , topic_(std::move(topic))
@@ -293,7 +311,7 @@ void DataTrackPublisher::publish()
 
   try {
     publication_ = std::make_unique<Publication>(
-      topic_, interface_type_, track_name_, interval_ms_, interfaces_, room_connection_, qos_config_);
+      topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
     publish_failed_ = false;
     LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", track_name_).info();
   } catch (...) {

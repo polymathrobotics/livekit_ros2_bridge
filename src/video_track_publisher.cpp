@@ -37,7 +37,9 @@ namespace
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
 
 std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   const VideoStreamSpec & spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
@@ -51,14 +53,14 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   }
   if (spec.input_kind == VideoInputKind::RosTopic) {
     if (spec.ingest_mode == kRawImageIngestMode) {
-      auto source =
-        std::make_shared<RawRosVideoFrameSource>(std::move(interfaces), spec, qos_config, sink, observer, profiler);
+      auto source = std::make_shared<RawRosVideoFrameSource>(
+        std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
       source->activate();
       return source;
     }
     if (spec.ingest_mode == kCompressedImageIngestMode) {
       auto source = std::make_shared<CompressedRosVideoFrameSource>(
-        std::move(interfaces), spec, qos_config, sink, observer, profiler);
+        std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
       source->activate();
       return source;
     }
@@ -128,7 +130,9 @@ private:
 };
 
 std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
-  SubscriptionNodeInterfaces interfaces,
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
@@ -137,7 +141,14 @@ std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
   auto publisher = std::shared_ptr<VideoTrackPublisher>(
     new VideoTrackPublisher(room_connection, std::move(spec), std::move(profiler)));
   publisher->frame_source_ = makeVideoFrameSource(
-    std::move(interfaces), publisher->spec_, qos_config, *publisher, *publisher, publisher->profiler_);
+    std::move(parameters),
+    std::move(topics),
+    std::move(graph),
+    publisher->spec_,
+    qos_config,
+    *publisher,
+    *publisher,
+    publisher->profiler_);
   return publisher;
 }
 

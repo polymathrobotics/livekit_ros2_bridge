@@ -18,7 +18,6 @@
 #include <string>
 
 #include "access_policy.hpp"
-#include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "room_connection.hpp"
 
@@ -34,11 +33,6 @@ class RosServiceCaller;
 class RpcRouter
 {
 public:
-  RpcRouter(
-    rclcpp::Node & node,
-    const AccessPolicy & access_policy,
-    RosExecutorQueue & ros_executor_queue,
-    RosServiceCaller & ros_service_caller);
   RpcRouter(
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     const AccessPolicy & access_policy,

@@ -18,7 +18,9 @@
 #include <optional>
 #include <string>
 
-#include "ros_node_interfaces.hpp"
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_parameters_interface.hpp"
+#include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
@@ -50,7 +52,9 @@ class RawRosVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   RawRosVideoFrameSource(
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
@@ -62,7 +66,9 @@ public:
   void close() override;
 
 private:
-  SubscriptionNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
@@ -80,7 +86,9 @@ class CompressedRosVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   CompressedRosVideoFrameSource(
-    SubscriptionNodeInterfaces interfaces,
+    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
@@ -92,7 +100,9 @@ public:
   void close() override;
 
 private:
-  SubscriptionNodeInterfaces interfaces_;
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
