@@ -28,7 +28,6 @@
 
 #include "utils/gstreamer_raii.hpp"
 #include "video_pipeline_description.hpp"
-#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
 #include "video_track_publisher.hpp"
 
@@ -58,7 +57,6 @@ public:
     VideoStreamSpec spec,
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
-    std::shared_ptr<VideoStreamProfiler> profiler = nullptr,
     std::optional<RestartConfig> restart_config = std::nullopt);
   ~VideoPipelineFrameSource() override;
 
@@ -88,7 +86,6 @@ protected:
   VideoStreamSpec spec_;
   VideoFrameSink & sink_;
   VideoStreamLifecycleObserver & observer_;
-  std::shared_ptr<VideoStreamProfiler> profiler_;
   const std::optional<RestartConfig> restart_config_;
   // Guards lifecycle flags and GStreamer handle ownership across activation,
   // close(), appsink callbacks, bus callbacks, and recovery.
@@ -130,9 +127,6 @@ private:
 };
 
 std::shared_ptr<VideoFrameSource> makeOtherVideoFrameSource(
-  VideoStreamSpec spec,
-  VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer,
-  std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+  VideoStreamSpec spec, VideoFrameSink & sink, VideoStreamLifecycleObserver & observer);
 
 }  // namespace livekit_ros2_bridge

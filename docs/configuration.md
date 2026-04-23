@@ -14,7 +14,6 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
     - [Defaults](#defaults)
     - [ROS topics](#ros-topics)
     - [Other video sources](#other-video-sources)
-  - [Profiling](#profiling)
   - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
   - [RTSP or device inputs](#rtsp-or-device-inputs)
@@ -165,20 +164,6 @@ Lookup notes:
 - lookup trims only surrounding whitespace from the requested name
 - other video track names percent-encode bytes outside RFC 3986 unreserved characters
 - other video sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_other_ids` and `video.other.*`
-
-### Profiling
-
-| Parameter | Default | Allowed values | Notes |
-| --- | --- | --- | --- |
-| `debug.profiling.enabled` | `false` | `true`, `false` | Enables bridge-side profiling at startup |
-| `debug.profiling.summary_interval_ms` | `5000` | integer `> 0` | Interval for aggregated profiling summary logs |
-| `debug.profiling.trace_file` | `"/workspace/log/video-profile.trace.json"` | non-empty string | Trace output path written on shutdown when profiling is enabled |
-| `debug.profiling.trace_max_events` | `250000` | integer `> 0` | Maximum retained in-memory trace events before older events are dropped |
-
-Notes:
-
-- profiling is configured at startup only
-- when enabled, the bridge logs the profiling config, emits periodic summaries, and flushes the trace file on shutdown
 
 ### QoS
 

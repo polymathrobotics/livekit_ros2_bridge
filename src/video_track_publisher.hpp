@@ -24,7 +24,6 @@
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "room_connection.hpp"
-#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit
@@ -65,7 +64,6 @@ public:
 
   virtual void onSampleUnpackFailed(const std::string & error) = 0;
   virtual void onCaptureFailed(const std::string & error) = 0;
-  virtual void onPipelineFailed(const std::string & reason) = 0;
   virtual void onRestartFailed(const std::string & error) = 0;
   virtual void onPushFailed(const std::string & error) = 0;
 };
@@ -81,13 +79,11 @@ public:
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
-    const SubscriptionQosConfig * qos_config,
-    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+    const SubscriptionQosConfig * qos_config);
 
   // Test-only: construct a publisher without a frame source so the publish/unpublish
   // flow can be exercised via direct write() calls.
-  VideoTrackPublisher(
-    RoomConnection & room_connection, VideoStreamSpec spec, std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+  VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec);
 
   ~VideoTrackPublisher();
 
@@ -110,7 +106,6 @@ private:
   // including after close() has started.
   void onSampleUnpackFailed(const std::string & error) override;
   void onCaptureFailed(const std::string & error) override;
-  void onPipelineFailed(const std::string & reason) override;
   void onRestartFailed(const std::string & error) override;
   void onPushFailed(const std::string & error) override;
 
@@ -118,7 +113,6 @@ private:
 
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
-  std::shared_ptr<VideoStreamProfiler> profiler_;
 
   std::mutex mutex_;
   bool is_closed_ = false;

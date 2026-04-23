@@ -32,31 +32,6 @@ livekit_ros2_bridge:
         validation:
           gt_eq<>: [0.0]
 
-  debug:
-    profiling:
-      enabled:
-        type: bool
-        default_value: false
-        description: "Enable bridge-side profiling and trace capture at startup."
-      summary_interval_ms:
-        type: int
-        default_value: 5000
-        description: "Interval for aggregated bridge profiling summary logs."
-        validation:
-          gt<>: [0]
-      trace_file:
-        type: string
-        default_value: "/workspace/log/video-profile.trace.json"
-        description: "Trace output path written on shutdown when profiling is enabled."
-        validation:
-          not_empty<>: null
-      trace_max_events:
-        type: int
-        default_value: 250000
-        description: "Maximum in-memory trace events retained before older events are dropped."
-        validation:
-          gt<>: [0]
-
   access:
     rules:
       publish:

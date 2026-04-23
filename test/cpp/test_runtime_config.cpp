@@ -203,30 +203,6 @@ TEST_F(RuntimeConfigTest, AccessRulesLoadIntoRuntimeAccessPolicy)
   EXPECT_FALSE(config.access_policy.allows(AccessOperation::CallService, "/robot/status"));
 }
 
-TEST_F(RuntimeConfigTest, ProfilingDefaultsAndOverridesLoadFromParameters)
-{
-  const RuntimeConfig default_config =
-    loadRuntimeConfigForNode("startup_config_profiling_defaults", makeStaticTokenOptions());
-
-  EXPECT_FALSE(default_config.profiling.enabled);
-  EXPECT_EQ(default_config.profiling.summary_interval, kVideoProfilingDefaultSummaryInterval);
-  EXPECT_EQ(default_config.profiling.trace_file, kVideoProfilingDefaultTraceFile);
-  EXPECT_EQ(default_config.profiling.trace_max_events, kVideoProfilingDefaultTraceMaxEvents);
-
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("debug.profiling.enabled", true);
-  options.append_parameter_override("debug.profiling.summary_interval_ms", 1200);
-  options.append_parameter_override("debug.profiling.trace_file", "/tmp/bridge.trace.json");
-  options.append_parameter_override("debug.profiling.trace_max_events", 4096);
-
-  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_profiling_overrides", options);
-
-  EXPECT_TRUE(overridden_config.profiling.enabled);
-  EXPECT_EQ(overridden_config.profiling.summary_interval, std::chrono::milliseconds(1200));
-  EXPECT_EQ(overridden_config.profiling.trace_file, "/tmp/bridge.trace.json");
-  EXPECT_EQ(overridden_config.profiling.trace_max_events, 4096U);
-}
-
 TEST_F(RuntimeConfigTest, NullParametersInterfaceIsRejected)
 {
   try {

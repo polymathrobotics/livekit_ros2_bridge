@@ -528,12 +528,6 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     stage = "video_stream_config";
     config.video_stream = loadVideoStreamConfig(params);
 
-    stage = "profiling_config";
-    config.profiling.enabled = params.debug.profiling.enabled;
-    config.profiling.summary_interval = std::chrono::milliseconds(params.debug.profiling.summary_interval_ms);
-    config.profiling.trace_file = params.debug.profiling.trace_file;
-    config.profiling.trace_max_events = static_cast<std::size_t>(params.debug.profiling.trace_max_events);
-
     LogEvent(kLogger, "runtime_config_loaded")
       .fieldOr("url", config.livekit.url, kUnsetLogValue)
       .field("token_present", !config.livekit.access_token.empty())

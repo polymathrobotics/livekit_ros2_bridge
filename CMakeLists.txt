@@ -112,7 +112,6 @@ add_library(livekit_ros2_bridge_streams STATIC
   src/subscription_lease_manager.cpp
   src/video_frame_source/ros_topic_video_frame_sources.cpp
   src/video_frame_source/video_pipeline_frame_source.cpp
-  src/video_profiling.cpp
   src/video_track_publisher.cpp
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_streams)
@@ -253,7 +252,6 @@ if(BUILD_TESTING)
     ${test_msgs_TARGETS}
   )
   livekit_ros2_bridge_add_test(test_video_stream_spec test/cpp/test_video_stream_spec.cpp)
-  livekit_ros2_bridge_add_test(test_video_profiling test/cpp/test_video_profiling.cpp)
   livekit_ros2_bridge_add_test(
     test_video_pipeline_frame_source
     test/cpp/test_video_pipeline_frame_source.cpp

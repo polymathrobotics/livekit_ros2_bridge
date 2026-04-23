@@ -58,8 +58,7 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
-    VideoStreamLifecycleObserver & observer,
-    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
+    VideoStreamLifecycleObserver & observer);
   ~RosTopicVideoFrameSource() override;
 
   void activate();

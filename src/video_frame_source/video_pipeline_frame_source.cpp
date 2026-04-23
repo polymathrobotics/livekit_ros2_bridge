@@ -28,7 +28,6 @@
 
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "utils/scope_exit.hpp"
 #include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
@@ -191,12 +190,10 @@ VideoPipelineFrameSource::VideoPipelineFrameSource(
   VideoStreamSpec spec,
   VideoFrameSink & sink,
   VideoStreamLifecycleObserver & observer,
-  std::shared_ptr<VideoStreamProfiler> profiler,
   std::optional<RestartConfig> restart_config)
 : spec_(std::move(spec))
 , sink_(sink)
 , observer_(observer)
-, profiler_(std::move(profiler))
 , restart_config_(std::move(restart_config))
 {}
 
@@ -293,9 +290,6 @@ void VideoPipelineFrameSource::joinRecoveryThread(std::thread & recovery_thread)
 void VideoPipelineFrameSource::startPipelineLocked(const std::string & description, bool require_appsrc)
 {
   ensureGstreamerInitialized();
-  if (profiler_ != nullptr) {
-    profiler_->notePipelineStart();
-  }
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
@@ -388,45 +382,23 @@ GstFlowReturn VideoPipelineFrameSource::onSampleThunk(GstAppSink * sink, gpointe
 
 GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
 {
-  const auto start_time = VideoStreamProfiler::SteadyClock::now();
-  std::optional<std::int64_t> pts_us;
-  ScopeExit callback_timer([this, start_time, &pts_us]() {
-    if (profiler_ == nullptr) {
-      return;
-    }
-    profiler_->recordStage(
-      VideoProfileStage::kSampleCallback,
-      std::chrono::duration_cast<std::chrono::microseconds>(VideoStreamProfiler::SteadyClock::now() - start_time),
-      pts_us,
-      start_time);
-  });
-
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
   if (sample == nullptr) {
     return GST_FLOW_EOS;
   }
 
   GstBuffer * buffer = gst_sample_get_buffer(sample.get());
-  if (buffer != nullptr && GST_BUFFER_PTS_IS_VALID(buffer)) {
-    pts_us = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U);
-  }
-  if (profiler_ != nullptr) {
-    if (otherVideoInput(spec_) != nullptr) {
-      profiler_->noteIngress(VideoStreamProfiler::SteadyClock::now(), pts_us);
-    }
-    profiler_->noteSample(pts_us);
-  }
+  const std::int64_t timestamp_us = (buffer != nullptr && GST_BUFFER_PTS_IS_VALID(buffer))
+                                      ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U)
+                                      : 0;
 
   PackedI420Frame frame;
   try {
-    VideoStreamProfiler::StageTimer unpack_timer(profiler_.get(), VideoProfileStage::kSampleUnpack, pts_us);
     frame = packI420Frame(sample.get());
   } catch (const std::exception & exc) {
     observer_.onSampleUnpackFailed(exc.what());
     return GST_FLOW_ERROR;
   }
-
-  const std::int64_t timestamp_us = pts_us.value_or(0);
 
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -438,7 +410,6 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
   try {
     // The mutex only protects local lifecycle state. Writing to the sink may
     // block in downstream LiveKit code, so keep that handoff outside the lock.
-    VideoStreamProfiler::StageTimer sink_timer(profiler_.get(), VideoProfileStage::kFrameSink, pts_us);
     sink_.write(frame.width, frame.height, std::move(frame.data), timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
@@ -481,8 +452,6 @@ void VideoPipelineFrameSource::handleFailure(const std::string & reason)
   if (is_shutdown_ || pipeline_ == nullptr) {
     return;
   }
-
-  observer_.onPipelineFailed(reason);
 
   if (recovery_pending_) {
     return;
@@ -564,16 +533,12 @@ void VideoPipelineFrameSource::recoverAfterFailure()
 }
 
 std::shared_ptr<VideoFrameSource> makeOtherVideoFrameSource(
-  VideoStreamSpec spec,
-  VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer,
-  std::shared_ptr<VideoStreamProfiler> profiler)
+  VideoStreamSpec spec, VideoFrameSink & sink, VideoStreamLifecycleObserver & observer)
 {
   auto source = std::make_shared<VideoPipelineFrameSource>(
     std::move(spec),
     sink,
     observer,
-    std::move(profiler),
     VideoPipelineFrameSource::RestartConfig{
       false,
       kOtherVideoRestartDelay,

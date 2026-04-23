@@ -35,7 +35,6 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_lease_manager.hpp"
-#include "video_profiling.hpp"
 #include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
@@ -133,20 +132,11 @@ VideoStreamConfig makeOtherVideoSourceConfig()
   return stream_config;
 }
 
-VideoProfilingConfig makeProfilingConfig()
-{
-  VideoProfilingConfig config;
-  config.enabled = true;
-  config.trace_max_events = 1024U;
-  return config;
-}
-
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
   AccessPolicy access_policy,
   const VideoStreamConfig * video_stream_config = nullptr,
-  VideoProfilingRegistry * profiling_registry = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   return SubscriptionLeaseManager(
@@ -157,7 +147,6 @@ SubscriptionLeaseManager makeLeaseManager(
     session,
     std::move(access_policy),
     nullptr,
-    profiling_registry,
     video_stream_config,
     heartbeat_lease_duration);
 }
@@ -166,18 +155,12 @@ SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
   const VideoStreamConfig * video_stream_config = nullptr,
-  VideoProfilingRegistry * profiling_registry = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   AccessPolicyConfig access_policy_config;
   access_policy_config.subscribe.allow = {"*"};
   return makeLeaseManager(
-    node,
-    session,
-    AccessPolicy(access_policy_config),
-    video_stream_config,
-    profiling_registry,
-    heartbeat_lease_duration);
+    node, session, AccessPolicy(access_policy_config), video_stream_config, heartbeat_lease_duration);
 }
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
@@ -506,7 +489,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSubscriptionAndRecompu
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  auto registry = makeLeaseManager(*node, session, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+  auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
 
   sendHeartbeat(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 50)}));
   std::this_thread::sleep_for(kShortHeartbeatLeaseDuration + kLeaseWaitBuffer);
@@ -543,7 +526,7 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   ASSERT_TRUE(waitForTopicType(executor, node, topic_a, "sensor_msgs/msg/BatteryState"));
   ASSERT_TRUE(waitForTopicType(executor, node, topic_b, "sensor_msgs/msg/BatteryState"));
 
-  auto registry = makeLeaseManager(*node, session, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+  auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
 
   sendHeartbeat(
     registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic_a, 0), makeTopicDemand(topic_b, 0)}));
@@ -670,7 +653,7 @@ TEST(SubscriptionLeaseManagerTest, VideoLeaseExpiryBeforeFirstFrameAllowsLaterRe
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
-  auto registry = makeLeaseManager(*node, session, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+  auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto first =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
@@ -692,44 +675,6 @@ TEST(SubscriptionLeaseManagerTest, VideoLeaseExpiryBeforeFirstFrameAllowsLaterRe
   ASSERT_TRUE(publishUntil(
     executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
-}
-
-TEST(SubscriptionLeaseManagerTest, VideoProfilingUsesResolvedCanonicalStreamKey)
-{
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_profiling_canonical_test");
-  FakeRoomConnection session;
-  const std::string canonical_topic = "/camera/profiled/front";
-  const std::string variant_topic = "  camera//profiled/front/  ";
-  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(canonical_topic, rclcpp::QoS(1).reliable());
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, canonical_topic, "sensor_msgs/msg/Image"));
-
-  VideoProfilingRegistry profiling_registry(node->get_logger(), makeProfilingConfig());
-  auto registry = makeLeaseManager(*node, session, nullptr, &profiling_registry);
-
-  const auto first =
-    sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(canonical_topic)}));
-  const auto second =
-    sendHeartbeatAndExtractStatus(registry, *session.state, "bob", makeHeartbeat({makeTopicDemand(variant_topic)}));
-  const auto expected_spec =
-    resolveRosVideoTopicSpec(makeDefaultVideoStreamConfig(), canonical_topic, kImageInterfaceType);
-
-  EXPECT_EQ(first["delivery"]["track_name"], expected_spec.track_name);
-  EXPECT_EQ(second["name"], canonical_topic);
-  ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
-
-  const auto summaries = profiling_registry.takeSummaries();
-  ASSERT_EQ(summaries.size(), 1U);
-  const auto & summary = summaries.front();
-  EXPECT_EQ(summary.stream_key, expected_spec.stream_key);
-  EXPECT_EQ(summary.track_name, expected_spec.track_name);
-  EXPECT_EQ(summary.track_publish_count, 1U);
-  EXPECT_GE(summary.frames_in, 1U);
 }
 
 TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedVideoTrack)
@@ -866,7 +811,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
 
-  auto registry = makeLeaseManager(*node, session, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+  auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();
@@ -890,7 +835,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedVideoTr
   executor.add_node(node);
   ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
 
-  auto registry = makeLeaseManager(*node, session, nullptr, nullptr, kShortHeartbeatLeaseDuration);
+  auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();

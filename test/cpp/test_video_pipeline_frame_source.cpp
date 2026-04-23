@@ -68,9 +68,6 @@ public:
   void onCaptureFailed(const std::string &) override
   {}
 
-  void onPipelineFailed(const std::string &) override
-  {}
-
   void onRestartFailed(const std::string &) override
   {}
 
@@ -85,7 +82,7 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::optional<RestartConfig> restart_config = std::nullopt)
-  : VideoPipelineFrameSource(makeTestSpec(), sink, observer, nullptr, std::move(restart_config))
+  : VideoPipelineFrameSource(makeTestSpec(), sink, observer, std::move(restart_config))
   {}
 
   ~TestableVideoPipelineFrameSource() override

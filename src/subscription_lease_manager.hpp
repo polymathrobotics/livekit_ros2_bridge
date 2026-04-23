@@ -41,7 +41,6 @@ class DataTrackPublisher;
 class RoomConnection;
 struct SubscriptionQosConfig;
 class VideoTrackPublisher;
-class VideoProfilingRegistry;
 
 // Maps heartbeat-driven subscription demands onto shared data/video runtimes, tracks requester
 // leases, and publishes subscription status back to the requester.
@@ -60,7 +59,6 @@ public:
     RoomConnection & room_connection,
     AccessPolicy access_policy,
     const SubscriptionQosConfig * qos_config = nullptr,
-    VideoProfilingRegistry * profiling_registry = nullptr,
     const VideoStreamConfig * video_stream_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
@@ -130,7 +128,6 @@ private:
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
   const SubscriptionQosConfig * qos_config_;
-  VideoProfilingRegistry * profiling_registry_;
   const VideoStreamConfig * video_stream_config_;
   Clock::duration heartbeat_lease_duration_;
 

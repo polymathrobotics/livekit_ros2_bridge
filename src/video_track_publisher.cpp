@@ -16,7 +16,6 @@
 
 #include <exception>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -43,15 +42,14 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
   const VideoStreamSpec & spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer,
-  const std::shared_ptr<VideoStreamProfiler> & profiler)
+  VideoStreamLifecycleObserver & observer)
 {
   if (otherVideoInput(spec) != nullptr) {
-    return makeOtherVideoFrameSource(spec, sink, observer, profiler);
+    return makeOtherVideoFrameSource(spec, sink, observer);
   }
 
   auto source = std::make_shared<RosTopicVideoFrameSource>(
-    std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
+    std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer);
   source->activate();
   return source;
 }
@@ -96,28 +94,17 @@ std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
-  const SubscriptionQosConfig * qos_config,
-  std::shared_ptr<VideoStreamProfiler> profiler)
+  const SubscriptionQosConfig * qos_config)
 {
-  auto publisher = std::shared_ptr<VideoTrackPublisher>(
-    new VideoTrackPublisher(room_connection, std::move(spec), std::move(profiler)));
+  auto publisher = std::shared_ptr<VideoTrackPublisher>(new VideoTrackPublisher(room_connection, std::move(spec)));
   publisher->frame_source_ = makeVideoFrameSource(
-    std::move(parameters),
-    std::move(topics),
-    std::move(graph),
-    publisher->spec_,
-    qos_config,
-    *publisher,
-    *publisher,
-    publisher->profiler_);
+    std::move(parameters), std::move(topics), std::move(graph), publisher->spec_, qos_config, *publisher, *publisher);
   return publisher;
 }
 
-VideoTrackPublisher::VideoTrackPublisher(
-  RoomConnection & room_connection, VideoStreamSpec spec, std::shared_ptr<VideoStreamProfiler> profiler)
+VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec)
 : room_connection_(room_connection)
 , spec_(std::move(spec))
-, profiler_(std::move(profiler))
 {}
 
 VideoTrackPublisher::~VideoTrackPublisher()
@@ -131,11 +118,6 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
   if (is_closed_) {
     return;
   }
-
-  const std::optional<std::int64_t> timestamp_us_opt =
-    timestamp_us > 0 ? std::optional<std::int64_t>(timestamp_us) : std::nullopt;
-  VideoStreamProfiler::StageTimer handle_timer(
-    profiler_.get(), VideoProfileStage::kPublisherHandleFrame, timestamp_us_opt);
 
   if (publication_ == nullptr || !publication_->matches(width, height)) {
     const bool is_republish = was_published_;
@@ -155,9 +137,6 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
     }
 
     was_published_ = true;
-    if (profiler_ != nullptr) {
-      profiler_->noteTrackPublished(width, height, is_republish);
-    }
     LogEvent(kLogger, is_republish ? "video_stream_track_republished" : "video_stream_track_published")
       .field("stream_key", spec_.stream_key)
       .field("width", width)
@@ -166,13 +145,7 @@ void VideoTrackPublisher::write(int width, int height, std::vector<std::uint8_t>
   }
 
   livekit::VideoFrame frame(width, height, livekit::VideoBufferType::I420, std::move(i420));
-  {
-    VideoStreamProfiler::StageTimer capture_timer(profiler_.get(), VideoProfileStage::kCaptureFrame, timestamp_us_opt);
-    publication_->capture(frame, timestamp_us);
-  }
-  if (profiler_) {
-    profiler_->noteCapture(timestamp_us_opt);
-  }
+  publication_->capture(frame, timestamp_us);
 }
 
 void VideoTrackPublisher::close()
@@ -186,9 +159,6 @@ void VideoTrackPublisher::close()
     }
 
     if (was_published_) {
-      if (profiler_ != nullptr) {
-        profiler_->noteTrackUnpublish();
-      }
       LogEvent(kLogger, "video_stream_track_unpublishing").field("stream_key", spec_.stream_key).info();
       was_published_ = false;
     }
@@ -205,10 +175,6 @@ void VideoTrackPublisher::close()
 
 void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
 {
-  if (profiler_ != nullptr) {
-    profiler_->noteSampleUnpackFailed(error);
-  }
-
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_closed_) {
     return;
@@ -222,10 +188,6 @@ void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
 
 void VideoTrackPublisher::onCaptureFailed(const std::string & error)
 {
-  if (profiler_ != nullptr) {
-    profiler_->noteCaptureFailed(error);
-  }
-
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_closed_) {
     return;
@@ -234,19 +196,8 @@ void VideoTrackPublisher::onCaptureFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_capture_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
-void VideoTrackPublisher::onPipelineFailed(const std::string & reason)
-{
-  if (profiler_ != nullptr) {
-    profiler_->notePipelineFailure(reason);
-  }
-}
-
 void VideoTrackPublisher::onRestartFailed(const std::string & error)
 {
-  if (profiler_ != nullptr) {
-    profiler_->noteRestartFailed(error);
-  }
-
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_closed_) {
     return;
@@ -257,10 +208,6 @@ void VideoTrackPublisher::onRestartFailed(const std::string & error)
 
 void VideoTrackPublisher::onPushFailed(const std::string & error)
 {
-  if (profiler_ != nullptr) {
-    profiler_->notePushFailed(error);
-  }
-
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_closed_) {
     return;

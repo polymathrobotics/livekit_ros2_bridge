@@ -30,7 +30,6 @@
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
-#include "video_profiling.hpp"
 #include "video_stream_spec.hpp"
 #include "video_track_publisher.hpp"
 #include "wire/protocol.hpp"
@@ -93,7 +92,6 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   RoomConnection & room_connection,
   AccessPolicy access_policy,
   const SubscriptionQosConfig * qos_config,
-  VideoProfilingRegistry * profiling_registry,
   const VideoStreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
 : parameters_(std::move(parameters))
@@ -103,7 +101,6 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
 , qos_config_(qos_config)
-, profiling_registry_(profiling_registry)
 , video_stream_config_(video_stream_config)
 , heartbeat_lease_duration_(heartbeat_lease_duration)
 {}
@@ -259,8 +256,7 @@ VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
 
 std::shared_ptr<VideoTrackPublisher> SubscriptionLeaseManager::createVideoPublisher(const VideoStreamSpec & spec)
 {
-  const auto profiler = profiling_registry_ == nullptr ? nullptr : profiling_registry_->getOrCreateProfiler(spec);
-  return VideoTrackPublisher::create(parameters_, topics_, graph_, room_connection_, spec, qos_config_, profiler);
+  return VideoTrackPublisher::create(parameters_, topics_, graph_, room_connection_, spec, qos_config_);
 }
 
 DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscription & subscription) const

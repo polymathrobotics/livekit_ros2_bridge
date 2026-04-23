@@ -38,7 +38,6 @@
 #include "rpc_router.hpp"
 #include "subscription_lease_manager.hpp"
 #include "utils/log_event.hpp"
-#include "video_profiling.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -166,9 +165,6 @@ public:
   , ros_executor_queue_(base_, node.get_node_waitables_interface(), clock_)
   , ros_topic_publisher_(node.get_node_topics_interface(), graph_, clock_, config_.access_policy)
   , ros_service_caller_(base_, graph_, timers_)
-  , profiling_registry_(
-      config_.profiling.enabled ? std::optional<VideoProfilingRegistry>(std::in_place, logger_, config_.profiling)
-                                : std::nullopt)
   , subscription_lease_manager_(
       node.get_node_parameters_interface(),
       node.get_node_topics_interface(),
@@ -177,7 +173,6 @@ public:
       room_connection_.connection(),
       config_.access_policy,
       &config_.subscription_qos,
-      profiling_registry_ ? &*profiling_registry_ : nullptr,
       &config_.video_stream)
   , packet_router_(
       clock_,
@@ -195,16 +190,6 @@ public:
       setWatchdogUnhealthy("startup_connect_pending");
       watchdog_timer_ = rclcpp::create_wall_timer(
         kWatchdogEvaluationInterval, [this]() { checkWatchdog(); }, nullptr, base_.get(), timers_.get());
-    }
-
-    if (profiling_registry_) {
-      profiling_registry_->logConfig();
-      video_profile_summary_timer_ = rclcpp::create_wall_timer(
-        profiling_registry_->config().summary_interval,
-        [this]() { profiling_registry_->logSummaries(); },
-        nullptr,
-        base_.get(),
-        timers_.get());
     }
 
     subscription_lease_gc_timer_ = rclcpp::create_wall_timer(
@@ -248,14 +233,8 @@ public:
 
     subscription_lease_gc_timer_.reset();
     watchdog_timer_.reset();
-    video_profile_summary_timer_.reset();
 
     ros_executor_queue_.shutdown();
-
-    if (profiling_registry_) {
-      profiling_registry_->logSummaries();
-      profiling_registry_->flushTrace();
-    }
   }
 
   Impl(const Impl &) = delete;
@@ -464,14 +443,12 @@ private:
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;
-  std::optional<VideoProfilingRegistry> profiling_registry_;
   SubscriptionLeaseManager subscription_lease_manager_;
   PacketRouter packet_router_;
   RpcRouter rpc_router_;
   ScopedRpcRegistration rpc_registration_;
   rclcpp::TimerBase::SharedPtr subscription_lease_gc_timer_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
-  rclcpp::TimerBase::SharedPtr video_profile_summary_timer_;
 };
 
 Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)

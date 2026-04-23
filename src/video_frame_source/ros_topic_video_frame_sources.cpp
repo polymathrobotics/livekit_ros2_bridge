@@ -102,14 +102,6 @@ std::optional<CompressedImageCodec> parseCompressedImageCodec(const std::string 
   return parse_token(format.substr(sep + 1));
 }
 
-std::optional<std::int64_t> timestampUsFromRosStamp(const builtin_interfaces::msg::Time & stamp)
-{
-  if (stamp.sec < 0 || (stamp.sec == 0 && stamp.nanosec == 0U)) {
-    return std::nullopt;
-  }
-  return static_cast<std::int64_t>(stamp.sec) * 1000000LL + static_cast<std::int64_t>(stamp.nanosec / 1000U);
-}
-
 FrameLayout frameLayoutFromImage(const sensor_msgs::msg::Image & image, GstVideoFormat format)
 {
   FrameLayout layout;
@@ -174,8 +166,7 @@ GstBufferPtr makeStampedGstBuffer(
     }
   }
 
-  // GStreamer still expects a non-negative running-time timestamp on every
-  // buffer, while profiling uses `nullopt` to mean "source time unavailable".
+  // GStreamer expects a non-negative running-time timestamp on every buffer.
   const std::uint64_t sec = stamp.sec < 0 ? 0U : static_cast<std::uint64_t>(stamp.sec);
   const GstClockTime pts = sec * GST_SECOND + stamp.nanosec;
   GST_BUFFER_PTS(buffer.get()) = pts;
@@ -212,9 +203,8 @@ RosTopicVideoFrameSource::RosTopicVideoFrameSource(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer,
-  std::shared_ptr<VideoStreamProfiler> profiler)
-: VideoPipelineFrameSource(std::move(spec), sink, observer, std::move(profiler))
+  VideoStreamLifecycleObserver & observer)
+: VideoPipelineFrameSource(std::move(spec), sink, observer)
 , parameters_(std::move(parameters))
 , topics_(std::move(topics))
 , graph_(std::move(graph))
@@ -317,18 +307,12 @@ void RosTopicVideoFrameSource::close()
 
 void RosTopicVideoFrameSource::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
 {
-  const auto ingress_time = VideoStreamProfiler::SteadyClock::now();
-  const auto source_timestamp_us = timestampUsFromRosStamp(image->header.stamp);
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
   try {
-    if (profiler_ != nullptr) {
-      profiler_->noteIngress(ingress_time, source_timestamp_us);
-    }
-
     const GstVideoFormat format = gstFormatFromRosEncoding(image->encoding);
     if (format == GST_VIDEO_FORMAT_UNKNOWN) {
       throw std::runtime_error("Unsupported ROS image encoding '" + image->encoding + "'.");
@@ -392,8 +376,6 @@ void RosTopicVideoFrameSource::pushRawLocked(const sensor_msgs::msg::Image & ima
     throw std::runtime_error("Raw video layout is unavailable.");
   }
 
-  VideoStreamProfiler::StageTimer push_timer(
-    profiler_.get(), VideoProfileStage::kPushToAppSrc, timestampUsFromRosStamp(image.header.stamp));
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
   const FrameLayout & layout = *layout_;
 
@@ -418,18 +400,12 @@ void RosTopicVideoFrameSource::pushRawLocked(const sensor_msgs::msg::Image & ima
 
 void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image)
 {
-  const auto ingress_time = VideoStreamProfiler::SteadyClock::now();
-  const auto source_timestamp_us = timestampUsFromRosStamp(image->header.stamp);
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
   try {
-    if (profiler_ != nullptr) {
-      profiler_->noteIngress(ingress_time, source_timestamp_us);
-    }
-
     const CompressedImageCodec codec = compressedImageCodecFromImage(*image);
 
     // The decoder chain differs per codec (`jpegdec` vs `pngdec`), so the
@@ -488,8 +464,6 @@ void RosTopicVideoFrameSource::pushCompressedLocked(const sensor_msgs::msg::Comp
     throw std::runtime_error("Compressed video appsrc is unavailable.");
   }
 
-  VideoStreamProfiler::StageTimer push_timer(
-    profiler_.get(), VideoProfileStage::kPushToAppSrc, timestampUsFromRosStamp(image.header.stamp));
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
   if (gst_app_src_push_buffer(appsrc_.get(), buffer.release()) != GST_FLOW_OK) {
     throw std::runtime_error("Failed to push compressed ROS image into GStreamer.");
