@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -85,8 +88,11 @@ public:
 class TestableVideoPipelineFrameSource final : public VideoPipelineFrameSource
 {
 public:
-  TestableVideoPipelineFrameSource(VideoFrameSink & sink, VideoStreamLifecycleObserver & observer)
-  : VideoPipelineFrameSource(makeTestSpec(), sink, observer)
+  TestableVideoPipelineFrameSource(
+    VideoFrameSink & sink,
+    VideoStreamLifecycleObserver & observer,
+    std::optional<RestartConfig> restart_config = std::nullopt)
+  : VideoPipelineFrameSource(makeTestSpec(), sink, observer, nullptr, std::move(restart_config))
   {}
 
   ~TestableVideoPipelineFrameSource() override
@@ -104,6 +110,28 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     return appsrc_ != nullptr;
+  }
+
+  void simulateEos()
+  {
+    GstElement * pipeline = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (pipeline_ == nullptr) {
+        throw std::runtime_error("Test pipeline is not active.");
+      }
+      pipeline = pipeline_.get();
+      gst_object_ref(pipeline);
+    }
+
+    GstMessage * message = gst_message_new_eos(GST_OBJECT(pipeline));
+    gst_object_unref(pipeline);
+    if (message == nullptr) {
+      throw std::runtime_error("Failed to allocate test EOS message.");
+    }
+
+    onBusMessageThunk(nullptr, message, this);
+    gst_message_unref(message);
   }
 };
 
@@ -171,6 +199,21 @@ TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
   auto source = makeOtherVideoFrameSource(spec, sink_, observer_);
   source->close();
   source->close();
+}
+
+TEST_F(VideoPipelineFrameSourceTest, CloseCancelsDelayedRecoveryWithoutExtendingLifetime)
+{
+  auto source = std::make_shared<TestableVideoPipelineFrameSource>(
+    sink_, observer_, VideoPipelineFrameSource::RestartConfig{false, std::chrono::seconds(5)});
+  const std::weak_ptr<TestableVideoPipelineFrameSource> weak_source = source;
+
+  source->startPipeline(
+    "videotestsrc is-live=true ! videoconvert ! video/x-raw,format=I420 ! appsink name=bridge_video_sink", false);
+  source->simulateEos();
+  source->close();
+  source.reset();
+
+  EXPECT_TRUE(weak_source.expired());
 }
 
 void expectRosTopicSourceLifecycleIsIdempotent(

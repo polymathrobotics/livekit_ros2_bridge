@@ -228,6 +228,7 @@ void VideoPipelineFrameSource::close()
 {
   PipelineHandles handles;
   bool recovery_pending = false;
+  std::thread recovery_thread;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -235,10 +236,16 @@ void VideoPipelineFrameSource::close()
     }
 
     recovery_pending = recovery_pending_;
-    is_shutdown_ = true;
-    // Drop the internal handles while holding mutex_ so any in-flight
-    // callbacks observe the terminal shutdown state before GStreamer teardown
-    // removes callbacks and transitions the pipeline to NULL.
+    recovery_thread = beginShutdownLocked();
+  }
+
+  joinRecoveryThread(recovery_thread);
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Drop the internal handles while holding mutex_ so any in-flight callbacks
+    // observe the terminal shutdown state before GStreamer teardown removes
+    // callbacks and transitions the pipeline to NULL.
     handles = takePipelineLocked();
   }
 
@@ -266,6 +273,21 @@ VideoPipelineFrameSource::PipelineHandles VideoPipelineFrameSource::takePipeline
   handles.appsrc = std::move(appsrc_);
   handles.appsink = std::move(appsink_);
   return handles;
+}
+
+std::thread VideoPipelineFrameSource::beginShutdownLocked()
+{
+  is_shutdown_ = true;
+  recovery_condition_.notify_all();
+  return std::move(recovery_thread_);
+}
+
+void VideoPipelineFrameSource::joinRecoveryThread(std::thread & recovery_thread)
+{
+  if (!recovery_thread.joinable()) {
+    return;
+  }
+  recovery_thread.join();
 }
 
 void VideoPipelineFrameSource::startPipelineLocked(const std::string & description, bool require_appsrc)
@@ -476,33 +498,56 @@ void VideoPipelineFrameSource::handleFailure(const std::string & reason)
     .fieldIf(restart_delay > std::chrono::milliseconds::zero(), "restart_delay_ms", restart_delay.count())
     .warn();
 
-  auto self = shared_from_this();
-  // Bus sync handlers run on GStreamer-owned threads. Defer teardown/restart so
-  // pipeline destruction never re-enters the bus callback stack.
-  std::thread([self, restart_delay]() {
-    if (restart_delay <= std::chrono::milliseconds::zero()) {
-      self->recoverAfterFailure();
+  ensureRecoveryThreadLocked();
+  recovery_condition_.notify_one();
+}
+
+void VideoPipelineFrameSource::ensureRecoveryThreadLocked()
+{
+  if (recovery_thread_.joinable()) {
+    return;
+  }
+
+  recovery_thread_ = std::thread([this]() { recoveryLoop(); });
+}
+
+void VideoPipelineFrameSource::recoveryLoop()
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (true) {
+    recovery_condition_.wait(lock, [this]() { return is_shutdown_ || recovery_pending_; });
+    if (is_shutdown_) {
       return;
     }
 
-    std::this_thread::sleep_for(restart_delay);
-    self->recoverAfterFailure();
-  }).detach();
+    const RestartConfig * config = restart_config_ ? &*restart_config_ : nullptr;
+    const auto restart_delay = config != nullptr ? config->restart_delay : std::chrono::milliseconds::zero();
+    if (restart_delay > std::chrono::milliseconds::zero()) {
+      const bool cancelled = recovery_condition_.wait_for(lock, restart_delay, [this]() { return is_shutdown_; });
+      if (cancelled) {
+        return;
+      }
+    }
+
+    lock.unlock();
+    recoverAfterFailure();
+    lock.lock();
+  }
 }
 
 void VideoPipelineFrameSource::recoverAfterFailure()
 {
+  // Serialize teardown and replacement startup with the base mutex so
+  // close() or producer-side reconfiguration never observes half-installed
+  // pipeline members during recovery.
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     return;
   }
 
-  // Serialize teardown and replacement startup with the base mutex so
-  // close() or producer-side reconfiguration never observes half-installed
-  // pipeline members during recovery.
   auto handles = takePipelineLocked();
   teardown(handles.pipeline, handles.appsrc, handles.appsink);
-  // takePipelineLocked() clears the pending marker for the detached pipeline,
+  // takePipelineLocked() clears the pending marker for the failed pipeline,
   // so a restarted pipeline begins from a clean recovery state.
 
   const RestartConfig * config = restart_config_ ? &*restart_config_ : nullptr;

@@ -21,6 +21,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "builtin_interfaces/msg/time.hpp"
@@ -290,15 +291,22 @@ void RosTopicVideoFrameSource::close()
   PipelineHandles handles;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
+  std::thread recovery_thread;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
 
-    is_shutdown_ = true;
+    recovery_thread = beginShutdownLocked();
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
+  }
+
+  joinRecoveryThread(recovery_thread);
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
     handles = takePipelineLocked();
   }
 

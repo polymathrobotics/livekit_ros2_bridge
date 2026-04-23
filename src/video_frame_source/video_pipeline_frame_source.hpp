@@ -19,10 +19,12 @@
 #include <gst/gst.h>
 
 #include <chrono>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "utils/gstreamer_raii.hpp"
 #include "video_pipeline_description.hpp"
@@ -104,6 +106,10 @@ protected:
   // Resets subclass-specific bookkeeping and atomically transfers the current
   // pipeline handles out of the object. Caller must hold mutex_.
   [[nodiscard]] PipelineHandles takePipelineLocked();
+  // Marks shutdown terminal, wakes any delayed recovery, and transfers the
+  // owned worker thread so callers can join without holding mutex_.
+  [[nodiscard]] std::thread beginShutdownLocked();
+  static void joinRecoveryThread(std::thread & recovery_thread);
   // Caller must hold mutex_. Parses `description`, validates the named
   // app endpoints, installs callbacks, and transitions the pipeline to PLAYING.
   void startPipelineLocked(const std::string & description, bool require_appsrc = false);
@@ -114,8 +120,13 @@ private:
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
   void handleFailure(const std::string & reason);
+  void ensureRecoveryThreadLocked();
+  void recoveryLoop();
   void recoverAfterFailure();
   std::string fixedDescription() const;
+
+  std::condition_variable recovery_condition_;
+  std::thread recovery_thread_;
 };
 
 std::shared_ptr<VideoFrameSource> makeOtherVideoFrameSource(
