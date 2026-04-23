@@ -23,15 +23,13 @@ ARG SKIP_KEYS=""
 WORKDIR /opt/rosdep-workspace
 
 COPY package.xml src/livekit_ros2_bridge/package.xml
-COPY docker/gather-rosdeps.sh /usr/local/bin/gather-rosdeps
 
-RUN chmod +x /usr/local/bin/gather-rosdeps \
+# `gather-rosdeps` is provided by the polymathrobotics/ros builder base image.
+RUN mkdir -p /tmp/rosdep-scripts \
      && export SKIP_KEYS="${SKIP_KEYS}" \
      && gather-rosdeps /tmp/rosdep-scripts/install-dev-rosdeps.sh src/livekit_ros2_bridge \
-     && ROSDEP_DEPENDENCY_TYPES="buildtool buildtool_export build build_export exec" \
-     gather-rosdeps /tmp/rosdep-scripts/install-build-rosdeps.sh src/livekit_ros2_bridge \
-     && ROSDEP_DEPENDENCY_TYPES="exec" \
-     gather-rosdeps /tmp/rosdep-scripts/install-runtime-rosdeps.sh src/livekit_ros2_bridge
+     && bash -lc 'rosdep(){ if [ "$1" = install ]; then shift; command rosdep install --dependency-types=buildtool --dependency-types=buildtool_export --dependency-types=build --dependency-types=build_export --dependency-types=exec "$@"; else command rosdep "$@"; fi; }; export -f rosdep; gather-rosdeps /tmp/rosdep-scripts/install-build-rosdeps.sh src/livekit_ros2_bridge' \
+     && bash -lc 'rosdep(){ if [ "$1" = install ]; then shift; command rosdep install --dependency-types=exec "$@"; else command rosdep "$@"; fi; }; export -f rosdep; gather-rosdeps /tmp/rosdep-scripts/install-runtime-rosdeps.sh src/livekit_ros2_bridge'
 
 FROM toolchain-base AS build
 
