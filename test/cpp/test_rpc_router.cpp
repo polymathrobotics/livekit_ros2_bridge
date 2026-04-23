@@ -153,7 +153,7 @@ public:
   explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy())
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
   , queue(node->get_node_base_interface(), node->get_node_waitables_interface(), node->get_clock())
-  , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_timers_interface())
+  , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
   , router(node->get_node_graph_interface(), policy, queue, caller)
   {
     router.registerRpcs(connection);
@@ -308,7 +308,7 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
   RosExecutorQueue queue(node->get_node_base_interface(), node->get_node_waitables_interface(), node->get_clock());
   RosServiceCaller caller(
-    node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_timers_interface());
+    node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface());
   FakeRoomConnection connection;
   connection.state->rejected_rpc_methods = {wire::protocol::kRpcServiceList};
 

@@ -150,7 +150,7 @@ bool waitForService(
 RosServiceCaller makeServiceCaller(const std::shared_ptr<rclcpp::Node> & node)
 {
   return RosServiceCaller(
-    node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_timers_interface());
+    node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface());
 }
 
 ServiceCallRequest makeSetBoolRequest(
@@ -213,7 +213,7 @@ TEST_F(RosServiceCallerTest, CallsServiceAndReturnsResponse)
 
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
-  const RosServiceCaller::ServiceCallResponse result = future.get();
+  const RosServiceCaller::Response result = future.get();
   const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
   EXPECT_TRUE(response.success);
   EXPECT_EQ(response.message, "enabled");
@@ -396,7 +396,8 @@ TEST_F(RosServiceCallerTest, DropsLateTimedOutResponseBeforeSettlingLaterCallOnS
   auto second_request_started_future = second_request_started->get_future();
   auto release_second_response = std::make_shared<std::promise<void>>();
   auto release_second_response_future = release_second_response->get_future().share();
-  auto invocation_count = std::make_shared<std::atomic<int>>(0);
+  auto first_request_observed = std::make_shared<std::atomic<bool>>(false);
+  auto second_request_observed = std::make_shared<std::atomic<bool>>(false);
 
   auto service = server_node->create_service<std_srvs::srv::SetBool>(
     "/late_timeout_drop",
@@ -404,14 +405,20 @@ TEST_F(RosServiceCallerTest, DropsLateTimedOutResponseBeforeSettlingLaterCallOnS
      release_first_response_future,
      second_request_started,
      release_second_response_future,
-     invocation_count](
+     first_request_observed,
+     second_request_observed](
       const std_srvs::srv::SetBool::Request::SharedPtr request, std_srvs::srv::SetBool::Response::SharedPtr response) {
-      const int invocation_index = invocation_count->fetch_add(1, std::memory_order_relaxed) + 1;
-      if (invocation_index == 1) {
-        first_request_started->set_value();
+      if (request->data) {
+        bool expected = false;
+        if (first_request_observed->compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+          first_request_started->set_value();
+        }
         release_first_response_future.wait();
-      } else if (invocation_index == 2) {
-        second_request_started->set_value();
+      } else {
+        bool expected = false;
+        if (second_request_observed->compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+          second_request_started->set_value();
+        }
         release_second_response_future.wait();
       }
 
@@ -487,7 +494,7 @@ TEST_F(RosServiceCallerTest, DropsLateTimedOutResponseBeforeSettlingLaterCallOnS
   server_spin_thread.join();
 }
 
-TEST_F(RosServiceCallerTest, CancelCallsForRequesterOnlySettlesMatchingRequesterCalls)
+TEST_F(RosServiceCallerTest, CancelForRequesterOnlySettlesMatchingCalls)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_scoped_disconnect_node");
 
@@ -495,13 +502,13 @@ TEST_F(RosServiceCallerTest, CancelCallsForRequesterOnlySettlesMatchingRequester
 
   const auto request = makeSetBoolRequest("/scoped_disconnect_release", kStandardRequestTimeoutMs);
 
-  std::vector<std::future<RosServiceCaller::ServiceCallResponse>> requester_one_futures;
+  std::vector<std::future<RosServiceCaller::Response>> requester_one_futures;
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     requester_one_futures.push_back(caller.call("requester-1", request));
   }
   auto requester_two_future = caller.call("requester-2", request);
 
-  caller.cancelCallsForRequester("requester-1");
+  caller.cancelForRequester("requester-1");
 
   for (auto & requester_one_future : requester_one_futures) {
     EXPECT_EQ(expectRuntimeErrorMessage(requester_one_future), "Requester identity disconnected.");
@@ -525,7 +532,7 @@ TEST_F(RosServiceCallerTest, SessionResetCompletesInflightCallsAndReleasesReques
   auto caller = makeServiceCaller(caller_node);
 
   const auto request = makeSetBoolRequest("/session_reset_release", kStandardRequestTimeoutMs);
-  std::vector<std::future<RosServiceCaller::ServiceCallResponse>> inflight_futures;
+  std::vector<std::future<RosServiceCaller::Response>> inflight_futures;
   for (int i = 0; i < kMaxInflightPerRequester; ++i) {
     inflight_futures.push_back(caller.call("requester-1", request));
   }
@@ -581,7 +588,7 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
 
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
-  const RosServiceCaller::ServiceCallResponse result = future.get();
+  const RosServiceCaller::Response result = future.get();
   EXPECT_EQ(result.interface_type, "std_srvs/srv/SetBool");
   const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
   EXPECT_TRUE(response.success);
@@ -687,7 +694,7 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
   caller.shutdown();
 }
 
-TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
+TEST_F(RosServiceCallerTest, ShutdownWaitsForActiveServiceWaitableCallback)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_shutdown_quiesce_node");
 
@@ -696,34 +703,34 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
 
   auto caller = makeServiceCaller(caller_node);
 
-  auto poll_entered = std::make_shared<std::promise<void>>();
-  auto poll_entered_future = poll_entered->get_future();
-  auto release_poll = std::make_shared<std::promise<void>>();
-  auto release_poll_future = release_poll->get_future().share();
-  auto poll_exited = std::make_shared<std::promise<void>>();
-  auto poll_exited_future = poll_exited->get_future();
+  auto waitable_entered = std::make_shared<std::promise<void>>();
+  auto waitable_entered_future = waitable_entered->get_future();
+  auto release_waitable = std::make_shared<std::promise<void>>();
+  auto release_waitable_future = release_waitable->get_future().share();
+  auto waitable_exited = std::make_shared<std::promise<void>>();
+  auto waitable_exited_future = waitable_exited->get_future();
 
-  caller.setPollCallbacksForTest(
-    [poll_entered, release_poll_future]() {
-      poll_entered->set_value();
-      release_poll_future.wait();
+  caller.setWaitableCallbacksForTest(
+    [waitable_entered, release_waitable_future]() {
+      waitable_entered->set_value();
+      release_waitable_future.wait();
     },
-    [poll_exited]() { poll_exited->set_value(); });
-
-  std::thread spin_thread([&executor]() { executor.spin(); });
+    [waitable_exited]() { waitable_exited->set_value(); });
 
   bool release_sent = false;
-  const auto release_poll_callback = [&]() {
+  const auto release_waitable_callback = [&]() {
     if (release_sent) {
       return;
     }
     release_sent = true;
-    release_poll->set_value();
+    release_waitable->set_value();
   };
 
   auto inflight_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", kStandardRequestTimeoutMs));
 
-  ASSERT_EQ(poll_entered_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  std::thread spin_thread([&executor]() { executor.spin(); });
+
+  ASSERT_EQ(waitable_entered_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
 
   auto shutdown_started = std::make_shared<std::promise<void>>();
   auto shutdown_started_future = shutdown_started->get_future();
@@ -736,9 +743,9 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   EXPECT_EQ(shutdown_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
   EXPECT_EQ(inflight_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
 
-  release_poll_callback();
+  release_waitable_callback();
 
-  EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(waitable_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(shutdown_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
 
@@ -746,7 +753,7 @@ TEST_F(RosServiceCallerTest, ShutdownWaitsForActivePollTimerCallback)
   spin_thread.join();
 }
 
-TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
+TEST_F(RosServiceCallerTest, ShutdownFromActiveServiceWaitableCallbackDoesNotDeadlock)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reentrant_shutdown_node");
 
@@ -757,23 +764,23 @@ TEST_F(RosServiceCallerTest, ShutdownFromActivePollTimerCallbackDoesNotDeadlock)
 
   auto shutdown_completed = std::make_shared<std::promise<void>>();
   auto shutdown_completed_future = shutdown_completed->get_future();
-  auto poll_exited = std::make_shared<std::promise<void>>();
-  auto poll_exited_future = poll_exited->get_future();
+  auto waitable_exited = std::make_shared<std::promise<void>>();
+  auto waitable_exited_future = waitable_exited->get_future();
 
-  caller.setPollCallbacksForTest(
+  caller.setWaitableCallbacksForTest(
     [&caller, shutdown_completed]() {
       caller.shutdown();
       shutdown_completed->set_value();
     },
-    [poll_exited]() { poll_exited->set_value(); });
-
-  std::thread spin_thread([&executor]() { executor.spin(); });
+    [waitable_exited]() { waitable_exited->set_value(); });
 
   auto inflight_future =
     caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", kStandardRequestTimeoutMs));
 
+  std::thread spin_thread([&executor]() { executor.spin(); });
+
   EXPECT_EQ(shutdown_completed_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(poll_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
+  EXPECT_EQ(waitable_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(inflight_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
   EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
 

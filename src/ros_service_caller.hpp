@@ -23,7 +23,7 @@
 
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
-#include "rclcpp/node_interfaces/node_timers_interface.hpp"
+#include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -31,14 +31,14 @@ namespace livekit_ros2_bridge
 struct ServiceCallRequest;
 
 // Owns dynamic ROS service clients and settles each request asynchronously from
-// a poll timer so RPC handlers can enqueue work without blocking the executor
+// a waitable so RPC handlers can enqueue work without blocking the executor
 // thread that created the request.
 class RosServiceCaller final
 {
 public:
   // The payload stays serialized so callers can forward arbitrary service types
   // without templating RosServiceCaller on generated ROS interfaces.
-  struct ServiceCallResponse
+  struct Response
   {
     std::string service;
     std::string interface_type;
@@ -48,7 +48,7 @@ public:
   RosServiceCaller(
     rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
-    rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers);
+    rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables);
 
   ~RosServiceCaller();
 
@@ -56,21 +56,21 @@ public:
   RosServiceCaller & operator=(const RosServiceCaller &) = delete;
 
   // Starts a service call for the requester. That identity owns the
-  // inflight quota slot and is the scope used by cancelCallsForRequester().
+  // inflight quota slot and is the scope used by cancelForRequester().
   // If request.interface_type is empty, exactly one type must be discoverable
   // for request.service from the current ROS graph. The returned future is
   // ready immediately only for validation, quota, or shutdown failures;
-  // otherwise it resolves later from the poll timer.
-  std::future<ServiceCallResponse> call(const std::string & requester, const ServiceCallRequest & request);
+  // otherwise it resolves later from the service response waitable.
+  std::future<Response> call(const std::string & requester, const ServiceCallRequest & request);
 
-  void cancelCallsForRequester(const std::string & requester);
+  void cancelForRequester(const std::string & requester);
   // Fails all inflight calls and drops cached clients and type support so the
   // next call rebuilds from current session and graph state.
   void resetSessionState();
 
-  // Prevents new calls, waits for any active poll callback to finish, then
+  // Prevents new calls, waits for any active waitable callback to finish, then
   // fails remaining inflight calls. This coordination is reentrant-safe so
-  // shutdown can be triggered from code already running inside poll().
+  // shutdown can be triggered from code already running inside the waitable.
   void shutdown();
 
 private:
@@ -78,7 +78,7 @@ private:
 
   std::unique_ptr<Impl> impl_;
 
-  void setPollCallbacksForTest(std::function<void()> on_poll_enter, std::function<void()> on_poll_exit);
+  void setWaitableCallbacksForTest(std::function<void()> on_waitable_enter, std::function<void()> on_waitable_exit);
   void setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load);
 };
 

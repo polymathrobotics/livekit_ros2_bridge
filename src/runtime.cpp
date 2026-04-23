@@ -164,7 +164,7 @@ public:
   , room_connection_(std::move(connection))
   , ros_executor_queue_(base_, node.get_node_waitables_interface(), clock_)
   , ros_topic_publisher_(node.get_node_topics_interface(), graph_, clock_, config_.access_policy)
-  , ros_service_caller_(base_, graph_, timers_)
+  , ros_service_caller_(base_, graph_, node.get_node_waitables_interface())
   , subscription_lease_manager_(
       node.get_node_parameters_interface(),
       node.get_node_topics_interface(),
@@ -275,7 +275,7 @@ private:
 
     submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity)]() {
       subscription_lease_manager_.onRemoteParticipantDisconnected(remote_participant_identity);
-      ros_service_caller_.cancelCallsForRequester(remote_participant_identity);
+      ros_service_caller_.cancelForRequester(remote_participant_identity);
     });
   }
 
