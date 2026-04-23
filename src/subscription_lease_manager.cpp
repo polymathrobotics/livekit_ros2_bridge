@@ -24,6 +24,7 @@
 
 #include "data_track_publisher.hpp"
 #include "nlohmann/json.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "rclcpp/logging.hpp"
 #include "room_connection.hpp"
 #include "utils/interface_type_utils.hpp"
@@ -42,6 +43,7 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("subscription_lease_manager");
+constexpr auto kLeaseGcInterval = std::chrono::seconds(1);
 constexpr const char * kLeaseExpiredReason = "lease_expired";
 
 const VideoStreamConfig & defaultVideoStreamConfig()
@@ -108,6 +110,21 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
 SubscriptionLeaseManager::~SubscriptionLeaseManager()
 {
   shutdown();
+}
+
+void SubscriptionLeaseManager::startLeaseGcTimer(
+  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
+  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
+  SubmitToExecutorFunction submit_to_executor)
+{
+  lease_gc_timer_ = rclcpp::create_wall_timer(
+    kLeaseGcInterval,
+    [this, submit_to_executor = std::move(submit_to_executor)]() {
+      submit_to_executor([this]() { pruneExpiredLeases(); });
+    },
+    nullptr,
+    base.get(),
+    timers.get());
 }
 
 void SubscriptionLeaseManager::handleHeartbeat(
@@ -665,6 +682,8 @@ void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_des
 
 void SubscriptionLeaseManager::shutdown()
 {
+  lease_gc_timer_.reset();
+
   if (is_shutdown_.exchange(true)) {
     return;
   }

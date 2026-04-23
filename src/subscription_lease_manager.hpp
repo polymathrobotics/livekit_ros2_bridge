@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -28,9 +29,12 @@
 #include "access_policy.hpp"
 #include "core/subscriptions.hpp"
 #include "rclcpp/clock.hpp"
+#include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
+#include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "rclcpp/timer.hpp"
 #include "utils/event_throttle.hpp"
 #include "video_stream_spec.hpp"
 
@@ -50,6 +54,7 @@ class SubscriptionLeaseManager final
 
 public:
   using Clock = std::chrono::steady_clock;
+  using SubmitToExecutorFunction = std::function<void(std::function<void()> work)>;
 
   SubscriptionLeaseManager(
     rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
@@ -63,6 +68,10 @@ public:
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
 
+  void startLeaseGcTimer(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
+    rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
+    SubmitToExecutorFunction submit_to_executor);
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
 
   // Participant disconnects can leave a rejoined requester unable to see an already published
@@ -132,6 +141,7 @@ private:
   Clock::duration heartbeat_lease_duration_;
 
   std::atomic<bool> is_shutdown_{false};
+  rclcpp::TimerBase::SharedPtr lease_gc_timer_;
   std::unordered_map<std::string, SessionLease> session_leases_;
   SubscriptionMap subscriptions_;
   std::unordered_set<std::string> republish_requesters_;
