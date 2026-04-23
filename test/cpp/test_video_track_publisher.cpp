@@ -18,6 +18,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "fake_room_connection.hpp"
@@ -29,7 +30,36 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-class ThrowingUnpublishRoomConnection final : public RoomConnection
+class RecordingPublishedVideoTrack final : public PublishedVideoTrack
+{
+public:
+  RecordingPublishedVideoTrack(std::string name, std::vector<std::string> & unpublished_names)
+  : RecordingPublishedVideoTrack(std::move(name), unpublished_names, false)
+  {}
+
+  RecordingPublishedVideoTrack(
+    std::string name, std::vector<std::string> & unpublished_names, bool simulate_unpublish_failure)
+  : PublishedVideoTrack(std::move(name))
+  , unpublished_names_(unpublished_names)
+  , simulate_unpublish_failure_(simulate_unpublish_failure)
+  {}
+
+  ~RecordingPublishedVideoTrack() noexcept override
+  {
+    try {
+      unpublished_names_.push_back(name());
+      if (simulate_unpublish_failure_) {
+        throw std::runtime_error("simulated video unpublish failure");
+      }
+    } catch (...) {}
+  }
+
+private:
+  std::vector<std::string> & unpublished_names_;
+  bool simulate_unpublish_failure_ = false;
+};
+
+class BestEffortUnpublishRoomConnection final : public RoomConnection
 {
 public:
   void start(LiveKitConfig, RoomEventCallbacks) override
@@ -65,21 +95,11 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
     published_video_track_names.push_back(name);
-    auto handle = std::make_shared<VideoTrackHandle>();
-    handle->name = name;
-    return handle;
-  }
-
-  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
-  {
-    if (handle != nullptr) {
-      unpublished_video_track_names.push_back(handle->name);
-    }
-    throw std::runtime_error("simulated video unpublish failure");
+    return std::make_unique<RecordingPublishedVideoTrack>(name, unpublished_video_track_names, true);
   }
 
   std::vector<std::string> published_video_track_names;
@@ -126,7 +146,7 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
     published_video_track_names.push_back(name);
@@ -135,16 +155,7 @@ public:
       throw std::runtime_error("simulated video publish failure");
     }
 
-    auto handle = std::make_shared<VideoTrackHandle>();
-    handle->name = name;
-    return handle;
-  }
-
-  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
-  {
-    if (handle != nullptr) {
-      unpublished_video_track_names.push_back(handle->name);
-    }
+    return std::make_unique<RecordingPublishedVideoTrack>(name, unpublished_video_track_names);
   }
 
   int publish_attempts = 0;
@@ -196,7 +207,7 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
   {}
 
-  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name, const std::shared_ptr<livekit::VideoSource> &, const VideoPublishConfig &) override
   {
     published_video_track_names.push_back(name);
@@ -206,16 +217,7 @@ public:
     }
     release_publish_future_.wait();
 
-    auto handle = std::make_shared<VideoTrackHandle>();
-    handle->name = name;
-    return handle;
-  }
-
-  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
-  {
-    if (handle != nullptr) {
-      unpublished_video_track_names.push_back(handle->name);
-    }
+    return std::make_unique<RecordingPublishedVideoTrack>(name, unpublished_video_track_names);
   }
 
   std::future<void> & publishStarted()
@@ -278,9 +280,9 @@ TEST(VideoTrackPublisherTest, RepublishesOnSizeChangeAndUnpublishesOnDestruction
     }));
 }
 
-TEST(VideoTrackPublisherTest, DestructionSwallowsVideoUnpublishFailure)
+TEST(VideoTrackPublisherTest, DestructionUsesBestEffortPublishedTrackCleanup)
 {
-  ThrowingUnpublishRoomConnection connection;
+  BestEffortUnpublishRoomConnection connection;
   auto publisher = std::make_unique<VideoTrackPublisher>(
     connection, makeSpec("stream:unpublish_failure", "lkros.video.camera.unpublish_failure"));
 

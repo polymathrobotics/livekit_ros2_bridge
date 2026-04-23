@@ -73,28 +73,11 @@ class VideoTrackPublisher::Publication final
 {
 public:
   Publication(RoomConnection & room_connection, const VideoStreamSpec & spec, int width, int height)
-  : room_connection_(room_connection)
-  , width_(width)
+  : width_(width)
   , height_(height)
   , video_source_(std::make_shared<livekit::VideoSource>(width, height))
-  , track_(room_connection_.publishVideoTrack(spec.track_name, video_source_, spec.publish_config))
+  , track_(room_connection.publishVideoTrack(spec.track_name, video_source_, spec.publish_config))
   {}
-
-  ~Publication()
-  {
-    if (track_ == nullptr) {
-      return;
-    }
-
-    try {
-      room_connection_.unpublishVideoTrack(track_);
-    } catch (...) {
-      LogEvent(kLogger, "video_track_unpublish_failed")
-        .field("track_name", track_->name)
-        .fieldException("error", std::current_exception())
-        .warn();
-    }
-  }
 
   Publication(const Publication &) = delete;
   Publication & operator=(const Publication &) = delete;
@@ -112,11 +95,10 @@ public:
   }
 
 private:
-  RoomConnection & room_connection_;
   int width_;
   int height_;
   std::shared_ptr<livekit::VideoSource> video_source_;
-  std::shared_ptr<VideoTrackHandle> track_;
+  std::unique_ptr<PublishedVideoTrack> track_;
 };
 
 std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(

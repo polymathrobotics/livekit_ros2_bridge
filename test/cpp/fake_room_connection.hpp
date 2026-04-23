@@ -70,6 +70,29 @@ struct FakeRoomConnectionState
   int publish_packet_call_count = 0;
 };
 
+class FakePublishedVideoTrack final : public PublishedVideoTrack
+{
+public:
+  FakePublishedVideoTrack(std::string name, std::shared_ptr<FakeRoomConnectionState> state)
+  : PublishedVideoTrack(std::move(name))
+  , state_(std::move(state))
+  {}
+
+  ~FakePublishedVideoTrack() noexcept override
+  {
+    try {
+      if (state_ == nullptr) {
+        return;
+      }
+      state_->event_log.push_back("unpublish_video_track:" + name());
+      state_->unpublished_video_track_names.push_back(name());
+    } catch (...) {}
+  }
+
+private:
+  std::shared_ptr<FakeRoomConnectionState> state_;
+};
+
 class FakeRoomConnection final : public RoomConnection
 {
 public:
@@ -155,7 +178,7 @@ public:
     data_track_names_.erase(track.get());
   }
 
-  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
     const VideoPublishConfig & config) override
@@ -164,18 +187,7 @@ public:
     state->event_log.push_back("publish_video_track:" + name);
     state->published_video_track_names.push_back(name);
     state->published_video_configs.push_back(config);
-    auto handle = std::make_shared<VideoTrackHandle>();
-    handle->name = name;
-    return handle;
-  }
-
-  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
-  {
-    if (handle == nullptr) {
-      return;
-    }
-    state->event_log.push_back("unpublish_video_track:" + handle->name);
-    state->unpublished_video_track_names.push_back(handle->name);
+    return std::make_unique<FakePublishedVideoTrack>(name, state);
   }
 
   void stop() override

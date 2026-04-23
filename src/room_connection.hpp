@@ -96,11 +96,28 @@ struct OutgoingPacket
   std::string topic;
 };
 
-struct VideoTrackHandle
+class PublishedVideoTrack
 {
-  // Opaque handle used only to request a later unpublish. Implementations may invalidate it after
-  // unpublish or any connection reset/reconnect.
-  std::string name;
+public:
+  virtual ~PublishedVideoTrack() noexcept = default;
+
+  PublishedVideoTrack(const PublishedVideoTrack &) = delete;
+  PublishedVideoTrack & operator=(const PublishedVideoTrack &) = delete;
+  PublishedVideoTrack(PublishedVideoTrack &&) = delete;
+  PublishedVideoTrack & operator=(PublishedVideoTrack &&) = delete;
+
+  const std::string & name() const noexcept
+  {
+    return name_;
+  }
+
+protected:
+  explicit PublishedVideoTrack(std::string name)
+  : name_(std::move(name))
+  {}
+
+private:
+  std::string name_;
 };
 
 enum class DataTrackPushErrorCode
@@ -194,12 +211,12 @@ public:
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 
-  virtual std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  // Returned publications own their eventual best-effort unpublish. Destroying a stale publication
+  // after reconnect or reset is a no-op.
+  virtual std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
     const VideoPublishConfig & config) = 0;
-  // Best-effort no-op for null, already-unpublished, or reconnect-stale handles.
-  virtual void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) = 0;
 };
 
 std::unique_ptr<RoomConnection> createRoomConnection();

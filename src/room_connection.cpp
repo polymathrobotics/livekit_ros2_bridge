@@ -114,6 +114,23 @@ struct VideoTrackEntry
 class LiveKitRoomConnection final : public RoomConnection, public livekit::RoomDelegate
 {
 public:
+  class PublishedVideoTrackLease final : public PublishedVideoTrack
+  {
+  public:
+    PublishedVideoTrackLease(LiveKitRoomConnection & owner, std::string name)
+    : PublishedVideoTrack(std::move(name))
+    , owner_(owner)
+    {}
+
+    ~PublishedVideoTrackLease() noexcept override
+    {
+      owner_.unpublishPublishedVideoTrack(this);
+    }
+
+  private:
+    LiveKitRoomConnection & owner_;
+  };
+
   LiveKitRoomConnection() = default;
 
   ~LiveKitRoomConnection() override
@@ -236,7 +253,7 @@ public:
     participant->unpublishDataTrack(track);
   }
 
-  std::shared_ptr<VideoTrackHandle> publishVideoTrack(
+  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
     const VideoPublishConfig & config) override
@@ -252,8 +269,6 @@ public:
     if (snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
-    auto handle = std::make_shared<VideoTrackHandle>();
-    handle->name = name;
 
     auto track = livekit::LocalVideoTrack::createLocalVideoTrack(name, source);
     livekit::TrackPublishOptions options;
@@ -301,31 +316,33 @@ public:
       throw std::runtime_error("Failed to publish video track '" + name + "'.");
     }
 
+    std::unique_ptr<PublishedVideoTrack> published_track = std::make_unique<PublishedVideoTrackLease>(*this, name);
     std::lock_guard<std::mutex> lock(mutex_);
     if (snapshot.room_generation != room_generation_) {
       // reset() invalidated this room after publishTrack() returned, so the caller gets
-      // a handle that is already stale and safely degrades to a later no-op.
+      // a publication that is already stale and safely degrades to a later no-op.
       LogEvent(kLogger, "video_track_publish_stale")
         .field("track_name", name)
         .field("track_sid", publication->sid())
         .field("reason", "room_reset")
         .warn();
-      return handle;
+      return published_track;
     }
-    video_tracks_[handle.get()] = VideoTrackEntry{std::move(track), snapshot.room_generation};
-    return handle;
+    video_tracks_[published_track.get()] = VideoTrackEntry{std::move(track), snapshot.room_generation};
+    return published_track;
   }
 
-  void unpublishVideoTrack(const std::shared_ptr<VideoTrackHandle> & handle) override
+  void unpublishPublishedVideoTrack(const PublishedVideoTrack * published_track) noexcept
   {
-    if (handle == nullptr) {
+    if (published_track == nullptr) {
       return;
     }
 
+    const std::string & track_name = published_track->name();
     VideoTrackEntry entry;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      const auto it = video_tracks_.find(handle.get());
+      const auto it = video_tracks_.find(published_track);
       if (it == video_tracks_.end()) {
         return;
       }
@@ -333,16 +350,25 @@ public:
       video_tracks_.erase(it);
     }
 
-    const auto publication = entry.track == nullptr ? nullptr : entry.track->publication();
-    if (publication == nullptr) {
-      return;
-    }
+    try {
+      const auto publication = entry.track == nullptr ? nullptr : entry.track->publication();
+      if (publication == nullptr) {
+        return;
+      }
 
-    const auto snapshot = snapshotLocalParticipant();
-    if (snapshot.participant == nullptr || snapshot.room_generation != entry.room_generation) {
-      return;
+      const auto snapshot = snapshotLocalParticipant();
+      if (snapshot.participant == nullptr || snapshot.room_generation != entry.room_generation) {
+        return;
+      }
+      snapshot.participant->unpublishTrack(publication->sid());
+    } catch (...) {
+      try {
+        LogEvent(kLogger, "video_track_unpublish_failed")
+          .field("track_name", track_name)
+          .fieldException("error", std::current_exception())
+          .warn();
+      } catch (...) {}
     }
-    snapshot.participant->unpublishTrack(publication->sid());
   }
 
   void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
@@ -784,9 +810,9 @@ private:
   RoomEventCallbacks callbacks_;
 
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
-  // Indexed by the address of the opaque VideoTrackHandle shared with callers. The room generation
+  // Indexed by the address of the RAII publication shared with callers. The room generation
   // keeps late publish/unpublish completions from crossing a reconnect boundary.
-  std::unordered_map<const VideoTrackHandle *, VideoTrackEntry> video_tracks_;
+  std::unordered_map<const PublishedVideoTrack *, VideoTrackEntry> video_tracks_;
 
   std::chrono::milliseconds initial_backoff_{kReconnectInitialBackoff};
   std::chrono::milliseconds max_backoff_{kReconnectMaxBackoff};
