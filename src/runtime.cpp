@@ -74,11 +74,6 @@ Runtime::Runtime(rclcpp::Node & node, std::unique_ptr<RoomConnection> connection
 
   const bool rpcs_registered = rpc_router_.registerRpcs(*room_connection_);
   if (!rpcs_registered) {
-    LogEvent(logger_, "runtime_startup_failed")
-      .fieldOr("url", config_.livekit.url, "<unset>")
-      .field("token_present", !config_.livekit.access_token.empty())
-      .field("reason", "required_rpc_registration_failed")
-      .error();
     throw std::runtime_error("Failed to register required RPC methods");
   }
 
