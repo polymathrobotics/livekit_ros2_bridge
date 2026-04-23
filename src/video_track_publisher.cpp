@@ -50,18 +50,10 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
     return makeOtherVideoFrameSource(spec, sink, observer, profiler);
   }
   if (spec.input_kind == VideoInputKind::RosTopic) {
-    if (spec.ingest_mode == kRawImageIngestMode) {
-      auto source = std::make_shared<RawRosVideoFrameSource>(
-        std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
-      source->activate();
-      return source;
-    }
-    if (spec.ingest_mode == kCompressedImageIngestMode) {
-      auto source = std::make_shared<CompressedRosVideoFrameSource>(
-        std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
-      source->activate();
-      return source;
-    }
+    auto source = std::make_shared<RosTopicVideoFrameSource>(
+      std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer, profiler);
+    source->activate();
+    return source;
   }
 
   LogEvent(kLogger, "video_stream_activate_failed")

@@ -48,10 +48,10 @@ enum class CompressedImageCodec
   kPng,
 };
 
-class RawRosVideoFrameSource final : public VideoPipelineFrameSource
+class RosTopicVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
-  RawRosVideoFrameSource(
+  RosTopicVideoFrameSource(
     rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
     rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
@@ -60,58 +60,38 @@ public:
     VideoFrameSink & sink,
     VideoStreamLifecycleObserver & observer,
     std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
-  ~RawRosVideoFrameSource() override;
+  ~RosTopicVideoFrameSource() override;
 
   void activate();
   void close() override;
 
 private:
+  enum class Mode
+  {
+    kRawImage,
+    kCompressedImage,
+  };
+
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
+  Mode mode_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
   std::optional<FrameLayout> layout_;
-
-  void onImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
-
-  void startLocked(const FrameLayout & layout);
-  void pushLocked(const sensor_msgs::msg::Image & image);
-
-  void resetLocked() override;
-};
-
-class CompressedRosVideoFrameSource final : public VideoPipelineFrameSource
-{
-public:
-  CompressedRosVideoFrameSource(
-    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
-    VideoStreamSpec spec,
-    const SubscriptionQosConfig * qos_config,
-    VideoFrameSink & sink,
-    VideoStreamLifecycleObserver & observer,
-    std::shared_ptr<VideoStreamProfiler> profiler = nullptr);
-  ~CompressedRosVideoFrameSource() override;
-
-  void activate();
-  void close() override;
-
-private:
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
-  // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
-  const SubscriptionQosConfig * qos_config_;
-  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr subscription_;
   std::optional<CompressedImageCodec> codec_;
 
-  void onImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
+  static Mode modeFromSpec(const VideoStreamSpec & spec);
 
-  void startLocked(CompressedImageCodec codec);
-  void pushLocked(const sensor_msgs::msg::CompressedImage & image);
+  void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
+  void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
+
+  void startRawPipelineLocked(const FrameLayout & layout);
+  void startCompressedPipelineLocked(CompressedImageCodec codec);
+  void pushRawLocked(const sensor_msgs::msg::Image & image);
+  void pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image);
 
   void resetLocked() override;
 };

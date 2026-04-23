@@ -19,7 +19,9 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "ros_test_support.hpp"
 #include "utils/gstreamer_raii.hpp"
+#include "video_frame_source/ros_topic_video_frame_sources.hpp"
 #include "video_frame_source/video_pipeline_frame_source.hpp"
 #include "video_track_publisher.hpp"
 
@@ -38,6 +40,19 @@ VideoStreamSpec makeTestSpec()
   spec.ingest_mode = kOtherVideoIngestMode;
   spec.config_id = "test";
   spec.other_video_source_name = "test";
+  return spec;
+}
+
+VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type, const char * ingest_mode)
+{
+  VideoStreamSpec spec;
+  spec.stream_key = "topic:" + topic;
+  spec.track_name = "lkros.video.test";
+  spec.input_kind = VideoInputKind::RosTopic;
+  spec.ros_topic = topic;
+  spec.interface_type = interface_type;
+  spec.ingest_mode = ingest_mode;
+  spec.config_id = "test";
   return spec;
 }
 
@@ -156,6 +171,59 @@ TEST_F(VideoPipelineFrameSourceTest, OtherVideoLifecycleIsIdempotent)
   auto source = makeOtherVideoFrameSource(spec, sink_, observer_);
   source->close();
   source->close();
+}
+
+void expectRosTopicSourceLifecycleIsIdempotent(
+  VideoFrameSink & sink,
+  VideoStreamLifecycleObserver & observer,
+  const std::string & node_name,
+  const std::string & topic,
+  const char * interface_type,
+  const char * ingest_mode)
+{
+  test_support::ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>(node_name);
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+
+  auto source = std::make_shared<RosTopicVideoFrameSource>(
+    node->get_node_parameters_interface(),
+    node->get_node_topics_interface(),
+    node->get_node_graph_interface(),
+    makeRosTopicSpec(topic, interface_type, ingest_mode),
+    nullptr,
+    sink,
+    observer);
+
+  source->activate();
+  source->activate();
+  ASSERT_TRUE(test_support::spinUntil(executor, [&]() { return node->count_subscribers(topic) == 1U; }));
+
+  source->close();
+  source->close();
+  ASSERT_TRUE(test_support::spinUntil(executor, [&]() { return node->count_subscribers(topic) == 0U; }));
+}
+
+TEST_F(VideoPipelineFrameSourceTest, RawRosTopicSourceLifecycleIsIdempotent)
+{
+  expectRosTopicSourceLifecycleIsIdempotent(
+    sink_,
+    observer_,
+    "video_pipeline_ros_topic_raw_source_test",
+    "/video_pipeline/raw_image",
+    kImageInterfaceType,
+    kRawImageIngestMode);
+}
+
+TEST_F(VideoPipelineFrameSourceTest, CompressedRosTopicSourceLifecycleIsIdempotent)
+{
+  expectRosTopicSourceLifecycleIsIdempotent(
+    sink_,
+    observer_,
+    "video_pipeline_ros_topic_compressed_source_test",
+    "/video_pipeline/compressed_image",
+    kCompressedImageInterfaceType,
+    kCompressedImageIngestMode);
 }
 
 }  // namespace
