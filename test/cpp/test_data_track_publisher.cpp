@@ -283,7 +283,7 @@ TEST(DataTrackPublisherTest, DestructionWaitsForActiveSerializedMessageCallback)
                                                          const std::string &, const std::vector<std::uint8_t> &) {
     push_entered->set_value();
     release_push_future.wait();
-    return DataTrackPushResult::success();
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
   };
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);

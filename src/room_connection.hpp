@@ -29,6 +29,9 @@
 namespace livekit
 {
 class LocalDataTrack;
+struct LocalDataTrackTryPushError;
+template <typename T, typename E>
+class Result;
 struct UserDataPacketEvent;
 class VideoSource;
 }  // namespace livekit
@@ -116,41 +119,6 @@ private:
   std::string name_;
 };
 
-enum class DataTrackPushErrorCode
-{
-  Unknown,
-  InvalidHandle,
-  TrackUnpublished,
-  QueueFull,
-  Internal,
-};
-
-struct DataTrackPushError
-{
-  DataTrackPushErrorCode code = DataTrackPushErrorCode::Unknown;
-  std::string message;
-};
-
-class DataTrackPushResult
-{
-public:
-  // Non-throwing result for the hot data-track push path, where stale handles and queue pressure
-  // are expected runtime conditions.
-  static DataTrackPushResult success();
-  static DataTrackPushResult failure(DataTrackPushError error);
-
-  bool ok() const noexcept;
-  bool hasError() const noexcept;
-  explicit operator bool() const noexcept;
-  // Throws std::logic_error when no error is present.
-  const DataTrackPushError & error() const;
-
-private:
-  explicit DataTrackPushResult(std::optional<DataTrackPushError> error);
-
-  std::optional<DataTrackPushError> error_;
-};
-
 struct RoomEventCallbacks
 {
   std::function<void()> on_connected;
@@ -203,7 +171,7 @@ public:
   // in-band.
   virtual void publishPacket(const OutgoingPacket & packet) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
-  virtual DataTrackPushResult tryPushDataTrack(
+  virtual livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 

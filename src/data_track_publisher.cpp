@@ -26,6 +26,8 @@
 #include <utility>
 #include <vector>
 
+#include "livekit/data_track_error.h"
+#include "livekit/result.h"
 #include "protocol/constants.hpp"
 #include "rclcpp/create_generic_subscription.hpp"
 #include "rclcpp/logging.hpp"
@@ -56,18 +58,18 @@ std::string makeTrackName(const std::string & topic)
   return name;
 }
 
-const char * pushReason(DataTrackPushErrorCode code)
+const char * pushReason(livekit::LocalDataTrackTryPushErrorCode code)
 {
   switch (code) {
-    case DataTrackPushErrorCode::Unknown:
+    case livekit::LocalDataTrackTryPushErrorCode::UNKNOWN:
       return "unknown";
-    case DataTrackPushErrorCode::InvalidHandle:
+    case livekit::LocalDataTrackTryPushErrorCode::INVALID_HANDLE:
       return "invalid_handle";
-    case DataTrackPushErrorCode::TrackUnpublished:
+    case livekit::LocalDataTrackTryPushErrorCode::TRACK_UNPUBLISHED:
       return "track_unpublished";
-    case DataTrackPushErrorCode::QueueFull:
+    case livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL:
       return "queue_full";
-    case DataTrackPushErrorCode::Internal:
+    case livekit::LocalDataTrackTryPushErrorCode::INTERNAL:
       return "internal";
   }
   return "unknown";
@@ -188,7 +190,7 @@ public:
       }
 
       const auto & error = result.error();
-      if (error.code == DataTrackPushErrorCode::QueueFull) {
+      if (error.code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL) {
         LogEvent(kLogger, "data_track_delivery_dropped")
           .field("resource", topic_)
           .field("track_name", track_name_)

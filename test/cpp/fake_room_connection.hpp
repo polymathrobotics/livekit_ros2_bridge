@@ -24,6 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include "livekit/data_track_error.h"
+#include "livekit/result.h"
 #include "livekit/room_event_types.h"
 #include "livekit_room_delegate.hpp"
 #include "livekit_room_delegate_test_support.hpp"
@@ -66,7 +68,8 @@ struct FakeRoomConnectionState
 
   std::function<void(LiveKitRoomDelegate & delegate)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
-  std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
+  std::function<livekit::Result<void, livekit::LocalDataTrackTryPushError>(
+    const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
 
   bool throw_on_publish_packet = false;
@@ -187,13 +190,14 @@ public:
     return track;
   }
 
-  DataTrackPushResult tryPushDataTrack(
+  livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) override
   {
     const std::string name = lookupDataTrackName(track);
     state->event_log.push_back("push_data_track:" + name);
-    const auto result = state->try_push_data_track_handler ? state->try_push_data_track_handler(name, payload)
-                                                           : DataTrackPushResult::success();
+    const auto result = state->try_push_data_track_handler
+                          ? state->try_push_data_track_handler(name, payload)
+                          : livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
     if (result) {
       state->pushed_data_track_frames.push_back({name, std::move(payload)});
     }

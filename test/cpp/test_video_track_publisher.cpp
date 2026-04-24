@@ -86,10 +86,10 @@ public:
     return nullptr;
   }
 
-  DataTrackPushResult tryPushDataTrack(
+  livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> &, std::vector<std::uint8_t>) override
   {
-    return DataTrackPushResult::success();
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
@@ -137,10 +137,10 @@ public:
     return nullptr;
   }
 
-  DataTrackPushResult tryPushDataTrack(
+  livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> &, std::vector<std::uint8_t>) override
   {
-    return DataTrackPushResult::success();
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override
@@ -198,10 +198,10 @@ public:
     return nullptr;
   }
 
-  DataTrackPushResult tryPushDataTrack(
+  livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> &, std::vector<std::uint8_t>) override
   {
-    return DataTrackPushResult::success();
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> &) override

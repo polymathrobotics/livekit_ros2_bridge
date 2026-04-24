@@ -951,7 +951,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
       push_entered->set_value();
       release_push_future.wait();
     }
-    return DataTrackPushResult::success();
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
   };
 
   auto registry = makeLeaseManager(*node, session);
@@ -1022,7 +1022,8 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
   session.state->try_push_data_track_handler = [&push_attempt_count](
                                                  const std::string &, const std::vector<std::uint8_t> &) {
     push_attempt_count.fetch_add(1);
-    return DataTrackPushResult::failure(DataTrackPushError{DataTrackPushErrorCode::QueueFull, "queue full"});
+    return livekit::Result<void, livekit::LocalDataTrackTryPushError>::failure(
+      livekit::LocalDataTrackTryPushError{livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL, "queue full"});
   };
 
   auto registry = makeLeaseManager(*node, session);
