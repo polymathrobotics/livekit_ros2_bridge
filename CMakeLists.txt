@@ -106,7 +106,6 @@ target_link_libraries(livekit_ros2_bridge_livekit PRIVATE
 )
 
 add_library(livekit_ros2_bridge_streams STATIC
-  src/packet_router.cpp
   src/data_track_publisher.cpp
   src/rpc_router.cpp
   src/subscription_lease_manager.cpp
@@ -178,6 +177,7 @@ if(BUILD_TESTING)
     )
     target_link_libraries(${test_name}
       ${PROJECT_NAME}
+      LiveKit::livekit
       rclcpp::rclcpp
       livekit_ros2_bridge_parameters
       ${sensor_msgs_TARGETS}
@@ -189,7 +189,6 @@ if(BUILD_TESTING)
   livekit_ros2_bridge_add_test(test_base64 test/cpp/test_base64.cpp)
   livekit_ros2_bridge_add_test(test_lru_cache test/cpp/test_lru_cache.cpp)
   livekit_ros2_bridge_add_test(test_data_track_publisher test/cpp/test_data_track_publisher.cpp)
-  livekit_ros2_bridge_add_test(test_packet_router test/cpp/test_packet_router.cpp)
   livekit_ros2_bridge_add_test(
     test_subscription_lease_manager
     test/cpp/test_subscription_lease_manager.cpp

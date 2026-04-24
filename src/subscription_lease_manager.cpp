@@ -135,6 +135,24 @@ SubscriptionLeaseManager::~SubscriptionLeaseManager()
   shutdown();
 }
 
+void SubscriptionLeaseManager::handleHeartbeatPayload(
+  const std::string & requester_identity, const std::vector<std::uint8_t> & payload)
+{
+  std::optional<SubscriptionHeartbeat> heartbeat;
+  try {
+    heartbeat = protocol::subscriptions::parseHeartbeat(payload);
+  } catch (const std::exception & exc) {
+    LogEvent(kLogger, "packet_rejected")
+      .field("reason", "invalid_heartbeat")
+      .fieldOr("requester_identity", requester_identity)
+      .field("error", exc.what())
+      .warnThrottle(*clock_, kLogThrottle);
+    return;
+  }
+
+  handleHeartbeat(requester_identity, *heartbeat);
+}
+
 void SubscriptionLeaseManager::startLeaseGcTimer(
   rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
   rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,

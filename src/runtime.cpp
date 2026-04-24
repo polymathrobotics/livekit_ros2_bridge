@@ -19,6 +19,9 @@
 #include <string_view>
 #include <utility>
 
+#include "livekit/remote_participant.h"
+#include "livekit/room_event_types.h"
+#include "protocol/constants.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -71,11 +74,6 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
     config_.access_policy,
     &config_.subscription_qos,
     &config_.video_stream)
-, packet_router_(
-    clock_,
-    [this](std::function<void()> work) { submitToExecutor(std::move(work)); },
-    subscription_lease_manager_,
-    ros_topic_publisher_)
 , rpc_router_(graph_, config_.access_policy, ros_executor_queue_, ros_service_caller_)
 , watchdog_(config_.health, base_, timers_, logger_, [this]() { return callback_gate_.closeAndWait(); })
 {
@@ -108,16 +106,16 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
 {
   RoomEventCallbacks callbacks;
   callbacks.on_connected = [this]() { (void)callback_gate_.runIfOpen([this]() { onRoomConnected(); }); };
-  callbacks.on_incoming_packet_received = [this](const IncomingPacket & packet) {
-    const bool handled = callback_gate_.runIfOpen([this, &packet]() { onRoomIncomingPacket(packet); });
+  callbacks.on_user_packet_received = [this](const livekit::UserDataPacketEvent & event) {
+    const bool handled = callback_gate_.runIfOpen([this, &event]() { onRoomUserPacketReceived(event); });
     if (handled) {
       return;
     }
 
     LogEvent(logger_, "packet_dropped")
       .field("reason", "shutdown")
-      .field("topic", packet.topic)
-      .fieldOr("requester_identity", packet.requester_identity)
+      .field("topic", event.topic)
+      .fieldOr("requester_identity", event.participant == nullptr ? "" : event.participant->identity())
       .warnThrottle(*clock_, std::chrono::seconds(5));
   };
   callbacks.on_remote_participant_disconnected = [this](const std::string & remote_participant_identity) {
@@ -172,9 +170,31 @@ void Runtime::onRoomConnected()
   LogEvent(logger_, "runtime_ready").info();
 }
 
-void Runtime::onRoomIncomingPacket(const IncomingPacket & packet)
+void Runtime::onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event)
 {
-  packet_router_.handle(packet);
+  const std::string topic = event.topic;
+  const std::string requester_identity = event.participant == nullptr ? "" : event.participant->identity();
+
+  // LiveKit owns the event lifetime, so executor work must capture only copied fields.
+  if (topic == protocol::kRosPublishTopic) {
+    submitToExecutor([this, requester_identity, payload = event.data]() {
+      ros_topic_publisher_.handlePublishPayload(requester_identity, payload);
+    });
+    return;
+  }
+
+  if (topic == protocol::kHeartbeatTopic) {
+    submitToExecutor([this, requester_identity, payload = event.data]() {
+      subscription_lease_manager_.handleHeartbeatPayload(requester_identity, payload);
+    });
+    return;
+  }
+
+  LogEvent(logger_, "packet_dropped")
+    .field("reason", "unsupported_topic")
+    .field("topic", topic)
+    .fieldOr("requester_identity", requester_identity)
+    .warnThrottle(*clock_, std::chrono::seconds(5));
 }
 
 void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)

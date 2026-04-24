@@ -234,7 +234,7 @@ TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnected));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
   EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_remote_participant_disconnected));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_incoming_packet_received));
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_user_packet_received));
 }
 
 TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
@@ -465,12 +465,7 @@ TEST_F(RuntimeTest, DataTrackTeardownHappensBeforeRoomStop)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
   const std::string track_name = harness.state->published_data_track_names.front();
@@ -500,12 +495,7 @@ TEST_F(RuntimeTest, VideoTrackTeardownHappensBeforeRoomStop)
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
 
   const std::string heartbeat = R"({"subscriptions":[{"kind":"topic","name":"/camera/front"}]})";
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   sensor_msgs::msg::Image image;
   image.header.stamp.sec = 1;
@@ -540,7 +530,7 @@ TEST_F(RuntimeTest, VideoTrackTeardownHappensBeforeRoomStop)
   EXPECT_EQ(harness.state->unpublished_video_track_names, (std::vector<std::string>{track_name}));
 }
 
-TEST_F(RuntimeTest, IncomingPacketPublishesAfterExecutorDispatch)
+TEST_F(RuntimeTest, UserPacketPublishesAfterExecutorDispatch)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.publish.allow", std::vector<std::string>{"/battery/cmd"});
@@ -570,17 +560,45 @@ TEST_F(RuntimeTest, IncomingPacketPublishesAfterExecutorDispatch)
       {"message", protocol::cdr::serialize(serializeMessage(expected_message))},
     }
       .dump();
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(payload.begin(), payload.end()),
-      protocol::kRosPublishTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(payload, protocol::kRosPublishTopic, "participant-1");
 
   EXPECT_FALSE(received_message.has_value());
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, expected_message.voltage, 1e-6F);
   EXPECT_NEAR(received_message->percentage, expected_message.percentage, 1e-6F);
+}
+
+TEST_F(RuntimeTest, UserPacketDropsUnsupportedTopicsWithoutExecutorDispatch)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("access.rules.publish.allow", std::vector<std::string>{"/battery/cmd"});
+
+  auto harness = makeRuntimeHarness(options);
+
+  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("runtime_unsupported_packet_observer"));
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  [[maybe_unused]] auto subscription = observer->create_subscription<sensor_msgs::msg::BatteryState>(
+    "/battery/cmd", rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+  executor.add_node(observer);
+  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
+
+  sensor_msgs::msg::BatteryState message;
+  const std::string payload =
+    nlohmann::json{
+      {"topic", "/battery/cmd"},
+      {"interface_type", "sensor_msgs/msg/BatteryState"},
+      {"message", protocol::cdr::serialize(serializeMessage(message))},
+    }
+      .dump();
+  harness.fake_room_connection->emitUserPacket(payload, "ros.topics.publish", "participant-1");
+
+  spinExecutorFor(executor, std::chrono::milliseconds(200));
+  EXPECT_FALSE(received_message.has_value());
 }
 
 TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
@@ -601,22 +619,12 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
   harness.fake_room_connection->emitParticipantDisconnected("participant-1");
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
 }
@@ -639,12 +647,7 @@ TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecrea
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
 
@@ -653,12 +656,7 @@ TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecrea
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->unpublished_data_track_names.size() == 1U; }));
   EXPECT_EQ(harness.state->unpublished_data_track_names.front(), harness.state->published_data_track_names.front());
 
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
 }
@@ -679,12 +677,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   ASSERT_TRUE(waitForTopicType(executor, harness.node, "/camera/front", "sensor_msgs/msg/Image"));
 
   const std::string heartbeat = R"({"subscriptions":[{"kind":"topic","name":"/camera/front"}]})";
-  harness.fake_room_connection->emitIncomingPacket(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_outgoing_packets.size() == 1U; }));
   const auto status = extractSinglePublishedStatusEnvelope(*harness.state, "participant-1");
@@ -736,14 +729,7 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
         callbacks.on_remote_participant_disconnected("participant-1");
       }
 
-      if (callbacks.on_incoming_packet_received) {
-        callbacks.on_incoming_packet_received(
-          IncomingPacket{
-            std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-            protocol::kHeartbeatTopic,
-            "participant-1",
-          });
-      }
+      emitUserPacket(callbacks, heartbeat, protocol::kHeartbeatTopic, "participant-1");
     };
   });
 
@@ -809,12 +795,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
-  harness.state->callbacks.on_incoming_packet_received(
-    IncomingPacket{
-      std::vector<std::uint8_t>(heartbeat.begin(), heartbeat.end()),
-      protocol::kHeartbeatTopic,
-      "participant-1",
-    });
+  emitUserPacket(harness.state->callbacks, heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   const bool publish_started_ready = publish_started.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
   EXPECT_TRUE(publish_started_ready);

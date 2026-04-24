@@ -29,6 +29,7 @@
 namespace livekit
 {
 class LocalDataTrack;
+struct UserDataPacketEvent;
 class VideoSource;
 }  // namespace livekit
 
@@ -80,13 +81,6 @@ public:
 
 private:
   std::uint32_t code_;
-};
-
-struct IncomingPacket
-{
-  std::vector<std::uint8_t> payload;
-  std::string topic;
-  std::string requester_identity;
 };
 
 struct OutgoingPacket
@@ -159,9 +153,9 @@ struct RoomEventCallbacks
 {
   std::function<void()> on_connected;
 
-  // Delivers one incoming packet on a connection-managed background thread; callbacks must
+  // Delivers one incoming LiveKit user packet on a connection-managed background thread; callbacks must
   // hand off ROS work instead of assuming executor-thread affinity.
-  std::function<void(const IncomingPacket &)> on_incoming_packet_received;
+  std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet_received;
 
   // Called when a remote participant disconnects outside reconnect handling. During reconnect, the
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.

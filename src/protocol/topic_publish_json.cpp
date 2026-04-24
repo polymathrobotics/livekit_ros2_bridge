@@ -49,7 +49,7 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
     throw std::invalid_argument("Publish request must be a JSON object.");
   }
 
-  // PacketRouter already emits the operator-facing warn logs for invalid publish packets,
+  // The ROS topic publisher emits the operator-facing warn logs for invalid publish packets,
   // including the exact error text. Keep parser-local logs at debug level so local troubleshooting
   // can distinguish which contract boundary rejected the request without repeating that detail.
   TopicPublishRequest request;

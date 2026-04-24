@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -72,6 +73,7 @@ public:
     rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
     rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
     SubmitToExecutorFunction submit_to_executor);
+  void handleHeartbeatPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
 
   // Participant disconnects can leave a rejoined requester unable to see an already published

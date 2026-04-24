@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -63,6 +64,7 @@ public:
   // consulting the graph again. Once the bounded publisher cache is full, new
   // topics are rejected until shutdown clears the cached handles.
   void publish(const std::string & requester_identity, const TopicPublishRequest & request);
+  void handlePublishPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
 
   // Idempotently rejects later publish() calls and clears the bridge-owned
   // cached publisher handles.

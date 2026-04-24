@@ -182,6 +182,11 @@ SubscriptionHeartbeat makeHeartbeat(
   return heartbeat;
 }
 
+std::vector<std::uint8_t> payloadBytes(const std::string & payload)
+{
+  return std::vector<std::uint8_t>(payload.begin(), payload.end());
+}
+
 AccessPolicy makeSubscribePolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
 {
   AccessPolicyConfig config;
@@ -343,6 +348,39 @@ void expectInvalidArgumentMessage(const std::function<void()> & fn, const char *
   } catch (...) {
     FAIL() << "Expected std::invalid_argument";
   }
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, HeartbeatPayloadParsesAndHandlesSubscriptions)
+{
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node_);
+
+  auto publisher =
+    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+
+  auto manager = makeManager(access_policy_);
+  const auto payload = payloadBytes(
+    R"({"session_id":"session-1","subscriptions":[{"kind":"topic","name":"/battery_state","delivery_preferences":{"interval_ms":125}}]})");
+
+  EXPECT_NO_THROW(manager.handleHeartbeatPayload("requester-1", payload));
+
+  const auto envelope = extractPublishedStatusEnvelope(*state_, "requester-1");
+  EXPECT_EQ(envelope["session_id"], "session-1");
+
+  const auto status = extractStatusEntry(envelope);
+  expectStatusEntry(status, "topic", "/battery_state", "active");
+  EXPECT_EQ(status["delivery"]["interval_ms"], 125);
+  (void)publisher;
+}
+
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, InvalidHeartbeatPayloadIsDroppedWithoutDispatch)
+{
+  auto manager = makeManager(access_policy_);
+
+  EXPECT_NO_THROW(manager.handleHeartbeatPayload("requester-1", payloadBytes("{")));
+
+  EXPECT_EQ(state_->publish_packet_call_count, 0);
+  EXPECT_TRUE(state_->published_data_track_names.empty());
 }
 
 TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonVideoTopics)

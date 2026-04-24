@@ -401,23 +401,16 @@ public:
 
   void onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event) override
   {
-    std::function<void(const IncomingPacket &)> on_packet;
+    std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      on_packet = callbacks_.on_incoming_packet_received;
+      on_user_packet = callbacks_.on_user_packet_received;
     }
-    if (!on_packet) {
+    if (!on_user_packet) {
       return;
     }
 
-    IncomingPacket packet;
-    packet.payload = event.data;
-    packet.topic = event.topic;
-    if (const auto * participant = event.participant; participant != nullptr) {
-      packet.requester_identity = participant->identity();
-    }
-
-    on_packet(packet);
+    on_user_packet(event);
   }
 
   void onConnectionStateChanged(livekit::Room &, const livekit::ConnectionStateChangedEvent & event) override

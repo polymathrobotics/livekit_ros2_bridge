@@ -16,11 +16,14 @@
 
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
+#include "protocol/topic_publish_json.hpp"
 #include "rclcpp/create_generic_publisher.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
@@ -65,6 +68,32 @@ RosTopicPublisher::RosTopicPublisher(
 RosTopicPublisher::~RosTopicPublisher()
 {
   shutdown();
+}
+
+void RosTopicPublisher::handlePublishPayload(
+  const std::string & requester_identity, const std::vector<std::uint8_t> & payload)
+{
+  if (requester_identity.empty()) {
+    LogEvent(kLogger, "packet_rejected")
+      .field("reason", "missing_requester_identity")
+      .fieldOr("requester_identity", requester_identity)
+      .warnThrottle(*clock_, kLogThrottle);
+    return;
+  }
+
+  std::optional<TopicPublishRequest> request;
+  try {
+    request = protocol::topic_publish::parse(payload);
+  } catch (const std::exception & exc) {
+    LogEvent(kLogger, "packet_rejected")
+      .field("reason", "invalid_publish_request")
+      .fieldOr("requester_identity", requester_identity)
+      .field("error", exc.what())
+      .warnThrottle(*clock_, kLogThrottle);
+    return;
+  }
+
+  publish(requester_identity, *request);
 }
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)

@@ -21,9 +21,12 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "livekit/remote_participant.h"
+#include "livekit/room_event_types.h"
 #include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
@@ -69,6 +72,52 @@ struct FakeRoomConnectionState
   bool throw_on_publish_packet = false;
   int publish_packet_call_count = 0;
 };
+
+inline std::vector<std::uint8_t> userPacketPayloadBytes(const std::string & payload)
+{
+  return std::vector<std::uint8_t>(payload.begin(), payload.end());
+}
+
+inline void emitUserPacket(
+  const RoomEventCallbacks & callbacks,
+  std::vector<std::uint8_t> payload,
+  std::string topic,
+  const std::string & requester_identity)
+{
+  if (!callbacks.on_user_packet_received) {
+    return;
+  }
+
+  livekit::UserDataPacketEvent event;
+  event.data = std::move(payload);
+  event.topic = std::move(topic);
+
+  if (requester_identity.empty()) {
+    callbacks.on_user_packet_received(event);
+    return;
+  }
+
+  livekit::RemoteParticipant participant(
+    livekit::FfiHandle{},
+    "fake-participant-sid",
+    "fake-participant-name",
+    requester_identity,
+    "",
+    std::unordered_map<std::string, std::string>{},
+    livekit::ParticipantKind::Standard,
+    livekit::DisconnectReason::Unknown);
+  event.participant = &participant;
+  callbacks.on_user_packet_received(event);
+}
+
+inline void emitUserPacket(
+  const RoomEventCallbacks & callbacks,
+  const std::string & payload,
+  std::string topic,
+  const std::string & requester_identity)
+{
+  emitUserPacket(callbacks, userPacketPayloadBytes(payload), std::move(topic), requester_identity);
+}
 
 class FakePublishedVideoTrack final : public PublishedVideoTrack
 {
@@ -250,11 +299,15 @@ public:
     }
   }
 
-  void emitIncomingPacket(const IncomingPacket & packet) const
+  void emitUserPacket(
+    std::vector<std::uint8_t> payload, std::string topic, const std::string & requester_identity) const
   {
-    if (state->callbacks.on_incoming_packet_received) {
-      state->callbacks.on_incoming_packet_received(packet);
-    }
+    livekit_ros2_bridge::emitUserPacket(state->callbacks, std::move(payload), std::move(topic), requester_identity);
+  }
+
+  void emitUserPacket(const std::string & payload, std::string topic, const std::string & requester_identity) const
+  {
+    livekit_ros2_bridge::emitUserPacket(state->callbacks, payload, std::move(topic), requester_identity);
   }
 
   std::shared_ptr<FakeRoomConnectionState> state;

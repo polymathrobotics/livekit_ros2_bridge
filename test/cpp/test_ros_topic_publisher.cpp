@@ -26,6 +26,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "nlohmann/json.hpp"
+#include "protocol/cdr.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/node_options.hpp"
 #include "rclcpp/serialization.hpp"
@@ -60,6 +62,24 @@ TopicPublishRequest makeRequest(
   request.interface_type = interface_type;
   request.cdr = std::move(cdr);
   return request;
+}
+
+std::vector<std::uint8_t> payloadBytes(const std::string & payload)
+{
+  return std::vector<std::uint8_t>(payload.begin(), payload.end());
+}
+
+std::vector<std::uint8_t> makePublishPayload(
+  const std::string & ros_topic, const std::string & interface_type, const std::vector<std::uint8_t> & cdr)
+{
+  const std::string payload =
+    nlohmann::json{
+      {"topic", ros_topic},
+      {"interface_type", interface_type},
+      {"message", protocol::cdr::serialize(cdr)},
+    }
+      .dump();
+  return payloadBytes(payload);
 }
 
 AccessPolicy makeAccessPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -248,6 +268,74 @@ TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
+}
+
+TEST(TopicPublisherTest, PublishPayloadParsesAndPublishesMessagesToRequestedTopic)
+{
+  RosTopicPublisherHarness harness;
+  const std::string topic = "/battery/payload_cmd";
+
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  [[maybe_unused]] const auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
+    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+
+  ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
+
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
+  sensor_msgs::msg::BatteryState message;
+  message.voltage = 48.5F;
+  message.percentage = 0.75F;
+
+  publisher.handlePublishPayload(
+    "alice", makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+
+  ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
+  EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
+  EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
+}
+
+TEST(TopicPublisherTest, InvalidPublishPayloadIsDroppedWithoutPublishing)
+{
+  RosTopicPublisherHarness harness;
+  const std::string topic = "/battery/invalid_payload";
+
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  [[maybe_unused]] const auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
+    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+
+  ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
+
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
+
+  EXPECT_NO_THROW(publisher.handlePublishPayload("alice", payloadBytes("{")));
+
+  expectTopicNotPublished(harness, topic, received_message);
+}
+
+TEST(TopicPublisherTest, PublishPayloadWithoutRequesterIdentityIsDropped)
+{
+  RosTopicPublisherHarness harness;
+  const std::string topic = "/battery/anonymous_payload";
+
+  std::optional<sensor_msgs::msg::BatteryState> received_message;
+  [[maybe_unused]] const auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
+    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
+      received_message = message;
+    });
+
+  ASSERT_TRUE(harness.waitForType(topic, "sensor_msgs/msg/BatteryState"));
+
+  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
+  sensor_msgs::msg::BatteryState message;
+
+  publisher.handlePublishPayload(
+    "", makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+
+  expectTopicNotPublished(harness, topic, received_message);
 }
 
 TEST(TopicPublisherTest, RejectsDeniedPublishRequests)

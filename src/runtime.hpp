@@ -23,7 +23,6 @@
 #include <utility>
 
 #include "connection_watchdog.hpp"
-#include "packet_router.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
 #include "rclcpp/node.hpp"
@@ -33,6 +32,7 @@
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
+#include "room_connection.hpp"
 #include "ros_executor_queue.hpp"
 #include "ros_service_caller.hpp"
 #include "ros_topic_publisher.hpp"
@@ -106,7 +106,7 @@ public:
 
 private:
   void onRoomConnected();
-  void onRoomIncomingPacket(const IncomingPacket & packet);
+  void onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
   void onRoomReconnectRequested(const std::string & reason);
   void onRoomReconnecting(const std::string & reason);
@@ -127,7 +127,6 @@ private:
   RosTopicPublisher ros_topic_publisher_;
   RosServiceCaller ros_service_caller_;
   SubscriptionLeaseManager subscription_lease_manager_;
-  PacketRouter packet_router_;
   RpcRouter rpc_router_;
   ConnectionWatchdog watchdog_;
 };
