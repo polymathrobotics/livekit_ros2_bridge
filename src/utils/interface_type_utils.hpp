@@ -14,43 +14,32 @@
 
 #pragma once
 
-#include <map>
 #include <stdexcept>
 #include <string>
-#include <vector>
+#include <utility>
+
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
 
 namespace livekit_ros2_bridge
 {
 
+using RosGraphNamesAndTypes =
+  decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
+
 // Returns the single graph-advertised type for a resource or throws when the
 // graph is missing or ambiguous, so callers never guess a ROS interface type.
 inline std::string requireSingleInterfaceType(
-  const std::map<std::string, std::vector<std::string>> & names_and_types,
-  const std::string & name,
-  const char * resource_kind)
+  const RosGraphNamesAndTypes & names_and_types, const std::string & name, const char * resource_kind)
 {
   auto it = names_and_types.find(name);
   if (it == names_and_types.end() || it->second.empty()) {
     throw std::invalid_argument(std::string("No ROS types found for ") + resource_kind + " '" + name + "'.");
   }
 
-  std::string resolved_type;
-  for (const auto & type : it->second) {
-    if (type.empty()) {
-      continue;
-    }
-    if (resolved_type.empty()) {
-      resolved_type = type;
-      continue;
-    }
-    if (resolved_type != type) {
-      throw std::invalid_argument(std::string("Multiple ROS types found for ") + resource_kind + " '" + name + "'.");
-    }
+  if (it->second.size() != 1) {
+    throw std::invalid_argument(std::string("Multiple ROS types found for ") + resource_kind + " '" + name + "'.");
   }
-  if (resolved_type.empty()) {
-    throw std::invalid_argument(std::string("No ROS types found for ") + resource_kind + " '" + name + "'.");
-  }
-  return resolved_type;
+  return it->second.front();
 }
 
 }  // namespace livekit_ros2_bridge

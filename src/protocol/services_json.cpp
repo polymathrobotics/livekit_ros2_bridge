@@ -14,13 +14,14 @@
 
 #include "protocol/services_json.hpp"
 
+#include <chrono>
 #include <stdexcept>
 
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/detail/json_fields.hpp"
 #include "protocol/validation_error.hpp"
-#include "utils/ros_resource_name_utils.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 
 namespace livekit_ros2_bridge::protocol::services
 {
@@ -36,6 +37,13 @@ constexpr char kRequestField[] = "request";
 constexpr char kResponseField[] = "response";
 constexpr char kTimeoutMsField[] = "timeout_ms";
 constexpr char kPayloadField[] = "payload";
+constexpr char kProtocolNodeName[] = "livekit_ros2_bridge";
+constexpr char kProtocolNamespace[] = "/";
+
+std::string expandServiceName(const std::string & service)
+{
+  return rclcpp::expand_topic_or_service_name(service, kProtocolNodeName, kProtocolNamespace, true);
+}
 
 }  // namespace
 
@@ -51,10 +59,9 @@ ServiceCallRequest parse(const std::string & text)
 
   ServiceCallRequest request;
   try {
-    // Canonicalize at the protocol boundary so policy checks and downstream caches do not have to
-    // reason about multiple spellings of the same ROS service name.
-    request.service =
-      normalizeRosResourceName(detail::requiredTrimmedStringField(body, kServiceField, "service is required"));
+    // Expand and validate through rclcpp so service-name grammar stays owned by ROS.
+    // Protocol service calls are global unless the caller supplies an absolute name.
+    request.service = expandServiceName(detail::requiredTrimmedStringField(body, kServiceField, "service is required"));
   } catch (const std::invalid_argument & exc) {
     throw ValidationError(kServiceField, exc.what());
   }
@@ -71,8 +78,8 @@ ServiceCallRequest parse(const std::string & text)
   try {
     // Service calls always forward a concrete serialized request message; an empty payload is
     // treated as malformed rather than as a typed default instance.
-    request.payload = cdr::parse(body, cdr::Field::Request);
-    if (request.payload.empty()) {
+    request.payload = cdr::parseSerializedMessage(body, cdr::Field::Request);
+    if (request.payload.size() == 0U) {
       throw std::invalid_argument("request.payload_base64 must not be empty");
     }
   } catch (const std::invalid_argument & exc) {
@@ -85,9 +92,9 @@ ServiceCallRequest parse(const std::string & text)
       throw ValidationError(kTimeoutMsField, "timeout_ms must be an integer");
     }
 
-    // Preserve the protocol value as-is when present; the caller layer decides whether non-positive
-    // timeouts fall back to its default deadline.
-    request.timeout_ms = timeout_field->get<int>();
+    // Preserve the protocol value as a duration when present; the caller layer decides whether
+    // non-positive timeouts fall back to its default deadline.
+    request.timeout = std::chrono::milliseconds(timeout_field->get<std::chrono::milliseconds::rep>());
   }
 
   return request;

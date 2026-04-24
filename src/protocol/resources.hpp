@@ -17,6 +17,9 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
+
+#include "rclcpp/node_interfaces/node_graph_interface.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -30,11 +33,8 @@ struct ResourceListRequest
   std::optional<std::size_t> limit;
 };
 
-/// A single ROS graph resource after runtime policy filtering and interface-type collapse.
-struct Resource
-{
-  std::string name;
-  std::string interface_type;
-};
+/// ROS graph resources keyed by resource name with the interface types reported by rclcpp.
+using ResourceNamesAndTypes =
+  decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
 
 }  // namespace livekit_ros2_bridge

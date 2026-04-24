@@ -43,6 +43,12 @@ nlohmann::json makeMessageBody()
   };
 }
 
+std::vector<std::uint8_t> serializedPayload(const rclcpp::SerializedMessage & message)
+{
+  const auto & rcl_message = message.get_rcl_serialized_message();
+  return {rcl_message.buffer, rcl_message.buffer + message.size()};
+}
+
 TEST(PayloadHelpersTest, ParseObjectRejectsInvalidJsonAndNonObjectRoot)
 {
   expectInvalidArgument(
@@ -127,6 +133,8 @@ TEST(PayloadHelpersTest, ParseCdrRoundTripsEmptyAndBinaryPayloads)
     {"message", protocol::cdr::serialize(payload)},
   };
   EXPECT_EQ(protocol::cdr::parse(binary_body, protocol::cdr::Field::Message), payload);
+  EXPECT_EQ(
+    serializedPayload(protocol::cdr::parseSerializedMessage(binary_body, protocol::cdr::Field::Message)), payload);
 }
 
 TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldName)
@@ -171,14 +179,14 @@ TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldNameInOuterEnvelopeError
 TEST(PayloadHelpersTest, SerializeCdrEmitsCanonicalEnvelopeForEmptyAndPaddedPayloads)
 {
   EXPECT_EQ(
-    protocol::cdr::serialize({}),
+    protocol::cdr::serialize(std::vector<std::uint8_t>{}),
     (nlohmann::json{
       {"content_type", "application/x-ros-cdr"},
       {"payload_base64", ""},
     }));
 
   EXPECT_EQ(
-    protocol::cdr::serialize({0x01, 0x02}),
+    protocol::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02}),
     (nlohmann::json{
       {"content_type", "application/x-ros-cdr"},
       {"payload_base64", "AQI="},

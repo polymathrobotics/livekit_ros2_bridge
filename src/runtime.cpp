@@ -41,35 +41,21 @@ std::unique_ptr<RoomConnection> requireRoomConnection(std::unique_ptr<RoomConnec
 
 }  // namespace
 
-RuntimeNodeInterfaces RuntimeNodeInterfaces::fromNode(rclcpp::Node & node)
-{
-  return RuntimeNodeInterfaces{
-    node.get_node_base_interface(),
-    node.get_node_graph_interface(),
-    node.get_node_topics_interface(),
-    node.get_node_waitables_interface(),
-    node.get_node_timers_interface(),
-    node.get_node_parameters_interface(),
-    node.get_clock(),
-    node.get_logger(),
-  };
-}
-
 Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
-: base_(std::move(interfaces.base))
-, graph_(std::move(interfaces.graph))
-, timers_(std::move(interfaces.timers))
-, clock_(std::move(interfaces.clock))
-, logger_(interfaces.logger)
+: base_(interfaces.get_node_base_interface())
+, graph_(interfaces.get_node_graph_interface())
+, timers_(interfaces.get_node_timers_interface())
+, clock_(interfaces.get_node_clock_interface()->get_clock())
+, logger_(interfaces.get_node_logging_interface()->get_logger())
 , config_(std::move(config))
 , room_delegate_(std::make_unique<LiveKitRoomDelegate>(makeRoomEventCallbacks()))
 , room_connection_(requireRoomConnection(std::move(connection)))
-, ros_executor_queue_(base_, interfaces.waitables, clock_)
-, ros_topic_publisher_(interfaces.topics, graph_, clock_, config_.access_policy)
-, ros_service_caller_(base_, graph_, interfaces.waitables)
+, ros_executor_queue_(interfaces, clock_)
+, ros_topic_publisher_(interfaces.get_node_topics_interface(), graph_, clock_, config_.access_policy)
+, ros_service_caller_(base_, graph_, interfaces.get_node_waitables_interface())
 , subscription_lease_manager_(
-    interfaces.parameters,
-    interfaces.topics,
+    interfaces.get_node_parameters_interface(),
+    interfaces.get_node_topics_interface(),
     graph_,
     clock_,
     *room_connection_,
@@ -77,7 +63,7 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
     &config_.subscription_qos,
     &config_.video_stream)
 , rpc_router_(graph_, config_.access_policy, ros_executor_queue_, ros_service_caller_)
-, watchdog_(config_.health, base_, timers_, logger_, [this]() { return callback_gate_.closeAndWait(); })
+, watchdog_(config_.health, interfaces, [this]() { return callback_gate_.closeAndWait(); })
 {
   LogEvent(logger_, "runtime_startup_begin")
     .fieldOr("url", config_.livekit.url, "<unset>")

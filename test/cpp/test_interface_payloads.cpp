@@ -18,6 +18,10 @@
 #include "nlohmann/json.hpp"
 #include "protocol/interfaces_json.hpp"
 #include "protocol_test_support.hpp"
+#include "rosidl_runtime_cpp/traits.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
+#include "std_msgs/msg/header.hpp"
+#include "std_msgs/msg/string.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -27,21 +31,39 @@ namespace
 
 using test_support::expectInvalidArgument;
 
+std::string batteryStateInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+}
+
+std::string headerInterfaceType()
+{
+  return rosidl_generator_traits::name<std_msgs::msg::Header>();
+}
+
+std::string stringInterfaceType()
+{
+  return rosidl_generator_traits::name<std_msgs::msg::String>();
+}
+
 TEST(InterfacePayloadsTest, ParsesTrimmedInterfaceTypesWithoutDroppingOrderOrDuplicates)
 {
-  const auto request = protocol::interfaces::parse(
+  const auto battery_state_type = batteryStateInterfaceType();
+  const auto string_type = stringInterfaceType();
+
+  const auto types = protocol::interfaces::parse(
     nlohmann::json{
-      {"interface_types", {" sensor_msgs/msg/BatteryState ", "std_msgs/msg/String", "sensor_msgs/msg/BatteryState "}},
+      {"interface_types", {" " + battery_state_type + " ", string_type, battery_state_type + " "}},
       {"request_id", "ignored-by-parser"},
     }
       .dump());
 
   EXPECT_EQ(
-    request.types,
+    types,
     (std::vector<std::string>{
-      "sensor_msgs/msg/BatteryState",
-      "std_msgs/msg/String",
-      "sensor_msgs/msg/BatteryState",
+      battery_state_type,
+      string_type,
+      battery_state_type,
     }));
 }
 
@@ -64,7 +86,7 @@ TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidAr
   expectInvalidArgument(
     []() {
       (void)protocol::interfaces::parse(
-        nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", "   ", "std_msgs/msg/String"}}}.dump());
+        nlohmann::json{{"interface_types", {batteryStateInterfaceType(), "   ", stringInterfaceType()}}}.dump());
     },
     "interface_types entries must not be empty",
     "interface_types");
@@ -75,7 +97,7 @@ TEST(InterfacePayloadsTest, RejectsInvalidJsonAndNonObjectRequests)
   expectInvalidArgument(
     []() { (void)protocol::interfaces::parse("{"); }, "Invalid JSON in interface show request", "payload");
   expectInvalidArgument(
-    []() { (void)protocol::interfaces::parse(R"(["sensor_msgs/msg/BatteryState"])"); },
+    []() { (void)protocol::interfaces::parse(nlohmann::json::array({batteryStateInterfaceType()}).dump()); },
     "Interface show request must be a JSON object",
     "payload");
 }
@@ -84,8 +106,7 @@ TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)
 {
   expectInvalidArgument(
     []() {
-      (void)protocol::interfaces::parse(
-        nlohmann::json{{"interface_types", {"sensor_msgs/msg/BatteryState", 42}}}.dump());
+      (void)protocol::interfaces::parse(nlohmann::json{{"interface_types", {batteryStateInterfaceType(), 42}}}.dump());
     },
     "interface_types entries must be strings",
     "interface_types");
@@ -93,10 +114,13 @@ TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)
 
 TEST(InterfacePayloadsTest, SerializesInterfacesByDirectFieldMappingWithoutReorderingOrDeduping)
 {
+  const auto header_type = headerInterfaceType();
+  const auto battery_state_type = batteryStateInterfaceType();
+
   std::vector<InterfaceDefinition> definitions = {
-    {"std_msgs/msg/Header", "ros2msg", "builtin_interfaces/Time stamp\nstring frame_id\n"},
-    {"sensor_msgs/msg/BatteryState", "ros2msg", "float32 voltage\n"},
-    {"std_msgs/msg/Header", "ros2msg", "builtin_interfaces/Time stamp\nstring frame_id\n"},
+    {header_type, "definition one\n"},
+    {battery_state_type, "definition two\n"},
+    {header_type, "definition one\n"},
   };
 
   const auto body = protocol::interfaces::serialize(definitions);
@@ -104,19 +128,19 @@ TEST(InterfacePayloadsTest, SerializesInterfacesByDirectFieldMappingWithoutReord
     {"interfaces",
      {
        {
-         {"interface_type", "std_msgs/msg/Header"},
+         {"interface_type", header_type},
          {"format", "ros2msg"},
-         {"definition", "builtin_interfaces/Time stamp\nstring frame_id\n"},
+         {"definition", "definition one\n"},
        },
        {
-         {"interface_type", "sensor_msgs/msg/BatteryState"},
+         {"interface_type", battery_state_type},
          {"format", "ros2msg"},
-         {"definition", "float32 voltage\n"},
+         {"definition", "definition two\n"},
        },
        {
-         {"interface_type", "std_msgs/msg/Header"},
+         {"interface_type", header_type},
          {"format", "ros2msg"},
-         {"definition", "builtin_interfaces/Time stamp\nstring frame_id\n"},
+         {"definition", "definition one\n"},
        },
      }}};
 

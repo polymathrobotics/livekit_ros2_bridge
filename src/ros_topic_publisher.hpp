@@ -17,12 +17,10 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 #include "access_policy.hpp"
 #include "protocol/topic_publish.hpp"
@@ -30,6 +28,7 @@
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "utils/interface_type_utils.hpp"
 
 namespace livekit
 {
@@ -60,9 +59,8 @@ public:
 
   // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
   // publisher errors are logged and ignored without throwing to the caller.
-  // `request.cdr` must already contain serialized ROS CDR bytes for
-  // `request.interface_type`; publish() copies that payload directly into
-  // rclcpp::SerializedMessage. Cold topics must already exist in the ROS graph
+  // `request.message` must already contain serialized ROS CDR bytes for
+  // `request.interface_type`. Cold topics must already exist in the ROS graph
   // with exactly one interface type. After the first successful publish, later
   // requests are checked against the cached publisher/type instead of
   // consulting the graph again. Once the bounded publisher cache is full, new
@@ -100,9 +98,10 @@ private:
   // Test-only seam used to force deterministic failures or shutdown after
   // publisher resolution/creation but immediately before publish().
   std::function<void()> before_publish_handler_;
-  // Test-only topic graph provider used to avoid mutating the real ROS graph in
-  // narrow unit tests. publish() only consults it on cache misses.
-  std::function<std::map<std::string, std::vector<std::string>>()> topic_graph_provider_;
+  // Test-only topic graph provider used for graph states that ROS itself will
+  // not let a single test process construct, such as conflicting in-process
+  // subscriptions on the same topic.
+  std::function<RosGraphNamesAndTypes()> topic_graph_provider_;
 };
 
 }  // namespace livekit_ros2_bridge

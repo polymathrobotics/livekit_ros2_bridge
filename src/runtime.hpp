@@ -25,9 +25,11 @@
 #include "connection_watchdog.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
-#include "rclcpp/node.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_clock_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
+#include "rclcpp/node_interfaces/node_logging_interface.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
@@ -43,19 +45,15 @@
 namespace livekit_ros2_bridge
 {
 
-struct RuntimeNodeInterfaces
-{
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph;
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics;
-  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
-  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers;
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters;
-  rclcpp::Clock::SharedPtr clock;
-  rclcpp::Logger logger;
-
-  static RuntimeNodeInterfaces fromNode(rclcpp::Node & node);
-};
+using RuntimeNodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
+  rclcpp::node_interfaces::NodeBaseInterface,
+  rclcpp::node_interfaces::NodeClockInterface,
+  rclcpp::node_interfaces::NodeGraphInterface,
+  rclcpp::node_interfaces::NodeLoggingInterface,
+  rclcpp::node_interfaces::NodeParametersInterface,
+  rclcpp::node_interfaces::NodeTimersInterface,
+  rclcpp::node_interfaces::NodeTopicsInterface,
+  rclcpp::node_interfaces::NodeWaitablesInterface>;
 
 class RuntimeCallbackGate final
 {

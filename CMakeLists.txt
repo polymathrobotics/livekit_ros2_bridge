@@ -27,7 +27,6 @@ endif()
 
 find_package(ament_cmake_auto REQUIRED)
 ament_auto_find_build_dependencies()
-find_package(magic_enum REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -74,13 +73,13 @@ target_link_libraries(livekit_ros2_bridge_core PRIVATE
   ament_index_cpp::ament_index_cpp
   LiveKit::livekit
   livekit_ros2_bridge_parameters
-  magic_enum::magic_enum
   nlohmann_json::nlohmann_json
   OpenSSL::Crypto
   PkgConfig::gstreamer
   PkgConfig::gstreamer-app
   PkgConfig::gstreamer-video
   rclcpp::rclcpp
+  rmw::rmw
 )
 
 add_library(livekit_ros2_bridge_ros STATIC
@@ -151,7 +150,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   livekit_ros2_bridge_ros
   livekit_ros2_bridge_streams
   LiveKit::livekit
-  magic_enum::magic_enum
   nlohmann_json::nlohmann_json
   OpenSSL::Crypto
   PkgConfig::gstreamer
@@ -214,6 +212,7 @@ if(BUILD_TESTING)
     test_interface_payloads
     test/cpp/test_interface_payloads.cpp
     nlohmann_json::nlohmann_json
+    ${std_msgs_TARGETS}
   )
   livekit_ros2_bridge_add_test(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
   livekit_ros2_bridge_add_test(test_livekit_room_delegate test/cpp/test_livekit_room_delegate.cpp)

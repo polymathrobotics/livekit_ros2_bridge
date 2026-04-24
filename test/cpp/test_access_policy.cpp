@@ -72,15 +72,30 @@ TEST(AccessPolicyTest, AllowAllStillHonorsDenylistEntries)
   EXPECT_FALSE(wildcard_deny.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
-TEST(AccessPolicyTest, NormalizesConfiguredEntriesAndRequestedNames)
+TEST(AccessPolicyTest, ExpandsRelativeConfiguredEntriesAndRequestedNames)
 {
   const AccessPolicy policy =
-    makeSubscribePolicy({"  camera//front//*  ", "/camera/front/image"}, {"  /camera/front/blocked  "});
+    makeSubscribePolicy({"  camera/front/*  ", "/camera/front/image"}, {"  camera/front/blocked  "});
 
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/stream"));
-  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "  camera//front/image/  "));
+  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "  camera/front/image  "));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/front/blocked"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, " \t\n "));
+}
+
+TEST(AccessPolicyTest, DeniesResourceNamesRejectedByRosValidation)
+{
+  const AccessPolicy policy = makeSubscribePolicy({"*"});
+
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera//front/image"));
+}
+
+TEST(AccessPolicyTest, IgnoresConfiguredEntriesThatRosValidationRejects)
+{
+  const AccessPolicy policy = makeSubscribePolicy({"camera//front/*", "/camera/front/image"});
+
+  EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/camera/front/stream"));
+  EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
 }
 
 TEST(AccessPolicyTest, ExactAndSubtreeRulesHaveDistinctMatchBoundaries)
@@ -97,7 +112,7 @@ TEST(AccessPolicyTest, ExactAndSubtreeRulesHaveDistinctMatchBoundaries)
 
 TEST(AccessPolicyTest, RootSubtreeWildcardAllowsAnyResourceExceptDeniedSubtrees)
 {
-  const AccessPolicy policy = makeSubscribePolicy({"/*"}, {"  /private//*  "});
+  const AccessPolicy policy = makeSubscribePolicy({"/*"}, {"  private/*  "});
 
   EXPECT_TRUE(policy.allows(AccessOperation::Subscribe, "/camera/front/image"));
   EXPECT_FALSE(policy.allows(AccessOperation::Subscribe, "/private/secret"));

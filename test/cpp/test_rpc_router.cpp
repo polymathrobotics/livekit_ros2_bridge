@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -49,26 +48,20 @@ namespace
 {
 
 template <typename MessageT>
-std::vector<std::uint8_t> serializeMessage(const MessageT & message)
+rclcpp::SerializedMessage serializeMessage(const MessageT & message)
 {
   rclcpp::Serialization<MessageT> serialization;
   rclcpp::SerializedMessage serialized;
   serialization.serialize_message(&message, &serialized);
-  const auto & rcl_msg = serialized.get_rcl_serialized_message();
-  return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
+  return serialized;
 }
 
 template <typename MessageT>
-MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
+MessageT deserializeMessage(const rclcpp::SerializedMessage & payload)
 {
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  std::copy(payload.begin(), payload.end(), rcl_msg.buffer);
-  rcl_msg.buffer_length = payload.size();
-
   rclcpp::Serialization<MessageT> serialization;
   MessageT message;
-  serialization.deserialize_message(&serialized, &message);
+  serialization.deserialize_message(&payload, &message);
   return message;
 }
 
@@ -129,7 +122,7 @@ std::string nextNodeName(const std::string & prefix)
 std::string makeServiceCallRequestPayload(
   const std::string & service,
   const std::string & interface_type,
-  const std::vector<std::uint8_t> & payload,
+  const rclcpp::SerializedMessage & payload,
   std::optional<int> timeout_ms = std::nullopt)
 {
   auto body = nlohmann::json{
@@ -172,7 +165,7 @@ class RpcRouterHarness
 public:
   explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy())
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
-  , queue(node->get_node_base_interface(), node->get_node_waitables_interface(), node->get_clock())
+  , queue(node)
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
   , router(node->get_node_graph_interface(), policy, queue, caller)
   {
@@ -290,7 +283,7 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 {
   test_support::ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
-  RosExecutorQueue queue(node->get_node_base_interface(), node->get_node_waitables_interface(), node->get_clock());
+  RosExecutorQueue queue(node);
   RosServiceCaller caller(
     node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface());
   FakeRoomConnection connection;
@@ -364,7 +357,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_FALSE(body.contains("ok"));
   EXPECT_FALSE(body.contains("elapsed_ms"));
 
-  const auto payload = protocol::cdr::parse(body, protocol::cdr::Field::Response);
+  const auto payload = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Response);
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(payload);
   EXPECT_TRUE(response_message.success);
   EXPECT_EQ(response_message.message, "enabled");

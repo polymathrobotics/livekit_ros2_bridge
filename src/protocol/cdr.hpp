@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "nlohmann/json_fwd.hpp"
+#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge::protocol::cdr
 {
@@ -41,9 +42,17 @@ enum class Field
 /// content type, or contains invalid base64.
 std::vector<std::uint8_t> parse(const nlohmann::json & body, Field field);
 
+/// Parse the selected CDR envelope directly into the ROS SDK serialized-message type used by
+/// generic publishers/subscriptions.
+rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field);
+
 /// Serialize raw ROS 2 CDR bytes into the canonical envelope shared across protocol surfaces.
 /// Empty input serializes as an empty `payload_base64` string so `serialize` and `parse` remain
 /// lossless even when the caller handles "must not be empty" as a separate policy decision.
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes);
+
+/// Serialize the ROS SDK serialized-message type without forcing callers at the ROS boundary to
+/// materialize a separate byte-vector DTO.
+nlohmann::json serialize(const rclcpp::SerializedMessage & message);
 
 }  // namespace livekit_ros2_bridge::protocol::cdr

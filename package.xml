@@ -12,11 +12,11 @@
 
   <depend>generate_parameter_library</depend>
   <depend>libssl-dev</depend>
-  <depend>magic_enum</depend>
   <depend>nlohmann-json-dev</depend>
   <depend>rclcpp_components</depend>
   <depend>ament_index_cpp</depend>
   <depend>rclcpp</depend>
+  <depend>rmw</depend>
   <depend>rosidl_typesupport_introspection_cpp</depend>
   <depend>sensor_msgs</depend>
 

@@ -32,6 +32,7 @@
 #include "rclcpp/clock.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
@@ -132,9 +133,11 @@ private:
     const Subscription & subscription, Clock::time_point reference_time);
   static bool isVideo(const Subscription & subscription);
 
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface>
+    node_interfaces_;
   rclcpp::Clock::SharedPtr clock_;
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;

@@ -24,8 +24,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "ament_index_cpp/get_package_share_directory.hpp"
-#include "ament_index_cpp/version.h"
+#include "ament_index_cpp/get_resource.hpp"
 #include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
 
@@ -35,30 +34,10 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 constexpr char kServiceDefinitionSeparator[] = "---";
+constexpr char kRosidlInterfacesResourceType[] = "rosidl_interfaces";
 constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
 const auto kLogger = rclcpp::get_logger("interface_definition_lookup");
-
-const std::set<std::string> kPrimitiveTypes = {
-  "bool",
-  "byte",
-  "char",
-  "float32",
-  "float64",
-  "int8",
-  "uint8",
-  "int16",
-  "uint16",
-  "int32",
-  "uint32",
-  "int64",
-  "uint64",
-  "string",
-  "wstring",
-  "boolean",
-  "octet",
-};
 
 using LookupFailureCache = LruCache<std::string, std::exception_ptr>;
 
@@ -118,19 +97,24 @@ struct TypeParts
   }
 };
 
-std::string getPackageShareDirCompat(const std::string & package)
+std::filesystem::path resolveInterfaceDefinitionPath(const TypeParts & parts)
 {
-  // ament_index_cpp 1.11+ adds the filesystem-path overload used by Kilted/Rolling, while
-  // Humble and Jazzy still only expose the legacy string-returning API. Keep one compatibility
-  // wrapper here instead of scattering distro/version checks across interface definition lookup
-  // code.
-#if AMENT_INDEX_CPP_VERSION_GTE(1, 11, 0)
-  std::filesystem::path share_dir;
-  ament_index_cpp::get_package_share_directory(package, share_dir);
-  return share_dir.string();
-#else
-  return ament_index_cpp::get_package_share_directory(package);
-#endif
+  std::string resource_content;
+  std::string package_prefix;
+  if (!ament_index_cpp::get_resource(kRosidlInterfacesResourceType, parts.package, resource_content, &package_prefix)) {
+    throw std::runtime_error("Package '" + parts.package + "' not found in ament index");
+  }
+
+  const std::string requested_relative_path = parts.kind + "/" + parts.name + "." + parts.kind;
+  std::istringstream lines(resource_content);
+  std::string registered_relative_path;
+  while (std::getline(lines, registered_relative_path)) {
+    if (registered_relative_path == requested_relative_path) {
+      return std::filesystem::path(package_prefix) / "share" / parts.package / registered_relative_path;
+    }
+  }
+
+  return std::filesystem::path(package_prefix) / "share" / parts.package / requested_relative_path;
 }
 
 std::string loadInterfaceDefinition(const std::string & interface_type)
@@ -156,18 +140,11 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
   try {
     const TypeParts parts = TypeParts::parse(interface_type);
 
-    std::string share_dir;
-    try {
-      share_dir = getPackageShareDirCompat(parts.package);
-    } catch (const std::exception &) {
-      reason = "package_not_found";
-      throw std::runtime_error("Package '" + parts.package + "' not found in ament index");
-    }
-
-    const std::filesystem::path path = std::filesystem::path(share_dir) / parts.kind / (parts.name + "." + parts.kind);
+    reason = "package_not_found";
+    const std::filesystem::path path = resolveInterfaceDefinitionPath(parts);
+    reason = "definition_file_unavailable";
     std::ifstream file(path);
     if (!file.is_open()) {
-      reason = "definition_file_unavailable";
       throw std::runtime_error("Cannot open interface definition file: " + path.string());
     }
 
@@ -190,6 +167,13 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
       .error();
     throw;
   }
+}
+
+bool isPackageLocalMessageType(const std::string & type)
+{
+  // rosidl_adapter treats unqualified field types as package-local messages only when they match
+  // the ROS message-name shape. Primitive, compatibility, and bounded string tokens are lower-case.
+  return !type.empty() && type.front() >= 'A' && type.front() <= 'Z';
 }
 
 /// Scan a .msg, .srv, or .action file for complex type references and return their fully-qualified
@@ -227,16 +211,17 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
     }
 
     const std::string base = type.substr(0, type.find('['));
-    if (kPrimitiveTypes.count(base) > 0) {
-      continue;
-    }
-
-    std::string dependency = base;
+    std::string dependency;
     const auto first_slash = base.find('/');
     if (first_slash == std::string::npos) {
+      if (!isPackageLocalMessageType(base)) {
+        continue;
+      }
       dependency = package + "/msg/" + base;
     } else if (base.find('/', first_slash + 1) == std::string::npos) {
       dependency = base.substr(0, first_slash) + "/msg/" + base.substr(first_slash + 1);
+    } else {
+      dependency = base;
     }
 
     dependencies.push_back(dependency);
@@ -256,12 +241,12 @@ void collectInterfaceDefinitions(
   }
 
   const std::string body = loadInterfaceDefinition(interface_type);
-  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, body});
+  definitions.push_back({interface_type, body});
 
   // Successful loads already validated the identifier; re-parse here instead of carrying the
   // package name through traversal state just for dependency qualification.
-  const std::string package = TypeParts::parse(interface_type).package;
-  for (const auto & dependency : extractDependencies(body, package)) {
+  const TypeParts parts = TypeParts::parse(interface_type);
+  for (const auto & dependency : extractDependencies(body, parts.package)) {
     collectInterfaceDefinitions(dependency, visited, definitions);
   }
 }

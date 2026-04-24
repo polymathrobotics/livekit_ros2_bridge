@@ -33,6 +33,18 @@ namespace
 
 constexpr char kInvalidLimitMessage[] = "limit must be a positive integer";
 
+template <typename AddEntryT>
+void appendSingleInterfaceTypeResources(
+  Json & entries, const ResourceNamesAndTypes & resources_by_name, AddEntryT add_entry)
+{
+  for (const auto & [name, types] : resources_by_name) {
+    if (types.size() != 1U) {
+      continue;
+    }
+    add_entry(entries, name, types.front());
+  }
+}
+
 std::optional<std::size_t> parseLimit(const Json & body)
 {
   const auto field = body.find("limit");
@@ -76,22 +88,24 @@ ResourceListRequest parseRequest(const std::string & payload)
   return {std::move(query), parseLimit(body)};
 }
 
-std::string serializeServices(const std::vector<Resource> & resources)
+std::string serializeServices(const ResourceNamesAndTypes & resources_by_name)
 {
   Json entries = Json::array();
-  for (const auto & resource : resources) {
-    entries.push_back({{"service", resource.name}, {"interface_type", resource.interface_type}});
-  }
+  appendSingleInterfaceTypeResources(
+    entries, resources_by_name, [](Json & output, const std::string & service, const std::string & interface_type) {
+      output.push_back({{"service", service}, {"interface_type", interface_type}});
+    });
 
   return Json{{"services", std::move(entries)}}.dump();
 }
 
-std::string serializeTopics(const std::vector<Resource> & resources)
+std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name)
 {
   Json entries = Json::array();
-  for (const auto & resource : resources) {
-    entries.push_back({{"topic", resource.name}, {"interface_type", resource.interface_type}});
-  }
+  appendSingleInterfaceTypeResources(
+    entries, resources_by_name, [](Json & output, const std::string & topic, const std::string & interface_type) {
+      output.push_back({{"topic", topic}, {"interface_type", interface_type}});
+    });
 
   return Json{{"topics", std::move(entries)}}.dump();
 }

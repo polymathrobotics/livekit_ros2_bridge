@@ -23,6 +23,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/detail/base64.hpp"
+#include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge::protocol::cdr
 {
@@ -86,11 +87,25 @@ std::vector<std::uint8_t> parse(const nlohmann::json & body, Field field)
   throw std::logic_error("Unhandled base64 decode status.");
 }
 
+rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field)
+{
+  return wrapSerializedPayload(parse(body, field));
+}
+
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)
 {
   return {
     {kContentType, protocol::kCdrContentType},
     {kPayloadBase64, detail::base64::encode(bytes.data(), bytes.size())},
+  };
+}
+
+nlohmann::json serialize(const rclcpp::SerializedMessage & message)
+{
+  const auto & raw = message.get_rcl_serialized_message();
+  return {
+    {kContentType, protocol::kCdrContentType},
+    {kPayloadBase64, detail::base64::encode(raw.buffer, raw.buffer_length)},
   };
 }
 

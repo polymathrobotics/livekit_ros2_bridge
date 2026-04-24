@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <chrono>
 #include <optional>
 #include <vector>
 
@@ -29,6 +30,12 @@ namespace
 
 using test_support::expectInvalidArgument;
 
+std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & message)
+{
+  const auto & raw = message.get_rcl_serialized_message();
+  return std::vector<std::uint8_t>(raw.buffer, raw.buffer + message.size());
+}
+
 nlohmann::json makeRequestBody()
 {
   return nlohmann::json{
@@ -39,7 +46,7 @@ nlohmann::json makeRequestBody()
   };
 }
 
-TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
+TEST(ServiceCallPayloadsTest, ParsesValidRequestAndExpandsFields)
 {
   auto body = makeRequestBody();
   body["service"] = "  set_bool  ";
@@ -48,8 +55,8 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndNormalizesFields)
 
   EXPECT_EQ(request.service, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
-  EXPECT_EQ(request.payload, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
-  EXPECT_EQ(request.timeout_ms, std::optional<int>(500));
+  EXPECT_EQ(serializedMessageBytes(request.payload), (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
+  EXPECT_EQ(request.timeout, std::chrono::milliseconds(500));
 }
 
 TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPresence)
@@ -60,7 +67,7 @@ TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPres
   const auto request = protocol::services::parse(body.dump());
 
   EXPECT_TRUE(request.interface_type.empty());
-  EXPECT_EQ(request.timeout_ms, std::nullopt);
+  EXPECT_EQ(request.timeout, std::nullopt);
 
   body = makeRequestBody();
   body["interface_type"] = "   ";
@@ -68,11 +75,11 @@ TEST(ServiceCallPayloadsTest, ParsesOptionalInterfaceTypeAndPreservesTimeoutPres
   const auto zero_timeout = protocol::services::parse(body.dump());
 
   EXPECT_TRUE(zero_timeout.interface_type.empty());
-  EXPECT_EQ(zero_timeout.timeout_ms, std::optional<int>(0));
+  EXPECT_EQ(zero_timeout.timeout, std::chrono::milliseconds(0));
 
   body["timeout_ms"] = -1;
   const auto negative_timeout = protocol::services::parse(body.dump());
-  EXPECT_EQ(negative_timeout.timeout_ms, std::optional<int>(-1));
+  EXPECT_EQ(negative_timeout.timeout, std::chrono::milliseconds(-1));
 }
 
 TEST(ServiceCallPayloadsTest, RejectsMalformedPayloadsWithFieldContext)
@@ -92,6 +99,17 @@ TEST(ServiceCallPayloadsTest, RejectsInvalidRequestFieldsWithFieldContext)
   body = makeRequestBody();
   body["service"] = "   ";
   expectInvalidArgument([&body]() { (void)protocol::services::parse(body.dump()); }, "service is required", "service");
+
+  body = makeRequestBody();
+  body["service"] = "/bad//service";
+  try {
+    (void)protocol::services::parse(body.dump());
+    ADD_FAILURE() << "Expected std::invalid_argument";
+  } catch (const std::invalid_argument & error) {
+    const auto * validation = dynamic_cast<const protocol::ValidationError *>(&error);
+    ASSERT_NE(validation, nullptr);
+    EXPECT_EQ(validation->field(), "service");
+  }
 
   body = makeRequestBody();
   body["interface_type"] = 123;

@@ -22,6 +22,7 @@
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "room_connection.hpp"
@@ -70,9 +71,10 @@ class VideoTrackPublisher final : public VideoFrameSink, private VideoStreamLife
 {
 public:
   static std::shared_ptr<VideoTrackPublisher> create(
-    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::node_interfaces::NodeInterfaces<
+      rclcpp::node_interfaces::NodeParametersInterface,
+      rclcpp::node_interfaces::NodeTopicsInterface,
+      rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
     RoomConnection & room_connection,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config);

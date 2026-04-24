@@ -29,8 +29,8 @@ namespace livekit_ros2_bridge::protocol::subscriptions
 
 /// Parse one subscription control-plane heartbeat payload from `lkros.heartbeat`.
 /// `session_id` is optional and trimmed; missing, null, or blank values are treated as absent.
-/// `subscriptions` is required. `topic` names are normalized as ROS resource names, while
-/// `other_video` names are only trimmed because they are bridge-defined identifiers.
+/// `subscriptions` is required. `topic` names are trimmed, expanded, and validated by rclcpp,
+/// while `other_video` names are only trimmed because they are bridge-defined identifiers.
 /// Duplicate canonical targets are coalesced in first-seen order, keeping the smallest non-zero
 /// preferred interval. Protocol integer intervals are clamped into `int`; later policy code may
 /// further normalize values such as negatives.

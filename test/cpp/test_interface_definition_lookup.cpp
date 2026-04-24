@@ -91,7 +91,6 @@ TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
 
   ASSERT_EQ(definitions.size(), 1u);
   EXPECT_EQ(definitions.front().type, "std_msgs/msg/String");
-  EXPECT_EQ(definitions.front().format, "ros2msg");
   EXPECT_NE(definitions.front().body.find("string data"), std::string::npos);
 }
 

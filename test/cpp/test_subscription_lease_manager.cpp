@@ -32,6 +32,7 @@
 #include "protocol/constants.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
+#include "rosidl_runtime_cpp/traits.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -48,6 +49,16 @@ using test_support::waitForTopicType;
 using test_support::waitUntil;
 constexpr auto kShortHeartbeatLeaseDuration = std::chrono::milliseconds(120);
 constexpr auto kLeaseWaitBuffer = std::chrono::milliseconds(40);
+
+template <typename MessageT>
+bool waitForTopic(
+  rclcpp::executors::SingleThreadedExecutor & executor,
+  const std::shared_ptr<rclcpp::Node> & node,
+  const std::string & topic,
+  std::chrono::milliseconds timeout = test_support::kDefaultWaitTimeout)
+{
+  return waitForTopicType(executor, node, topic, rosidl_generator_traits::name<MessageT>(), timeout);
+}
 
 sensor_msgs::msg::BatteryState makeBatteryState()
 {
@@ -199,11 +210,10 @@ template <typename MessageT>
 std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const std::shared_ptr<rclcpp::Node> & node,
-  const std::string & topic,
-  const std::string & interface_type)
+  const std::string & topic)
 {
   auto publisher = node->create_publisher<MessageT>(topic, 1);
-  EXPECT_TRUE(waitForTopicType(executor, node, topic, interface_type));
+  EXPECT_TRUE(waitForTopic<MessageT>(executor, node, topic));
   return publisher;
 }
 
@@ -355,8 +365,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, HeartbeatPayloadParsesAndHandlesSu
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+  auto publisher = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state");
 
   auto manager = makeManager(access_policy_);
   const auto payload = payloadBytes(
@@ -394,7 +403,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
 
@@ -404,7 +413,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
     sendHeartbeatAndExtractStatus(registry, *session.state, "bob", makeHeartbeat({makeTopicDemand(topic, 0)}));
 
   expectStatusEntry(first, "topic", topic.c_str(), "active");
-  EXPECT_EQ(first["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(first["interface_type"], rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>());
   EXPECT_EQ(first["delivery"]["kind"], "data");
   EXPECT_EQ(first["delivery"]["content_type"], protocol::kCdrContentType);
   EXPECT_EQ(first["delivery"]["interval_ms"], 0);
@@ -431,7 +440,7 @@ TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto status =
@@ -459,7 +468,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatClampsNegativeRequestedIntervalToZer
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto status =
@@ -479,7 +488,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   int publish_attempt_count = 0;
   session.state->publish_data_track_handler =
@@ -499,7 +508,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 500)}));
 
   expectStatusEntry(failed, "topic", topic.c_str(), "active");
-  EXPECT_EQ(failed["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(failed["interface_type"], rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>());
   EXPECT_EQ(failed["delivery"]["kind"], "data");
   EXPECT_EQ(failed["delivery"]["interval_ms"], 500);
   EXPECT_TRUE(failed["delivery"]["track_name"].get<std::string>().empty());
@@ -508,7 +517,7 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatStatusOmitsTrackNameUntilFailedPubli
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 500)}));
 
   expectStatusEntry(recovered, "topic", topic.c_str(), "active");
-  EXPECT_EQ(recovered["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(recovered["interface_type"], rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>());
   EXPECT_EQ(recovered["delivery"]["kind"], "data");
   EXPECT_EQ(recovered["delivery"]["interval_ms"], 500);
   EXPECT_EQ(recovered["delivery"]["track_name"], "lkros.data.battery.failed_publish_response");
@@ -526,7 +535,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesKeepsSubscriptionAndRecompu
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
 
@@ -562,8 +571,8 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic_a, "sensor_msgs/msg/BatteryState"));
-  ASSERT_TRUE(waitForTopicType(executor, node, topic_b, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic_a));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic_b));
 
   auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
 
@@ -605,7 +614,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOther
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, video_topic));
 
   auto registry = makeLeaseManager(*node, session, &video_stream_config);
 
@@ -626,12 +635,12 @@ TEST(SubscriptionLeaseManagerTest, EquivalentRosVideoRequestsShareCanonicalSubsc
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_canonical_topic_test");
   FakeRoomConnection session;
   const std::string canonical_topic = "/camera/front/image";
-  const std::string variant_topic = "  camera//front/image/  ";
+  const std::string variant_topic = "  camera/front/image  ";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(canonical_topic, rclcpp::QoS(10));
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, canonical_topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, canonical_topic));
 
   auto registry = makeLeaseManager(*node, session);
 
@@ -690,7 +699,7 @@ TEST(SubscriptionLeaseManagerTest, VideoLeaseExpiryBeforeFirstFrameAllowsLaterRe
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto first =
@@ -741,8 +750,8 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, first_topic, "sensor_msgs/msg/Image"));
-  ASSERT_TRUE(waitForTopicType(executor, node, second_topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, first_topic));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, second_topic));
 
   auto registry = makeLeaseManager(*node, session, &stream_config);
   const auto first_status =
@@ -797,7 +806,7 @@ TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTra
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto first =
@@ -825,7 +834,7 @@ TEST(SubscriptionLeaseManagerTest, NewRequesterHeartbeatRepublishesAlreadyPublis
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto first =
@@ -850,7 +859,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto status =
@@ -874,7 +883,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedVideoTr
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session, nullptr, kShortHeartbeatLeaseDuration);
   const auto status =
@@ -906,8 +915,8 @@ TEST(SubscriptionLeaseManagerTest, ResetSessionStateClearsDataAndVideoSubscripti
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, data_topic, "sensor_msgs/msg/BatteryState"));
-  ASSERT_TRUE(waitForTopicType(executor, node, video_topic, "sensor_msgs/msg/Image"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, data_topic));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, video_topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto data_status =
@@ -940,7 +949,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto push_entered = std::make_shared<std::promise<void>>();
   auto push_entered_future = push_entered->get_future();
@@ -993,7 +1002,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownAllowsFreshManagerToRecreateSameDataT
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto active =
@@ -1019,7 +1028,7 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   std::atomic<int> push_attempt_count{0};
   session.state->try_push_data_track_handler = [&push_attempt_count](
@@ -1058,7 +1067,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownReportsNotFoundSubscriptionsAndFurthe
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
 
   auto registry = makeLeaseManager(*node, session);
   const auto active =
@@ -1130,8 +1139,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscri
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+  auto publisher = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state");
 
   auto manager = makeManager(access_policy_);
 
@@ -1148,7 +1156,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ActiveSubscriptionPublishesSubscri
   const auto status = extractStatusEntry(envelope);
   const auto & delivery = status["delivery"];
   expectStatusEntry(status, "topic", "/battery_state", "active");
-  EXPECT_EQ(status["interface_type"], "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(status["interface_type"], rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>());
   EXPECT_EQ(delivery["track_name"], "lkros.data.battery_state");
   EXPECT_EQ(delivery["interval_ms"], 100);
   (void)publisher;
@@ -1159,10 +1167,8 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OmittedHeartbeatTargetRemainsActiv
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto battery_a =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_a", "sensor_msgs/msg/BatteryState");
-  auto battery_b =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_b", "sensor_msgs/msg/BatteryState");
+  auto battery_a = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_a");
+  auto battery_b = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_b");
 
   auto manager = makeManager(access_policy_);
 
@@ -1198,8 +1204,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatRenewsKnownClien
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+  auto publisher = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state");
 
   auto manager = makeManager(access_policy_);
 
@@ -1234,8 +1239,7 @@ TEST_F(
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+  auto publisher = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state");
 
   auto manager = makeManager(access_policy_);
 
@@ -1284,8 +1288,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, MixedSubscriptionResultsArePublish
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node_);
 
-  auto publisher =
-    advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state", "sensor_msgs/msg/BatteryState");
+  auto publisher = advertiseTopic<sensor_msgs::msg::BatteryState>(executor, node_, "/battery_state");
 
   auto manager = makeManager(access_policy_);
 

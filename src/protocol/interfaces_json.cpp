@@ -35,10 +35,11 @@ constexpr char kInterfacesField[] = "interfaces";
 constexpr char kTypeField[] = "interface_type";
 constexpr char kFormatField[] = "format";
 constexpr char kDefinitionField[] = "definition";
+constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 
 }  // namespace
 
-InterfaceShowRequest parse(const std::string & payload)
+std::vector<std::string> parse(const std::string & payload)
 {
   Json body;
   try {
@@ -66,7 +67,7 @@ InterfaceShowRequest parse(const std::string & payload)
       throw std::invalid_argument("interface_types must not be empty");
     }
 
-    return InterfaceShowRequest{std::move(types)};
+    return types;
   } catch (const std::invalid_argument & exc) {
     throw ValidationError(kTypesField, exc.what());
   }
@@ -80,7 +81,7 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
     interfaces.push_back(
       Json{
         {kTypeField, definition.type},
-        {kFormatField, definition.format},
+        {kFormatField, kDefinitionFormatRos2Msg},
         {kDefinitionField, definition.body},
       });
   }

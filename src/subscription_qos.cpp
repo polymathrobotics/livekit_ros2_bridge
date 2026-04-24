@@ -14,10 +14,12 @@
 
 #include "subscription_qos.hpp"
 
+#include <algorithm>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 
-#include "rclcpp/version.h"
+#include "rmw/qos_string_conversions.h"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
@@ -32,14 +34,33 @@ struct PublisherPolicySummary
   bool mixed = false;
 };
 
-template <typename Policy, typename Accessor>
+template <typename Policy, typename Mutator>
+bool qosPoliciesAreCompatible(Policy publisher_policy, Policy subscription_policy, Mutator mutator)
+{
+  rclcpp::QoS publisher_qos{rclcpp::KeepLast(1)};
+  rclcpp::QoS subscription_qos{rclcpp::KeepLast(1)};
+  mutator(publisher_qos, publisher_policy);
+  mutator(subscription_qos, subscription_policy);
+  return rclcpp::qos_check_compatible(publisher_qos, subscription_qos).compatibility == rclcpp::QoSCompatibility::Ok;
+}
+
+template <typename Policy>
+bool containsPolicy(std::initializer_list<Policy> policies, Policy policy)
+{
+  return std::find(policies.begin(), policies.end(), policy) != policies.end();
+}
+
+template <typename Policy, typename Accessor, typename Mutator>
 PublisherPolicySummary<Policy> summarizePublisherPolicy(
-  const std::vector<PublisherQos> & publishers, Accessor accessor, Policy weaker_policy, Policy stronger_policy)
+  const std::vector<rclcpp::QoS> & publisher_qos_profiles,
+  Accessor accessor,
+  Mutator mutator,
+  std::initializer_list<Policy> candidate_subscription_policies)
 {
   PublisherPolicySummary<Policy> summary;
-  for (const auto & publisher : publishers) {
-    const Policy policy = accessor(publisher);
-    if (policy != weaker_policy && policy != stronger_policy) {
+  for (const auto & publisher_qos : publisher_qos_profiles) {
+    const Policy policy = accessor(publisher_qos);
+    if (!containsPolicy(candidate_subscription_policies, policy)) {
       continue;
     }
     if (!summary.resolved_policy.has_value()) {
@@ -48,9 +69,37 @@ PublisherPolicySummary<Policy> summarizePublisherPolicy(
     }
     if (*summary.resolved_policy != policy) {
       summary.mixed = true;
-      summary.resolved_policy = weaker_policy;
     }
   }
+
+  if (!summary.resolved_policy.has_value()) {
+    return summary;
+  }
+
+  std::optional<Policy> compatible_policy;
+  for (const Policy subscription_policy : candidate_subscription_policies) {
+    bool compatible_with_all_publishers = true;
+    for (const auto & publisher_qos : publisher_qos_profiles) {
+      const Policy publisher_policy = accessor(publisher_qos);
+      if (!containsPolicy(candidate_subscription_policies, publisher_policy)) {
+        continue;
+      }
+      if (!qosPoliciesAreCompatible(publisher_policy, subscription_policy, mutator)) {
+        compatible_with_all_publishers = false;
+        break;
+      }
+    }
+    if (compatible_with_all_publishers) {
+      compatible_policy = subscription_policy;
+    }
+  }
+
+  if (compatible_policy.has_value()) {
+    summary.resolved_policy = *compatible_policy;
+  } else if (summary.mixed) {
+    summary.resolved_policy = *(candidate_subscription_policies.end() - 1);
+  }
+
   return summary;
 }
 
@@ -60,11 +109,11 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
-  const std::vector<PublisherQos> & publishers)
+  const std::vector<rclcpp::QoS> & publisher_qos_profiles)
 {
   ResolvedSubscriptionQos resolved;
   resolved.qos = base_qos;
-  resolved.publisher_count = publishers.size();
+  resolved.publisher_count = publisher_qos_profiles.size();
 
   const TopicSubscriptionQosOverride * match = nullptr;
   if (config != nullptr) {
@@ -88,15 +137,15 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   // Only explicit publisher policies participate in resolution. Unknown and
   // system-default entries do not provide a concrete policy to inherit.
   const auto reliability = summarizePublisherPolicy(
-    publishers,
-    [](const PublisherQos & publisher) { return publisher.reliability; },
-    rclcpp::ReliabilityPolicy::BestEffort,
-    rclcpp::ReliabilityPolicy::Reliable);
+    publisher_qos_profiles,
+    [](const rclcpp::QoS & publisher_qos) { return publisher_qos.reliability(); },
+    [](rclcpp::QoS & qos, rclcpp::ReliabilityPolicy policy) { qos.reliability(policy); },
+    {rclcpp::ReliabilityPolicy::Reliable, rclcpp::ReliabilityPolicy::BestEffort});
   const auto durability = summarizePublisherPolicy(
-    publishers,
-    [](const PublisherQos & publisher) { return publisher.durability; },
-    rclcpp::DurabilityPolicy::Volatile,
-    rclcpp::DurabilityPolicy::TransientLocal);
+    publisher_qos_profiles,
+    [](const rclcpp::QoS & publisher_qos) { return publisher_qos.durability(); },
+    [](rclcpp::QoS & qos, rclcpp::DurabilityPolicy policy) { qos.durability(policy); },
+    {rclcpp::DurabilityPolicy::TransientLocal, rclcpp::DurabilityPolicy::Volatile});
   resolved.mixed_reliability = reliability.mixed;
   resolved.mixed_durability = durability.mixed;
 
@@ -139,19 +188,18 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config)
 {
-  std::vector<PublisherQos> publishers;
+  std::vector<rclcpp::QoS> publisher_qos_profiles;
   if (graph == nullptr) {
     throw std::invalid_argument("subscription QoS graph interface is null");
   }
   // Resolve against a single graph snapshot. The publisher set may change
   // immediately after this query, but we keep one consistent view per call.
   const auto publisher_infos = graph->get_publishers_info_by_topic(std::string(topic));
-  publishers.reserve(publisher_infos.size());
+  publisher_qos_profiles.reserve(publisher_infos.size());
   for (const auto & info : publisher_infos) {
-    const auto & qos = info.qos_profile();
-    publishers.push_back({qos.reliability(), qos.durability()});
+    publisher_qos_profiles.push_back(info.qos_profile());
   }
-  return resolveSubscriptionQos(topic, base_qos, config, publishers);
+  return resolveSubscriptionQos(topic, base_qos, config, publisher_qos_profiles);
 }
 
 const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)
@@ -170,42 +218,14 @@ const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)
 
 const char * subscriptionQosReliabilityString(rclcpp::ReliabilityPolicy policy)
 {
-  switch (policy) {
-    case rclcpp::ReliabilityPolicy::Reliable:
-      return "reliable";
-    case rclcpp::ReliabilityPolicy::BestEffort:
-      return "best_effort";
-#if RCLCPP_VERSION_GTE(28, 0, 0)
-    case rclcpp::ReliabilityPolicy::BestAvailable:
-      return "best_available";
-#endif
-    case rclcpp::ReliabilityPolicy::SystemDefault:
-      return "system_default";
-    case rclcpp::ReliabilityPolicy::Unknown:
-      return "unknown";
-  }
-
-  return "unknown";
+  const char * name = rmw_qos_reliability_policy_to_str(static_cast<rmw_qos_reliability_policy_t>(policy));
+  return name == nullptr ? "unknown" : name;
 }
 
 const char * subscriptionQosDurabilityString(rclcpp::DurabilityPolicy policy)
 {
-  switch (policy) {
-    case rclcpp::DurabilityPolicy::Volatile:
-      return "volatile";
-    case rclcpp::DurabilityPolicy::TransientLocal:
-      return "transient_local";
-#if RCLCPP_VERSION_GTE(28, 0, 0)
-    case rclcpp::DurabilityPolicy::BestAvailable:
-      return "best_available";
-#endif
-    case rclcpp::DurabilityPolicy::SystemDefault:
-      return "system_default";
-    case rclcpp::DurabilityPolicy::Unknown:
-      return "unknown";
-  }
-
-  return "unknown";
+  const char * name = rmw_qos_durability_policy_to_str(static_cast<rmw_qos_durability_policy_t>(policy));
+  return name == nullptr ? "unknown" : name;
 }
 
 }  // namespace livekit_ros2_bridge

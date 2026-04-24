@@ -168,7 +168,7 @@ public:
 
       const auto & cdr = message.get_rcl_serialized_message();
       const auto result = room_connection_.tryPushDataTrack(
-        track_, livekit::DataTrackFrame{std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length)});
+        track_, livekit::DataTrackFrame{std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + message.size())});
       if (result) {
         return;
       }
@@ -269,7 +269,7 @@ public:
 private:
   void subscribe()
   {
-    const rclcpp::QoS base_qos(kSubscriptionDepth);
+    const rclcpp::QoS base_qos{rclcpp::KeepLast(kSubscriptionDepth)};
     const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, topic_, base_qos, qos_config_);
 
     LogEvent(kLogger, "subscription_qos_resolved")
@@ -294,7 +294,7 @@ private:
       qos.qos,
       [weak_state = std::weak_ptr<State>(state_)](std::shared_ptr<rclcpp::SerializedMessage> message) {
         const auto state = weak_state.lock();
-        if (message == nullptr || state == nullptr || !state->tryEnter()) {
+        if (state == nullptr || !state->tryEnter()) {
           return;
         }
         ScopeExit leave_state([&state]() { state->leave(); });

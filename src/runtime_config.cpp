@@ -14,29 +14,22 @@
 
 #include "runtime_config.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
 #include <vector>
 
-#if __has_include(<magic_enum/magic_enum.hpp>)
-  #include <magic_enum/magic_enum.hpp>
-#elif __has_include(<magic_enum.hpp>)
-  #include <magic_enum.hpp>
-#else
-  #error "magic_enum header not found"
-#endif
 #include "livekit/room_event_types.h"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/parameter.hpp"
+#include "rmw/qos_string_conversions.h"
 #include "subscription_qos.hpp"
 #include "utils/gstreamer_raii.hpp"
 #include "utils/log_event.hpp"
@@ -116,30 +109,6 @@ std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char
   return normalized;
 }
 
-std::string toPascalCaseToken(std::string token)
-{
-  std::transform(token.begin(), token.end(), token.begin(), [](unsigned char ch) {
-    if (ch == '-' || ch == ' ') {
-      return '_';
-    }
-    return static_cast<char>(std::tolower(ch));
-  });
-
-  bool uppercase_next = true;
-  std::string normalized;
-  normalized.reserve(token.size());
-  for (const char ch : token) {
-    if (ch == '_') {
-      uppercase_next = true;
-      continue;
-    }
-    normalized.push_back(uppercase_next ? static_cast<char>(std::toupper(static_cast<unsigned char>(ch))) : ch);
-    uppercase_next = false;
-  }
-
-  return normalized;
-}
-
 std::optional<livekit::VideoCodec> parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
 {
   const std::string codec = trim(raw_codec);
@@ -202,46 +171,45 @@ double videoMaxFramerate(const livekit::TrackPublishOptions & config)
   return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
 }
 
-template <typename EnumT>
-EnumT parseEnumToken(std::string token, const std::string & field_name)
+template <typename RosPolicy, typename RmwPolicy, typename ParseFn>
+std::optional<RosPolicy> parseSubscriptionQosPolicy(
+  const std::string & raw_mode,
+  const std::string & field_name,
+  ParseFn parse,
+  RmwPolicy unknown_policy,
+  RmwPolicy system_default_policy)
 {
-  const std::string raw_token = token;
-  if (const auto parsed = magic_enum::enum_cast<EnumT>(toPascalCaseToken(std::move(token))); parsed.has_value()) {
-    return *parsed;
+  const std::string mode = trim(raw_mode);
+  if (mode == "auto") {
+    return std::nullopt;
   }
-  throw std::runtime_error("unsupported " + field_name + " '" + raw_token + "'");
+
+  const RmwPolicy parsed = parse(mode.c_str());
+  if (parsed == unknown_policy || parsed == system_default_policy) {
+    throw std::runtime_error("unsupported " + field_name + " '" + mode + "'");
+  }
+
+  return static_cast<RosPolicy>(parsed);
 }
 
 std::optional<rclcpp::ReliabilityPolicy> parseSubscriptionQosReliability(const std::string & raw_mode)
 {
-  const std::string mode = trim(raw_mode);
-  if (mode == "auto") {
-    return std::nullopt;
-  }
-  const auto parsed = parseEnumToken<rclcpp::ReliabilityPolicy>(mode, "subscription.qos reliability mode");
-  switch (parsed) {
-    case rclcpp::ReliabilityPolicy::Reliable:
-    case rclcpp::ReliabilityPolicy::BestEffort:
-      return parsed;
-    default:
-      throw std::runtime_error("unsupported subscription.qos reliability mode '" + mode + "'");
-  }
+  return parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(
+    raw_mode,
+    "subscription.qos reliability mode",
+    rmw_qos_reliability_policy_from_str,
+    RMW_QOS_POLICY_RELIABILITY_UNKNOWN,
+    RMW_QOS_POLICY_RELIABILITY_SYSTEM_DEFAULT);
 }
 
 std::optional<rclcpp::DurabilityPolicy> parseSubscriptionQosDurability(const std::string & raw_mode)
 {
-  const std::string mode = trim(raw_mode);
-  if (mode == "auto") {
-    return std::nullopt;
-  }
-  const auto parsed = parseEnumToken<rclcpp::DurabilityPolicy>(mode, "subscription.qos durability mode");
-  switch (parsed) {
-    case rclcpp::DurabilityPolicy::Volatile:
-    case rclcpp::DurabilityPolicy::TransientLocal:
-      return parsed;
-    default:
-      throw std::runtime_error("unsupported subscription.qos durability mode '" + mode + "'");
-  }
+  return parseSubscriptionQosPolicy<rclcpp::DurabilityPolicy>(
+    raw_mode,
+    "subscription.qos durability mode",
+    rmw_qos_durability_policy_from_str,
+    RMW_QOS_POLICY_DURABILITY_UNKNOWN,
+    RMW_QOS_POLICY_DURABILITY_SYSTEM_DEFAULT);
 }
 
 livekit::TrackPublishOptions parseTrackPublishOptions(const Params & params)

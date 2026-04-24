@@ -317,7 +317,21 @@ TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosEntriesLoadFromUnifiedParams)
     rclcpp::DurabilityPolicy::TransientLocal);
 }
 
-TEST_F(RuntimeConfigTest, SubscriptionQosOverrideNormalizesPattern)
+TEST_F(RuntimeConfigTest, SubscriptionQosOverrideExpandsRelativePattern)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("subscription.qos.front.pattern", " camera/front ");
+  options.append_parameter_override("subscription.qos.front.reliability", "auto");
+  options.append_parameter_override("subscription.qos.front.durability", "auto");
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_subscription_qos_pattern_expansion", options);
+
+  ASSERT_EQ(config.subscription_qos.topic_overrides.size(), 1U);
+  EXPECT_EQ(config.subscription_qos.topic_overrides.front().pattern, "/camera/front");
+}
+
+TEST_F(RuntimeConfigTest, SubscriptionQosOverrideRejectsInvalidRosPattern)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("subscription_qos_ids", std::vector<std::string>{"front"});
@@ -325,11 +339,10 @@ TEST_F(RuntimeConfigTest, SubscriptionQosOverrideNormalizesPattern)
   options.append_parameter_override("subscription.qos.front.reliability", "auto");
   options.append_parameter_override("subscription.qos.front.durability", "auto");
 
-  const RuntimeConfig config =
-    loadRuntimeConfigForNode("startup_config_subscription_qos_pattern_normalization", options);
-
-  ASSERT_EQ(config.subscription_qos.topic_overrides.size(), 1U);
-  EXPECT_EQ(config.subscription_qos.topic_overrides.front().pattern, "/camera/front");
+  expectConfigError(
+    "startup_config_subscription_qos_invalid_pattern",
+    options,
+    "subscription.qos pattern must normalize to a valid ROS resource");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateSubscriptionQosOverrideIdReportsSectionSpecificError)

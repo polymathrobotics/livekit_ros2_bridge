@@ -24,6 +24,8 @@
 #include "gtest/gtest.h"
 #include "livekit/video_frame.h"
 #include "ros_test_support.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "utils/gstreamer_raii.hpp"
 #include "video_frame_source/ros_topic_video_frame_sources.hpp"
 #include "video_frame_source/video_pipeline_frame_source.hpp"
@@ -46,11 +48,21 @@ VideoStreamSpec makeTestSpec()
 
 VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type)
 {
-  VideoStreamSpec spec;
-  spec.stream_key = "topic:" + topic;
+  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  config.ros_topic_rules.front().rule_id = "test";
+  VideoStreamSpec spec = resolveRosVideoTopicSpec(config, topic, interface_type);
   spec.track_name = "lkros.video.test";
-  spec.input = RosVideoInput{topic, interface_type, classifyRosVideoIngestMode(interface_type).value(), "test", ""};
   return spec;
+}
+
+const char * imageInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::Image>();
+}
+
+const char * compressedImageInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
 }
 
 class NoOpFrameSink final : public VideoFrameSink
@@ -221,14 +233,8 @@ void expectRosTopicSourceLifecycleIsIdempotent(
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  auto source = std::make_shared<RosTopicVideoFrameSource>(
-    node->get_node_parameters_interface(),
-    node->get_node_topics_interface(),
-    node->get_node_graph_interface(),
-    makeRosTopicSpec(topic, interface_type),
-    nullptr,
-    sink,
-    observer);
+  auto source =
+    std::make_shared<RosTopicVideoFrameSource>(*node, makeRosTopicSpec(topic, interface_type), nullptr, sink, observer);
 
   source->activate();
   source->activate();
@@ -242,7 +248,7 @@ void expectRosTopicSourceLifecycleIsIdempotent(
 TEST_F(VideoPipelineFrameSourceTest, RawRosTopicSourceLifecycleIsIdempotent)
 {
   expectRosTopicSourceLifecycleIsIdempotent(
-    sink_, observer_, "video_pipeline_ros_topic_raw_source_test", "/video_pipeline/raw_image", kImageInterfaceType);
+    sink_, observer_, "video_pipeline_ros_topic_raw_source_test", "/video_pipeline/raw_image", imageInterfaceType());
 }
 
 TEST_F(VideoPipelineFrameSourceTest, CompressedRosTopicSourceLifecycleIsIdempotent)
@@ -252,7 +258,7 @@ TEST_F(VideoPipelineFrameSourceTest, CompressedRosTopicSourceLifecycleIsIdempote
     observer_,
     "video_pipeline_ros_topic_compressed_source_test",
     "/video_pipeline/compressed_image",
-    kCompressedImageInterfaceType);
+    compressedImageInterfaceType());
 }
 
 }  // namespace

@@ -30,7 +30,6 @@
 #include "room_connection.hpp"
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
-#include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 #include "video_stream_spec.hpp"
 #include "video_track_publisher.hpp"
@@ -86,14 +85,11 @@ std::string makeSubscriptionKey(SubscriptionTargetKind kind, const std::string &
   return key;
 }
 
-std::string normalizeDemandLookupName(SubscriptionTargetKind kind, const std::string & name)
+std::string resolveDemandLookupName(
+  const rclcpp::node_interfaces::NodeTopicsInterface & topics, SubscriptionTargetKind kind, const std::string & name)
 {
   if (kind == SubscriptionTargetKind::Topic) {
-    const std::string normalized_name = normalizeRosResourceName(name);
-    if (normalized_name.empty()) {
-      throw std::invalid_argument("Invalid ROS topic.");
-    }
-    return normalized_name;
+    return topics.resolve_topic_name(trim(name));
   }
 
   if (kind == SubscriptionTargetKind::OtherVideo) {
@@ -119,9 +115,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   const SubscriptionQosConfig * qos_config,
   const VideoStreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
-: parameters_(std::move(parameters))
-, topics_(std::move(topics))
-, graph_(std::move(graph))
+: node_interfaces_(std::move(parameters), std::move(topics), std::move(graph))
 , clock_(std::move(clock))
 , room_connection_(room_connection)
 , access_policy_(std::move(access_policy))
@@ -312,7 +306,7 @@ VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
 
 std::shared_ptr<VideoTrackPublisher> SubscriptionLeaseManager::createVideoPublisher(const VideoStreamSpec & spec)
 {
-  return VideoTrackPublisher::create(parameters_, topics_, graph_, room_connection_, spec, qos_config_);
+  return VideoTrackPublisher::create(node_interfaces_, room_connection_, spec, qos_config_);
 }
 
 DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscription & subscription) const
@@ -338,11 +332,13 @@ SubscriptionLeaseManager::ResolvedDemand SubscriptionLeaseManager::resolveDemand
 {
   ResolvedDemand resolved;
   resolved.kind = demand.kind;
-  resolved.name = normalizeDemandLookupName(demand.kind, demand.name);
+  const auto topics = node_interfaces_.get_node_topics_interface();
+  resolved.name = resolveDemandLookupName(*topics, demand.kind, demand.name);
   resolved.key = makeSubscriptionKey(demand.kind, resolved.name);
 
   if (demand.kind == SubscriptionTargetKind::Topic) {
-    resolved.interface_type = requireSingleInterfaceType(graph_->get_topic_names_and_types(), resolved.name, "topic");
+    const auto graph = node_interfaces_.get_node_graph_interface();
+    resolved.interface_type = requireSingleInterfaceType(graph->get_topic_names_and_types(), resolved.name, "topic");
     if (!classifyRosVideoIngestMode(resolved.interface_type).has_value()) {
       return resolved;
     }
@@ -361,13 +357,14 @@ SubscriptionStatus SubscriptionLeaseManager::ensure(
   if (requester_identity.empty()) {
     throw std::invalid_argument("requester_identity is required");
   }
-  if (demand.name.empty()) {
+  if (demand.kind != SubscriptionTargetKind::Topic && demand.name.empty()) {
     throw std::invalid_argument("heartbeat subscription target name must resolve to a non-empty name");
   }
 
   const int preferred_interval_ms = std::max(demand.preferred_interval_ms.value_or(0), 0);
   const Lease lease{preferred_interval_ms, expiry};
-  const auto lookup_key = makeSubscriptionKey(demand.kind, normalizeDemandLookupName(demand.kind, demand.name));
+  const auto topics = node_interfaces_.get_node_topics_interface();
+  const auto lookup_key = makeSubscriptionKey(demand.kind, resolveDemandLookupName(*topics, demand.kind, demand.name));
   if (auto subscription_it = subscriptions_.find(lookup_key); subscription_it != subscriptions_.end()) {
     return renew(subscription_it->second, requester_identity, lease);
   }
@@ -430,7 +427,13 @@ SubscriptionStatus SubscriptionLeaseManager::create(
       subscription.video_publisher = createVideoPublisher(*demand.video_spec);
     } else {
       subscription.data_publisher = DataTrackPublisher::create(
-        demand.name, subscription.interface_type, topics_, graph_, clock_, room_connection_, qos_config_);
+        demand.name,
+        subscription.interface_type,
+        node_interfaces_.get_node_topics_interface(),
+        node_interfaces_.get_node_graph_interface(),
+        clock_,
+        room_connection_,
+        qos_config_);
       subscription.data_publisher->setIntervalMs(appliedIntervalMs(subscription.leases));
       subscription.data_publisher->publish();
     }

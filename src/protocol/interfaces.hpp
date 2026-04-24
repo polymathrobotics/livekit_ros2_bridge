@@ -15,26 +15,15 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
 namespace livekit_ros2_bridge
 {
-
-/// Parsed form of a `ros2.interface.show` request body.
-struct InterfaceShowRequest
-{
-  /// Fully-qualified ROS interface types in caller-provided order. Duplicates are preserved so the
-  /// runtime boundary can decide how to collapse repeated definitions and dependencies.
-  std::vector<std::string> types;
-};
 
 /// One ROS interface definition entry shared between lookup code and protocol serialization.
 struct InterfaceDefinition
 {
   /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
   std::string type;
-  /// Stable format label for `body`.
-  std::string format;
   /// Raw `.msg`, `.srv`, or `.action` file contents as read from the ROS package share directory.
   std::string body;
 };

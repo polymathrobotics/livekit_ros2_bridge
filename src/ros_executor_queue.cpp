@@ -17,10 +17,12 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "rclcpp/guard_condition.hpp"
+#include "rclcpp/node.hpp"
 #include "rclcpp/version.h"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
@@ -30,6 +32,14 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+rclcpp::Node & requireNode(const std::shared_ptr<rclcpp::Node> & node)
+{
+  if (!node) {
+    throw std::invalid_argument("given node pointer is nullptr");
+  }
+  return *node;
+}
+
 constexpr int kReadyEntityId = 0;
 }  // namespace
 
@@ -115,33 +125,18 @@ public:
 
   void set_on_ready_callback(std::function<void(size_t, int)> on_ready) override
   {
-    std::function<void(size_t, int)> callback;
-    size_t pending_wakes = 0U;
-
-    {
-      std::lock_guard<std::mutex> lock(callback_mutex_);
-      on_ready_ = std::move(on_ready);
-      callback = on_ready_;
-      if (callback == nullptr) {
-        return;
-      }
-
-      pending_wakes = std::exchange(pending_wakes_, 0U);
-    }
-
-    // Some executors install the ready callback after wake() observes queued
-    // work. Replay remembered wakes so the first pending task is not stranded.
-    if (pending_wakes == 0U) {
+    if (on_ready == nullptr) {
+      clear_on_ready_callback();
       return;
     }
 
-    callback(pending_wakes, kReadyEntityId);
+    guard_condition_->set_on_trigger_callback(
+      [on_ready = std::move(on_ready)](size_t wake_count) { on_ready(wake_count, kReadyEntityId); });
   }
 
   void clear_on_ready_callback() override
   {
-    std::lock_guard<std::mutex> lock(callback_mutex_);
-    on_ready_ = nullptr;
+    guard_condition_->set_on_trigger_callback(nullptr);
   }
 
   std::vector<std::shared_ptr<rclcpp::TimerBase>> get_timers() const
@@ -151,41 +146,29 @@ public:
 
   void wake()
   {
-    // If the executor has not installed a ready callback yet, remember this
-    // wake so set_on_ready_callback() can replay it after registration.
     guard_condition_->trigger();
-    std::function<void(size_t, int)> callback;
-
-    {
-      std::lock_guard<std::mutex> lock(callback_mutex_);
-      callback = on_ready_;
-      if (callback == nullptr) {
-        ++pending_wakes_;
-        return;
-      }
-    }
-
-    callback(1U, kReadyEntityId);
   }
 
 private:
   RosExecutorQueue & queue_;
   rclcpp::GuardCondition::SharedPtr guard_condition_;
-  mutable std::mutex callback_mutex_;
-  std::function<void(size_t, int)> on_ready_;
-  size_t pending_wakes_ = 0U;
 };
 
-RosExecutorQueue::RosExecutorQueue(
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
-  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables,
-  rclcpp::Clock::SharedPtr clock)
-: callback_group_(base->get_default_callback_group())
-, waitables_(std::move(waitables))
+RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
+: RosExecutorQueue(RosExecutorQueueNodeInterfaces(node), node.get_clock())
+{}
+
+RosExecutorQueue::RosExecutorQueue(const std::shared_ptr<rclcpp::Node> & node)
+: RosExecutorQueue(requireNode(node))
+{}
+
+RosExecutorQueue::RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock)
+: waitables_(interfaces.get_node_waitables_interface())
 , log_clock_(std::move(clock))
 {
+  const auto base = interfaces.get_node_base_interface();
   waitable_ = std::make_shared<DrainWaitable>(*this, base->get_context());
-  waitables_->add_waitable(waitable_, callback_group_);
+  waitables_->add_waitable(waitable_, nullptr);
 }
 
 RosExecutorQueue::~RosExecutorQueue()
@@ -200,7 +183,6 @@ void RosExecutorQueue::shutdown()
   std::queue<Task> queued_tasks;
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
-  rclcpp::CallbackGroup::SharedPtr callback_group;
 
   std::unique_lock<std::mutex> lock(mutex_);
   if (shutdown_) {
@@ -215,13 +197,12 @@ void RosExecutorQueue::shutdown()
   queued_tasks = std::move(tasks_);
   waitable = std::move(waitable_);
   waitables = std::move(waitables_);
-  callback_group = std::move(callback_group_);
   lock.unlock();
 
   const std::size_t canceled_count = queued_tasks.size();
 
-  if (waitable != nullptr && waitables != nullptr && callback_group != nullptr) {
-    waitables->remove_waitable(waitable, callback_group);
+  if (waitable != nullptr && waitables != nullptr) {
+    waitables->remove_waitable(waitable, nullptr);
   }
 
   if (canceled_count > 0U) {

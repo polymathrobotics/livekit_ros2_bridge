@@ -32,10 +32,7 @@ class Node::Impl final
 {
 public:
   explicit Impl(Node & node)
-  : runtime_(
-      RuntimeNodeInterfaces::fromNode(node),
-      createRoomConnection(),
-      loadRuntimeConfig(node.get_node_parameters_interface()))
+  : runtime_(node, createRoomConnection(), loadRuntimeConfig(node.get_node_parameters_interface()))
   {}
 
 private:

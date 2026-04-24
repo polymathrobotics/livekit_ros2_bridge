@@ -32,12 +32,21 @@
 #include "rclcpp/logger.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/waitable.hpp"
 #include "utils/log_event.hpp"
 
+namespace rclcpp
+{
+class Node;
+}  // namespace rclcpp
+
 namespace livekit_ros2_bridge
 {
+
+using RosExecutorQueueNodeInterfaces = rclcpp::node_interfaces::
+  NodeInterfaces<rclcpp::node_interfaces::NodeBaseInterface, rclcpp::node_interfaces::NodeWaitablesInterface>;
 
 // Queues work that must run on the node's ROS executor thread. Work is exposed
 // through a waitable on the node's default callback group, so submitted futures
@@ -47,10 +56,9 @@ namespace livekit_ros2_bridge
 class RosExecutorQueue final
 {
 public:
-  RosExecutorQueue(
-    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
-    rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables,
-    rclcpp::Clock::SharedPtr clock);
+  explicit RosExecutorQueue(rclcpp::Node & node);
+  explicit RosExecutorQueue(const std::shared_ptr<rclcpp::Node> & node);
+  RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock);
   ~RosExecutorQueue();
 
   // Enqueues work in FIFO order for execution on the executor thread. If
@@ -125,9 +133,8 @@ private:
   // Cleared during shutdown() before the waitable is detached so concurrent
   // wake() callers either use the live waitable or cleanly become a no-op.
   std::shared_ptr<DrainWaitable> waitable_;
-  // Retained solely so shutdown() can unregister waitable_ from the same
-  // node interfaces it was added to.
-  rclcpp::CallbackGroup::SharedPtr callback_group_;
+  // Retained solely so shutdown() can unregister waitable_ from the same node
+  // interfaces; rclcpp chooses the node's default callback group for nullptr.
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
 
   rclcpp::Clock::SharedPtr log_clock_;

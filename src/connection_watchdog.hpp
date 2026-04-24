@@ -22,12 +22,19 @@
 
 #include "rclcpp/logger.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
+#include "rclcpp/node_interfaces/node_logging_interface.hpp"
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/timer.hpp"
 #include "runtime_config.hpp"
 
 namespace livekit_ros2_bridge
 {
+
+using ConnectionWatchdogNodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
+  rclcpp::node_interfaces::NodeBaseInterface,
+  rclcpp::node_interfaces::NodeLoggingInterface,
+  rclcpp::node_interfaces::NodeTimersInterface>;
 
 class ConnectionWatchdog final
 {
@@ -36,11 +43,7 @@ public:
   using SteadyClock = std::chrono::steady_clock;
 
   ConnectionWatchdog(
-    RuntimeConfig::HealthConfig config,
-    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
-    rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
-    rclcpp::Logger logger,
-    CloseCallback close);
+    RuntimeConfig::HealthConfig config, ConnectionWatchdogNodeInterfaces interfaces, CloseCallback close);
   ~ConnectionWatchdog();
 
   ConnectionWatchdog(const ConnectionWatchdog &) = delete;
@@ -53,8 +56,6 @@ public:
 
 private:
   RuntimeConfig::HealthConfig config_;
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
-  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers_;
   rclcpp::Logger logger_;
   CloseCallback close_;
 

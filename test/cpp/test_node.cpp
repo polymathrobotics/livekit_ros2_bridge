@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <stdexcept>
-#include <string>
+#include <exception>
+#include <memory>
 
 #include "gtest/gtest.h"
 #include "livekit_ros2_bridge/node.hpp"
@@ -33,9 +33,10 @@ protected:
 TEST_F(NodeTest, ConstructsWithRequiredConnectionParameters)
 {
   rclcpp::NodeOptions options;
-  // This test only exercises presence of the required startup parameters. A non-empty placeholder
-  // URL is enough because Node construction does not synchronously reject malformed values here.
-  options.append_parameter_override("livekit.url", "not-a-url");
+  // This test only exercises presence of the required startup parameters. Use a syntactically
+  // valid loopback URL so the asynchronous LiveKit connection path does not fail URL parsing
+  // during teardown on distros where the SDK reports that failure from another thread.
+  options.append_parameter_override("livekit.url", "ws://127.0.0.1:9");
   options.append_parameter_override("livekit.token", "test-token");
 
   EXPECT_NO_THROW((void)std::make_shared<Node>(options));
@@ -46,18 +47,9 @@ TEST_F(NodeTest, FailsWhenUrlMissing)
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.token", "test-token");
 
-  // Keep one node-boundary failure check here because generate_parameter_library rejects missing
-  // required parameters during Node instantiation, before RuntimeConfig is ever constructed.
-  std::string message;
-  try {
-    (void)std::make_shared<Node>(options);
-    ADD_FAILURE() << "Expected Node construction to fail";
-  } catch (const std::exception & error) {
-    message = error.what();
-  }
-
-  EXPECT_NE(message.find("livekit.url"), std::string::npos) << message;
-  EXPECT_TRUE(message.find("empty") != std::string::npos || message.find("required") != std::string::npos) << message;
+  // generate_parameter_library owns the required-parameter validation details; this
+  // node-boundary test only verifies that construction surfaces the failure.
+  EXPECT_THROW((void)std::make_shared<Node>(options), std::exception);
 }
 
 }  // namespace livekit_ros2_bridge

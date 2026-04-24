@@ -18,6 +18,9 @@
 #include "nlohmann/json.hpp"
 #include "protocol/resources_json.hpp"
 #include "protocol_test_support.hpp"
+#include "rosidl_runtime_cpp/traits.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/srv/set_camera_info.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -26,6 +29,16 @@ namespace
 {
 
 using test_support::expectInvalidArgument;
+
+std::string imageInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::Image>();
+}
+
+std::string setCameraInfoInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::srv::SetCameraInfo>();
+}
 
 TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
@@ -70,10 +83,14 @@ TEST(ResourceListPayloadsTest, RejectsInvalidRequestsWithFieldContext)
 
 TEST(ResourceListPayloadsTest, SerializesServices)
 {
+  const auto interface_type = setCameraInfoInterfaceType();
+
   const auto body = nlohmann::json::parse(
     protocol::resources::serializeServices({
-      {"/set_bool", "std_srvs/srv/SetBool"},
-      {"/trigger", "std_srvs/srv/Trigger"},
+      {"/backup_camera_info", {interface_type}},
+      {"/ambiguous", {"example/srv/A", "example/srv/B"}},
+      {"/empty", {}},
+      {"/set_camera_info", {interface_type}},
     }));
 
   EXPECT_EQ(
@@ -81,8 +98,8 @@ TEST(ResourceListPayloadsTest, SerializesServices)
     nlohmann::json({
       {"services",
        nlohmann::json::array({
-         {{"service", "/set_bool"}, {"interface_type", "std_srvs/srv/SetBool"}},
-         {{"service", "/trigger"}, {"interface_type", "std_srvs/srv/Trigger"}},
+         {{"service", "/backup_camera_info"}, {"interface_type", interface_type}},
+         {{"service", "/set_camera_info"}, {"interface_type", interface_type}},
        })},
     }));
 
@@ -93,15 +110,18 @@ TEST(ResourceListPayloadsTest, SerializesServices)
 
 TEST(ResourceListPayloadsTest, SerializesTopics)
 {
+  const auto interface_type = imageInterfaceType();
+
   EXPECT_EQ(
     nlohmann::json::parse(
       protocol::resources::serializeTopics({
-        {"/camera/image_raw", "sensor_msgs/msg/Image"},
+        {"/camera/image_raw", {interface_type}},
+        {"/camera/ambiguous", {"example/msg/A", "example/msg/B"}},
       })),
     nlohmann::json({
       {"topics",
        nlohmann::json::array({
-         {{"topic", "/camera/image_raw"}, {"interface_type", "sensor_msgs/msg/Image"}},
+         {{"topic", "/camera/image_raw"}, {"interface_type", interface_type}},
        })},
     }));
 

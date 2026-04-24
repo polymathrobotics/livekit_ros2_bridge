@@ -14,10 +14,13 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -25,15 +28,15 @@ namespace livekit_ros2_bridge
 // Typed service-call request shared by the RPC boundary and ROS runtime.
 struct ServiceCallRequest
 {
-  // Normalized absolute ROS service name.
+  // Expanded ROS service name.
   std::string service;
   // Optional `pkg/srv/Type` hint. Empty values let the caller resolve the type from the ROS graph.
   std::string interface_type;
-  // Serialized request bytes. Empty payloads are invalid.
-  std::vector<std::uint8_t> payload;
-  // Caller-supplied timeout in milliseconds when present. The runtime maps omitted or non-positive
-  // values to its default deadline.
-  std::optional<int> timeout_ms;
+  // Serialized ROS request payload ready for rclcpp deserialization. Empty payloads are invalid.
+  rclcpp::SerializedMessage payload;
+  // Caller-supplied timeout when present. The runtime maps omitted or non-positive values to its
+  // default deadline.
+  std::optional<std::chrono::milliseconds> timeout;
 };
 
 struct ServiceCallResponse

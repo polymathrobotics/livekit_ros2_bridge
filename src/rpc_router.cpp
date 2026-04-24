@@ -17,7 +17,6 @@
 #include <array>
 #include <exception>
 #include <future>
-#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -45,7 +44,6 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("rpc_router");
-using ResourcesByName = std::map<std::string, std::vector<std::string>>;
 
 constexpr std::array<const char *, 4> kRpcNames{
   protocol::kCallServiceRpc,
@@ -133,15 +131,15 @@ const char * errorReason(std::uint32_t code)
   throw livekit::RpcError(code, exc.what());
 }
 
-std::vector<Resource> filterResources(
-  const ResourcesByName & by_name,
+ResourceNamesAndTypes filterResources(
+  const ResourceNamesAndTypes & graph_resources,
   const AccessPolicy & policy,
   AccessOperation operation,
   const ResourceListRequest & request)
 {
-  std::vector<Resource> resources;
+  ResourceNamesAndTypes filtered_resources;
 
-  for (const auto & [name, types] : by_name) {
+  for (const auto & [name, types] : graph_resources) {
     // The RPC schema exposes a single interface type per resource, so resources
     // with multiple ROS types are omitted instead of guessed or duplicated.
     if (types.size() != 1U) {
@@ -158,15 +156,15 @@ std::vector<Resource> filterResources(
       }
     }
 
-    resources.push_back({name, interface_type});
+    filtered_resources.emplace(name, ResourceNamesAndTypes::mapped_type{interface_type});
     // Apply the page limit after policy/query filtering so denied resources do
     // not consume caller-visible capacity.
-    if (request.limit && resources.size() >= *request.limit) {
+    if (request.limit && filtered_resources.size() >= *request.limit) {
       break;
     }
   }
 
-  return resources;
+  return filtered_resources;
 }
 
 template <typename HandleRpcT>
@@ -293,14 +291,14 @@ std::optional<std::string> RpcRouter::getInterfaces(const livekit::RpcInvocation
 {
   return withCallerIdentity(protocol::kShowInterfaceRpc, invocation, [&invocation]() {
     try {
-      auto request = protocol::interfaces::parse(invocation.payload);
+      auto requested_types = protocol::interfaces::parse(invocation.payload);
 
       // Repeated requested types and shared nested dependencies can both return
       // the same definition; keep the first-seen protocol order while deduplicating.
       std::set<std::string> seen;
       std::vector<InterfaceDefinition> definitions;
 
-      for (const auto & type : request.types) {
+      for (const auto & type : requested_types) {
         for (auto & definition : lookupInterfaceDefinitions(type)) {
           if (!seen.insert(definition.type).second) {
             continue;

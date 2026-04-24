@@ -48,9 +48,10 @@ void unpublishVideoTrackBestEffort(
 }
 
 std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
   const VideoStreamSpec & spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
@@ -60,8 +61,8 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
     return makeOtherVideoFrameSource(spec, sink, observer);
   }
 
-  auto source = std::make_shared<RosTopicVideoFrameSource>(
-    std::move(parameters), std::move(topics), std::move(graph), spec, qos_config, sink, observer);
+  auto source =
+    std::make_shared<RosTopicVideoFrameSource>(std::move(node_interfaces), spec, qos_config, sink, observer);
   source->activate();
   return source;
 }
@@ -69,16 +70,17 @@ std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
 }  // namespace
 
 std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
   RoomConnection & room_connection,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config)
 {
   auto publisher = std::shared_ptr<VideoTrackPublisher>(new VideoTrackPublisher(room_connection, std::move(spec)));
-  publisher->frame_source_ = makeVideoFrameSource(
-    std::move(parameters), std::move(topics), std::move(graph), publisher->spec_, qos_config, *publisher, *publisher);
+  publisher->frame_source_ =
+    makeVideoFrameSource(std::move(node_interfaces), publisher->spec_, qos_config, *publisher, *publisher);
   return publisher;
 }
 

@@ -108,21 +108,13 @@ TEST(LogEventTest, SupportsConditionalChainableFields)
     "present_cstr=ok");
 }
 
-TEST(LogEventTest, ClampWarnThrottleIntervalKeepsMillisecondsNonNegative)
-{
-  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::milliseconds(-5)), 0);
-  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(999)), 0);
-  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(1000)), 1);
-  EXPECT_EQ(detail::clampWarnThrottleIntervalMs(std::chrono::microseconds(2500)), 2);
-}
-
-TEST(LogEventTest, WarnThrottleAcceptsAnIntervalThatClampsToZeroMilliseconds)
+TEST(LogEventTest, WarnThrottleUsesRosDurationIntervals)
 {
   test_support::ScopedRclcppInit init;
   rclcpp::Clock clock(RCL_SYSTEM_TIME);
+  const rclcpp::Duration interval(std::chrono::microseconds(999));
 
-  EXPECT_NO_THROW(
-    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").warnThrottle(clock, std::chrono::microseconds(999)));
+  EXPECT_NO_THROW(LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").warnThrottle(clock, interval));
 }
 
 }  // namespace livekit_ros2_bridge

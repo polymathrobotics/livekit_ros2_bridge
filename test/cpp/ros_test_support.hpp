@@ -32,6 +32,18 @@ namespace livekit_ros2_bridge::test_support
 constexpr auto kDefaultWaitTimeout = std::chrono::seconds(2);
 constexpr auto kWaitPollInterval = std::chrono::milliseconds(20);
 
+inline std::chrono::nanoseconds boundedWaitTime(const std::chrono::steady_clock::time_point & deadline)
+{
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= deadline) {
+    return std::chrono::nanoseconds(0);
+  }
+
+  const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(deadline - now);
+  const auto poll_interval = std::chrono::duration_cast<std::chrono::nanoseconds>(kWaitPollInterval);
+  return remaining < poll_interval ? remaining : poll_interval;
+}
+
 class ScopedRclcppInit
 {
 public:
@@ -108,6 +120,7 @@ inline bool spinUntil(
     }
     std::this_thread::sleep_for(kWaitPollInterval);
   }
+  executor.spin_some();
   return predicate();
 }
 
@@ -123,6 +136,14 @@ inline bool waitUntil(const std::function<bool()> & predicate, std::chrono::mill
   return predicate();
 }
 
+inline bool topicHasSingleType(
+  const std::shared_ptr<rclcpp::Node> & node, const std::string & topic, const std::string & expected_type)
+{
+  const auto topics = node->get_topic_names_and_types();
+  const auto entry = topics.find(topic);
+  return entry != topics.end() && entry->second.size() == 1U && entry->second.front() == expected_type;
+}
+
 inline bool waitForTopicType(
   rclcpp::executors::SingleThreadedExecutor & executor,
   const std::shared_ptr<rclcpp::Node> & node,
@@ -130,20 +151,21 @@ inline bool waitForTopicType(
   const std::string & expected_type,
   std::chrono::milliseconds timeout = kDefaultWaitTimeout)
 {
-  const bool found = spinUntil(
-    executor,
-    [&node, &topic, &expected_type]() {
-      const auto topics = node->get_topic_names_and_types();
-      for (const auto & entry : topics) {
-        const bool is_single_type_match =
-          entry.first == topic && entry.second.size() == 1U && entry.second.front() == expected_type;
-        if (is_single_type_match) {
-          return true;
-        }
-      }
-      return false;
-    },
-    timeout);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  const auto graph_event = node->get_graph_event();
+  bool found = false;
+
+  while (std::chrono::steady_clock::now() < deadline) {
+    executor.spin_some();
+    if (topicHasSingleType(node, topic, expected_type)) {
+      found = true;
+      break;
+    }
+    graph_event->check_and_clear();
+    node->wait_for_graph_change(graph_event, boundedWaitTime(deadline));
+  }
+
+  found = found || topicHasSingleType(node, topic, expected_type);
 
   if (!found) {
     RCLCPP_WARN(

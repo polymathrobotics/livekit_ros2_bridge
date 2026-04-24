@@ -19,8 +19,10 @@
 #include <string>
 
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "rclcpp/subscription.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
@@ -42,19 +44,14 @@ struct FrameLayout
   std::uint32_t stride = 0;
 };
 
-enum class CompressedImageCodec
-{
-  Jpeg,
-  Png,
-};
-
 class RosTopicVideoFrameSource final : public VideoPipelineFrameSource
 {
 public:
   RosTopicVideoFrameSource(
-    rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+    rclcpp::node_interfaces::NodeInterfaces<
+      rclcpp::node_interfaces::NodeParametersInterface,
+      rclcpp::node_interfaces::NodeTopicsInterface,
+      rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
     VideoFrameSink & sink,
@@ -65,22 +62,24 @@ public:
   void close() override;
 
 private:
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface>
+    node_interfaces_;
   // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
   const SubscriptionQosConfig * qos_config_;
   RosVideoIngestMode mode_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
   std::optional<FrameLayout> layout_;
-  std::optional<CompressedImageCodec> codec_;
+  std::optional<std::string> compressed_format_;
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
 
   void startRawPipelineLocked(const FrameLayout & layout);
-  void startCompressedPipelineLocked(CompressedImageCodec codec);
+  void startCompressedPipelineLocked(const std::string & format);
   void pushRawLocked(const sensor_msgs::msg::Image & image);
   void pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image);
 

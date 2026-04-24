@@ -36,23 +36,11 @@ constexpr std::string_view kStartupConnectPendingReason = "startup_connect_pendi
 }  // namespace
 
 ConnectionWatchdog::ConnectionWatchdog(
-  RuntimeConfig::HealthConfig config,
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
-  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
-  rclcpp::Logger logger,
-  CloseCallback close)
+  RuntimeConfig::HealthConfig config, ConnectionWatchdogNodeInterfaces interfaces, CloseCallback close)
 : config_(config)
-, base_(std::move(base))
-, timers_(std::move(timers))
-, logger_(std::move(logger))
+, logger_(interfaces.get_node_logging_interface()->get_logger())
 , close_(std::move(close))
 {
-  if (base_ == nullptr) {
-    throw std::invalid_argument("ConnectionWatchdog requires a node base interface.");
-  }
-  if (timers_ == nullptr) {
-    throw std::invalid_argument("ConnectionWatchdog requires a node timers interface.");
-  }
   if (!close_) {
     throw std::invalid_argument("ConnectionWatchdog requires a close callback.");
   }
@@ -61,8 +49,13 @@ ConnectionWatchdog::ConnectionWatchdog(
     return;
   }
 
+  timer_ = rclcpp::create_wall_timer(
+    kCheckInterval,
+    [this]() { check(); },
+    nullptr,
+    interfaces.get_node_base_interface().get(),
+    interfaces.get_node_timers_interface().get());
   markUnhealthy(kStartupConnectPendingReason);
-  timer_ = rclcpp::create_wall_timer(kCheckInterval, [this]() { check(); }, nullptr, base_.get(), timers_.get());
 }
 
 ConnectionWatchdog::~ConnectionWatchdog()

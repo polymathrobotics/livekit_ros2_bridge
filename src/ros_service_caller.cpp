@@ -34,9 +34,13 @@
 
 #include "rcl/client.h"
 #include "rcl/error_handling.h"
+#include "rcl/node.h"
 #include "rcl/timer.h"
 #include "rcl/wait.h"
+#include "rclcpp/client.hpp"
 #include "rclcpp/clock.hpp"
+#include "rclcpp/exceptions.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 #include "rclcpp/guard_condition.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/serialization.hpp"
@@ -53,7 +57,6 @@
 #include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
 #include "utils/scope_exit.hpp"
-#include "utils/serialized_message.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
 #if !RCLCPP_VERSION_GTE(28, 0, 0)
@@ -81,7 +84,7 @@ constexpr char kServiceTypeSupportSymbolPrefix[] = "__get_service_type_support_h
 constexpr char kRequestMessageTypeSuffix[] = "_Request";
 constexpr char kResponseMessageTypeSuffix[] = "_Response";
 constexpr auto kLogThrottle = std::chrono::seconds(5);
-constexpr int kDefaultTimeoutMs = 2000;
+constexpr auto kDefaultTimeout = std::chrono::milliseconds(2000);
 constexpr int kMaxInflightPerRequester = 4;
 constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr std::size_t kMaxCachedServiceClients = 256U;
@@ -90,13 +93,6 @@ constexpr char kInflightLimitReachedError[] = "Requester identity service call l
 constexpr int kReadyEntityId = 0;
 const auto kLogger = rclcpp::get_logger("ros_service_caller");
 using FailureCache = LruCache<std::string, std::exception_ptr>;
-
-[[noreturn]] void throwRclError(const std::string & action)
-{
-  std::string message = action + ": " + rcl_get_error_string().str;
-  rcl_reset_error();
-  throw std::runtime_error(message);
-}
 
 void deadlineTimerCallback(rcl_timer_t *, int64_t)
 {}
@@ -221,7 +217,20 @@ const rosidl_service_type_support_t * getServiceTypeSupportHandle(
 
 #endif
 
-struct ServiceClient
+[[noreturn]] void throwClientInitError(rcl_ret_t ret, const std::string & service_name, rcl_node_t * node_handle)
+{
+  if (ret == RCL_RET_SERVICE_NAME_INVALID) {
+    // Match rclcpp::Client's constructor path so service-name validation stays
+    // owned by rclcpp even for runtime-discovered service types.
+    rcl_reset_error();
+    rclcpp::expand_topic_or_service_name(
+      service_name, rcl_node_get_name(node_handle), rcl_node_get_namespace(node_handle), true);
+  }
+
+  rclcpp::exceptions::throw_from_rcl_error(ret, "could not create service client");
+}
+
+struct ServiceClient : public rclcpp::ClientBase
 {
   struct TypeSupport
   {
@@ -242,38 +251,56 @@ struct ServiceClient
     const std::string & service_name,
     const std::string & interface_type,
     std::shared_ptr<TypeSupport> support,
-    rcl_node_t * node_handle)
-  : service_name(service_name)
+    rclcpp::node_interfaces::NodeBaseInterface * node_base,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph)
+  : rclcpp::ClientBase(node_base, std::move(node_graph))
   , interface_type(interface_type)
   , support(std::move(support))
-  , client(rcl_get_zero_initialized_client())
   {
     rcl_client_options_t options = rcl_client_get_default_options();
-    rcl_ret_t ret = rcl_client_init(&client, node_handle, this->support->service, service_name.c_str(), &options);
+    rcl_ret_t ret = rcl_client_init(
+      get_client_handle().get(), get_rcl_node_handle(), this->support->service, service_name.c_str(), &options);
     if (ret != RCL_RET_OK) {
-      throw std::runtime_error("Failed to create rcl service client for '" + service_name + "'");
+      throwClientInitError(ret, service_name, get_rcl_node_handle());
     }
-    node_handle_ = node_handle;
   }
 
-  ~ServiceClient()
-  {
-    if (node_handle_ == nullptr) {
-      return;
-    }
+  ~ServiceClient() override = default;
 
-    rcl_ret_t ret = rcl_client_fini(&client, node_handle_);
-    (void)ret;
+  std::shared_ptr<void> create_response() override
+  {
+    struct ResponseStorage
+    {
+      explicit ResponseStorage(std::shared_ptr<TypeSupport> support)
+      : support(std::move(support))
+      , message(this->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO)
+      {}
+
+      std::shared_ptr<TypeSupport> support;
+      MessageStorage message;
+    };
+
+    auto storage = std::make_shared<ResponseStorage>(support);
+    void * data = storage->message.data();
+    return std::shared_ptr<void>(std::move(storage), data);
+  }
+
+  std::shared_ptr<rmw_request_id_t> create_request_header() override
+  {
+    return std::make_shared<rmw_request_id_t>();
+  }
+
+  void handle_response(std::shared_ptr<rmw_request_id_t> request_header, std::shared_ptr<void> response) override
+  {
+    (void)request_header;
+    (void)response;
   }
 
   ServiceClient(const ServiceClient &) = delete;
   ServiceClient & operator=(const ServiceClient &) = delete;
 
-  std::string service_name;
   std::string interface_type;
   std::shared_ptr<TypeSupport> support;
-  rcl_client_t client;
-  rcl_node_t * node_handle_ = nullptr;
 };
 
 struct InflightKey
@@ -479,12 +506,12 @@ public:
       rcl_get_default_allocator());
 #endif
     if (init_ret != RCL_RET_OK) {
-      throwRclError("Failed to initialize service deadline timer");
+      rclcpp::exceptions::throw_from_rcl_error(init_ret, "Failed to initialize service deadline timer");
     }
 
     const rcl_ret_t cancel_ret = rcl_timer_cancel(&deadline_timer_);
     if (cancel_ret != RCL_RET_OK) {
-      throwRclError("Failed to cancel initial service deadline timer");
+      rclcpp::exceptions::throw_from_rcl_error(cancel_ret, "Failed to cancel initial service deadline timer");
     }
   }
 
@@ -612,7 +639,7 @@ public:
     if (!deadline.has_value()) {
       const rcl_ret_t ret = rcl_timer_cancel(&deadline_timer_);
       if (ret != RCL_RET_OK) {
-        throwRclError("Failed to cancel service deadline timer");
+        rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to cancel service deadline timer");
       }
       return;
     }
@@ -625,12 +652,12 @@ public:
     int64_t old_period = 0;
     rcl_ret_t ret = rcl_timer_exchange_period(&deadline_timer_, duration.count(), &old_period);
     if (ret != RCL_RET_OK) {
-      throwRclError("Failed to update service deadline timer period");
+      rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to update service deadline timer period");
     }
 
     ret = rcl_timer_reset(&deadline_timer_);
     if (ret != RCL_RET_OK) {
-      throwRclError("Failed to reset service deadline timer");
+      rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to reset service deadline timer");
     }
   }
 
@@ -661,9 +688,9 @@ private:
     {
       std::lock_guard<std::mutex> lock(clients_mutex_);
       for (const auto & client : clients_) {
-        const rcl_ret_t ret = rcl_wait_set_add_client(wait_set, &client->client, nullptr);
+        const rcl_ret_t ret = rcl_wait_set_add_client(wait_set, client->get_client_handle().get(), nullptr);
         if (ret != RCL_RET_OK) {
-          throwRclError("Failed to add service client to wait set");
+          rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to add service client to wait set");
         }
       }
     }
@@ -672,7 +699,7 @@ private:
       std::lock_guard<std::mutex> lock(timer_mutex_);
       const rcl_ret_t ret = rcl_wait_set_add_timer(wait_set, &deadline_timer_, nullptr);
       if (ret != RCL_RET_OK) {
-        throwRclError("Failed to add service deadline timer to wait set");
+        rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to add service deadline timer to wait set");
       }
     }
 
@@ -699,7 +726,7 @@ private:
           continue;
         }
         const auto ready_it = std::find_if(clients_.begin(), clients_.end(), [ready_client](const ClientPtr & client) {
-          return &client->client == ready_client;
+          return client->get_client_handle().get() == ready_client;
         });
         if (ready_it != clients_.end()) {
           return true;
@@ -752,7 +779,7 @@ private:
       return;
     }
     if (ret != RCL_RET_OK) {
-      throwRclError("Failed to check service deadline timer readiness");
+      rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to check service deadline timer readiness");
     }
     if (!ready) {
       return;
@@ -764,7 +791,7 @@ private:
       return;
     }
     if (ret != RCL_RET_OK) {
-      throwRclError("Failed to consume service deadline timer");
+      rclcpp::exceptions::throw_from_rcl_error(ret, "Failed to consume service deadline timer");
     }
   }
 
@@ -810,12 +837,12 @@ RosServiceCaller::~RosServiceCaller()
 // ros2.service.call spans both sides of the runtime boundary.
 //
 // Phase 1 happens here on the ROS executor: resolve the service type, create
-// or reuse the rcl client, deserialize the request, and call
+// or reuse the rclcpp client, deserialize the request, and call
 // rcl_send_request().
 //
-// Phase 2 happens later from the service waitable: call rcl_take_response(),
-// match by client pointer and sequence number, fulfill the stored promise,
-// and time out or cancel pending calls when needed.
+// Phase 2 happens later from the service waitable: take the response through
+// rclcpp::ClientBase, match by client pointer and sequence number, fulfill the
+// stored promise, and time out or cancel pending calls when needed.
 //
 // That split keeps executor-affine request creation safe without blocking the
 // executor until the remote service replies. Immediate failures such as
@@ -885,7 +912,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
 
       std::unique_ptr<MessageStorage> body;
       try {
-        auto serialized = wrapSerializedPayload(request.payload);
+        auto serialized = request.payload;
         body = std::make_unique<MessageStorage>(
           client->support->request.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
         client->support->request.serializer.deserialize_message(&serialized, body->data());
@@ -894,9 +921,9 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       }
 
       std::int64_t sequence_number = 0;
-      const rcl_ret_t ret = rcl_send_request(&client->client, body->data(), &sequence_number);
+      const rcl_ret_t ret = rcl_send_request(client->get_client_handle().get(), body->data(), &sequence_number);
       if (ret != RCL_RET_OK) {
-        throw std::runtime_error("Failed to send service request.");
+        rclcpp::exceptions::throw_from_rcl_error(ret, "failed to send request");
       }
 
       key = InflightKey{client.get(), sequence_number};
@@ -921,8 +948,9 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       throw std::runtime_error("Duplicate pending service call key.");
     }
 
-    const int timeout_ms =
-      request.timeout_ms.has_value() && *request.timeout_ms > 0 ? *request.timeout_ms : kDefaultTimeoutMs;
+    const auto timeout = request.timeout.has_value() && *request.timeout > std::chrono::milliseconds::zero()
+                           ? *request.timeout
+                           : kDefaultTimeout;
 
     LogEvent(kLogger, "service_call_started")
       .fieldOr("service", request.service)
@@ -938,7 +966,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
         interface_type,
         requester,
         std::move(promise),
-        std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms),
+        std::chrono::steady_clock::now() + timeout,
       });
     // From here on every settle path goes through inflight_calls, so that entry
     // owns releasing the requester's inflight quota.
@@ -1048,9 +1076,8 @@ RosServiceCaller::Impl::ClientPtr RosServiceCaller::Impl::getClient(
     throw std::runtime_error("Service client cache limit reached.");
   }
 
-  auto * rcl_node = base->get_rcl_node_handle();
   auto support = getTypeSupport(interface_type);
-  auto entry = std::make_shared<ServiceClient>(service, interface_type, support, rcl_node);
+  auto entry = std::make_shared<ServiceClient>(service, interface_type, support, base.get(), graph);
   return cached_clients.emplace(key, std::move(entry)).first->second;
 }
 
@@ -1227,8 +1254,7 @@ void RosServiceCaller::Impl::drainResponses()
     while (true) {
       MessageStorage response(client->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
       rmw_request_id_t header{};
-      rcl_ret_t ret = rcl_take_response(&client->client, &header, response.data());
-      if (ret != RCL_RET_OK) {
+      if (!client->take_type_erased_response(response.data(), header)) {
         break;
       }
 
@@ -1243,7 +1269,7 @@ void RosServiceCaller::Impl::drainResponses()
         if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
           LogEvent(kLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
-            .field("service", client->service_name)
+            .field("service", client->get_service_name())
             .field("interface_type", client->interface_type)
             .field("count", count)
             .warn();

@@ -14,9 +14,9 @@
 
 #pragma once
 
-#include <cstdint>
 #include <string>
-#include <vector>
+
+#include "rclcpp/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -24,11 +24,13 @@ namespace livekit_ros2_bridge
 /// Runtime form of a ROS publish request carried on a LiveKit data-packet topic.
 struct TopicPublishRequest
 {
-  /// Normalized absolute ROS topic name.
+  /// Trimmed ROS topic name from the request. The ROS publisher resolves and validates it
+  /// against its node context before policy checks or publishing.
   std::string ros_topic;
   /// Trimmed interface type. Package/msg spelling stays exact for later ROS-graph validation.
   std::string interface_type;
-  std::vector<std::uint8_t> cdr;
+  /// Serialized ROS message payload ready for rclcpp::GenericPublisher.
+  rclcpp::SerializedMessage message;
 };
 
 }  // namespace livekit_ros2_bridge

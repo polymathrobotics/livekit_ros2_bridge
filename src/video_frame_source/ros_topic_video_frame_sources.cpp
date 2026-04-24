@@ -28,6 +28,7 @@
 #include "rclcpp/create_subscription.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
+#include "rclcpp/time.hpp"
 #include "sensor_msgs/image_encodings.hpp"
 #include "utils/log_event.hpp"
 #include "utils/trim.hpp"
@@ -62,24 +63,12 @@ GstVideoFormat gstFormatFromRosEncoding(const std::string & encoding)
   return GST_VIDEO_FORMAT_UNKNOWN;
 }
 
-const char * compressedImageCodecName(CompressedImageCodec codec)
-{
-  switch (codec) {
-    case CompressedImageCodec::Jpeg:
-      return "jpeg";
-    case CompressedImageCodec::Png:
-      return "png";
-    default:
-      return "unknown";
-  }
-}
-
-std::optional<CompressedImageCodec> parseCompressedImageCodec(const std::string & format)
+std::optional<std::string> parseCompressedImageFormat(const std::string & format)
 {
   // `sensor_msgs/msg/CompressedImage::format` is convention-based rather than
   // strongly typed, so normalize the leading codec token and ignore any extra
   // transport-specific suffixes such as `jpeg; quality=...`.
-  const auto parse_token = [](std::string token) -> std::optional<CompressedImageCodec> {
+  const auto parse_token = [](std::string token) -> std::optional<std::string> {
     token = trim(token);
     const auto token_end = token.find_first_of(" \t\r\n");
     if (token_end != std::string::npos) {
@@ -87,8 +76,8 @@ std::optional<CompressedImageCodec> parseCompressedImageCodec(const std::string 
     }
     std::transform(
       token.begin(), token.end(), token.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (token == "jpeg" || token == "jpg") return CompressedImageCodec::Jpeg;
-    if (token == "png") return CompressedImageCodec::Png;
+    if (token == "jpeg" || token == "jpg") return std::string{"jpeg"};
+    if (token == "png") return std::string{"png"};
     return std::nullopt;
   };
 
@@ -138,13 +127,13 @@ void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & prev
   event.info();
 }
 
-CompressedImageCodec compressedImageCodecFromImage(const sensor_msgs::msg::CompressedImage & image)
+std::string compressedImageFormatFromImage(const sensor_msgs::msg::CompressedImage & image)
 {
-  const auto codec = parseCompressedImageCodec(image.format);
-  if (!codec.has_value()) {
+  const auto format = parseCompressedImageFormat(image.format);
+  if (!format.has_value()) {
     throw std::runtime_error("Unsupported compressed image format '" + image.format + "'.");
   }
-  return *codec;
+  return *format;
 }
 
 GstBufferPtr makeStampedGstBuffer(
@@ -166,9 +155,8 @@ GstBufferPtr makeStampedGstBuffer(
     }
   }
 
-  // GStreamer expects a non-negative running-time timestamp on every buffer.
-  const std::uint64_t sec = stamp.sec < 0 ? 0U : static_cast<std::uint64_t>(stamp.sec);
-  const GstClockTime pts = sec * GST_SECOND + stamp.nanosec;
+  // Let rclcpp own ROS Time message validation before handing the timestamp to GStreamer.
+  const GstClockTime pts = static_cast<GstClockTime>(rclcpp::Time(stamp).nanoseconds());
   GST_BUFFER_PTS(buffer.get()) = pts;
   GST_BUFFER_DTS(buffer.get()) = pts;
   GST_BUFFER_DURATION(buffer.get()) = GST_CLOCK_TIME_NONE;
@@ -197,17 +185,16 @@ void logSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscription
 }  // namespace
 
 RosTopicVideoFrameSource::RosTopicVideoFrameSource(
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
   VideoFrameSink & sink,
   VideoStreamLifecycleObserver & observer)
 : VideoPipelineFrameSource(std::move(spec), sink, observer)
-, parameters_(std::move(parameters))
-, topics_(std::move(topics))
-, graph_(std::move(graph))
+, node_interfaces_(std::move(node_interfaces))
 , qos_config_(qos_config)
 , mode_(requireRosVideoInput(spec_).ingest_mode)
 {}
@@ -230,7 +217,8 @@ void RosTopicVideoFrameSource::activate()
 
   const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
   const auto & input = requireRosVideoInput(spec_);
-  ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, input.topic, base_qos, qos_config_);
+  ResolvedSubscriptionQos qos =
+    resolveSubscriptionQos(node_interfaces_.get_node_graph_interface(), input.topic, base_qos, qos_config_);
   logSubscriptionQos(spec_, qos);
 
   // The ROS subscription may still have queued callbacks during shutdown; the
@@ -240,7 +228,7 @@ void RosTopicVideoFrameSource::activate()
   switch (mode_) {
     case RosVideoIngestMode::RawImage:
       raw_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
-        parameters_, topics_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
+        node_interfaces_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
           if (const auto self = weak_self.lock(); self) {
             self->onRawImage(image);
           }
@@ -248,8 +236,7 @@ void RosTopicVideoFrameSource::activate()
       return;
     case RosVideoIngestMode::CompressedImage:
       compressed_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
-        parameters_,
-        topics_,
+        node_interfaces_,
         input.topic,
         qos.qos,
         [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
@@ -393,12 +380,13 @@ void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::Compres
   }
 
   try {
-    const CompressedImageCodec codec = compressedImageCodecFromImage(*image);
+    const std::string format = compressedImageFormatFromImage(*image);
 
-    // The decoder chain differs per codec (`jpegdec` vs `pngdec`), so the
-    // pipeline is recreated whenever the advertised codec changes.
-    if (codec_) {
-      if (*codec_ == codec) {
+    // The decoder chain differs per ROS compressed format (`jpegdec` vs
+    // `pngdec`), so the pipeline is recreated whenever the advertised format
+    // changes.
+    if (compressed_format_) {
+      if (*compressed_format_ == format) {
         if (pipeline_ != nullptr) {
           pushCompressedLocked(*image);
           return;
@@ -407,15 +395,15 @@ void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::Compres
         LogEvent(kLogger, "video_stream_input_codec_changed")
           .field("stream_key", spec_.stream_key)
           .field("topic", requireRosVideoInput(spec_).topic)
-          .field("previous_codec", compressedImageCodecName(*codec_))
-          .field("codec", compressedImageCodecName(codec))
+          .field("previous_codec", *compressed_format_)
+          .field("codec", format)
           .info();
       }
     }
 
     auto handles = takePipelineLocked();
     teardown(handles.pipeline, handles.appsrc, handles.appsink);
-    startCompressedPipelineLocked(codec);
+    startCompressedPipelineLocked(format);
     pushCompressedLocked(*image);
   } catch (const std::exception & exc) {
     // Keep the ROS subscription alive after a frame-handling failure so the
@@ -426,23 +414,20 @@ void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::Compres
   }
 }
 
-void RosTopicVideoFrameSource::startCompressedPipelineLocked(CompressedImageCodec codec)
+void RosTopicVideoFrameSource::startCompressedPipelineLocked(const std::string & format)
 {
   std::string ingress = "appsrc name=";
   ingress += kBridgeAppSrcName;
   ingress += " is-live=true block=false format=time do-timestamp=true";
-  switch (codec) {
-    case CompressedImageCodec::Jpeg:
-      ingress += " caps=image/jpeg ! jpegdec";
-      break;
-    case CompressedImageCodec::Png:
-      ingress += " caps=image/png ! pngdec";
-      break;
-    default:
-      throw std::logic_error("Unsupported compressed image codec.");
+  if (format == "jpeg") {
+    ingress += " caps=image/jpeg ! jpegdec";
+  } else if (format == "png") {
+    ingress += " caps=image/png ! pngdec";
+  } else {
+    throw std::logic_error("Unsupported compressed image format.");
   }
   startPipelineLocked(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
-  codec_ = codec;
+  compressed_format_ = format;
 }
 
 void RosTopicVideoFrameSource::pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image)
@@ -460,7 +445,7 @@ void RosTopicVideoFrameSource::pushCompressedLocked(const sensor_msgs::msg::Comp
 void RosTopicVideoFrameSource::resetLocked()
 {
   layout_.reset();
-  codec_.reset();
+  compressed_format_.reset();
 }
 
 }  // namespace livekit_ros2_bridge

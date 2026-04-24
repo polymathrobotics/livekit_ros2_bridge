@@ -14,9 +14,12 @@
 
 #pragma once
 
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
+#include "rclcpp/exceptions/exceptions.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
@@ -24,39 +27,39 @@ namespace livekit_ros2_bridge
 
 constexpr char kRosResourceSubtreeWildcard[] = "/*";
 
-/// Canonicalize a ROS topic/service/resource name for policy and protocol comparisons:
-/// trim surrounding whitespace, collapse repeated `/`, prepend a leading `/` when missing,
-/// and drop trailing `/` except for the root name `/`. Returns an empty string only when the
-/// trimmed input is empty.
-inline std::string normalizeRosResourceName(std::string_view name)
+namespace ros_resource_name_utils_detail
+{
+constexpr char kResourceNameExpansionNode[] = "livekit_ros2_bridge_resource_name";
+constexpr char kResourceNameExpansionNamespace[] = "/";
+}  // namespace ros_resource_name_utils_detail
+
+/// Expand and validate a ROS topic/resource name for policy and protocol comparisons.
+/// Surrounding whitespace is trimmed before delegating to ROS name expansion. Relative names
+/// resolve from the root namespace to preserve this bridge's existing public canonical form.
+/// Returns an empty string when the trimmed input is empty or ROS rejects the name.
+inline std::string normalizeRosResourceName(
+  std::string_view name, std::string_view node_name, std::string_view namespace_, bool is_service = false)
 {
   const std::string trimmed = trim(name);
   if (trimmed.empty()) {
     return "";
   }
 
-  std::string normalized;
-  normalized.reserve(trimmed.size() + 1);
-  bool previous_was_slash = false;
-  for (char ch : trimmed) {
-    if (ch == '/') {
-      if (!previous_was_slash) {
-        normalized.push_back(ch);
-      }
-      previous_was_slash = true;
-      continue;
-    }
-    normalized.push_back(ch);
-    previous_was_slash = false;
+  try {
+    return rclcpp::expand_topic_or_service_name(trimmed, std::string(node_name), std::string(namespace_), is_service);
+  } catch (const rclcpp::exceptions::NameValidationError &) {
+    return "";
+  } catch (const std::runtime_error &) {
+    return "";
   }
+}
 
-  if (normalized.front() != '/') {
-    normalized.insert(normalized.begin(), '/');
-  }
-  while (normalized.size() > 1 && normalized.back() == '/') {
-    normalized.pop_back();
-  }
-  return normalized;
+inline std::string normalizeRosResourceName(std::string_view name)
+{
+  return normalizeRosResourceName(
+    name,
+    ros_resource_name_utils_detail::kResourceNameExpansionNode,
+    ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
 }
 
 /// Match normalized names against normalized policy patterns.

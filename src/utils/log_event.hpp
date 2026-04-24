@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <exception>
 #include <ostream>
 #include <sstream>
@@ -25,22 +24,11 @@
 #include <utility>
 
 #include "rclcpp/clock.hpp"
+#include "rclcpp/duration.hpp"
 #include "rclcpp/logging.hpp"
 
 namespace livekit_ros2_bridge
 {
-
-namespace detail
-{
-
-template <typename Rep, typename Period>
-std::int64_t clampWarnThrottleIntervalMs(const std::chrono::duration<Rep, Period> & interval)
-{
-  const auto requested_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
-  return std::max<std::int64_t>(0, requested_interval_ms);
-}
-
-}  // namespace detail
 
 constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
 constexpr std::string_view kUnknownExceptionLogFieldValue = "unknown_exception";
@@ -213,12 +201,17 @@ public:
     RCLCPP_ERROR_STREAM(logger_, str());
   }
 
+  void warnThrottle(rclcpp::Clock & clock, const rclcpp::Duration & interval) const
+  {
+    const auto requested_interval_ms = interval.to_chrono<std::chrono::milliseconds>().count();
+    const auto throttle_interval_ms = std::max<rcl_duration_value_t>(0, requested_interval_ms);
+    RCLCPP_WARN_STREAM_THROTTLE(logger_, clock, throttle_interval_ms, str());
+  }
+
   template <typename Rep, typename Period>
   void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
   {
-    const std::string message = str();
-    const auto throttle_interval_ms = detail::clampWarnThrottleIntervalMs(interval);
-    RCLCPP_WARN_THROTTLE(logger_, clock, throttle_interval_ms, "%s", message.c_str());
+    warnThrottle(clock, rclcpp::Duration(std::chrono::duration_cast<std::chrono::nanoseconds>(interval)));
   }
 
 private:

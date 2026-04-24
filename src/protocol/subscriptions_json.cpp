@@ -27,9 +27,9 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/detail/json_fields.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge::protocol::subscriptions
@@ -64,6 +64,8 @@ const char * toWire(SubscriptionDeliveryKind kind)
 
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("protocol_subscriptions");
+constexpr char kHeartbeatTopicExpansionNodeName[] = "livekit_ros2_bridge";
+constexpr char kHeartbeatTopicExpansionNamespace[] = "/";
 
 enum class ClampBoundary
 {
@@ -189,10 +191,9 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
 
   const auto & raw_name = name_it->get_ref<const std::string &>();
   if (demand.kind == SubscriptionTargetKind::Topic) {
-    demand.name = normalizeRosResourceName(raw_name);
-    if (demand.name.empty()) {
-      throw std::invalid_argument("heartbeat subscription topic name must normalize to a non-empty name");
-    }
+    const std::string trimmed_name = trim(raw_name);
+    demand.name = rclcpp::expand_topic_or_service_name(
+      trimmed_name, kHeartbeatTopicExpansionNodeName, kHeartbeatTopicExpansionNamespace);
     return;
   }
 

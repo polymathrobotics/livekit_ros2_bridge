@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -29,6 +28,8 @@
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
+#include "rosidl_runtime_cpp/traits.hpp"
+#include "utils/serialized_message.hpp"
 
 #define private public
 #include "ros_service_caller.hpp"
@@ -54,24 +55,24 @@ constexpr auto kShutdownBlockedWindow = std::chrono::milliseconds(50);
 constexpr int kStandardRequestTimeoutMs = 5000;
 constexpr int kResponseSettleTimeoutMs = 2000;
 
+const char * setBoolServiceType()
+{
+  return rosidl_generator_traits::name<std_srvs::srv::SetBool>();
+}
+
 template <typename MessageT>
-std::vector<std::uint8_t> serializeMessage(const MessageT & message)
+rclcpp::SerializedMessage serializeMessage(const MessageT & message)
 {
   rclcpp::Serialization<MessageT> serialization;
   rclcpp::SerializedMessage serialized;
   serialization.serialize_message(&message, &serialized);
-  const auto & rcl_msg = serialized.get_rcl_serialized_message();
-  return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
+  return serialized;
 }
 
 template <typename MessageT>
 MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
 {
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  std::copy(payload.begin(), payload.end(), rcl_msg.buffer);
-  rcl_msg.buffer_length = payload.size();
-
+  auto serialized = wrapSerializedPayload(payload);
   rclcpp::Serialization<MessageT> serialization;
   MessageT message;
   serialization.deserialize_message(&serialized, &message);
@@ -162,13 +163,13 @@ ServiceCallRequest makeSetBoolRequest(
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = data;
   request.payload = serializeMessage(ros_request);
-  request.timeout_ms = timeout_ms;
+  request.timeout = std::chrono::milliseconds(timeout_ms);
   return request;
 }
 
 ServiceCallRequest makeSetBoolRequest(const std::string & service, int timeout_ms, bool data = true)
 {
-  return makeSetBoolRequest(service, timeout_ms, std::optional<std::string>{"std_srvs/srv/SetBool"}, data);
+  return makeSetBoolRequest(service, timeout_ms, std::optional<std::string>{setBoolServiceType()}, data);
 }
 
 void saturateInflightQuota(
@@ -317,7 +318,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
   saturateInflightQuota(caller, "requester-1", request, kMaxInflightPerRequester - 1);
 
   ServiceCallRequest malformed_request = request;
-  malformed_request.payload.clear();
+  malformed_request.payload = rclcpp::SerializedMessage();
   auto malformed_future = caller.call("requester-1", malformed_request);
   const std::string malformed_error = expectRuntimeErrorMessage(malformed_future);
   EXPECT_NE(malformed_error.find("Failed to build service request:"), std::string::npos);
@@ -589,7 +590,7 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
   const RosServiceCaller::Response result = future.get();
-  EXPECT_EQ(result.interface_type, "std_srvs/srv/SetBool");
+  EXPECT_EQ(result.interface_type, setBoolServiceType());
   const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.payload);
   EXPECT_TRUE(response.success);
 
@@ -629,7 +630,7 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = false;
   request.payload = serializeMessage(ros_request);
-  request.timeout_ms = 100;
+  request.timeout = std::chrono::milliseconds(100);
 
   auto first_future = caller.call("requester-1", request);
   const std::string first_error = expectRuntimeErrorMessage(first_future);
@@ -668,7 +669,7 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
   int type_support_load_attempts = 0;
   caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
     ++type_support_load_attempts;
-    EXPECT_EQ(interface_type, "std_srvs/srv/SetBool");
+    EXPECT_EQ(interface_type, setBoolServiceType());
   });
 
   auto first_future =

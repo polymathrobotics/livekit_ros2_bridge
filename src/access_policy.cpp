@@ -18,6 +18,7 @@
 
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
+#include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
@@ -28,6 +29,9 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.access_policy");
 constexpr char kMatchAllRule[] = "*";
+constexpr char kPolicyNodeName[] = "livekit_ros2_bridge_access_policy";
+constexpr char kPolicyNamespace[] = "/";
+constexpr auto kSubtreeWildcardSize = sizeof(kRosResourceSubtreeWildcard) - 1U;
 
 const char * accessOperationName(AccessOperation operation)
 {
@@ -43,18 +47,45 @@ const char * accessOperationName(AccessOperation operation)
   return "unknown";
 }
 
+std::string normalizePolicyResourceName(std::string_view raw_name, bool is_service)
+{
+  return normalizeRosResourceName(raw_name, kPolicyNodeName, kPolicyNamespace, is_service);
+}
+
+std::string normalizePolicyResourcePattern(std::string_view raw_pattern, bool is_service)
+{
+  const std::string pattern = trim(raw_pattern);
+  if (pattern == kRosResourceSubtreeWildcard) {
+    return std::string{kRosResourceSubtreeWildcard};
+  }
+
+  if (
+    pattern.size() >= kSubtreeWildcardSize &&
+    pattern.substr(pattern.size() - kSubtreeWildcardSize) == kRosResourceSubtreeWildcard)
+  {
+    const auto prefix_pattern = pattern.substr(0, pattern.size() - kSubtreeWildcardSize);
+    const auto prefix = normalizePolicyResourceName(prefix_pattern, is_service);
+    if (prefix.empty()) {
+      return "";
+    }
+    return prefix + kRosResourceSubtreeWildcard;
+  }
+
+  return normalizePolicyResourceName(pattern, is_service);
+}
+
 }  // namespace
 
 AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
-: publish_allow_(Rules::parse(config.publish.allow))
-, publish_deny_(Rules::parse(config.publish.deny))
-, subscribe_allow_(Rules::parse(config.subscribe.allow))
-, subscribe_deny_(Rules::parse(config.subscribe.deny))
-, service_allow_(Rules::parse(config.service.allow))
-, service_deny_(Rules::parse(config.service.deny))
+: publish_allow_(Rules::parse(config.publish.allow, false))
+, publish_deny_(Rules::parse(config.publish.deny, false))
+, subscribe_allow_(Rules::parse(config.subscribe.allow, false))
+, subscribe_deny_(Rules::parse(config.subscribe.deny, false))
+, service_allow_(Rules::parse(config.service.allow, true))
+, service_deny_(Rules::parse(config.service.deny, true))
 {
   // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
-  // trimming, normalization, wildcard handling, and duplicate collapse.
+  // trimming, ROS expansion/validation, wildcard handling, and duplicate collapse.
   LogEvent(kLogger, "access_policy_loaded")
     .field("publish_allow_all", publish_allow_.matches_all)
     .field("publish_allow_patterns", publish_allow_.patterns.size())
@@ -73,11 +104,12 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 
 bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resource) const
 {
-  const std::string resource = normalizeRosResourceName(raw_resource);
+  const bool is_service = operation == AccessOperation::CallService;
+  const auto resource = normalizePolicyResourceName(raw_resource, is_service);
   if (resource.empty()) {
     LogEvent(kLogger, "access_check_rejected")
       .field("operation", accessOperationName(operation))
-      .field("reason", "empty_resource_name")
+      .field("reason", "invalid_resource_name")
       .warn();
     return false;
   }
@@ -94,7 +126,7 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resour
   return false;
 }
 
-AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules)
+AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules, bool is_service)
 {
   Rules rules;
   for (const auto & raw_rule : raw_rules) {
@@ -103,13 +135,13 @@ AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & 
       continue;
     }
     if (rule == kMatchAllRule) {
-      // `"*"` means allow or deny the entire operation. Normalizing it into `/*` would narrow
-      // it to descendant matching instead of preserving the policy-wide override.
+      // `"*"` means allow or deny the entire operation. Treating it as `/*` would narrow it
+      // to descendant matching instead of preserving the policy-wide override.
       rules.matches_all = true;
       continue;
     }
 
-    const std::string pattern = normalizeRosResourceName(rule);
+    const auto pattern = normalizePolicyResourcePattern(rule, is_service);
     if (pattern.empty()) {
       continue;
     }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <optional>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "subscription_qos.hpp"
@@ -24,9 +25,14 @@ namespace
 
 rclcpp::QoS makeBaseQos()
 {
-  rclcpp::QoS qos{rclcpp::KeepLast(10)};
-  qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
-  qos.durability(rclcpp::DurabilityPolicy::Volatile);
+  return rclcpp::QoS{10};
+}
+
+rclcpp::QoS makePublisherQos(rclcpp::ReliabilityPolicy reliability, rclcpp::DurabilityPolicy durability)
+{
+  rclcpp::QoS qos{10};
+  qos.reliability(reliability);
+  qos.durability(durability);
   return qos;
 }
 
@@ -37,8 +43,8 @@ TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::Fallback);
   EXPECT_EQ(qos.publisher_count, 0U);
-  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
-  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.qos.reliability(), base_qos.reliability());
+  EXPECT_EQ(qos.qos.durability(), base_qos.durability());
 }
 
 TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
@@ -50,14 +56,14 @@ TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
     base_qos,
     nullptr,
     {
-      {rclcpp::ReliabilityPolicy::Unknown, rclcpp::DurabilityPolicy::Unknown},
-      {rclcpp::ReliabilityPolicy::SystemDefault, rclcpp::DurabilityPolicy::SystemDefault},
+      makePublisherQos(rclcpp::ReliabilityPolicy::Unknown, rclcpp::DurabilityPolicy::Unknown),
+      makePublisherQos(rclcpp::ReliabilityPolicy::SystemDefault, rclcpp::DurabilityPolicy::SystemDefault),
     });
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::Fallback);
   EXPECT_EQ(qos.publisher_count, 2U);
-  EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
-  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.qos.reliability(), base_qos.reliability());
+  EXPECT_EQ(qos.qos.durability(), base_qos.durability());
 }
 
 TEST(SubscriptionQosTest, MixedPublisherPoliciesChooseWeakerCompatiblePolicyPerAxis)
@@ -69,8 +75,8 @@ TEST(SubscriptionQosTest, MixedPublisherPoliciesChooseWeakerCompatiblePolicyPerA
     base_qos,
     nullptr,
     {
-      {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
-      {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
+      makePublisherQos(rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal),
+      makePublisherQos(rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile),
     });
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::PublisherQos);
@@ -89,7 +95,7 @@ TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
     base_qos,
     nullptr,
     {
-      {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
+      makePublisherQos(rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal),
     });
 
   EXPECT_TRUE(qos.used_publisher_qos);
@@ -108,13 +114,13 @@ TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOther
     base_qos,
     nullptr,
     {
-      {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Unknown},
-      {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::SystemDefault},
+      makePublisherQos(rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Unknown),
+      makePublisherQos(rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::SystemDefault),
     });
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::PublisherQos);
   EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
-  EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(qos.qos.durability(), base_qos.durability());
 }
 
 TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvailableOtherwiseBaseDurability)
@@ -131,7 +137,7 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
     base_qos,
     &config,
     {
-      {rclcpp::ReliabilityPolicy::Unknown, rclcpp::DurabilityPolicy::Unknown},
+      makePublisherQos(rclcpp::ReliabilityPolicy::Unknown, rclcpp::DurabilityPolicy::Unknown),
     });
 
   const ResolvedSubscriptionQos with_publisher_durability = resolveSubscriptionQos(
@@ -139,13 +145,13 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
     base_qos,
     &config,
     {
-      {rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal},
+      makePublisherQos(rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal),
     });
 
   EXPECT_EQ(without_publisher_durability.source, SubscriptionQosResolutionSource::Override);
   EXPECT_FALSE(without_publisher_durability.used_publisher_qos);
   EXPECT_EQ(without_publisher_durability.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
-  EXPECT_EQ(without_publisher_durability.qos.durability(), rclcpp::DurabilityPolicy::Volatile);
+  EXPECT_EQ(without_publisher_durability.qos.durability(), base_qos.durability());
 
   EXPECT_EQ(with_publisher_durability.source, SubscriptionQosResolutionSource::Override);
   EXPECT_TRUE(with_publisher_durability.used_publisher_qos);
@@ -163,8 +169,8 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUses
     {"camera", "/camera/*", std::nullopt, rclcpp::DurabilityPolicy::TransientLocal},
   };
 
-  const std::vector<PublisherQos> publishers{
-    {rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile},
+  const std::vector<rclcpp::QoS> publishers{
+    makePublisherQos(rclcpp::ReliabilityPolicy::BestEffort, rclcpp::DurabilityPolicy::Volatile),
   };
 
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos("/camera/front", base_qos, &config, publishers);

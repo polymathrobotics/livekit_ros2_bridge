@@ -25,15 +25,24 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/subscriptions_json.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 
 namespace livekit_ros2_bridge
 {
 namespace
 {
 
+constexpr char kTestTopicExpansionNodeName[] = "test_subscription_payloads";
+constexpr char kTestTopicExpansionNamespace[] = "/";
+
 std::vector<std::uint8_t> payloadBytes(const std::string & payload)
 {
   return std::vector<std::uint8_t>(payload.begin(), payload.end());
+}
+
+std::string expandHeartbeatTopicName(const std::string & topic)
+{
+  return rclcpp::expand_topic_or_service_name(topic, kTestTopicExpansionNodeName, kTestTopicExpansionNamespace);
 }
 
 SubscriptionHeartbeat parseHeartbeatPayload(const std::string & payload)
@@ -104,7 +113,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
     nlohmann::json::parse(
       R"({"subscriptions":[{"kind":" topic ","name":" battery ","delivery_preferences":{"interval_ms":125},"accepts":"application/x-ros-cdr"}]})"),
     SubscriptionTargetKind::Topic,
-    "/battery",
+    expandHeartbeatTopicName("battery"),
     125);
 
   expectDemand(
@@ -117,7 +126,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
   expectDemand(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/camera"}]})"),
     SubscriptionTargetKind::Topic,
-    "/camera",
+    expandHeartbeatTopicName("/camera"),
     std::nullopt);
 }
 
@@ -193,7 +202,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
       {"subscriptions",
        {{{"kind", "topic"}, {"name", "/lidar"}, {"delivery_preferences", {{"interval_ms", raw_interval_ms}}}}}}};
 
-    expectDemand(body, SubscriptionTargetKind::Topic, "/lidar", expected_interval_ms);
+    expectDemand(body, SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/lidar"), expected_interval_ms);
   };
 
   expectClampedInterval(std::numeric_limits<std::int64_t>::max(), std::numeric_limits<int>::max());
@@ -204,7 +213,8 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
      {{{"kind", "topic"},
        {"name", "/lidar"},
        {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::uint64_t>::max()}}}}}}};
-  expectDemand(unsigned_body, SubscriptionTargetKind::Topic, "/lidar", std::numeric_limits<int>::max());
+  expectDemand(
+    unsigned_body, SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/lidar"), std::numeric_limits<int>::max());
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)
@@ -216,7 +226,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimu
       {"kind":"topic","name":" /battery ","delivery_preferences":{"interval_ms":125}}
     ]})"),
     SubscriptionTargetKind::Topic,
-    "/battery",
+    expandHeartbeatTopicName("/battery"),
     25);
 }
 
@@ -236,7 +246,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateOtherVideoTargets
 TEST(SubscriptionPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDuringCoalescing)
 {
   const auto expectPreferredInterval = [](const char * body) {
-    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, "/battery", 125);
+    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/battery"), 125);
   };
 
   expectPreferredInterval(R"({"subscriptions":[
@@ -252,7 +262,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatTreatsZeroIntervalAsNoPreferenceDur
 TEST(SubscriptionPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoPreferenceDuringCoalescing)
 {
   const auto expectPreferredInterval = [](const char * body) {
-    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, "/battery", 125);
+    expectDemand(nlohmann::json::parse(body), SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/battery"), 125);
   };
 
   expectPreferredInterval(R"({"subscriptions":[
@@ -278,7 +288,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepara
 
   ASSERT_EQ(heartbeat.demands.size(), 4U);
   EXPECT_EQ(heartbeat.demands[0].kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(heartbeat.demands[0].name, "/camera/front");
+  EXPECT_EQ(heartbeat.demands[0].name, expandHeartbeatTopicName("/camera/front"));
   EXPECT_EQ(heartbeat.demands[1].kind, SubscriptionTargetKind::OtherVideo);
   EXPECT_EQ(heartbeat.demands[1].name, "/camera/front");
   EXPECT_EQ(heartbeat.demands[2].name, "front_camera");

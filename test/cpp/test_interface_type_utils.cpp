@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <map>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 #include "gtest/gtest.h"
 #include "utils/interface_type_utils.hpp"
@@ -27,7 +25,7 @@ namespace
 {
 
 std::string requireSingleInterfaceTypeError(
-  const std::map<std::string, std::vector<std::string>> & names, const std::string & name, const char * resource_kind)
+  const RosGraphNamesAndTypes & names, const std::string & name, const char * resource_kind)
 {
   try {
     static_cast<void>(requireSingleInterfaceType(names, name, resource_kind));
@@ -42,30 +40,24 @@ std::string requireSingleInterfaceTypeError(
 
 TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
 {
-  std::map<std::string, std::vector<std::string>> names{
+  RosGraphNamesAndTypes names{
     {"/foo", {"bar/msg/Baz"}},
   };
   EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
 }
 
-TEST(RequireSingleInterfaceTypeTest, RejectsMissingOrUnusableTypeSetsAsNoTypesFound)
+TEST(RequireSingleInterfaceTypeTest, RejectsMissingOrEmptyTypeSetsAsNoTypesFound)
 {
   const std::string expected_error = "No ROS types found for topic '/foo'.";
 
-  EXPECT_EQ(
-    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{}, "/foo", "topic"),
-    expected_error);
-  // A graph entry with only empty strings is not a usable ROS interface type.
-  EXPECT_EQ(
-    requireSingleInterfaceTypeError(std::map<std::string, std::vector<std::string>>{{"/foo", {""}}}, "/foo", "topic"),
-    expected_error);
+  EXPECT_EQ(requireSingleInterfaceTypeError(RosGraphNamesAndTypes{}, "/foo", "topic"), expected_error);
+  EXPECT_EQ(requireSingleInterfaceTypeError(RosGraphNamesAndTypes{{"/foo", {}}}, "/foo", "topic"), expected_error);
 }
 
 TEST(RequireSingleInterfaceTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)
 {
   EXPECT_EQ(
-    requireSingleInterfaceTypeError(
-      std::map<std::string, std::vector<std::string>>{{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
+    requireSingleInterfaceTypeError(RosGraphNamesAndTypes{{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
     "Multiple ROS types found for topic '/foo'.");
 }
 

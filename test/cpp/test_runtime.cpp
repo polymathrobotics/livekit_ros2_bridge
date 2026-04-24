@@ -188,8 +188,7 @@ RuntimeHarness makeRuntimeHarness(const rclcpp::NodeOptions & options, Configure
   configure_room_connection(*room_connection);
 
   RuntimeConfig config = loadRuntimeConfig(harness.node->get_node_parameters_interface());
-  harness.runtime = std::make_unique<Runtime>(
-    RuntimeNodeInterfaces::fromNode(*harness.node), std::move(room_connection), std::move(config));
+  harness.runtime = std::make_unique<Runtime>(*harness.node, std::move(room_connection), std::move(config));
   return harness;
 }
 
@@ -401,7 +400,7 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   state->rejected_rpc_methods = {protocol::kShowInterfaceRpc};
 
   try {
-    Runtime runtime(RuntimeNodeInterfaces::fromNode(*node), std::move(room_connection), std::move(config));
+    Runtime runtime(*node, std::move(room_connection), std::move(config));
     FAIL() << "Expected std::runtime_error";
   } catch (const std::runtime_error & exc) {
     EXPECT_STREQ(exc.what(), "Failed to register required RPC methods");
@@ -420,7 +419,7 @@ TEST_F(RuntimeTest, StartupRejectsNullRoomConnection)
   RuntimeConfig config = loadRuntimeConfig(node->get_node_parameters_interface());
 
   try {
-    Runtime runtime(RuntimeNodeInterfaces::fromNode(*node), nullptr, std::move(config));
+    Runtime runtime(*node, nullptr, std::move(config));
     FAIL() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & exc) {
     EXPECT_STREQ(exc.what(), "Runtime requires a non-null RoomConnection");

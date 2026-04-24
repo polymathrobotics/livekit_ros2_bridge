@@ -47,30 +47,26 @@ nlohmann::json makeBody()
   };
 }
 
-TEST(TopicPublishRequestTest, ParsesValidRequestAndNormalizesFields)
+std::vector<std::uint8_t> serializedPayload(const rclcpp::SerializedMessage & message)
+{
+  const auto & rcl_message = message.get_rcl_serialized_message();
+  return {rcl_message.buffer, rcl_message.buffer + rcl_message.buffer_length};
+}
+
+TEST(TopicPublishRequestTest, ParsesValidRequestAndTrimsFields)
 {
   auto body = makeBody();
-  body["topic"] = " //camera///image/ ";
+  body["topic"] = " /camera/image ";
   body["interface_type"] = "  std_msgs/msg/String  ";
 
   const auto request = parse(body);
 
   EXPECT_EQ(request.ros_topic, "/camera/image");
   EXPECT_EQ(request.interface_type, "std_msgs/msg/String");
-  EXPECT_EQ(request.cdr, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
+  EXPECT_EQ(serializedPayload(request.message), (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
 }
 
-TEST(TopicPublishRequestTest, AcceptsRootTopicAfterNormalization)
-{
-  auto body = makeBody();
-  body["topic"] = "  ////  ";
-
-  const auto request = parse(body);
-
-  EXPECT_EQ(request.ros_topic, "/");
-}
-
-TEST(TopicPublishRequestTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayload)
+TEST(TopicPublishRequestTest, PreservesRelativeTopicNamesAndBinaryPayload)
 {
   const std::vector<std::uint8_t> cdr = {0x00, 0x01, 0x7f, 0x80, 0xff};
 
@@ -80,8 +76,8 @@ TEST(TopicPublishRequestTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayl
 
   const auto request = parse(body);
 
-  EXPECT_EQ(request.ros_topic, "/battery/cmd");
-  EXPECT_EQ(request.cdr, cdr);
+  EXPECT_EQ(request.ros_topic, "battery/cmd");
+  EXPECT_EQ(serializedPayload(request.message), cdr);
 }
 
 TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
@@ -92,14 +88,18 @@ TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
     std::invalid_argument);
 }
 
-TEST(TopicPublishRequestTest, RejectsMissingOrBlankTopicField)
+TEST(TopicPublishRequestTest, RejectsMissingTopicField)
 {
   auto body = makeBody();
   body.erase("topic");
   expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a string 'topic' field.");
+}
 
-  body = makeBody();
+TEST(TopicPublishRequestTest, RejectsBlankTopicField)
+{
+  auto body = makeBody();
   body["topic"] = "   ";
+
   expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a non-empty 'topic' field.");
 }
 

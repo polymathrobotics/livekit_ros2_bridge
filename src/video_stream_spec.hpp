@@ -26,8 +26,6 @@
 namespace livekit_ros2_bridge
 {
 
-inline constexpr char kImageInterfaceType[] = "sensor_msgs/msg/Image";
-inline constexpr char kCompressedImageInterfaceType[] = "sensor_msgs/msg/CompressedImage";
 inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
 inline constexpr char kOtherVideoIngestMode[] = "other_video";

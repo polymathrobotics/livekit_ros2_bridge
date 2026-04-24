@@ -16,23 +16,23 @@
 #define LIVEKIT_ROS2_BRIDGE__SERIALIZED_MESSAGE_HPP_
 
 #include <cstdint>
-#include <cstring>
 #include <vector>
 
+#include "rcl/allocator.h"
 #include "rclcpp/serialized_message.hpp"
+#include "rmw/serialized_message.h"
 
 namespace livekit_ros2_bridge
 {
 
 inline rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
 {
-  rclcpp::SerializedMessage serialized(payload.size());
-  auto & rcl_msg = serialized.get_rcl_serialized_message();
-  if (!payload.empty()) {
-    std::memcpy(rcl_msg.buffer, payload.data(), payload.size());
-  }
-  rcl_msg.buffer_length = payload.size();
-  return serialized;
+  auto source = rmw_get_zero_initialized_serialized_message();
+  source.buffer = payload.empty() ? nullptr : const_cast<std::uint8_t *>(payload.data());
+  source.buffer_length = payload.size();
+  source.buffer_capacity = payload.size();
+  source.allocator = rcl_get_default_allocator();
+  return rclcpp::SerializedMessage(source);
 }
 
 }  // namespace livekit_ros2_bridge

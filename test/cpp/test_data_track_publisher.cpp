@@ -27,6 +27,7 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "ros_test_support.hpp"
+#include "rosidl_runtime_cpp/traits.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 
 namespace livekit_ros2_bridge
@@ -54,12 +55,17 @@ sensor_msgs::msg::BatteryState makeBatteryState()
   return message;
 }
 
+const char * batteryStateInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+}
+
 std::shared_ptr<DataTrackPublisher> createDataTrackPublisher(
   rclcpp::Node & node, FakeRoomConnection & room_connection, const std::string & topic)
 {
   return DataTrackPublisher::create(
     topic,
-    "sensor_msgs/msg/BatteryState",
+    batteryStateInterfaceType(),
     node.get_node_topics_interface(),
     node.get_node_graph_interface(),
     node.get_clock(),
@@ -127,7 +133,7 @@ TEST(DataTrackPublisherTest, SuppressesMessagesAccordingToAppliedInterval)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->setIntervalMs(150);
@@ -153,7 +159,7 @@ TEST(DataTrackPublisherTest, RepublishResetsSuppressionBeforeIntervalExpires)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->setIntervalMs(1000);
@@ -178,7 +184,7 @@ TEST(DataTrackPublisherTest, RecoversFromPublishFailureWithoutStartingSuppressio
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   int publish_attempt_count = 0;
   room_connection.state->publish_data_track_handler =
@@ -215,7 +221,7 @@ TEST(DataTrackPublisherTest, ReentrantPublishDoesNotStartSuppressionWindow)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   const auto message = makeBatteryState();
   room_connection.state->publish_data_track_handler =
@@ -248,7 +254,7 @@ TEST(DataTrackPublisherTest, DestructionAllowsSameTopicToBeRepublishedWithSameTr
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto first = createDataTrackPublisher(*node, room_connection, topic);
   first->publish();
@@ -272,7 +278,7 @@ TEST(DataTrackPublisherTest, DestructionWaitsForActiveSerializedMessageCallback)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto push_entered = std::make_shared<std::promise<void>>();
   auto push_entered_future = push_entered->get_future();
@@ -318,7 +324,7 @@ TEST(DataTrackPublisherTest, DestructionUnpublishesPublishedTrackAndDropsSubscri
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->publish();
@@ -345,7 +351,7 @@ TEST(DataTrackPublisherTest, DestructionSwallowsUnpublishFailure)
 
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, "sensor_msgs/msg/BatteryState"));
+  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->publish();

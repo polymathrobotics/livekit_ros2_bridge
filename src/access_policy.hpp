@@ -19,8 +19,6 @@
 #include <string_view>
 #include <vector>
 
-#include "utils/ros_resource_name_utils.hpp"
-
 namespace livekit_ros2_bridge
 {
 
@@ -44,13 +42,12 @@ enum class AccessOperation
   CallService,
 };
 
-/// Operation-specific allow/deny rules over normalized ROS resource names.
+/// Operation-specific allow/deny rules over ROS topic and service names.
 /// The policy is default-deny, a literal `"*"` allow rule means allow all for that operation,
-/// and deny rules always win over allows. Rules are trimmed and normalized before matching;
+/// and deny rules always win over allows. ROS expansion and validation are delegated to rclcpp;
 /// exact patterns match one resource and `.../*` patterns match descendants.
 /// Instances are immutable after construction and can be shared across threads without
 /// external synchronization.
-/// TODO: "an empty rule config is default-deny for that op"" and stop talking about normalization and an example?
 class AccessPolicy
 {
 public:
@@ -64,7 +61,7 @@ public:
 private:
   struct Rules
   {
-    static Rules parse(const std::vector<std::string> & raw_rules);
+    static Rules parse(const std::vector<std::string> & raw_rules, bool is_service);
 
     bool matches_all = false;
     std::set<std::string> patterns;

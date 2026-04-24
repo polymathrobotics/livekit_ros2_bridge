@@ -15,7 +15,6 @@
 #pragma once
 
 #include <string>
-#include <vector>
 
 #include "protocol/resources.hpp"
 
@@ -27,14 +26,16 @@ namespace livekit_ros2_bridge::protocol::resources
 /// violate the RPC contract. Missing, null, and blank queries normalize to "no filter".
 ResourceListRequest parseRequest(const std::string & payload);
 
-/// Serialize services as `{ "services": [{ "service", "interface_type" }, ...] }` in caller order.
-/// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph resources to
-/// the single `interface_type` protocol shape before calling this response serializer.
-std::string serializeServices(const std::vector<Resource> & resources);
+/// Serialize services as `{ "services": [{ "service", "interface_type" }, ...] }` in ROS graph order.
+/// Entries without exactly one interface type are omitted to preserve the single `interface_type`
+/// protocol shape. Callers must pre-filter results and apply any limit before calling this response
+/// serializer.
+std::string serializeServices(const ResourceNamesAndTypes & resources_by_name);
 
-/// Serialize topics as `{ "topics": [{ "topic", "interface_type" }, ...] }` in caller order.
-/// Callers must pre-filter results, apply any limit, and collapse multi-type ROS graph resources to
-/// the single `interface_type` protocol shape before calling this response serializer.
-std::string serializeTopics(const std::vector<Resource> & resources);
+/// Serialize topics as `{ "topics": [{ "topic", "interface_type" }, ...] }` in ROS graph order.
+/// Entries without exactly one interface type are omitted to preserve the single `interface_type`
+/// protocol shape. Callers must pre-filter results and apply any limit before calling this response
+/// serializer.
+std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name);
 
 }  // namespace livekit_ros2_bridge::protocol::resources

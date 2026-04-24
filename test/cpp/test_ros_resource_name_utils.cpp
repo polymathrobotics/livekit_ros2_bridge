@@ -12,11 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <string>
+#include <string_view>
+
 #include "gtest/gtest.h"
+#include "rclcpp/exceptions/exceptions.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
+namespace
+{
+
+std::string expandRosResourceName(std::string_view name)
+{
+  return rclcpp::expand_topic_or_service_name(
+    std::string{name},
+    ros_resource_name_utils_detail::kResourceNameExpansionNode,
+    ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
+}
+
+}  // namespace
 
 TEST(NormalizeRosResourceNameTest, EmptyAndWhitespaceOnlyInputsReturnEmpty)
 {
@@ -24,16 +41,18 @@ TEST(NormalizeRosResourceNameTest, EmptyAndWhitespaceOnlyInputsReturnEmpty)
   EXPECT_EQ(normalizeRosResourceName("\t\n"), "");
 }
 
-TEST(NormalizeRosResourceNameTest, NormalizesCommonInputsToCanonicalAbsoluteNames)
+TEST(NormalizeRosResourceNameTest, TrimsAndDelegatesExpansionToRclcpp)
 {
-  EXPECT_EQ(normalizeRosResourceName("camera"), "/camera");
-  EXPECT_EQ(normalizeRosResourceName("  /camera///front/image/  "), "/camera/front/image");
-  EXPECT_EQ(normalizeRosResourceName(" blocked//tree//* "), "/blocked/tree/*");
+  EXPECT_EQ(normalizeRosResourceName("camera"), expandRosResourceName("camera"));
+  EXPECT_EQ(normalizeRosResourceName("  /camera/front/image  "), expandRosResourceName("/camera/front/image"));
+  EXPECT_EQ(normalizeRosResourceName("{node}/image"), expandRosResourceName("{node}/image"));
 }
 
-TEST(NormalizeRosResourceNameTest, RootInputsNormalizeToRootName)
+TEST(NormalizeRosResourceNameTest, RosValidationFailuresReturnEmpty)
 {
-  EXPECT_EQ(normalizeRosResourceName("  ////  "), "/");
+  constexpr char kInvalidName[] = "/camera///front/image/";
+  EXPECT_THROW(expandRosResourceName(kInvalidName), rclcpp::exceptions::NameValidationError);
+  EXPECT_EQ(normalizeRosResourceName(kInvalidName), "");
 }
 
 TEST(RosResourceMatchesPatternTest, ExactPatternsMatchOnlyIdenticalNames)

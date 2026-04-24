@@ -29,7 +29,7 @@ namespace livekit_ros2_bridge::protocol::interfaces
 /// Unrelated top-level fields are ignored so the request envelope can grow without changing this parser.
 /// Throws `std::invalid_argument` with caller-fixable validation text that is surfaced through
 /// the RPC invalid-request path.
-InterfaceShowRequest parse(const std::string & payload);
+std::vector<std::string> parse(const std::string & payload);
 
 /// Serialize interface definitions as
 /// `{ "interfaces": [{ "interface_type", "format", "definition" }, ...] }`

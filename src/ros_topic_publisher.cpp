@@ -15,7 +15,6 @@
 #include "ros_topic_publisher.hpp"
 
 #include <chrono>
-#include <cstring>
 #include <exception>
 #include <mutex>
 #include <optional>
@@ -99,9 +98,22 @@ void RosTopicPublisher::handlePublishPacket(
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)
 {
-  const std::string & ros_topic = request.ros_topic;
-
   if (is_shutdown_.load()) {
+    return;
+  }
+
+  std::string ros_topic;
+  try {
+    ros_topic = topics_->resolve_topic_name(request.ros_topic);
+  } catch (const std::exception & exc) {
+    LogEvent(kLogger, "publish_request_rejected")
+      .field("reason", "invalid_request")
+      .field("topic", request.ros_topic)
+      .field("requester_identity", requester_identity)
+      .field("interface_type", request.interface_type)
+      .field("error", exc.what())
+      .warnThrottle(*clock_, kLogThrottle);
+
     return;
   }
 
@@ -161,15 +173,6 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
   const bool had_cached_publisher = static_cast<bool>(publisher);
 
-  // Control packets already carry a CDR payload, so copy the bytes directly
-  // into SerializedMessage without a deserialize/serialize round trip.
-  rclcpp::SerializedMessage serialized(request.cdr.size());
-  auto & rcl_message = serialized.get_rcl_serialized_message();
-  if (!request.cdr.empty()) {
-    std::memcpy(rcl_message.buffer, request.cdr.data(), request.cdr.size());
-  }
-  rcl_message.buffer_length = request.cdr.size();
-
   try {
     if (!publisher) {
       const rclcpp::QoS qos(kPublisherDepth);
@@ -186,7 +189,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       return;
     }
 
-    publisher->publish(serialized);
+    publisher->publish(request.message);
     // If shutdown is already visible here, bail out before touching cache state
     // that teardown is intentionally trying to drop.
     if (is_shutdown_.load()) {

@@ -16,13 +16,13 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/detail/json_fields.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge::protocol::topic_publish
 {
@@ -54,12 +54,12 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
   // can distinguish which contract boundary rejected the request without repeating that detail.
   TopicPublishRequest request;
   try {
-    request.ros_topic = normalizeRosResourceName(
-      protocol::detail::requiredTrimmedStringField(
-        body,
-        "topic",
-        "Publish request requires a string 'topic' field.",
-        "Publish request requires a non-empty 'topic' field."));
+    const std::string topic = protocol::detail::requiredTrimmedStringField(
+      body,
+      "topic",
+      "Publish request requires a string 'topic' field.",
+      "Publish request requires a non-empty 'topic' field.");
+    request.ros_topic = topic;
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected").field("reason", "invalid_topic").debug();
     throw;
@@ -76,8 +76,9 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
     throw;
   }
 
+  rclcpp::SerializedMessage message;
   try {
-    request.cdr = protocol::cdr::parse(body, protocol::cdr::Field::Message);
+    message = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Message);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_message")
@@ -88,17 +89,18 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
 
   // Reject an empty decoded CDR blob instead of treating it as an implicit
   // default-constructed message instance.
-  if (request.cdr.empty()) {
+  if (message.size() == 0U) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_message")
       .field("topic", request.ros_topic)
       .debug();
     throw std::invalid_argument("Publish request requires a non-empty message.payload_base64 field.");
   }
+  request.message = std::move(message);
 
-  // Normalize ROS topic names here so policy checks, publisher lookup, and logs see one resource
-  // spelling. Keep `interface_type` trimmed-but-exact because publish-time validation compares it
-  // against the ROS graph.
+  // Keep ROS names and types trimmed-but-exact. The publisher resolves the
+  // topic against its node context, then compares the interface type against
+  // the ROS graph.
   return request;
 }
 

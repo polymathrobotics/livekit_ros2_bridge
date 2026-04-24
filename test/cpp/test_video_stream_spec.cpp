@@ -14,9 +14,15 @@
 
 #include <optional>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "gtest/gtest.h"
+#include "rclcpp/expand_topic_or_service_name.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "utils/ros_resource_name_utils.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -70,6 +76,24 @@ RosVideoTopicRule makeRule(const char * rule_id, const char * pattern, const cha
   return rule;
 }
 
+const char * imageInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::Image>();
+}
+
+const char * compressedImageInterfaceType()
+{
+  return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
+}
+
+std::string expandRosTopicName(std::string_view name)
+{
+  return rclcpp::expand_topic_or_service_name(
+    std::string{name},
+    ros_resource_name_utils_detail::kResourceNameExpansionNode,
+    ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
+}
+
 template <typename Exception, typename Callable>
 void expectThrowsWithMessage(Callable && callable, const char * expected_message)
 {
@@ -83,22 +107,22 @@ void expectThrowsWithMessage(Callable && callable, const char * expected_message
 
 TEST(VideoStreamSpecTest, ClassifyRosVideoIngestModeOnlyAcceptsSupportedExactStrings)
 {
-  EXPECT_EQ(classifyRosVideoIngestMode(kImageInterfaceType), RosVideoIngestMode::RawImage);
+  EXPECT_EQ(classifyRosVideoIngestMode(imageInterfaceType()), RosVideoIngestMode::RawImage);
 
-  EXPECT_EQ(classifyRosVideoIngestMode(kCompressedImageInterfaceType), RosVideoIngestMode::CompressedImage);
-  EXPECT_FALSE(classifyRosVideoIngestMode(" sensor_msgs/msg/Image").has_value());
+  EXPECT_EQ(classifyRosVideoIngestMode(compressedImageInterfaceType()), RosVideoIngestMode::CompressedImage);
+  EXPECT_FALSE(classifyRosVideoIngestMode(std::string{" "} + imageInterfaceType()).has_value());
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionForSupportedTypes)
 {
   const auto config = makeDefaultVideoStreamConfig();
 
-  const auto raw_spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto raw_spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
   const auto & raw_input = requireRosVideoInput(raw_spec);
   EXPECT_EQ(raw_spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(raw_spec.track_name, "lkros.video.camera.front.image");
   EXPECT_EQ(raw_input.topic, "/camera/front/image");
-  EXPECT_EQ(raw_input.interface_type, kImageInterfaceType);
+  EXPECT_EQ(raw_input.interface_type, imageInterfaceType());
   EXPECT_EQ(videoInputKind(raw_spec), VideoInputKind::RosTopic);
   EXPECT_EQ(raw_input.rule_id, "default_ros");
   EXPECT_EQ(raw_input.ingest_mode, RosVideoIngestMode::RawImage);
@@ -106,7 +130,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   expectTrackPublishOptionsEq(raw_spec.publish_config, config.default_publish_config);
 
   const auto compressed_spec =
-    resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
+    resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", compressedImageInterfaceType());
   const auto & compressed_input = requireRosVideoInput(compressed_spec);
   EXPECT_EQ(compressed_spec.stream_key, "topic:/camera/front/image/compressed");
   EXPECT_EQ(compressed_spec.track_name, "lkros.video.camera.front.image.compressed");
@@ -116,7 +140,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   expectTrackPublishOptionsEq(compressed_spec.publish_config, config.default_publish_config);
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndIdentifiers)
+TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecExpandsRelativeTopicForMatchingAndIdentifiers)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
 
@@ -125,26 +149,24 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
     makeTrackPublishOptions(videoCodec(1), livekit::VideoEncodingOptions{900000U, 12.0}, false);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), normalized_rule);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "  camera//front/image/  ", kImageInterfaceType);
+  const auto spec = resolveRosVideoTopicSpec(config, "  camera/front/image  ", imageInterfaceType());
   const auto & input = requireRosVideoInput(spec);
+  const std::string expected_topic = expandRosTopicName("camera/front/image");
 
-  EXPECT_EQ(spec.stream_key, "topic:/camera/front/image");
+  EXPECT_EQ(spec.stream_key, "topic:" + expected_topic);
   EXPECT_EQ(spec.track_name, "lkros.video.camera.front.image");
-  EXPECT_EQ(input.topic, "/camera/front/image");
+  EXPECT_EQ(input.topic, expected_topic);
   EXPECT_EQ(input.rule_id, "normalized");
   EXPECT_EQ(input.transform_fragment, "videoconvert ! normalized-filter");
   expectTrackPublishOptionsEq(spec.publish_config, normalized_rule.publish_config);
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesUnnamedTrackNameForRootTopic)
+TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsRootTopic)
 {
   const auto config = makeDefaultVideoStreamConfig();
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/", kImageInterfaceType);
-
-  EXPECT_EQ(spec.stream_key, "topic:/");
-  EXPECT_EQ(spec.track_name, "lkros.video.unnamed");
-  EXPECT_EQ(requireRosVideoInput(spec).topic, "/");
+  expectThrowsWithMessage<std::invalid_argument>(
+    [&]() { (void)resolveRosVideoTopicSpec(config, "/", imageInterfaceType()); }, "Invalid ROS topic.");
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsInvalidInput)
@@ -155,7 +177,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsInvalidInput)
     [&]() { (void)resolveRosVideoTopicSpec(config, "/camera/front/image", ""); },
     "ROS topic is not a supported video type.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, " \t\n ", kImageInterfaceType); }, "Invalid ROS topic.");
+    [&]() { (void)resolveRosVideoTopicSpec(config, " \t\n ", imageInterfaceType()); }, "Invalid ROS topic.");
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsWhenNoRuleMatches)
@@ -163,7 +185,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsWhenNoRuleMatches)
   const VideoStreamConfig config;
 
   expectThrowsWithMessage<std::runtime_error>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType); },
+    [&]() { (void)resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType()); },
     "no matching video rule for topic '/camera/front/image'");
 }
 
@@ -181,7 +203,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), broad_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), specific_rule);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
   EXPECT_EQ(requireRosVideoInput(spec).rule_id, "specific");
   expectTrackPublishOptionsEq(spec.publish_config, specific_rule.publish_config);
@@ -197,7 +219,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), first_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.end() - 1, second_rule);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
   EXPECT_EQ(requireRosVideoInput(spec).rule_id, "first");
 }
@@ -208,7 +230,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceho
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), makeRule("front", "/camera/front/*", "{topic}"));
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
+  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
   EXPECT_EQ(requireRosVideoInput(spec).transform_fragment, "{topic}");
 }

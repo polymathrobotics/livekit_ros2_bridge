@@ -18,6 +18,8 @@
 #include <variant>
 
 #include "rclcpp/logging.hpp"
+#include "sensor_msgs/msg/compressed_image.hpp"
+#include "sensor_msgs/msg/image.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
@@ -33,7 +35,6 @@ constexpr char kOtherVideoKeyPrefix[] = "other_video";
 constexpr char kTopicTrackPrefix[] = "lkros.video.";
 constexpr char kOtherVideoTrackPrefix[] = "lkros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
-constexpr char kUnnamedTrackSuffix[] = "unnamed";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");
 
 // ROS-topic track names intentionally keep the historical slash/colon-to-dot mapping
@@ -85,9 +86,6 @@ std::string makeTrackName(std::string_view prefix, std::string_view suffix)
 std::string makeTopicTrackName(std::string_view normalized_topic)
 {
   const std::string suffix = makeTopicTrackSuffix(normalized_topic);
-  if (suffix.empty()) {
-    return makeTrackName(kTopicTrackPrefix, kUnnamedTrackSuffix);
-  }
   return makeTrackName(kTopicTrackPrefix, suffix);
 }
 
@@ -151,10 +149,10 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
 
 std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type)
 {
-  if (interface_type == kImageInterfaceType) {
+  if (interface_type == rosidl_generator_traits::name<sensor_msgs::msg::Image>()) {
     return RosVideoIngestMode::RawImage;
   }
-  if (interface_type == kCompressedImageInterfaceType) {
+  if (interface_type == rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>()) {
     return RosVideoIngestMode::CompressedImage;
   }
   return std::nullopt;
