@@ -232,13 +232,11 @@ void SubscriptionLeaseManager::handleHeartbeat(
   }
 
   const std::string body = protocol::subscriptions::serializeStatusReport(report);
-  OutgoingPacket packet;
-  packet.payload = std::vector<std::uint8_t>(body.begin(), body.end());
-  packet.recipient_identities = {resolved_identity};
-  packet.topic = protocol::kStatusTopic;
+  const std::vector<std::uint8_t> payload(body.begin(), body.end());
+  const std::vector<std::string> destination_identities{resolved_identity};
 
   try {
-    room_connection_.publishPacket(packet);
+    room_connection_.publishData(payload, true, destination_identities, protocol::kStatusTopic);
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "subscription_status_publish_failed")
       .field("requester_identity", resolved_identity)

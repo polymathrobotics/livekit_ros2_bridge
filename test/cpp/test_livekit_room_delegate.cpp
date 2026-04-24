@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/room.h"
 #include "livekit_room_delegate.hpp"
 #include "livekit_room_delegate_test_support.hpp"
 
@@ -60,8 +61,13 @@ TEST(LiveKitRoomDelegateTest, ForwardsUserPackets)
   };
 
   LiveKitRoomDelegate delegate(std::move(callbacks));
-  LiveKitRoomDelegateTestEvents::emitUserPacket(
-    delegate, std::vector<std::uint8_t>{1U, 2U, 3U}, "ros.test", "participant-1");
+  livekit::Room room;
+  auto participant = LiveKitRoomDelegateTestEvents::makeRemoteParticipant("participant-1");
+  livekit::UserDataPacketEvent event;
+  event.data = std::vector<std::uint8_t>{1U, 2U, 3U};
+  event.participant = &participant;
+  event.topic = "ros.test";
+  delegate.onUserPacketReceived(room, event);
 
   EXPECT_TRUE(packet_received);
   EXPECT_EQ(topic, "ros.test");
@@ -73,28 +79,38 @@ TEST(LiveKitRoomDelegateTest, SuppressesParticipantDisconnectsOutsideConnectedRo
 {
   RoomEventCallbacks callbacks;
   std::vector<std::string> disconnected_identities;
-  callbacks.on_participant_disconnected = [&](const std::string & identity) {
-    disconnected_identities.push_back(identity);
+  callbacks.on_participant_disconnected = [&](const livekit::ParticipantDisconnectedEvent & event) {
+    disconnected_identities.push_back(event.participant == nullptr ? "" : event.participant->identity());
   };
 
   RecordingControl control;
   LiveKitRoomDelegate delegate(std::move(callbacks));
   delegate.setReconnectRequestHandler(control.callback());
+  livekit::Room room;
+  auto participant_1 = LiveKitRoomDelegateTestEvents::makeRemoteParticipant("participant-1");
+  livekit::ParticipantDisconnectedEvent participant_1_disconnected;
+  participant_1_disconnected.participant = &participant_1;
 
-  LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-1");
+  delegate.onParticipantDisconnected(room, participant_1_disconnected);
   EXPECT_TRUE(disconnected_identities.empty());
 
   delegate.roomConnected();
-  LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-1");
+  delegate.onParticipantDisconnected(room, participant_1_disconnected);
   EXPECT_EQ(disconnected_identities, (std::vector<std::string>{"participant-1"}));
 
-  LiveKitRoomDelegateTestEvents::emitReconnecting(delegate, "room_reconnecting");
-  LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-2");
+  delegate.onReconnecting(room, livekit::ReconnectingEvent{});
+  auto participant_2 = LiveKitRoomDelegateTestEvents::makeRemoteParticipant("participant-2");
+  livekit::ParticipantDisconnectedEvent participant_2_disconnected;
+  participant_2_disconnected.participant = &participant_2;
+  delegate.onParticipantDisconnected(room, participant_2_disconnected);
   EXPECT_EQ(disconnected_identities, (std::vector<std::string>{"participant-1"}));
 
-  LiveKitRoomDelegateTestEvents::emitReconnected(delegate);
-  LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "");
-  LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-3");
+  delegate.onReconnected(room, livekit::ReconnectedEvent{});
+  delegate.onParticipantDisconnected(room, livekit::ParticipantDisconnectedEvent{});
+  auto participant_3 = LiveKitRoomDelegateTestEvents::makeRemoteParticipant("participant-3");
+  livekit::ParticipantDisconnectedEvent participant_3_disconnected;
+  participant_3_disconnected.participant = &participant_3;
+  delegate.onParticipantDisconnected(room, participant_3_disconnected);
   EXPECT_EQ(disconnected_identities, (std::vector<std::string>{"participant-1", "participant-3"}));
 }
 
@@ -112,12 +128,13 @@ TEST(LiveKitRoomDelegateTest, CoalescesReconnectNotifications)
   LiveKitRoomDelegate delegate(std::move(callbacks));
   delegate.setReconnectRequestHandler(control.callback());
 
-  LiveKitRoomDelegateTestEvents::emitReconnectRequested(delegate, "room_disconnected");
-  LiveKitRoomDelegateTestEvents::emitReconnectRequested(delegate, "room_eos");
-  LiveKitRoomDelegateTestEvents::emitConnectionStateChanged(delegate, livekit::ConnectionState::Reconnecting);
-  LiveKitRoomDelegateTestEvents::emitReconnecting(delegate, "room_reconnecting");
-  LiveKitRoomDelegateTestEvents::emitConnectionStateChanged(delegate, livekit::ConnectionState::Connected);
-  LiveKitRoomDelegateTestEvents::emitReconnected(delegate);
+  livekit::Room room;
+  delegate.onDisconnected(room, livekit::DisconnectedEvent{});
+  delegate.onRoomEos(room, livekit::RoomEosEvent{});
+  delegate.onConnectionStateChanged(room, livekit::ConnectionStateChangedEvent{livekit::ConnectionState::Reconnecting});
+  delegate.onReconnecting(room, livekit::ReconnectingEvent{});
+  delegate.onConnectionStateChanged(room, livekit::ConnectionStateChangedEvent{livekit::ConnectionState::Connected});
+  delegate.onReconnected(room, livekit::ReconnectedEvent{});
 
   EXPECT_EQ(reconnect_reasons, (std::vector<std::string>{"room_disconnected"}));
   EXPECT_EQ(reconnecting_reasons, (std::vector<std::string>{"connection_state_reconnecting"}));

@@ -68,7 +68,6 @@ struct LocalParticipantSnapshot
 
 struct VideoTrackEntry
 {
-  std::shared_ptr<livekit::LocalVideoTrack> track;
   std::uint64_t room_generation = 0;
 };
 
@@ -77,23 +76,6 @@ struct VideoTrackEntry
 class LiveKitRoomConnection final : public RoomConnection
 {
 public:
-  class PublishedVideoTrackLease final : public PublishedVideoTrack
-  {
-  public:
-    PublishedVideoTrackLease(LiveKitRoomConnection & owner, std::string name)
-    : PublishedVideoTrack(std::move(name))
-    , owner_(owner)
-    {}
-
-    ~PublishedVideoTrackLease() noexcept override
-    {
-      owner_.unpublishPublishedVideoTrack(this);
-    }
-
-  private:
-    LiveKitRoomConnection & owner_;
-  };
-
   LiveKitRoomConnection() = default;
 
   ~LiveKitRoomConnection() override
@@ -141,7 +123,7 @@ public:
     }
   }
 
-  bool registerRpc(const std::string & method, RpcHandler handler) override
+  bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     rpc_handlers_[method] = std::move(handler);
@@ -167,13 +149,17 @@ public:
     return true;
   }
 
-  void publishPacket(const OutgoingPacket & packet) override
+  void publishData(
+    const std::vector<std::uint8_t> & payload,
+    bool reliable,
+    const std::vector<std::string> & destination_identities,
+    const std::string & topic) override
   {
     const auto snapshot = snapshotLocalParticipant();
     if (snapshot.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
-    snapshot.participant->publishData(packet.payload, true, packet.recipient_identities, packet.topic);
+    snapshot.participant->publishData(payload, reliable, destination_identities, topic);
   }
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
@@ -190,9 +176,9 @@ public:
   }
 
   livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
-    const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) override
+    const std::shared_ptr<livekit::LocalDataTrack> & track, const livekit::DataTrackFrame & frame) override
   {
-    return track->tryPush(std::move(payload));
+    return track->tryPush(frame);
   }
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
@@ -209,10 +195,10 @@ public:
     participant->unpublishDataTrack(track);
   }
 
-  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
+  std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const VideoPublishConfig & config) override
+    const livekit::TrackPublishOptions & config) override
   {
     if (name.empty()) {
       throw std::invalid_argument("Video track name is required.");
@@ -227,78 +213,40 @@ public:
     }
 
     auto track = livekit::LocalVideoTrack::createLocalVideoTrack(name, source);
-    livekit::TrackPublishOptions options;
+    livekit::TrackPublishOptions options = config;
     options.source = livekit::TrackSource::SOURCE_CAMERA;
-    if (config.max_bitrate_bps > 0 || config.max_framerate > 0.0) {
-      livekit::VideoEncodingOptions encoding;
-      encoding.max_bitrate = config.max_bitrate_bps;
-      encoding.max_framerate = config.max_framerate;
-      options.video_encoding = encoding;
-    }
-
-    switch (config.codec) {
-      case VideoPublishCodec::Auto:
-        break;
-      case VideoPublishCodec::Vp8:
-        options.video_codec = static_cast<livekit::VideoCodec>(0);
-        break;
-      case VideoPublishCodec::H264:
-        options.video_codec = static_cast<livekit::VideoCodec>(1);
-        break;
-      case VideoPublishCodec::Av1:
-        options.video_codec = static_cast<livekit::VideoCodec>(2);
-        break;
-      case VideoPublishCodec::Vp9:
-        options.video_codec = static_cast<livekit::VideoCodec>(3);
-        break;
-      case VideoPublishCodec::H265:
-        options.video_codec = static_cast<livekit::VideoCodec>(4);
-        break;
-    }
-
-    switch (config.simulcast) {
-      case VideoPublishSimulcast::Auto:
-        break;
-      case VideoPublishSimulcast::Enabled:
-        options.simulcast = true;
-        break;
-      case VideoPublishSimulcast::Disabled:
-        options.simulcast = false;
-        break;
-    }
     snapshot.participant->publishTrack(track, options);
     const auto publication = track == nullptr ? nullptr : track->publication();
     if (publication == nullptr) {
       throw std::runtime_error("Failed to publish video track '" + name + "'.");
     }
 
-    std::unique_ptr<PublishedVideoTrack> published_track = std::make_unique<PublishedVideoTrackLease>(*this, name);
     std::lock_guard<std::mutex> lock(mutex_);
     if (snapshot.room_generation != room_generation_) {
       // reset() invalidated this room after publishTrack() returned, so the caller gets
-      // a publication that is already stale and safely degrades to a later no-op.
+      // a track that is already stale and safely degrades to a later no-op.
       LogEvent(kLogger, "video_track_publish_stale")
         .field("track_name", name)
         .field("track_sid", publication->sid())
         .field("reason", "room_reset")
         .warn();
-      return published_track;
+      return track;
     }
-    video_tracks_[published_track.get()] = VideoTrackEntry{std::move(track), snapshot.room_generation};
-    return published_track;
+    video_tracks_[track.get()] = VideoTrackEntry{snapshot.room_generation};
+    return track;
   }
 
-  void unpublishPublishedVideoTrack(const PublishedVideoTrack * published_track) noexcept
+  void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) override
   {
-    if (published_track == nullptr) {
+    if (track == nullptr) {
       return;
     }
 
-    const std::string & track_name = published_track->name();
+    const std::string & track_name = track->name();
     VideoTrackEntry entry;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      const auto it = video_tracks_.find(published_track);
+      const auto it = video_tracks_.find(track.get());
       if (it == video_tracks_.end()) {
         return;
       }
@@ -307,7 +255,7 @@ public:
     }
 
     try {
-      const auto publication = entry.track == nullptr ? nullptr : entry.track->publication();
+      const auto publication = track->publication();
       if (publication == nullptr) {
         return;
       }
@@ -410,11 +358,7 @@ private:
     auto room = std::make_shared<livekit::Room>();
     room->setDelegate(delegate);
 
-    livekit::RoomOptions options;
-    options.auto_subscribe = true;
-    // Reuse the connected transport for publish+subscribe so data-track
-    // publication does not depend on bringing up a second peer connection.
-    options.single_peer_connection = true;
+    const livekit::RoomOptions options;
 
     try {
       if (!room->Connect(config.url, config.access_token, options)) {
@@ -562,14 +506,9 @@ private:
         [method,
          handler = handler_it->second](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
           try {
-            return handler(
-              RpcInvocation{
-                invocation.caller_identity,
-                invocation.request_id,
-                invocation.payload,
-              });
-          } catch (const RpcHandlerError & exc) {
-            throw livekit::RpcError(exc.code(), exc.what());
+            return handler(invocation);
+          } catch (const livekit::RpcError &) {
+            throw;
           } catch (...) {
             LogEvent(kLogger, "rpc_request_failed")
               .field("method", method)
@@ -595,10 +534,10 @@ private:
   LiveKitConfig config_;
   LiveKitRoomDelegate * delegate_ = nullptr;
 
-  std::unordered_map<std::string, RpcHandler> rpc_handlers_;
-  // Indexed by the address of the RAII publication shared with callers. The room generation
-  // keeps late publish/unpublish completions from crossing a reconnect boundary.
-  std::unordered_map<const PublishedVideoTrack *, VideoTrackEntry> video_tracks_;
+  std::unordered_map<std::string, livekit::LocalParticipant::RpcHandler> rpc_handlers_;
+  // Indexed by the SDK local track shared with callers. The room generation keeps late
+  // publish/unpublish completions from crossing a reconnect boundary.
+  std::unordered_map<const livekit::LocalVideoTrack *, VideoTrackEntry> video_tracks_;
 
   std::chrono::milliseconds initial_backoff_{kReconnectInitialBackoff};
   std::chrono::milliseconds max_backoff_{kReconnectMaxBackoff};

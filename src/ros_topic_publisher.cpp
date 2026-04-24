@@ -23,6 +23,7 @@
 #include <string>
 #include <utility>
 
+#include "livekit/room_event_types.h"
 #include "protocol/topic_publish_json.hpp"
 #include "rclcpp/create_generic_publisher.hpp"
 #include "rclcpp/logging.hpp"
@@ -70,8 +71,8 @@ RosTopicPublisher::~RosTopicPublisher()
   shutdown();
 }
 
-void RosTopicPublisher::handlePublishPayload(
-  const std::string & requester_identity, const std::vector<std::uint8_t> & payload)
+void RosTopicPublisher::handlePublishPacket(
+  const std::string & requester_identity, const livekit::UserDataPacketEvent & event)
 {
   if (requester_identity.empty()) {
     LogEvent(kLogger, "packet_rejected")
@@ -83,7 +84,7 @@ void RosTopicPublisher::handlePublishPayload(
 
   std::optional<TopicPublishRequest> request;
   try {
-    request = protocol::topic_publish::parse(payload);
+    request = protocol::topic_publish::parse(event.data);
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "packet_rejected")
       .field("reason", "invalid_publish_request")

@@ -42,54 +42,6 @@ struct LiveKitRoomDelegateTestEvents
       livekit::DisconnectReason::Unknown);
   }
 
-  static void emitReconnectRequested(LiveKitRoomDelegate & delegate, const std::string & reason)
-  {
-    livekit::Room room;
-    if (reason == "room_eos") {
-      livekit::RoomEosEvent event;
-      delegate.onRoomEos(room, event);
-      return;
-    }
-    if (reason == "connection_state_disconnected") {
-      livekit::ConnectionStateChangedEvent event;
-      event.state = livekit::ConnectionState::Disconnected;
-      delegate.onConnectionStateChanged(room, event);
-      return;
-    }
-
-    livekit::DisconnectedEvent event;
-    delegate.onDisconnected(room, event);
-  }
-
-  static void emitReconnecting(LiveKitRoomDelegate & delegate, const std::string & reason)
-  {
-    livekit::Room room;
-    if (reason == "connection_state_reconnecting") {
-      livekit::ConnectionStateChangedEvent event;
-      event.state = livekit::ConnectionState::Reconnecting;
-      delegate.onConnectionStateChanged(room, event);
-      return;
-    }
-
-    livekit::ReconnectingEvent event;
-    delegate.onReconnecting(room, event);
-  }
-
-  static void emitReconnected(LiveKitRoomDelegate & delegate)
-  {
-    livekit::Room room;
-    livekit::ReconnectedEvent event;
-    delegate.onReconnected(room, event);
-  }
-
-  static void emitConnectionStateChanged(LiveKitRoomDelegate & delegate, livekit::ConnectionState state)
-  {
-    livekit::Room room;
-    livekit::ConnectionStateChangedEvent event;
-    event.state = state;
-    delegate.onConnectionStateChanged(room, event);
-  }
-
   static void emitParticipantDisconnected(LiveKitRoomDelegate & delegate, const std::string & identity)
   {
     livekit::ParticipantDisconnectedEvent event;

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -23,22 +24,40 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-VideoPublishConfig makePublishConfig(
-  VideoPublishCodec codec, std::uint64_t max_bitrate_bps, double max_framerate, VideoPublishSimulcast simulcast)
+livekit::VideoCodec videoCodec(int value)
 {
-  VideoPublishConfig config;
-  config.codec = codec;
-  config.max_bitrate_bps = max_bitrate_bps;
-  config.max_framerate = max_framerate;
-  config.simulcast = simulcast;
-  return config;
+  return static_cast<livekit::VideoCodec>(value);
 }
 
-void expectPublishConfigEq(const VideoPublishConfig & actual, const VideoPublishConfig & expected)
+livekit::TrackPublishOptions makeTrackPublishOptions(
+  std::optional<livekit::VideoCodec> video_codec,
+  std::optional<livekit::VideoEncodingOptions> video_encoding,
+  std::optional<bool> simulcast)
 {
-  EXPECT_EQ(actual.codec, expected.codec);
-  EXPECT_EQ(actual.max_bitrate_bps, expected.max_bitrate_bps);
-  EXPECT_DOUBLE_EQ(actual.max_framerate, expected.max_framerate);
+  livekit::TrackPublishOptions options;
+  options.video_codec = video_codec;
+  options.video_encoding = video_encoding;
+  options.simulcast = simulcast;
+  return options;
+}
+
+void expectVideoEncodingEq(
+  const std::optional<livekit::VideoEncodingOptions> & actual,
+  const std::optional<livekit::VideoEncodingOptions> & expected)
+{
+  EXPECT_EQ(actual.has_value(), expected.has_value());
+  if (!actual.has_value() || !expected.has_value()) {
+    return;
+  }
+  EXPECT_EQ(actual->max_bitrate, expected->max_bitrate);
+  EXPECT_DOUBLE_EQ(actual->max_framerate, expected->max_framerate);
+}
+
+void expectTrackPublishOptionsEq(
+  const livekit::TrackPublishOptions & actual, const livekit::TrackPublishOptions & expected)
+{
+  EXPECT_EQ(actual.video_codec, expected.video_codec);
+  expectVideoEncodingEq(actual.video_encoding, expected.video_encoding);
   EXPECT_EQ(actual.simulcast, expected.simulcast);
 }
 
@@ -84,7 +103,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   EXPECT_EQ(raw_input.rule_id, "default_ros");
   EXPECT_EQ(raw_input.ingest_mode, RosVideoIngestMode::RawImage);
   EXPECT_EQ(videoIngestModeToString(raw_spec), kRawImageIngestMode);
-  expectPublishConfigEq(raw_spec.publish_config, config.default_publish_config);
+  expectTrackPublishOptionsEq(raw_spec.publish_config, config.default_publish_config);
 
   const auto compressed_spec =
     resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", kCompressedImageInterfaceType);
@@ -94,7 +113,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   EXPECT_EQ(compressed_input.rule_id, "default_ros");
   EXPECT_EQ(compressed_input.ingest_mode, RosVideoIngestMode::CompressedImage);
   EXPECT_EQ(videoIngestModeToString(compressed_spec), kCompressedImageIngestMode);
-  expectPublishConfigEq(compressed_spec.publish_config, config.default_publish_config);
+  expectTrackPublishOptionsEq(compressed_spec.publish_config, config.default_publish_config);
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndIdentifiers)
@@ -103,7 +122,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
 
   RosVideoTopicRule normalized_rule = makeRule("normalized", "/camera/front/*", "videoconvert ! normalized-filter");
   normalized_rule.publish_config =
-    makePublishConfig(VideoPublishCodec::H264, 900000, 12.0, VideoPublishSimulcast::Disabled);
+    makeTrackPublishOptions(videoCodec(1), livekit::VideoEncodingOptions{900000U, 12.0}, false);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), normalized_rule);
 
   const auto spec = resolveRosVideoTopicSpec(config, "  camera//front/image/  ", kImageInterfaceType);
@@ -114,7 +133,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecNormalizesTopicForMatchingAndI
   EXPECT_EQ(input.topic, "/camera/front/image");
   EXPECT_EQ(input.rule_id, "normalized");
   EXPECT_EQ(input.transform_fragment, "videoconvert ! normalized-filter");
-  expectPublishConfigEq(spec.publish_config, normalized_rule.publish_config);
+  expectTrackPublishOptionsEq(spec.publish_config, normalized_rule.publish_config);
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesUnnamedTrackNameForRootTopic)
@@ -153,10 +172,11 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
 
   RosVideoTopicRule broad_rule = makeRule("broad", "/camera/*", "videoconvert ! broad-filter");
-  broad_rule.publish_config = makePublishConfig(VideoPublishCodec::Vp8, 500000, 30.0, VideoPublishSimulcast::Disabled);
+  broad_rule.publish_config =
+    makeTrackPublishOptions(videoCodec(0), livekit::VideoEncodingOptions{500000U, 30.0}, false);
   RosVideoTopicRule specific_rule = makeRule("specific", "/camera/front/*", "videoconvert ! specific-filter");
   specific_rule.publish_config =
-    makePublishConfig(VideoPublishCodec::H264, 800000, 15.0, VideoPublishSimulcast::Enabled);
+    makeTrackPublishOptions(videoCodec(1), livekit::VideoEncodingOptions{800000U, 15.0}, true);
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), broad_rule);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), specific_rule);
@@ -164,7 +184,7 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
   const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", kImageInterfaceType);
 
   EXPECT_EQ(requireRosVideoInput(spec).rule_id, "specific");
-  expectPublishConfigEq(spec.publish_config, specific_rule.publish_config);
+  expectTrackPublishOptionsEq(spec.publish_config, specific_rule.publish_config);
 }
 
 TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
@@ -197,7 +217,7 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
   const auto expected_publish_config =
-    makePublishConfig(VideoPublishCodec::H265, 1200000, 10.0, VideoPublishSimulcast::Disabled);
+    makeTrackPublishOptions(videoCodec(4), livekit::VideoEncodingOptions{1200000U, 10.0}, false);
 
   OtherVideoSource source_config;
   source_config.ingress_fragment = "videotestsrc is-live=true pattern=black";
@@ -216,7 +236,7 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
   EXPECT_EQ(videoIngestModeToString(spec), kOtherVideoIngestMode);
   EXPECT_EQ(input.ingress_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
-  expectPublishConfigEq(spec.publish_config, expected_publish_config);
+  expectTrackPublishOptionsEq(spec.publish_config, expected_publish_config);
 }
 
 TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecPercentEncodesTrackNameSuffix)

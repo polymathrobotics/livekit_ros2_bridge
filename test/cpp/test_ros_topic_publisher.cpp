@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/room_event_types.h"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
@@ -80,6 +81,13 @@ std::vector<std::uint8_t> makePublishPayload(
     }
       .dump();
   return payloadBytes(payload);
+}
+
+livekit::UserDataPacketEvent makeUserPacket(std::vector<std::uint8_t> data)
+{
+  livekit::UserDataPacketEvent event;
+  event.data = std::move(data);
+  return event;
 }
 
 AccessPolicy makeAccessPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -288,8 +296,9 @@ TEST(TopicPublisherTest, PublishPayloadParsesAndPublishesMessagesToRequestedTopi
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
-  publisher.handlePublishPayload(
-    "alice", makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  const livekit::UserDataPacketEvent event =
+    makeUserPacket(makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.handlePublishPacket("alice", event);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -311,7 +320,8 @@ TEST(TopicPublisherTest, InvalidPublishPayloadIsDroppedWithoutPublishing)
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
-  EXPECT_NO_THROW(publisher.handlePublishPayload("alice", payloadBytes("{")));
+  const livekit::UserDataPacketEvent event = makeUserPacket(payloadBytes("{"));
+  EXPECT_NO_THROW(publisher.handlePublishPacket("alice", event));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -332,8 +342,9 @@ TEST(TopicPublisherTest, PublishPayloadWithoutRequesterIdentityIsDropped)
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
 
-  publisher.handlePublishPayload(
-    "", makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  const livekit::UserDataPacketEvent event =
+    makeUserPacket(makePublishPayload(topic, "sensor_msgs/msg/BatteryState", serializeMessageToCdr(message)));
+  publisher.handlePublishPacket("", event);
 
   expectTopicNotPublished(harness, topic, received_message);
 }

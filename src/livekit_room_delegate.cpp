@@ -141,7 +141,7 @@ void LiveKitRoomDelegate::onParticipantDisconnected(
     return;
   }
 
-  std::function<void(const std::string &)> callback;
+  std::function<void(const livekit::ParticipantDisconnectedEvent &)> callback;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ != livekit::ConnectionState::Connected) {
@@ -154,12 +154,11 @@ void LiveKitRoomDelegate::onParticipantDisconnected(
     return;
   }
 
-  const std::string identity = participant->identity();
-  if (identity.empty()) {
+  if (participant->identity().empty()) {
     return;
   }
 
-  callback(identity);
+  callback(event);
 }
 
 void LiveKitRoomDelegate::onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event)

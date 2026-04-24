@@ -28,6 +28,8 @@
 #include "access_policy.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
+#include "livekit/local_participant.h"
+#include "livekit/rpc_error.h"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/constants.hpp"
@@ -70,20 +72,31 @@ MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
   return message;
 }
 
-void expectRpcHandlerError(
+void expectRpcError(
   const std::function<void()> & action,
   std::uint32_t expected_code,
   const std::optional<std::string> & expected_message = std::nullopt)
 {
   try {
     action();
-    FAIL() << "Expected RpcHandlerError";
-  } catch (const RpcHandlerError & exc) {
+    FAIL() << "Expected livekit::RpcError";
+  } catch (const livekit::RpcError & exc) {
     EXPECT_EQ(exc.code(), expected_code);
     if (expected_message.has_value()) {
-      EXPECT_STREQ(exc.what(), expected_message->c_str());
+      EXPECT_EQ(exc.message(), *expected_message);
     }
   }
+}
+
+livekit::RpcInvocationData makeRpcInvocation(
+  std::string caller_identity, std::string payload, std::string request_id = {})
+{
+  livekit::RpcInvocationData invocation;
+  invocation.caller_identity = std::move(caller_identity);
+  invocation.payload = std::move(payload);
+  invocation.request_id = std::move(request_id);
+  invocation.response_timeout_sec = 0.0;
+  return invocation;
 }
 
 class ScopedExecutorThread
@@ -166,7 +179,7 @@ public:
     router.registerRpcs(connection);
   }
 
-  std::optional<std::string> invokeRpc(const std::string & method, const RpcInvocation & invocation)
+  std::optional<std::string> invokeRpc(const std::string & method, const livekit::RpcInvocationData & invocation)
   {
     const auto handler_it = connection.state->rpc_handlers.find(method);
     if (handler_it == connection.state->rpc_handlers.end()) {
@@ -188,16 +201,8 @@ TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
   RpcRouterHarness harness;
 
   const auto expectUnauthorized = [&](const std::string & method) {
-    expectRpcHandlerError(
-      [&]() {
-        harness.invokeRpc(
-          method,
-          RpcInvocation{
-            "",
-            R"({not-json})",
-          });
-      },
-      protocol::kUnauthorizedRpcError);
+    expectRpcError(
+      [&]() { harness.invokeRpc(method, makeRpcInvocation("", R"({not-json})")); }, protocol::kUnauthorizedRpcError);
   };
 
   expectUnauthorized(protocol::kCallServiceRpc);
@@ -211,14 +216,10 @@ TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
   test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
 
-  expectRpcHandlerError(
+  expectRpcError(
     [&]() {
       harness.invokeRpc(
-        protocol::kCallServiceRpc,
-        RpcInvocation{
-          "participant-1",
-          R"({"service":"/rpc_router/set_bool"})",
-        });
+        protocol::kCallServiceRpc, makeRpcInvocation("participant-1", R"({"service":"/rpc_router/set_bool"})"));
     },
     protocol::kInvalidRequestRpcError);
 }
@@ -228,14 +229,10 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
   test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"/allowed_service"}));
 
-  expectRpcHandlerError(
+  expectRpcError(
     [&]() {
       harness.invokeRpc(
-        protocol::kCallServiceRpc,
-        RpcInvocation{
-          "participant-1",
-          makeSetBoolRequestPayload("/denied_service"),
-        });
+        protocol::kCallServiceRpc, makeRpcInvocation("participant-1", makeSetBoolRequestPayload("/denied_service")));
     },
     protocol::kForbiddenRpcError,
     "ROS service '/denied_service' not permitted.");
@@ -246,14 +243,11 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
   test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
-  expectRpcHandlerError(
+  expectRpcError(
     [&]() {
       harness.invokeRpc(
         protocol::kShowInterfaceRpc,
-        RpcInvocation{
-          "participant-1",
-          R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
-        });
+        makeRpcInvocation("participant-1", R"({"interface_types":["nonexistent_pkg/msg/Foo"]})"));
     },
     protocol::kInternalRpcError);
 }
@@ -265,10 +259,7 @@ TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicates
 
   const auto response = harness.invokeRpc(
     protocol::kShowInterfaceRpc,
-    RpcInvocation{
-      "participant-1",
-      R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})",
-    });
+    makeRpcInvocation("participant-1", R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})"));
 
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
@@ -285,15 +276,8 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
   RpcRouterHarness harness;
 
   const auto expectInvalidLimit = [&](const std::string & method) {
-    expectRpcHandlerError(
-      [&]() {
-        harness.invokeRpc(
-          method,
-          RpcInvocation{
-            "participant-1",
-            R"({"limit":0})",
-          });
-      },
+    expectRpcError(
+      [&]() { harness.invokeRpc(method, makeRpcInvocation("participant-1", R"({"limit":0})")); },
       protocol::kInvalidRequestRpcError,
       "limit must be a positive integer");
   };
@@ -371,10 +355,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   ScopedExecutorThread executor_thread(executor);
   const auto rpc_response = harness.invokeRpc(
     protocol::kCallServiceRpc,
-    RpcInvocation{
-      "participant-1",
-      makeSetBoolRequestPayload("/rpc_router/set_bool", true),
-    });
+    makeRpcInvocation("participant-1", makeSetBoolRequestPayload("/rpc_router/set_bool", true)));
   ASSERT_TRUE(rpc_response.has_value());
 
   const auto body = nlohmann::json::parse(*rpc_response);
@@ -398,14 +379,11 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
   executor.add_node(harness.node);
 
   ScopedExecutorThread executor_thread(executor);
-  expectRpcHandlerError(
+  expectRpcError(
     [&]() {
       harness.invokeRpc(
         protocol::kCallServiceRpc,
-        RpcInvocation{
-          "participant-1",
-          makeSetBoolRequestPayload("/no_such_service", true, 200),
-        });
+        makeRpcInvocation("participant-1", makeSetBoolRequestPayload("/no_such_service", true, 200)));
     },
     protocol::kInternalRpcError,
     "Service call timed out.");
@@ -435,12 +413,8 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
   }));
 
   ScopedExecutorThread executor_thread(executor);
-  const auto response = harness.invokeRpc(
-    protocol::kListServicesRpc,
-    RpcInvocation{
-      "participant-1",
-      R"({"query":"rpc_router"})",
-    });
+  const auto response =
+    harness.invokeRpc(protocol::kListServicesRpc, makeRpcInvocation("participant-1", R"({"query":"rpc_router"})"));
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["services"].size(), 1U);
@@ -467,11 +441,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
 
   ScopedExecutorThread executor_thread(executor);
   const auto response = harness.invokeRpc(
-    protocol::kListTopicsRpc,
-    RpcInvocation{
-      "participant-1",
-      R"({"query":"BatteryState","limit":1})",
-    });
+    protocol::kListTopicsRpc, makeRpcInvocation("participant-1", R"({"query":"BatteryState","limit":1})"));
   ASSERT_TRUE(response.has_value());
   const auto body = nlohmann::json::parse(*response);
   ASSERT_EQ(body["topics"].size(), 1U);

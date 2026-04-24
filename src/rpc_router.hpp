@@ -65,10 +65,10 @@ private:
 
   void unregisterRpcs() noexcept;
 
-  std::optional<std::string> callService(const RpcInvocation & invocation);
-  std::optional<std::string> getInterfaces(const RpcInvocation & invocation);
-  std::optional<std::string> listServices(const RpcInvocation & invocation);
-  std::optional<std::string> listTopics(const RpcInvocation & invocation);
+  std::optional<std::string> callService(const livekit::RpcInvocationData & invocation);
+  std::optional<std::string> getInterfaces(const livekit::RpcInvocationData & invocation);
+  std::optional<std::string> listServices(const livekit::RpcInvocationData & invocation);
+  std::optional<std::string> listTopics(const livekit::RpcInvocationData & invocation);
 };
 
 }  // namespace livekit_ros2_bridge

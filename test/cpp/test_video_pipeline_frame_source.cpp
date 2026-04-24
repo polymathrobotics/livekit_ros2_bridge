@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/video_frame.h"
 #include "ros_test_support.hpp"
 #include "utils/gstreamer_raii.hpp"
 #include "video_frame_source/ros_topic_video_frame_sources.hpp"
@@ -55,7 +56,7 @@ VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interfa
 class NoOpFrameSink final : public VideoFrameSink
 {
 public:
-  void write(int, int, std::vector<std::uint8_t>, std::int64_t) override
+  void captureFrame(const livekit::VideoFrame &, std::int64_t) override
   {}
 };
 

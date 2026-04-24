@@ -28,6 +28,9 @@
 
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
+#include "livekit/room.h"
+#include "livekit/room_event_types.h"
+#include "livekit_room_delegate_test_support.hpp"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/constants.hpp"
@@ -43,6 +46,7 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+using test_support::LiveKitRoomDelegateTestEvents;
 using test_support::ScopedRclcppInit;
 using test_support::spinUntil;
 using test_support::waitForTopicType;
@@ -144,14 +148,14 @@ bool publishUntil(
 nlohmann::json extractSinglePublishedStatusEnvelope(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
-  if (state.published_outgoing_packets.size() != 1U) {
-    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_packets.size();
+  if (state.published_data_calls.size() != 1U) {
+    ADD_FAILURE() << "Expected one published status response, got " << state.published_data_calls.size();
     return nlohmann::json::object();
   }
 
-  const auto & packet = state.published_outgoing_packets.front();
+  const auto & packet = state.published_data_calls.front();
   EXPECT_EQ(packet.topic, protocol::kStatusTopic);
-  EXPECT_EQ(packet.recipient_identities, (std::vector<std::string>{requester_identity}));
+  EXPECT_EQ(packet.destination_identities, (std::vector<std::string>{requester_identity}));
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
@@ -276,7 +280,8 @@ TEST_F(RuntimeTest, WatchdogExitsWhenRecoveryTimeoutExpires)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          harness.fake_room_connection->emitReconnectRequested("room_disconnected");
+          livekit::Room room;
+          harness.state->delegate->onDisconnected(room, livekit::DisconnectedEvent{});
         },
         kWatchdogObservationWindow,
         kRuntimeScenarioTimedOutWithoutWatchdog);
@@ -297,7 +302,8 @@ TEST_F(RuntimeTest, WatchdogExitsWhenSdkReconnectNeverRecovers)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          harness.fake_room_connection->emitReconnecting("room_reconnecting");
+          livekit::Room room;
+          harness.state->delegate->onReconnecting(room, livekit::ReconnectingEvent{});
         },
         kWatchdogObservationWindow,
         kRuntimeScenarioTimedOutWithoutWatchdog);
@@ -318,7 +324,8 @@ TEST_F(RuntimeTest, WatchdogClearsRecoveryTimeoutAfterRecovery)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          harness.fake_room_connection->emitReconnectRequested("room_disconnected");
+          livekit::Room room;
+          harness.state->delegate->onDisconnected(room, livekit::DisconnectedEvent{});
           harness.fake_room_connection->emitConnected();
         },
         kHealthyConnectionObservationWindow,
@@ -340,8 +347,9 @@ TEST_F(RuntimeTest, WatchdogClearsSdkReconnectTimeoutAfterRecovery)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          harness.fake_room_connection->emitReconnecting("room_reconnecting");
-          harness.fake_room_connection->emitReconnected();
+          livekit::Room room;
+          harness.state->delegate->onReconnecting(room, livekit::ReconnectingEvent{});
+          harness.state->delegate->onReconnected(room, livekit::ReconnectedEvent{});
         },
         kHealthyConnectionObservationWindow,
         kRuntimeScenarioCompleted);
@@ -674,7 +682,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   const std::string heartbeat = R"({"subscriptions":[{"kind":"topic","name":"/camera/front"}]})";
   harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_outgoing_packets.size() == 1U; }));
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_calls.size() == 1U; }));
   const auto status = extractSinglePublishedStatusEnvelope(*harness.state, "participant-1");
   ASSERT_TRUE(status.contains("subscriptions"));
   ASSERT_EQ(status["subscriptions"].size(), 1U);
@@ -717,8 +725,8 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
     room_connection.state->stop_hook = [heartbeat](LiveKitRoomDelegate & delegate) {
       delegate.roomConnectionReset();
-      emitParticipantDisconnected(delegate, "participant-1");
-      emitUserPacket(delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+      LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-1");
+      LiveKitRoomDelegateTestEvents::emitUserPacket(delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
     };
   });
 
@@ -745,7 +753,7 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   executor.cancel();
   executor_thread.join();
 
-  EXPECT_TRUE(harness.state->published_outgoing_packets.empty());
+  EXPECT_TRUE(harness.state->published_data_calls.empty());
   EXPECT_TRUE(harness.state->published_data_track_names.empty());
 }
 
@@ -785,7 +793,8 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   ASSERT_NE(harness.state->delegate, nullptr);
-  emitUserPacket(*harness.state->delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+  LiveKitRoomDelegateTestEvents::emitUserPacket(
+    *harness.state->delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   const bool publish_started_ready = publish_started.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
   EXPECT_TRUE(publish_started_ready);

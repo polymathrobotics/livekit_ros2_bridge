@@ -18,6 +18,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -75,6 +76,16 @@ SubscriptionErrorStatus makeErrorStatus(
   SubscriptionTargetKind kind, std::string name, SubscriptionStatusErrorReason reason, std::string message)
 {
   return {kind, std::move(name), reason, std::move(message)};
+}
+
+SubscriptionReportedStatus reportedStatus(SubscriptionStatus status)
+{
+  return status;
+}
+
+SubscriptionReportedStatus reportedError(SubscriptionErrorStatus status)
+{
+  return status;
 }
 
 nlohmann::json parseSerializedStatusPayload(
@@ -314,7 +325,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
 
   EXPECT_EQ(
     parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{topic_data, other_video},
+      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data), reportedStatus(other_video)},
       std::nullopt,
       std::nullopt,
       std::chrono::steady_clock::time_point{}),
@@ -350,21 +361,21 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
   EXPECT_EQ(
     parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
-        makeErrorStatus(
+        reportedError(makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/battery_state",
           SubscriptionStatusErrorReason::Forbidden,
-          "ROS topic '/battery_state' not permitted."),
-        makeErrorStatus(
+          "ROS topic '/battery_state' not permitted.")),
+        reportedError(makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/camera/front",
           SubscriptionStatusErrorReason::Unavailable,
-          "Video stream is unavailable."),
-        makeErrorStatus(
+          "Video stream is unavailable.")),
+        reportedError(makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
           SubscriptionStatusErrorReason::NotFound,
-          "Unknown other video source '/sources/missing'."),
+          "Unknown other video source '/sources/missing'.")),
       },
       std::nullopt,
       std::nullopt,
@@ -403,7 +414,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
   });
 
   EXPECT_EQ(
-    parseSerializedStatusPayload(std::vector<SubscriptionReportedStatus>{topic_data}, session_id, expiry, now),
+    parseSerializedStatusPayload(
+      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, session_id, expiry, now),
     expected);
 }
 
@@ -436,7 +448,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
   });
 
   EXPECT_EQ(
-    parseSerializedStatusPayload(std::vector<SubscriptionReportedStatus>{topic_data}, std::nullopt, expiry, now),
+    parseSerializedStatusPayload(
+      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, std::nullopt, expiry, now),
     expected);
 }
 
@@ -469,12 +482,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   EXPECT_EQ(
     parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
-        other_video,
-        makeErrorStatus(
+        reportedStatus(other_video),
+        reportedError(makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",
           SubscriptionStatusErrorReason::NotFound,
-          "No ROS types found for topic '/nonexistent_topic'."),
+          "No ROS types found for topic '/nonexistent_topic'.")),
       },
       std::nullopt,
       std::nullopt,
@@ -491,7 +504,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDelive
 
   EXPECT_THROW(
     (void)protocol::subscriptions::serializeStatusReport(
-      SubscriptionStatusReport{{status}, std::nullopt, std::nullopt}, std::chrono::steady_clock::time_point{}),
+      SubscriptionStatusReport{
+        std::vector<SubscriptionReportedStatus>{reportedStatus(status)},
+        std::nullopt,
+        std::nullopt,
+      },
+      std::chrono::steady_clock::time_point{}),
     std::invalid_argument);
 }
 

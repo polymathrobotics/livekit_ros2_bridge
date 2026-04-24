@@ -109,7 +109,6 @@ private:
   void onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
   void onRoomReconnectRequested(const std::string & reason);
-  void onRoomReconnecting(const std::string & reason);
   void onRoomReconnected();
   void onRoomConnectionReset();
   void submitToExecutor(std::function<void()> work);

@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -31,6 +30,11 @@
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+
+namespace livekit
+{
+struct UserDataPacketEvent;
+}  // namespace livekit
 
 namespace livekit_ros2_bridge
 {
@@ -64,7 +68,7 @@ public:
   // consulting the graph again. Once the bounded publisher cache is full, new
   // topics are rejected until shutdown clears the cached handles.
   void publish(const std::string & requester_identity, const TopicPublishRequest & request);
-  void handlePublishPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
+  void handlePublishPacket(const std::string & requester_identity, const livekit::UserDataPacketEvent & event);
 
   // Idempotently rejects later publish() calls and clears the bridge-owned
   // cached publisher handles.

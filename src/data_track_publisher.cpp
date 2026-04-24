@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "livekit/data_track_error.h"
+#include "livekit/data_track_frame.h"
 #include "livekit/result.h"
 #include "protocol/constants.hpp"
 #include "rclcpp/create_generic_subscription.hpp"
@@ -56,23 +57,6 @@ std::string makeTrackName(const std::string & topic)
     name.push_back(ch == '/' ? '.' : ch);
   }
   return name;
-}
-
-const char * pushReason(livekit::LocalDataTrackTryPushErrorCode code)
-{
-  switch (code) {
-    case livekit::LocalDataTrackTryPushErrorCode::UNKNOWN:
-      return "unknown";
-    case livekit::LocalDataTrackTryPushErrorCode::INVALID_HANDLE:
-      return "invalid_handle";
-    case livekit::LocalDataTrackTryPushErrorCode::TRACK_UNPUBLISHED:
-      return "track_unpublished";
-    case livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL:
-      return "queue_full";
-    case livekit::LocalDataTrackTryPushErrorCode::INTERNAL:
-      return "internal";
-  }
-  return "unknown";
 }
 
 }  // namespace
@@ -184,7 +168,7 @@ public:
 
       const auto & cdr = message.get_rcl_serialized_message();
       const auto result = room_connection_.tryPushDataTrack(
-        track_, std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length));
+        track_, livekit::DataTrackFrame{std::vector<std::uint8_t>(cdr.buffer, cdr.buffer + cdr.buffer_length)});
       if (result) {
         return;
       }
@@ -202,7 +186,7 @@ public:
       LogEvent(kLogger, "data_track_push_failed")
         .field("resource", topic_)
         .field("track_name", track_name_)
-        .field("reason", pushReason(error.code))
+        .field("sdk_error_code", static_cast<std::uint32_t>(error.code))
         .fieldOr("error", error.message)
         .warnThrottle(*clock_, kLogThrottle);
     }

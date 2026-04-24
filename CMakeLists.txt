@@ -72,6 +72,7 @@ livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_core)
 target_link_libraries(livekit_ros2_bridge_core PRIVATE
   ${sensor_msgs_TARGETS}
   ament_index_cpp::ament_index_cpp
+  LiveKit::livekit
   livekit_ros2_bridge_parameters
   magic_enum::magic_enum
   nlohmann_json::nlohmann_json
@@ -89,6 +90,7 @@ add_library(livekit_ros2_bridge_ros STATIC
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_ros)
 target_link_libraries(livekit_ros2_bridge_ros PRIVATE
+  LiveKit::livekit
   livekit_ros2_bridge_core
   rclcpp::rclcpp
 )

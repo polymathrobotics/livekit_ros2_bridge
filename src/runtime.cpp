@@ -120,15 +120,16 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
       .fieldOr("requester_identity", event.participant == nullptr ? "" : event.participant->identity())
       .warnThrottle(*clock_, std::chrono::seconds(5));
   };
-  callbacks.on_participant_disconnected = [this](const std::string & remote_participant_identity) {
-    (void)callback_gate_.runIfOpen(
-      [this, &remote_participant_identity]() { onRoomRemoteParticipantDisconnected(remote_participant_identity); });
+  callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
+    (void)callback_gate_.runIfOpen([this, &event]() {
+      onRoomRemoteParticipantDisconnected(event.participant == nullptr ? "" : event.participant->identity());
+    });
   };
   callbacks.on_reconnect_requested = [this](const std::string & reason) {
     (void)callback_gate_.runIfOpen([this, &reason]() { onRoomReconnectRequested(reason); });
   };
   callbacks.on_reconnecting = [this](const std::string & reason) {
-    (void)callback_gate_.runIfOpen([this, &reason]() { onRoomReconnecting(reason); });
+    (void)callback_gate_.runIfOpen([this, &reason]() { onRoomReconnectRequested(reason); });
   };
   callbacks.on_reconnected = [this]() { (void)callback_gate_.runIfOpen([this]() { onRoomReconnected(); }); };
   callbacks.on_connection_reset = [this]() { (void)callback_gate_.runIfOpen([this]() { onRoomConnectionReset(); }); };
@@ -179,8 +180,10 @@ void Runtime::onRoomUserPacketReceived(const livekit::UserDataPacketEvent & even
 
   // LiveKit owns the event lifetime, so executor work must capture only copied fields.
   if (topic == protocol::kRosPublishTopic) {
-    submitToExecutor([this, requester_identity, payload = event.data]() {
-      ros_topic_publisher_.handlePublishPayload(requester_identity, payload);
+    livekit::UserDataPacketEvent event_snapshot = event;
+    event_snapshot.participant = nullptr;
+    submitToExecutor([this, requester_identity, event_snapshot = std::move(event_snapshot)]() {
+      ros_topic_publisher_.handlePublishPacket(requester_identity, event_snapshot);
     });
     return;
   }
@@ -222,11 +225,6 @@ void Runtime::onRoomReconnectRequested(const std::string & reason)
 
   log.field("recovery_timeout_seconds", config_.health.watchdog_recovery_timeout.count() / 1000.0);
   log.warn();
-}
-
-void Runtime::onRoomReconnecting(const std::string & reason)
-{
-  onRoomReconnectRequested(reason);
 }
 
 void Runtime::onRoomReconnected()

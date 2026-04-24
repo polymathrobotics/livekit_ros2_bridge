@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <unordered_set>
@@ -32,6 +33,7 @@
 #else
   #error "magic_enum header not found"
 #endif
+#include "livekit/room_event_types.h"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/parameter.hpp"
@@ -138,6 +140,68 @@ std::string toPascalCaseToken(std::string token)
   return normalized;
 }
 
+std::optional<livekit::VideoCodec> parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
+{
+  const std::string codec = trim(raw_codec);
+  if (codec == "auto") {
+    return std::nullopt;
+  }
+  if (codec == "vp8") {
+    return static_cast<livekit::VideoCodec>(0);
+  }
+  if (codec == "h264") {
+    return static_cast<livekit::VideoCodec>(1);
+  }
+  if (codec == "av1") {
+    return static_cast<livekit::VideoCodec>(2);
+  }
+  if (codec == "vp9") {
+    return static_cast<livekit::VideoCodec>(3);
+  }
+  if (codec == "h265") {
+    return static_cast<livekit::VideoCodec>(4);
+  }
+  throw std::runtime_error("unsupported " + field_name + " '" + codec + "'");
+}
+
+std::optional<bool> parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
+{
+  const std::string simulcast = trim(raw_simulcast);
+  if (simulcast == "auto") {
+    return std::nullopt;
+  }
+  if (simulcast == "enabled") {
+    return true;
+  }
+  if (simulcast == "disabled") {
+    return false;
+  }
+  throw std::runtime_error("unsupported " + field_name + " '" + simulcast + "'");
+}
+
+void setVideoEncodingOptions(livekit::TrackPublishOptions & config, std::uint64_t max_bitrate_bps, double max_framerate)
+{
+  if (max_bitrate_bps > 0 || max_framerate > 0.0) {
+    livekit::VideoEncodingOptions encoding;
+    encoding.max_bitrate = max_bitrate_bps;
+    encoding.max_framerate = max_framerate;
+    config.video_encoding = encoding;
+    return;
+  }
+
+  config.video_encoding.reset();
+}
+
+std::uint64_t videoMaxBitrateBps(const livekit::TrackPublishOptions & config)
+{
+  return config.video_encoding.has_value() ? config.video_encoding->max_bitrate : 0;
+}
+
+double videoMaxFramerate(const livekit::TrackPublishOptions & config)
+{
+  return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
+}
+
 template <typename EnumT>
 EnumT parseEnumToken(std::string token, const std::string & field_name)
 {
@@ -180,46 +244,39 @@ std::optional<rclcpp::DurabilityPolicy> parseSubscriptionQosDurability(const std
   }
 }
 
-VideoPublishCodec parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
+livekit::TrackPublishOptions parseTrackPublishOptions(const Params & params)
 {
-  return parseEnumToken<VideoPublishCodec>(raw_codec, field_name);
-}
-
-VideoPublishSimulcast parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
-{
-  return parseEnumToken<VideoPublishSimulcast>(raw_simulcast, field_name);
-}
-
-VideoPublishConfig parseVideoPublishConfig(const Params & params)
-{
-  VideoPublishConfig config;
-  config.codec = parseVideoPublishCodec(trim(params.video.publish.codec), "video.publish.codec");
-  config.max_bitrate_bps = static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps);
-  config.max_framerate = params.video.publish.max_framerate;
+  livekit::TrackPublishOptions config;
+  config.video_codec = parseVideoPublishCodec(params.video.publish.codec, "video.publish.codec");
+  setVideoEncodingOptions(
+    config, static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps), params.video.publish.max_framerate);
   config.simulcast = parseVideoPublishSimulcast(trim(params.video.publish.simulcast), "video.publish.simulcast");
   return config;
 }
 
 template <typename EntryT>
-VideoPublishConfig parseVideoPublishConfig(
-  const EntryT & entry, const std::string & context, const VideoPublishConfig & default_publish_config)
+livekit::TrackPublishOptions parseTrackPublishOptions(
+  const EntryT & entry, const std::string & context, const livekit::TrackPublishOptions & default_publish_config)
 {
-  VideoPublishConfig config = default_publish_config;
+  livekit::TrackPublishOptions config = default_publish_config;
 
   const std::string codec = trim(entry.publish.codec);
   if (!codec.empty()) {
-    config.codec = parseVideoPublishCodec(codec, context + " publish.codec");
+    config.video_codec = parseVideoPublishCodec(codec, context + " publish.codec");
   }
 
   // Entry-level numeric overrides use negative values as "inherit the global
   // default" sentinels because the generated parameter schema cannot express
   // optional scalars for these fields.
+  std::uint64_t max_bitrate_bps = videoMaxBitrateBps(config);
+  double max_framerate = videoMaxFramerate(config);
   if (entry.publish.max_bitrate_bps >= 0) {
-    config.max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
+    max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
   }
   if (entry.publish.max_framerate >= 0.0) {
-    config.max_framerate = entry.publish.max_framerate;
+    max_framerate = entry.publish.max_framerate;
   }
+  setVideoEncodingOptions(config, max_bitrate_bps, max_framerate);
 
   const std::string simulcast = trim(entry.publish.simulcast);
   if (!simulcast.empty()) {
@@ -383,7 +440,7 @@ const typename EntryMap::mapped_type & requireUniqueEntry(
 VideoStreamConfig loadVideoStreamConfig(const Params & params)
 {
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
-  config.default_publish_config = parseVideoPublishConfig(params);
+  config.default_publish_config = parseTrackPublishOptions(params);
   for (auto & rule : config.ros_topic_rules) {
     rule.publish_config = config.default_publish_config;
   }
@@ -416,7 +473,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     rule.pattern = pattern;
     rule.rule_id = entry_id;
     rule.transform_fragment = transform;
-    rule.publish_config = parseVideoPublishConfig(entry, rule_context, config.default_publish_config);
+    rule.publish_config = parseTrackPublishOptions(entry, rule_context, config.default_publish_config);
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
@@ -446,7 +503,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     OtherVideoSource source;
     source.ingress_fragment = ingress;
     source.transform_fragment = transform;
-    source.publish_config = parseVideoPublishConfig(entry, source_context, config.default_publish_config);
+    source.publish_config = parseTrackPublishOptions(entry, source_context, config.default_publish_config);
     config.other_video_sources.emplace(other_video_source_name, std::move(source));
   }
 

@@ -26,6 +26,8 @@
 #include <utility>
 #include <vector>
 
+#include "livekit/video_frame.h"
+#include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "video_track_publisher.hpp"
@@ -39,85 +41,62 @@ namespace
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.video_pipeline_frame_source");
 constexpr auto kOtherVideoRestartDelay = std::chrono::milliseconds(250);
 
-struct PackedI420Frame
-{
-  int width = 0;
-  int height = 0;
-  std::vector<std::uint8_t> data;
-};
-
-struct I420Layout
+struct VideoDimensions
 {
   int width = 0;
   int height = 0;
 
-  static I420Layout fromInfo(const GstVideoInfo & video_info)
+  static VideoDimensions fromInfo(const GstVideoInfo & video_info)
   {
-    I420Layout layout;
-    layout.width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&video_info));
-    layout.height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&video_info));
-    if (layout.width <= 0 || layout.height <= 0) {
+    VideoDimensions dimensions;
+    dimensions.width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&video_info));
+    dimensions.height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&video_info));
+    if (dimensions.width <= 0 || dimensions.height <= 0) {
       throw std::runtime_error("I420 sample dimensions are invalid.");
     }
-    return layout;
-  }
-
-  [[nodiscard]] std::size_t lumaWidth() const
-  {
-    return static_cast<std::size_t>(width);
-  }
-
-  [[nodiscard]] std::size_t lumaHeight() const
-  {
-    return static_cast<std::size_t>(height);
-  }
-
-  [[nodiscard]] std::size_t chromaWidth() const
-  {
-    return (lumaWidth() + 1U) / 2U;
-  }
-
-  [[nodiscard]] std::size_t chromaHeight() const
-  {
-    return (lumaHeight() + 1U) / 2U;
-  }
-
-  [[nodiscard]] std::size_t lumaPlaneSize() const
-  {
-    return lumaWidth() * lumaHeight();
-  }
-
-  [[nodiscard]] std::size_t chromaPlaneSize() const
-  {
-    return chromaWidth() * chromaHeight();
-  }
-
-  [[nodiscard]] std::size_t byteCount() const
-  {
-    return lumaPlaneSize() + chromaPlaneSize() * 2U;
-  }
-
-  void validate(const GstVideoFrame * frame) const
-  {
-    if (
-      !hasPlaneDimensions(frame, 0, lumaWidth(), lumaHeight()) ||
-      !hasPlaneDimensions(frame, 1, chromaWidth(), chromaHeight()) ||
-      !hasPlaneDimensions(frame, 2, chromaWidth(), chromaHeight()))
-    {
-      throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
-    }
-  }
-
-private:
-  static bool hasPlaneDimensions(
-    const GstVideoFrame * frame, guint component_index, std::size_t expected_width, std::size_t expected_height)
-  {
-    return static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(frame, component_index)) == expected_width &&
-           static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(frame, component_index)) == expected_height;
+    return dimensions;
   }
 };
 
-void copyI420Plane(const GstVideoFrame * frame, guint component_index, std::uint8_t * dst, std::size_t dst_stride)
+std::size_t planeHeight(const livekit::VideoPlaneInfo & plane)
+{
+  if (plane.stride == 0U || plane.size % plane.stride != 0U) {
+    throw std::runtime_error("LiveKit I420 plane layout is invalid.");
+  }
+  return static_cast<std::size_t>(plane.size / plane.stride);
+}
+
+std::uint8_t * planeData(const livekit::VideoPlaneInfo & plane)
+{
+  if (plane.data_ptr == 0U) {
+    throw std::runtime_error("LiveKit I420 plane data is unavailable.");
+  }
+  return reinterpret_cast<std::uint8_t *>(plane.data_ptr);
+}
+
+void validateI420Plane(
+  const GstVideoFrame * frame, guint component_index, const livekit::VideoPlaneInfo & expected_plane)
+{
+  if (
+    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(frame, component_index)) != expected_plane.stride ||
+    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(frame, component_index)) != planeHeight(expected_plane))
+  {
+    throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
+  }
+}
+
+void validateI420Planes(const GstVideoFrame * frame, const std::vector<livekit::VideoPlaneInfo> & expected_planes)
+{
+  if (expected_planes.size() != 3U) {
+    throw std::runtime_error("LiveKit I420 plane layout is invalid.");
+  }
+
+  validateI420Plane(frame, 0, expected_planes[0]);
+  validateI420Plane(frame, 1, expected_planes[1]);
+  validateI420Plane(frame, 2, expected_planes[2]);
+}
+
+void copyI420Plane(const GstVideoFrame * frame, guint component_index, const livekit::VideoPlaneInfo & dst_plane)
 {
   const auto * src = static_cast<const std::uint8_t *>(GST_VIDEO_FRAME_COMP_DATA(frame, component_index));
   const int src_stride = GST_VIDEO_FRAME_COMP_STRIDE(frame, component_index);
@@ -129,6 +108,8 @@ void copyI420Plane(const GstVideoFrame * frame, guint component_index, std::uint
   if (src_stride < 0 || plane_width <= 0 || plane_height <= 0) {
     throw std::runtime_error("I420 frame plane layout is invalid.");
   }
+  auto * dst = planeData(dst_plane);
+  const std::size_t dst_stride = dst_plane.stride;
   if (static_cast<std::size_t>(plane_width) > dst_stride || src_stride < plane_width) {
     throw std::runtime_error("I420 frame plane stride is unsupported.");
   }
@@ -143,7 +124,7 @@ void copyI420Plane(const GstVideoFrame * frame, guint component_index, std::uint
   }
 }
 
-PackedI420Frame packI420Frame(GstSample * sample)
+livekit::VideoFrame unpackI420Frame(GstSample * sample)
 {
   GstCaps * caps = gst_sample_get_caps(sample);
   GstBuffer * buffer = gst_sample_get_buffer(sample);
@@ -159,7 +140,7 @@ PackedI420Frame packI420Frame(GstSample * sample)
     throw std::runtime_error("Video pipeline did not output I420 frames.");
   }
 
-  const I420Layout layout = I420Layout::fromInfo(video_info);
+  const VideoDimensions dimensions = VideoDimensions::fromInfo(video_info);
 
   GstVideoFrameGuard mapped_frame(&video_info, buffer, GST_MAP_READ);
   if (!mapped_frame.is_valid()) {
@@ -170,17 +151,12 @@ PackedI420Frame packI420Frame(GstSample * sample)
   // hand us planar I420 with padding, so we repack planes row-by-row while
   // keeping the frame in I420 to avoid any CPU color conversion.
   const auto * gst_frame = mapped_frame.get();
-  layout.validate(gst_frame);
-
-  PackedI420Frame frame;
-  frame.width = layout.width;
-  frame.height = layout.height;
-  frame.data.resize(layout.byteCount());
-
-  auto * dst = frame.data.data();
-  copyI420Plane(gst_frame, 0, dst, layout.lumaWidth());
-  copyI420Plane(gst_frame, 1, dst + layout.lumaPlaneSize(), layout.chromaWidth());
-  copyI420Plane(gst_frame, 2, dst + layout.lumaPlaneSize() + layout.chromaPlaneSize(), layout.chromaWidth());
+  auto frame = livekit::VideoFrame::create(dimensions.width, dimensions.height, livekit::VideoBufferType::I420);
+  const auto planes = frame.planeInfos();
+  validateI420Planes(gst_frame, planes);
+  copyI420Plane(gst_frame, 0, planes[0]);
+  copyI420Plane(gst_frame, 1, planes[1]);
+  copyI420Plane(gst_frame, 2, planes[2]);
   return frame;
 }
 
@@ -392,9 +368,9 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
                                       ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U)
                                       : 0;
 
-  PackedI420Frame frame;
+  livekit::VideoFrame frame;
   try {
-    frame = packI420Frame(sample.get());
+    frame = unpackI420Frame(sample.get());
   } catch (const std::exception & exc) {
     observer_.onSampleUnpackFailed(exc.what());
     return GST_FLOW_ERROR;
@@ -408,9 +384,9 @@ GstFlowReturn VideoPipelineFrameSource::onSample(GstAppSink * sink)
   }
 
   try {
-    // The mutex only protects local lifecycle state. Writing to the sink may
+    // The mutex only protects local lifecycle state. Capturing into the sink may
     // block in downstream LiveKit code, so keep that handoff outside the lock.
-    sink_.write(frame.width, frame.height, std::move(frame.data), timestamp_us);
+    sink_.captureFrame(frame, timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     observer_.onCaptureFailed(exc.what());

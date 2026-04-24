@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "interface_definition_lookup.hpp"
+#include "livekit/rpc_error.h"
 #include "protocol/constants.hpp"
 #include "protocol/interfaces_json.hpp"
 #include "protocol/resources.hpp"
@@ -54,7 +55,7 @@ constexpr std::array<const char *, 4> kRpcNames{
 };
 
 template <typename EventT>
-EventT && addLogFields(EventT && event, const char * method_name, const RpcInvocation & invocation)
+EventT && addLogFields(EventT && event, const char * method_name, const livekit::RpcInvocationData & invocation)
 {
   // Keep the request-scoped correlation fields uniform across every router
   // rejection/failure log so operators can trace one RPC through the bridge.
@@ -66,11 +67,11 @@ EventT && addLogFields(EventT && event, const char * method_name, const RpcInvoc
 
 std::uint32_t errorCodeFor(const std::exception & exc)
 {
-  // Keep the protocol error taxonomy narrow: explicit RpcHandlerError values
+  // Keep the protocol error taxonomy narrow: explicit SDK RpcError values
   // win, payload/range validation faults become invalid_request, and every
   // other exception is collapsed into the bridge's generic internal error.
-  if (const auto * handler_error = dynamic_cast<const RpcHandlerError *>(&exc)) {
-    return handler_error->code();
+  if (const auto * rpc_error = dynamic_cast<const livekit::RpcError *>(&exc)) {
+    return rpc_error->code();
   }
   if (
     dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
@@ -98,17 +99,18 @@ const char * errorReason(std::uint32_t code)
 
 [[noreturn]] void throwLoggedError(
   const char * method_name,
-  const RpcInvocation & invocation,
+  const livekit::RpcInvocationData & invocation,
   const std::exception & exc,
   std::optional<std::string_view> service = std::nullopt)
 {
   // Log once before translating arbitrary exceptions into the stable RPC error
-  // surface. Pre-built RpcHandlerError instances are rethrown after logging so
+  // surface. Pre-built SDK RpcError instances are rethrown after logging so
   // method-specific codes and messages survive unchanged.
   const auto code = errorCodeFor(exc);
   const char * reason = errorReason(code);
   LogEvent event(kLogger, code == protocol::kInternalRpcError ? "rpc_request_failed" : "rpc_request_rejected");
   addLogFields(event, method_name, invocation).field("reason", reason);
+  const auto * rpc_error = dynamic_cast<const livekit::RpcError *>(&exc);
   const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
   if (validation != nullptr) {
     event.field("request_field", validation->field());
@@ -117,7 +119,7 @@ const char * errorReason(std::uint32_t code)
   if (service) {
     event.field("service", *service);
   }
-  event.field("error", exc.what());
+  event.field("error", rpc_error != nullptr ? rpc_error->message() : exc.what());
 
   if (code == protocol::kInternalRpcError) {
     event.error();
@@ -125,10 +127,10 @@ const char * errorReason(std::uint32_t code)
     event.warn();
   }
 
-  if (dynamic_cast<const RpcHandlerError *>(&exc) != nullptr) {
+  if (rpc_error != nullptr) {
     throw;
   }
-  throw RpcHandlerError(code, exc.what());
+  throw livekit::RpcError(code, exc.what());
 }
 
 std::vector<Resource> filterResources(
@@ -169,7 +171,7 @@ std::vector<Resource> filterResources(
 
 template <typename HandleRpcT>
 std::optional<std::string> withCallerIdentity(
-  const char * method_name, const RpcInvocation & invocation, HandleRpcT handle)
+  const char * method_name, const livekit::RpcInvocationData & invocation, HandleRpcT handle)
 {
   // Reject anonymous callers before parsing/dispatch, and centralize shared
   // exception-to-protocol translation for every RPC handler.
@@ -178,12 +180,12 @@ std::optional<std::string> withCallerIdentity(
       .field("reason", "unauthorized")
       .field("error", "caller_identity_required")
       .warn();
-    throw RpcHandlerError(protocol::kUnauthorizedRpcError, "caller_identity is required for this RPC");
+    throw livekit::RpcError(protocol::kUnauthorizedRpcError, "caller_identity is required for this RPC");
   }
 
   try {
     return handle();
-  } catch (const RpcHandlerError &) {
+  } catch (const livekit::RpcError &) {
     throw;
   } catch (const std::exception & exc) {
     throwLoggedError(method_name, invocation, exc);
@@ -213,20 +215,23 @@ bool RpcRouter::registerRpcs(RoomConnection & connection)
   registered_connection_ = &connection;
   bool all_registered = true;
 
-  const auto register_method = [&](const char * method_name, RpcHandler handler) {
+  const auto register_method = [&](const char * method_name, livekit::LocalParticipant::RpcHandler handler) {
     // Registration is best-effort rather than transactional so one failure
     // does not hide other methods that can still be served on this connection.
     all_registered = connection.registerRpc(method_name, std::move(handler)) && all_registered;
   };
 
+  register_method(protocol::kCallServiceRpc, [this](const livekit::RpcInvocationData & invocation) {
+    return callService(invocation);
+  });
+  register_method(protocol::kShowInterfaceRpc, [this](const livekit::RpcInvocationData & invocation) {
+    return getInterfaces(invocation);
+  });
+  register_method(protocol::kListServicesRpc, [this](const livekit::RpcInvocationData & invocation) {
+    return listServices(invocation);
+  });
   register_method(
-    protocol::kCallServiceRpc, [this](const RpcInvocation & invocation) { return callService(invocation); });
-  register_method(
-    protocol::kShowInterfaceRpc, [this](const RpcInvocation & invocation) { return getInterfaces(invocation); });
-  register_method(
-    protocol::kListServicesRpc, [this](const RpcInvocation & invocation) { return listServices(invocation); });
-  register_method(
-    protocol::kListTopicsRpc, [this](const RpcInvocation & invocation) { return listTopics(invocation); });
+    protocol::kListTopicsRpc, [this](const livekit::RpcInvocationData & invocation) { return listTopics(invocation); });
 
   return all_registered;
 }
@@ -245,7 +250,7 @@ void RpcRouter::unregisterRpcs() noexcept
   }
 }
 
-std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kCallServiceRpc, invocation, [this, &invocation]() {
     auto request = [&]() -> ServiceCallRequest {
@@ -262,7 +267,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
         .field("service", request.service)
         .field("error", "service_not_permitted")
         .warn();
-      throw RpcHandlerError(protocol::kForbiddenRpcError, "ROS service '" + request.service + "' not permitted.");
+      throw livekit::RpcError(protocol::kForbiddenRpcError, "ROS service '" + request.service + "' not permitted.");
     }
 
     // Once the request moves into the executor task, the router only needs the
@@ -284,7 +289,7 @@ std::optional<std::string> RpcRouter::callService(const RpcInvocation & invocati
   });
 }
 
-std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::getInterfaces(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kShowInterfaceRpc, invocation, [&invocation]() {
     try {
@@ -310,7 +315,7 @@ std::optional<std::string> RpcRouter::getInterfaces(const RpcInvocation & invoca
   });
 }
 
-std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::listServices(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kListServicesRpc, invocation, [this, &invocation]() {
     try {
@@ -326,7 +331,7 @@ std::optional<std::string> RpcRouter::listServices(const RpcInvocation & invocat
   });
 }
 
-std::optional<std::string> RpcRouter::listTopics(const RpcInvocation & invocation)
+std::optional<std::string> RpcRouter::listTopics(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kListTopicsRpc, invocation, [this, &invocation]() {
     try {

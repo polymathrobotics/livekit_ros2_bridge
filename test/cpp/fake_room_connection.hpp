@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "livekit/data_track_error.h"
+#include "livekit/data_track_frame.h"
 #include "livekit/result.h"
 #include "livekit/room_event_types.h"
 #include "livekit_room_delegate.hpp"
@@ -39,7 +40,15 @@ constexpr char kUnknownDataTrackName[] = "<unknown>";
 struct PushedDataTrackFrame
 {
   std::string track_name;
+  livekit::DataTrackFrame frame;
+};
+
+struct PublishedDataCall
+{
   std::vector<std::uint8_t> payload;
+  bool reliable = true;
+  std::vector<std::string> destination_identities;
+  std::string topic;
 };
 
 struct FakeRoomConnectionState
@@ -52,80 +61,31 @@ struct FakeRoomConnectionState
   std::vector<std::string> registered_rpc_methods;
   std::vector<std::string> unregistered_rpc_methods;
   std::vector<std::string> event_log;
-  std::vector<OutgoingPacket> published_outgoing_packets;
+  std::vector<PublishedDataCall> published_data_calls;
 
   std::vector<std::string> published_data_track_names;
   std::vector<PushedDataTrackFrame> pushed_data_track_frames;
   std::vector<std::string> unpublished_data_track_names;
   std::vector<std::string> published_video_track_names;
-  std::vector<VideoPublishConfig> published_video_configs;
+  std::vector<livekit::TrackPublishOptions> published_video_configs;
   std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> unpublish_attempted_data_track_names;
   std::vector<std::string> unpublish_rejected_data_track_names;
 
   std::vector<std::string> rejected_rpc_methods;
-  std::map<std::string, RpcHandler> rpc_handlers;
+  std::map<std::string, livekit::LocalParticipant::RpcHandler> rpc_handlers;
 
   std::function<void(LiveKitRoomDelegate & delegate)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<livekit::Result<void, livekit::LocalDataTrackTryPushError>(
-    const std::string & name, const std::vector<std::uint8_t> & payload)>
+    const std::string & name, const livekit::DataTrackFrame & frame)>
     try_push_data_track_handler;
+  std::function<void(const std::string & name)> publish_video_track_hook;
+  std::function<void(const std::string & name)> unpublish_video_track_hook;
 
-  bool throw_on_publish_packet = false;
-  int publish_packet_call_count = 0;
-};
-
-inline std::vector<std::uint8_t> userPacketPayloadBytes(const std::string & payload)
-{
-  return std::vector<std::uint8_t>(payload.begin(), payload.end());
-}
-
-inline void emitUserPacket(
-  LiveKitRoomDelegate & delegate,
-  std::vector<std::uint8_t> payload,
-  std::string topic,
-  const std::string & requester_identity)
-{
-  test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
-    delegate, std::move(payload), std::move(topic), requester_identity);
-}
-
-inline void emitUserPacket(
-  LiveKitRoomDelegate & delegate,
-  const std::string & payload,
-  std::string topic,
-  const std::string & requester_identity)
-{
-  emitUserPacket(delegate, userPacketPayloadBytes(payload), std::move(topic), requester_identity);
-}
-
-inline void emitParticipantDisconnected(LiveKitRoomDelegate & delegate, const std::string & requester_identity)
-{
-  test_support::LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, requester_identity);
-}
-
-class FakePublishedVideoTrack final : public PublishedVideoTrack
-{
-public:
-  FakePublishedVideoTrack(std::string name, std::shared_ptr<FakeRoomConnectionState> state)
-  : PublishedVideoTrack(std::move(name))
-  , state_(std::move(state))
-  {}
-
-  ~FakePublishedVideoTrack() noexcept override
-  {
-    try {
-      if (state_ == nullptr) {
-        return;
-      }
-      state_->event_log.push_back("unpublish_video_track:" + name());
-      state_->unpublished_video_track_names.push_back(name());
-    } catch (...) {}
-  }
-
-private:
-  std::shared_ptr<FakeRoomConnectionState> state_;
+  bool throw_on_publish_data = false;
+  bool throw_on_unpublish_video = false;
+  int publish_data_call_count = 0;
 };
 
 class FakeRoomConnection final : public RoomConnection
@@ -148,7 +108,7 @@ public:
     state->delegate->setReconnectRequestHandler([](const std::string &) { return true; });
   }
 
-  bool registerRpc(const std::string & method_name, RpcHandler handler) override
+  bool registerRpc(const std::string & method_name, livekit::LocalParticipant::RpcHandler handler) override
   {
     state->registered_rpc_methods.push_back(method_name);
     const bool registration_rejected =
@@ -169,14 +129,18 @@ public:
     return true;
   }
 
-  void publishPacket(const OutgoingPacket & packet) override
+  void publishData(
+    const std::vector<std::uint8_t> & payload,
+    bool reliable,
+    const std::vector<std::string> & destination_identities,
+    const std::string & topic) override
   {
-    state->publish_packet_call_count++;
-    if (state->throw_on_publish_packet) {
-      throw std::runtime_error("simulated publishPacket failure");
+    state->publish_data_call_count++;
+    if (state->throw_on_publish_data) {
+      throw std::runtime_error("simulated publishData failure");
     }
-    state->event_log.push_back("publish_packet:" + packet.topic);
-    state->published_outgoing_packets.push_back(packet);
+    state->event_log.push_back("publish_data:" + topic);
+    state->published_data_calls.push_back(PublishedDataCall{payload, reliable, destination_identities, topic});
   }
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
@@ -191,15 +155,15 @@ public:
   }
 
   livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
-    const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) override
+    const std::shared_ptr<livekit::LocalDataTrack> & track, const livekit::DataTrackFrame & frame) override
   {
     const std::string name = lookupDataTrackName(track);
     state->event_log.push_back("push_data_track:" + name);
     const auto result = state->try_push_data_track_handler
-                          ? state->try_push_data_track_handler(name, payload)
+                          ? state->try_push_data_track_handler(name, frame)
                           : livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
     if (result) {
-      state->pushed_data_track_frames.push_back({name, std::move(payload)});
+      state->pushed_data_track_frames.push_back({name, frame});
     }
     return result;
   }
@@ -220,16 +184,36 @@ public:
     data_track_names_.erase(track.get());
   }
 
-  std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
+  std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const VideoPublishConfig & config) override
+    const livekit::TrackPublishOptions & config) override
   {
     (void)source;
     state->event_log.push_back("publish_video_track:" + name);
     state->published_video_track_names.push_back(name);
     state->published_video_configs.push_back(config);
-    return std::make_unique<FakePublishedVideoTrack>(name, state);
+    if (state->publish_video_track_hook) {
+      state->publish_video_track_hook(name);
+    }
+
+    auto track = makeSyntheticVideoTrack();
+    video_track_names_[track.get()] = name;
+    return track;
+  }
+
+  void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) override
+  {
+    const std::string name = lookupVideoTrackName(track);
+    state->event_log.push_back("unpublish_video_track:" + name);
+    state->unpublished_video_track_names.push_back(name);
+    video_track_names_.erase(track.get());
+    if (state->unpublish_video_track_hook) {
+      state->unpublish_video_track_hook(name);
+    }
+    if (state->throw_on_unpublish_video) {
+      throw std::runtime_error("simulated video unpublish failure");
+    }
   }
 
   void stop() override
@@ -263,31 +247,10 @@ public:
     }
   }
 
-  void emitReconnectRequested(const std::string & reason) const
-  {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitReconnectRequested(*state->delegate, reason);
-    }
-  }
-
-  void emitReconnecting(const std::string & reason) const
-  {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitReconnecting(*state->delegate, reason);
-    }
-  }
-
-  void emitReconnected() const
-  {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitReconnected(*state->delegate);
-    }
-  }
-
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
     if (state->delegate != nullptr) {
-      livekit_ros2_bridge::emitParticipantDisconnected(*state->delegate, requester_identity);
+      test_support::LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(*state->delegate, requester_identity);
     }
   }
 
@@ -295,34 +258,49 @@ public:
     std::vector<std::uint8_t> payload, std::string topic, const std::string & requester_identity) const
   {
     if (state->delegate != nullptr) {
-      livekit_ros2_bridge::emitUserPacket(*state->delegate, std::move(payload), std::move(topic), requester_identity);
+      test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
+        *state->delegate, std::move(payload), std::move(topic), requester_identity);
     }
   }
 
   void emitUserPacket(const std::string & payload, std::string topic, const std::string & requester_identity) const
   {
     if (state->delegate != nullptr) {
-      livekit_ros2_bridge::emitUserPacket(*state->delegate, payload, std::move(topic), requester_identity);
+      test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
+        *state->delegate, payload, std::move(topic), requester_identity);
     }
   }
 
-  std::shared_ptr<FakeRoomConnectionState> state;
-
-private:
   std::shared_ptr<livekit::LocalDataTrack> makeSyntheticDataTrack()
   {
     auto owner = std::make_shared<int>(next_track_id_++);
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   }
 
+  std::shared_ptr<livekit::LocalVideoTrack> makeSyntheticVideoTrack()
+  {
+    auto owner = std::make_shared<int>(next_track_id_++);
+    return std::shared_ptr<livekit::LocalVideoTrack>(owner, reinterpret_cast<livekit::LocalVideoTrack *>(owner.get()));
+  }
+
+  std::shared_ptr<FakeRoomConnectionState> state;
+
+private:
   std::string lookupDataTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
     const auto it = data_track_names_.find(track.get());
     return it == data_track_names_.end() ? kUnknownDataTrackName : it->second;
   }
 
+  std::string lookupVideoTrackName(const std::shared_ptr<livekit::LocalVideoTrack> & track) const
+  {
+    const auto it = video_track_names_.find(track.get());
+    return it == video_track_names_.end() ? kUnknownDataTrackName : it->second;
+  }
+
   int next_track_id_ = 1;
   std::map<const livekit::LocalDataTrack *, std::string> data_track_names_;
+  std::map<const livekit::LocalVideoTrack *, std::string> video_track_names_;
 };
 
 }  // namespace livekit_ros2_bridge

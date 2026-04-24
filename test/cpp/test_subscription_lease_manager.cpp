@@ -210,20 +210,20 @@ std::shared_ptr<rclcpp::Publisher<MessageT>> advertiseTopic(
 nlohmann::json extractPublishedStatusEnvelope(
   const FakeRoomConnectionState & state, const std::string & requester_identity)
 {
-  if (state.published_outgoing_packets.size() != 1U) {
-    ADD_FAILURE() << "Expected one published status response, got " << state.published_outgoing_packets.size();
+  if (state.published_data_calls.size() != 1U) {
+    ADD_FAILURE() << "Expected one published status response, got " << state.published_data_calls.size();
     return nlohmann::json::object();
   }
 
-  const auto & packet = state.published_outgoing_packets.front();
+  const auto & packet = state.published_data_calls.front();
   EXPECT_EQ(packet.topic, protocol::kStatusTopic);
 
-  if (packet.recipient_identities.size() != 1U) {
-    ADD_FAILURE() << "Expected one recipient identity, got " << packet.recipient_identities.size();
+  if (packet.destination_identities.size() != 1U) {
+    ADD_FAILURE() << "Expected one recipient identity, got " << packet.destination_identities.size();
     return nlohmann::json::object();
   }
 
-  EXPECT_EQ(packet.recipient_identities.front(), requester_identity);
+  EXPECT_EQ(packet.destination_identities.front(), requester_identity);
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
 
@@ -249,7 +249,7 @@ void sendHeartbeat(
   const std::string & requester_identity,
   const SubscriptionHeartbeat & heartbeat)
 {
-  state.published_outgoing_packets.clear();
+  state.published_data_calls.clear();
   manager.handleHeartbeat(requester_identity, heartbeat);
 }
 
@@ -379,7 +379,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, InvalidHeartbeatPayloadIsDroppedWi
 
   EXPECT_NO_THROW(manager.handleHeartbeatPayload("requester-1", payloadBytes("{")));
 
-  EXPECT_EQ(state_->publish_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_data_call_count, 0);
   EXPECT_TRUE(state_->published_data_track_names.empty());
 }
 
@@ -444,7 +444,8 @@ TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)
 
   EXPECT_EQ(session.state->pushed_data_track_frames[0].track_name, track_name);
   EXPECT_EQ(
-    deserializeMessage<sensor_msgs::msg::BatteryState>(session.state->pushed_data_track_frames[0].payload), message);
+    deserializeMessage<sensor_msgs::msg::BatteryState>(session.state->pushed_data_track_frames[0].frame.payload),
+    message);
 }
 
 TEST(SubscriptionLeaseManagerTest, HeartbeatClampsNegativeRequestedIntervalToZero)
@@ -722,18 +723,14 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
   FakeRoomConnection session;
   const std::string first_topic = "/camera/publish_config/one";
   const std::string second_topic = "/camera/publish_config/two";
-  const VideoPublishConfig first_publish_config{
-    VideoPublishCodec::H264,
-    900000,
-    24.0,
-    VideoPublishSimulcast::Enabled,
-  };
-  const VideoPublishConfig second_publish_config{
-    VideoPublishCodec::Vp9,
-    250000,
-    12.0,
-    VideoPublishSimulcast::Disabled,
-  };
+  livekit::TrackPublishOptions first_publish_config;
+  first_publish_config.video_codec = static_cast<livekit::VideoCodec>(1);
+  first_publish_config.video_encoding = livekit::VideoEncodingOptions{900000, 24.0};
+  first_publish_config.simulcast = true;
+  livekit::TrackPublishOptions second_publish_config;
+  second_publish_config.video_codec = static_cast<livekit::VideoCodec>(3);
+  second_publish_config.video_encoding = livekit::VideoEncodingOptions{250000, 12.0};
+  second_publish_config.simulcast = false;
 
   VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
   stream_config.ros_topic_rules.push_back({first_topic, "first_publish_config", "", first_publish_config});
@@ -773,13 +770,19 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
   ASSERT_EQ(session.state->published_video_configs.size(), 2U);
   const auto & actual_first_config = session.state->published_video_configs[0];
   const auto & actual_second_config = session.state->published_video_configs[1];
-  EXPECT_EQ(actual_first_config.codec, first_publish_config.codec);
-  EXPECT_EQ(actual_first_config.max_bitrate_bps, first_publish_config.max_bitrate_bps);
-  EXPECT_DOUBLE_EQ(actual_first_config.max_framerate, first_publish_config.max_framerate);
+  EXPECT_EQ(actual_first_config.video_codec, first_publish_config.video_codec);
+  ASSERT_TRUE(actual_first_config.video_encoding.has_value());
+  ASSERT_TRUE(first_publish_config.video_encoding.has_value());
+  EXPECT_EQ(actual_first_config.video_encoding->max_bitrate, first_publish_config.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(
+    actual_first_config.video_encoding->max_framerate, first_publish_config.video_encoding->max_framerate);
   EXPECT_EQ(actual_first_config.simulcast, first_publish_config.simulcast);
-  EXPECT_EQ(actual_second_config.codec, second_publish_config.codec);
-  EXPECT_EQ(actual_second_config.max_bitrate_bps, second_publish_config.max_bitrate_bps);
-  EXPECT_DOUBLE_EQ(actual_second_config.max_framerate, second_publish_config.max_framerate);
+  EXPECT_EQ(actual_second_config.video_codec, second_publish_config.video_codec);
+  ASSERT_TRUE(actual_second_config.video_encoding.has_value());
+  ASSERT_TRUE(second_publish_config.video_encoding.has_value());
+  EXPECT_EQ(actual_second_config.video_encoding->max_bitrate, second_publish_config.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(
+    actual_second_config.video_encoding->max_framerate, second_publish_config.video_encoding->max_framerate);
   EXPECT_EQ(actual_second_config.simulcast, second_publish_config.simulcast);
 }
 
@@ -945,7 +948,7 @@ TEST(SubscriptionLeaseManagerTest, ShutdownWaitsForActiveSerializedMessageCallba
   auto release_push_future = release_push->get_future().share();
   std::atomic<int> push_call_count{0};
   session.state->try_push_data_track_handler = [push_entered, release_push_future, &push_call_count](
-                                                 const std::string &, const std::vector<std::uint8_t> &) {
+                                                 const std::string &, const livekit::DataTrackFrame &) {
     const int call_number = push_call_count.fetch_add(1) + 1;
     if (call_number == 1) {
       push_entered->set_value();
@@ -1020,7 +1023,7 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
 
   std::atomic<int> push_attempt_count{0};
   session.state->try_push_data_track_handler = [&push_attempt_count](
-                                                 const std::string &, const std::vector<std::uint8_t> &) {
+                                                 const std::string &, const livekit::DataTrackFrame &) {
     push_attempt_count.fetch_add(1);
     return livekit::Result<void, livekit::LocalDataTrackTryPushError>::failure(
       livekit::LocalDataTrackTryPushError{livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL, "queue full"});
@@ -1169,7 +1172,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OmittedHeartbeatTargetRemainsActiv
   ASSERT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_a") != nullptr);
   ASSERT_TRUE(manager.find(SubscriptionTargetKind::Topic, "/battery_b") != nullptr);
 
-  state_->published_outgoing_packets.clear();
+  state_->published_data_calls.clear();
 
   manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/battery_a", 100)}));
 
@@ -1202,7 +1205,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatRenewsKnownClien
 
   const auto heartbeat = makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1"));
   manager.handleHeartbeat("requester-1", heartbeat);
-  state_->published_outgoing_packets.clear();
+  state_->published_data_calls.clear();
 
   manager.handleHeartbeat("", heartbeat);
 
@@ -1221,7 +1224,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, AnonymousHeartbeatWithoutResolvabl
   manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("unknown-session")));
   manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}));
 
-  EXPECT_EQ(state_->publish_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_data_call_count, 0);
 }
 
 TEST_F(
@@ -1240,7 +1243,7 @@ TEST_F(
   manager.handleHeartbeat("requester-1", bind_heartbeat);
   manager.handleHeartbeat("requester-2", bind_heartbeat);
 
-  EXPECT_EQ(state_->publish_packet_call_count, 0);
+  EXPECT_EQ(state_->publish_data_call_count, 0);
 
   manager.handleHeartbeat("", makeHeartbeat({makeTopicDemand("/battery_state", 100)}, std::string("session-1")));
 
@@ -1268,12 +1271,12 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, CopiesAccessPolicyAtConstruction)
 
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, PublishControlPacketFailureIsHandledGracefully)
 {
-  state_->throw_on_publish_packet = true;
+  state_->throw_on_publish_data = true;
 
   auto manager = makeManager(access_policy_);
 
   EXPECT_NO_THROW(manager.handleHeartbeat("requester-1", makeHeartbeat({makeTopicDemand("/nonexistent_topic", 100)})));
-  EXPECT_EQ(state_->publish_packet_call_count, 1);
+  EXPECT_EQ(state_->publish_data_call_count, 1);
 }
 
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, MixedSubscriptionResultsArePublishedInOneEnvelope)

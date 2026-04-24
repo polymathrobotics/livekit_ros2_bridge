@@ -14,24 +14,25 @@
 
 #pragma once
 
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "video_stream_spec.hpp"
+#include "livekit/data_track_frame.h"
+#include "livekit/local_participant.h"
+#include "livekit/room_event_types.h"
 
 namespace livekit
 {
 class LocalDataTrack;
+class LocalVideoTrack;
 struct LocalDataTrackTryPushError;
 template <typename T, typename E>
 class Result;
+struct ParticipantDisconnectedEvent;
 struct UserDataPacketEvent;
 class VideoSource;
 }  // namespace livekit
@@ -47,78 +48,6 @@ struct LiveKitConfig
   std::string access_token;
 };
 
-struct RpcInvocation
-{
-  RpcInvocation() = default;
-
-  RpcInvocation(std::string caller_identity, std::string payload)
-  : caller_identity(std::move(caller_identity))
-  , payload(std::move(payload))
-  {}
-
-  RpcInvocation(std::string caller_identity, std::string request_id, std::string payload)
-  : caller_identity(std::move(caller_identity))
-  , request_id(std::move(request_id))
-  , payload(std::move(payload))
-  {}
-
-  std::string caller_identity;
-  std::string request_id;
-  std::string payload;
-};
-
-using RpcHandler = std::function<std::optional<std::string>(const RpcInvocation &)>;
-
-// Throw from an RpcHandler to propagate an explicit RPC error code/message back to the remote
-// caller. Other exceptions are treated as generic internal failures.
-class RpcHandlerError : public std::runtime_error
-{
-public:
-  RpcHandlerError(std::uint32_t code, std::string message)
-  : std::runtime_error(std::move(message))
-  , code_(code)
-  {}
-
-  std::uint32_t code() const noexcept
-  {
-    return code_;
-  }
-
-private:
-  std::uint32_t code_;
-};
-
-struct OutgoingPacket
-{
-  std::vector<std::uint8_t> payload;
-  std::vector<std::string> recipient_identities;
-  std::string topic;
-};
-
-class PublishedVideoTrack
-{
-public:
-  virtual ~PublishedVideoTrack() noexcept = default;
-
-  PublishedVideoTrack(const PublishedVideoTrack &) = delete;
-  PublishedVideoTrack & operator=(const PublishedVideoTrack &) = delete;
-  PublishedVideoTrack(PublishedVideoTrack &&) = delete;
-  PublishedVideoTrack & operator=(PublishedVideoTrack &&) = delete;
-
-  const std::string & name() const noexcept
-  {
-    return name_;
-  }
-
-protected:
-  explicit PublishedVideoTrack(std::string name)
-  : name_(std::move(name))
-  {}
-
-private:
-  std::string name_;
-};
-
 struct RoomEventCallbacks
 {
   std::function<void()> on_connected;
@@ -129,7 +58,8 @@ struct RoomEventCallbacks
 
   // Called when a remote participant disconnects outside reconnect handling. During reconnect, the
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.
-  std::function<void(const std::string &)> on_participant_disconnected;
+  // LiveKit owns the event lifetime, so callbacks must copy fields they keep beyond the call.
+  std::function<void(const livekit::ParticipantDisconnectedEvent &)> on_participant_disconnected;
 
   // Called once when the current room connection begins a reconnect episode. The reason is a
   // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
@@ -163,24 +93,29 @@ public:
 
   // Registers or replaces an RPC handler and reapplies it after reconnects when a local
   // participant is available.
-  virtual bool registerRpc(const std::string & method, RpcHandler handler) = 0;
+  virtual bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) = 0;
   virtual bool unregisterRpc(const std::string & method) = 0;
 
   // These publication calls require an active local participant. Implementations may throw if
   // used while disconnected, except tryPushDataTrack(), which reports expected push failures
   // in-band.
-  virtual void publishPacket(const OutgoingPacket & packet) = 0;
+  virtual void publishData(
+    const std::vector<std::uint8_t> & payload,
+    bool reliable = true,
+    const std::vector<std::string> & destination_identities = {},
+    const std::string & topic = {}) = 0;
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
   virtual livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
-    const std::shared_ptr<livekit::LocalDataTrack> & track, std::vector<std::uint8_t> payload) = 0;
+    const std::shared_ptr<livekit::LocalDataTrack> & track, const livekit::DataTrackFrame & frame) = 0;
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 
-  // Returned publications own their eventual best-effort unpublish. Destroying a stale publication
+  // Returned video tracks carry the SDK publication identity. Unpublishing a stale track
   // after reconnect or reset is a no-op.
-  virtual std::unique_ptr<PublishedVideoTrack> publishVideoTrack(
+  virtual std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const VideoPublishConfig & config) = 0;
+    const livekit::TrackPublishOptions & config) = 0;
+  virtual void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) = 0;
 };
 
 std::unique_ptr<RoomConnection> createRoomConnection();

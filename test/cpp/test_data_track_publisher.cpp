@@ -182,14 +182,13 @@ TEST(DataTrackPublisherTest, RecoversFromPublishFailureWithoutStartingSuppressio
 
   int publish_attempt_count = 0;
   room_connection.state->publish_data_track_handler =
-    [&publish_attempt_count](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    [&publish_attempt_count, &room_connection](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     publish_attempt_count++;
     if (publish_attempt_count == 1) {
       throw std::runtime_error("simulated publish failure");
     }
 
-    auto owner = std::make_shared<int>(publish_attempt_count);
-    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+    return room_connection.makeSyntheticDataTrack();
   };
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
@@ -220,12 +219,12 @@ TEST(DataTrackPublisherTest, ReentrantPublishDoesNotStartSuppressionWindow)
 
   const auto message = makeBatteryState();
   room_connection.state->publish_data_track_handler =
-    [&executor, &publisher, &message](const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
+    [&executor, &publisher, &message, &room_connection](
+      const std::string &) -> std::shared_ptr<livekit::LocalDataTrack> {
     publisher->publish(message);
     executor.spin_some();
 
-    auto owner = std::make_shared<int>(1);
-    return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
+    return room_connection.makeSyntheticDataTrack();
   };
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
@@ -280,7 +279,7 @@ TEST(DataTrackPublisherTest, DestructionWaitsForActiveSerializedMessageCallback)
   auto release_push = std::make_shared<std::promise<void>>();
   auto release_push_future = release_push->get_future().share();
   room_connection.state->try_push_data_track_handler = [push_entered, release_push_future](
-                                                         const std::string &, const std::vector<std::uint8_t> &) {
+                                                         const std::string &, const livekit::DataTrackFrame &) {
     push_entered->set_value();
     release_push_future.wait();
     return livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();

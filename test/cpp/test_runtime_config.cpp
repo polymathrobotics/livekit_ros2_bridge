@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -32,6 +33,8 @@ namespace
 {
 
 constexpr char kLivekitTokenEnvVar[] = "LIVEKIT_TOKEN";
+constexpr auto kLivekitVideoCodecH264 = static_cast<livekit::VideoCodec>(1);
+constexpr auto kLivekitVideoCodecH265 = static_cast<livekit::VideoCodec>(4);
 
 rclcpp::NodeOptions makeBaseOptions()
 {
@@ -84,22 +87,40 @@ void appendVideoPublishOverrides(
   options.append_parameter_override("video.publish.simulcast", simulcast);
 }
 
-void expectPublishConfigEq(
-  const VideoPublishConfig & actual,
-  VideoPublishCodec codec,
-  std::uint64_t max_bitrate_bps,
-  double max_framerate,
-  VideoPublishSimulcast simulcast)
+std::uint64_t maxBitrateBps(const livekit::TrackPublishOptions & config)
 {
-  EXPECT_EQ(actual.codec, codec);
-  EXPECT_EQ(actual.max_bitrate_bps, max_bitrate_bps);
-  EXPECT_DOUBLE_EQ(actual.max_framerate, max_framerate);
-  EXPECT_EQ(actual.simulcast, simulcast);
+  return config.video_encoding.has_value() ? config.video_encoding->max_bitrate : 0;
 }
 
-void expectPublishConfigEq(const VideoPublishConfig & actual, const VideoPublishConfig & expected)
+double maxFramerate(const livekit::TrackPublishOptions & config)
 {
-  expectPublishConfigEq(actual, expected.codec, expected.max_bitrate_bps, expected.max_framerate, expected.simulcast);
+  return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
+}
+
+livekit::TrackPublishOptions makeExpectedPublishOptions(
+  std::optional<livekit::VideoCodec> codec,
+  std::uint64_t max_bitrate_bps,
+  double max_framerate,
+  std::optional<bool> simulcast)
+{
+  livekit::TrackPublishOptions options;
+  options.video_codec = codec;
+  if (max_bitrate_bps > 0 || max_framerate > 0.0) {
+    livekit::VideoEncodingOptions encoding;
+    encoding.max_bitrate = max_bitrate_bps;
+    encoding.max_framerate = max_framerate;
+    options.video_encoding = encoding;
+  }
+  options.simulcast = simulcast;
+  return options;
+}
+
+void expectPublishConfigEq(const livekit::TrackPublishOptions & actual, const livekit::TrackPublishOptions & expected)
+{
+  EXPECT_EQ(actual.video_codec, expected.video_codec);
+  EXPECT_EQ(maxBitrateBps(actual), maxBitrateBps(expected));
+  EXPECT_DOUBLE_EQ(maxFramerate(actual), maxFramerate(expected));
+  EXPECT_EQ(actual.simulcast, expected.simulcast);
 }
 
 void expectSubscriptionQosOverrideEq(
@@ -256,7 +277,7 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(config.video_stream.other_video_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
 }
 
-TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
+TEST_F(RuntimeConfigTest, TrackPublishOptionsLoadFromUnifiedParams)
 {
   auto options = makeStaticTokenOptions();
   appendVideoPublishOverrides(options, "h264", 900000, 24.0, "enabled");
@@ -264,7 +285,8 @@ TEST_F(RuntimeConfigTest, VideoPublishConfigLoadsFromUnifiedParams)
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_video_publish_params", options);
 
   expectPublishConfigEq(
-    config.video_stream.default_publish_config, VideoPublishCodec::H264, 900000U, 24.0, VideoPublishSimulcast::Enabled);
+    config.video_stream.default_publish_config,
+    makeExpectedPublishOptions(kLivekitVideoCodecH264, 900000U, 24.0, true));
 }
 
 TEST_F(RuntimeConfigTest, GeneratedSubscriptionQosEntriesLoadFromUnifiedParams)
@@ -380,10 +402,7 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
     ASSERT_FALSE(config.video_stream.ros_topic_rules.empty());
     expectPublishConfigEq(
       config.video_stream.ros_topic_rules.front().publish_config,
-      VideoPublishCodec::H264,
-      900000U,
-      15.0,
-      VideoPublishSimulcast::Enabled);
+      makeExpectedPublishOptions(kLivekitVideoCodecH264, 900000U, 15.0, true));
   }
 
   {
@@ -397,10 +416,7 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
 
     expectPublishConfigEq(
       config.video_stream.other_video_sources.at("front").publish_config,
-      VideoPublishCodec::H265,
-      500000U,
-      30.0,
-      VideoPublishSimulcast::Disabled);
+      makeExpectedPublishOptions(kLivekitVideoCodecH265, 500000U, 30.0, false));
   }
 }
 
@@ -420,10 +436,7 @@ TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
   ASSERT_FALSE(config.video_stream.ros_topic_rules.empty());
   expectPublishConfigEq(
     config.video_stream.ros_topic_rules.front().publish_config,
-    VideoPublishCodec::Auto,
-    0U,
-    0.0,
-    VideoPublishSimulcast::Auto);
+    makeExpectedPublishOptions(std::nullopt, 0U, 0.0, std::nullopt));
 }
 
 TEST_F(RuntimeConfigTest, MissingGeneratedVideoParametersAreRejectedByParameterLibrary)

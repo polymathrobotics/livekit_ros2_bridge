@@ -14,13 +14,14 @@
 
 #pragma once
 
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <variant>
 #include <vector>
+
+#include "livekit/room_event_types.h"
 
 namespace livekit_ros2_bridge
 {
@@ -31,38 +32,13 @@ inline constexpr char kRawImageIngestMode[] = "raw_image";
 inline constexpr char kCompressedImageIngestMode[] = "compressed_image";
 inline constexpr char kOtherVideoIngestMode[] = "other_video";
 
-enum class VideoPublishCodec
-{
-  Auto,
-  Vp8,
-  H264,
-  Av1,
-  Vp9,
-  H265,
-};
-
-enum class VideoPublishSimulcast
-{
-  Auto,
-  Enabled,
-  Disabled,
-};
-
-struct VideoPublishConfig
-{
-  VideoPublishCodec codec = VideoPublishCodec::Auto;
-  std::uint64_t max_bitrate_bps = 0;
-  double max_framerate = 0.0;
-  VideoPublishSimulcast simulcast = VideoPublishSimulcast::Auto;
-};
-
 // Declared config for one ROS topic rule before it is resolved into a stream spec.
 struct RosVideoTopicRule
 {
   std::string pattern;
   std::string rule_id;
   std::string transform_fragment;
-  VideoPublishConfig publish_config;
+  livekit::TrackPublishOptions publish_config;
 };
 
 // Declared config for one other video source before it is resolved into a stream spec.
@@ -70,7 +46,7 @@ struct OtherVideoSource
 {
   std::string ingress_fragment;
   std::string transform_fragment;
-  VideoPublishConfig publish_config;
+  livekit::TrackPublishOptions publish_config;
 };
 
 // Declared video configuration. Stream specs resolve from this config, instances own the shared
@@ -80,7 +56,7 @@ struct VideoStreamConfig
   std::vector<RosVideoTopicRule> ros_topic_rules;
   // Keyed by the trimmed other-video-source name used during stream-spec resolution.
   std::unordered_map<std::string, OtherVideoSource> other_video_sources;
-  VideoPublishConfig default_publish_config;
+  livekit::TrackPublishOptions default_publish_config;
 };
 
 inline VideoStreamConfig makeDefaultVideoStreamConfig()
@@ -138,7 +114,7 @@ struct VideoStreamSpec
   // Source-specific data. The active alternative determines which fields are valid.
   VideoStreamInput input;
   // Resolved LiveKit publish config after applying any per-entry overrides to video.publish.*.
-  VideoPublishConfig publish_config;
+  livekit::TrackPublishOptions publish_config;
 };
 
 // Returns the ingest mode for supported ROS video interface types and std::nullopt for non-video types.

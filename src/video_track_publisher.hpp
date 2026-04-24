@@ -18,18 +18,14 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <vector>
 
+#include "livekit/video_frame.h"
+#include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "room_connection.hpp"
 #include "video_stream_spec.hpp"
-
-namespace livekit
-{
-class VideoSource;
-}  // namespace livekit
 
 namespace livekit_ros2_bridge
 {
@@ -51,7 +47,7 @@ class VideoFrameSink
 public:
   virtual ~VideoFrameSink() = default;
 
-  virtual void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) = 0;
+  virtual void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us) = 0;
 };
 
 // Frame sources report transient ingress/egress failures through this observer so the
@@ -82,7 +78,7 @@ public:
     const SubscriptionQosConfig * qos_config);
 
   // Test-only: construct a publisher without a frame source so the publish/unpublish
-  // flow can be exercised via direct write() calls.
+  // flow can be exercised via direct captureFrame() calls.
   VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec);
 
   ~VideoTrackPublisher();
@@ -97,11 +93,9 @@ public:
     return spec_;
   }
 
-  void write(int width, int height, std::vector<std::uint8_t> i420, std::int64_t timestamp_us) override;
+  void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us) override;
 
 private:
-  class Publication;
-
   // Frame sources may fire these from ROS, GStreamer, or LiveKit worker threads,
   // including after close() has started.
   void onSampleUnpackFailed(const std::string & error) override;
@@ -118,7 +112,8 @@ private:
   bool is_closed_ = false;
   bool was_published_ = false;
   std::shared_ptr<VideoFrameSource> frame_source_;
-  std::unique_ptr<Publication> publication_;
+  std::shared_ptr<livekit::VideoSource> video_source_;
+  std::shared_ptr<livekit::LocalVideoTrack> published_video_track_;
 };
 
 }  // namespace livekit_ros2_bridge
