@@ -40,8 +40,6 @@ class VideoSource;
 namespace livekit_ros2_bridge
 {
 
-class LiveKitRoomDelegate;
-
 struct LiveKitConfig
 {
   std::string url;
@@ -50,49 +48,35 @@ struct LiveKitConfig
 
 struct RoomEventCallbacks
 {
-  std::function<void()> on_connected;
+  // Called when the SDK room connection state changes. The initial successful Connect() result is
+  // also reported as Connected because it is established before normal delegate events are reliable.
+  std::function<void(livekit::ConnectionState)> on_connection_state_changed;
 
   // Delivers one incoming LiveKit user packet on a connection-managed background thread; callbacks must
   // hand off ROS work instead of assuming executor-thread affinity.
   std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet_received;
 
-  // Called when a remote participant disconnects outside reconnect handling. During reconnect, the
-  // connection suppresses transient participant disconnects so leases can survive browser refreshes.
+  // Called when a remote participant disconnects while the room is connected. During SDK reconnect,
+  // the connection suppresses transient participant disconnects so leases can survive browser refreshes.
   // LiveKit owns the event lifetime, so callbacks must copy fields they keep beyond the call.
   std::function<void(const livekit::ParticipantDisconnectedEvent &)> on_participant_disconnected;
-
-  // Called once when the current room connection begins a reconnect episode. The reason is a
-  // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
-  std::function<void(const std::string &)> on_reconnect_requested;
-
-  // Called once when the SDK begins an in-place reconnect episode without yet requiring this
-  // wrapper to tear the room down and create a new connection.
-  std::function<void(const std::string &)> on_reconnecting;
-
-  // Called when the SDK recovers from an in-place reconnect episode and the room is healthy again.
-  std::function<void()> on_reconnected;
-
-  // Called after a connected room connection has been torn down and any per-connection state
-  // should be rebuilt on the next connect. Final stop() does not fire this callback.
-  std::function<void()> on_connection_reset;
 };
 
-// Thread-safe transport facade around a reconnecting room connection. Implementations own background
-// worker state and may invoke callbacks from connection-managed threads.
+// Thread-safe transport facade around one SDK-owned room connection. Implementations may invoke
+// callbacks from connection-managed threads.
 class RoomConnection
 {
 public:
   virtual ~RoomConnection() = default;
 
-  // Starts the background connection and reconnect loop using the supplied immutable LiveKit
-  // startup config. Repeated calls after a successful start are ignored until stop() returns.
-  virtual void start(LiveKitConfig config, LiveKitRoomDelegate & delegate) = 0;
+  // Starts a one-shot background connection task using the supplied immutable LiveKit startup config.
+  // Repeated calls after a successful start are ignored until stop() returns.
+  virtual void start(LiveKitConfig config, RoomEventCallbacks callbacks) = 0;
 
-  // Stops the reconnect loop and waits for any connection-owned background thread to exit.
+  // Stops the active room and waits for any in-flight connection task to exit.
   virtual void stop() = 0;
 
-  // Registers or replaces an RPC handler and reapplies it after reconnects when a local
-  // participant is available.
+  // Registers or replaces an RPC handler when a local participant is available.
   virtual bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) = 0;
   virtual bool unregisterRpc(const std::string & method) = 0;
 
@@ -104,17 +88,21 @@ public:
     bool reliable = true,
     const std::vector<std::string> & destination_identities = {},
     const std::string & topic = {}) = 0;
+
   virtual std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) = 0;
+
   virtual livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
     const std::shared_ptr<livekit::LocalDataTrack> & track, const livekit::DataTrackFrame & frame) = 0;
+
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 
-  // Returned video tracks carry the SDK publication identity. Unpublishing a stale track
-  // after reconnect or reset is a no-op.
+  // Returned video tracks carry the SDK publication identity. Unpublishing a stale track after the
+  // active SDK room is gone is a no-op.
   virtual std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const livekit::TrackPublishOptions & config) = 0;
+    const livekit::TrackPublishOptions & options) = 0;
+
   virtual void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) = 0;
 };
 

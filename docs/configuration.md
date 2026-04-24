@@ -1,8 +1,8 @@
 # Configuration Guide
 
-The bridge reads ROS parameters once at node startup and builds one immutable runtime snapshot. Reconnects reuse that snapshot. Changing parameters later does not change live behavior.
+The bridge reads ROS parameters once at node startup and builds one immutable runtime snapshot. SDK reconnect attempts reuse that snapshot. Changing parameters later does not change live behavior.
 
-If a change affects LiveKit connection settings, access rules, QoS override matching, or video source resolution, restart the node. Reconnect alone is not enough.
+If a change affects LiveKit connection settings, access rules, QoS override matching, or video source resolution, restart the node.
 
 ## Contents
 
@@ -41,12 +41,12 @@ Notes:
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
 | `health.watchdog.enabled` | `true` | `true`, `false` | Enables shutdown after the recovery timeout expires |
-| `health.watchdog.recovery_timeout_seconds` | `120.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity before it exits |
+| `health.watchdog.recovery_timeout_seconds` | `75.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity before it exits |
 
 Notes:
 
 - when the recovery timeout expires, the bridge logs the failure, shuts down, and exits non-zero
-- the default 2-minute timeout is intentionally shorter than the SDK reconnect budget so orchestration can recycle the bridge sooner
+- the default 75-second timeout keeps recovery bounded while the SDK owns reconnect
 
 ### Access rules
 

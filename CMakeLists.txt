@@ -52,7 +52,6 @@ add_library(${PROJECT_NAME} SHARED
   src/gstreamer_pipeline.cpp
   src/gstreamer_video_stream.cpp
   src/interface_definition_lookup.cpp
-  src/livekit_room_delegate.cpp
   src/node.cpp
   src/protocol/cdr.cpp
   src/protocol/detail/base64.cpp
@@ -152,7 +151,6 @@ if(BUILD_TESTING)
     ${std_msgs_TARGETS}
   )
   livekit_ros2_bridge_add_test(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
-  livekit_ros2_bridge_add_test(test_livekit_room_delegate test/cpp/test_livekit_room_delegate.cpp)
   livekit_ros2_bridge_add_test(test_log_event test/cpp/test_log_event.cpp)
   livekit_ros2_bridge_add_test(test_node test/cpp/test_node.cpp ${std_srvs_TARGETS})
   livekit_ros2_bridge_add_test(

@@ -103,12 +103,8 @@ public:
   Runtime & operator=(Runtime &&) = delete;
 
 private:
-  void onRoomConnected();
   void onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event);
   void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
-  void onRoomReconnectRequested(const std::string & reason);
-  void onRoomReconnected();
-  void onRoomConnectionReset();
   void submitToExecutor(std::function<void()> work);
   RoomEventCallbacks makeRoomEventCallbacks();
 
@@ -119,7 +115,6 @@ private:
   rclcpp::Logger logger_;
   RuntimeConfig config_;
   RuntimeCallbackGate callback_gate_;
-  std::unique_ptr<LiveKitRoomDelegate> room_delegate_;
   std::unique_ptr<RoomConnection> room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;

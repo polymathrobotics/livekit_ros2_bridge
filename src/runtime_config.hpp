@@ -29,16 +29,15 @@ namespace livekit_ros2_bridge
 {
 
 // Immutable startup configuration derived once from ROS parameters and then shared across the
-// runtime and reconnect loop.
+// runtime.
 struct RuntimeConfig
 {
   struct HealthConfig
   {
     bool watchdog_enabled = true;
-    // Maximum time the bridge may spend trying to recover connectivity before
-    // Runtime requests process shutdown. The 2-minute default keeps recovery
-    // bounded without waiting for the full SDK reconnect budget.
-    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::minutes(2)};
+    // Maximum time the bridge may spend trying to recover connectivity before Runtime requests
+    // process shutdown. The 75-second default keeps recovery bounded while the SDK owns reconnect.
+    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::seconds(75)};
   };
 
   LiveKitConfig livekit;

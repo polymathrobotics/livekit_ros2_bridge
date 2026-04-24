@@ -21,15 +21,15 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "livekit/data_track_error.h"
 #include "livekit/data_track_frame.h"
+#include "livekit/remote_participant.h"
 #include "livekit/result.h"
 #include "livekit/room_event_types.h"
-#include "livekit_room_delegate.hpp"
-#include "livekit_room_delegate_test_support.hpp"
 #include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
@@ -51,9 +51,12 @@ struct PublishedDataCall
   std::string topic;
 };
 
+class FakeRoomConnection;
+
 struct FakeRoomConnectionState
 {
-  LiveKitRoomDelegate * delegate = nullptr;
+  RoomEventCallbacks callbacks;
+  livekit::ConnectionState connection_state = livekit::ConnectionState::Disconnected;
   bool started = false;
   bool stopped = false;
   std::string access_token;
@@ -67,7 +70,7 @@ struct FakeRoomConnectionState
   std::vector<PushedDataTrackFrame> pushed_data_track_frames;
   std::vector<std::string> unpublished_data_track_names;
   std::vector<std::string> published_video_track_names;
-  std::vector<livekit::TrackPublishOptions> published_video_configs;
+  std::vector<livekit::TrackPublishOptions> published_video_options;
   std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> unpublish_attempted_data_track_names;
   std::vector<std::string> unpublish_rejected_data_track_names;
@@ -75,7 +78,7 @@ struct FakeRoomConnectionState
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, livekit::LocalParticipant::RpcHandler> rpc_handlers;
 
-  std::function<void(LiveKitRoomDelegate & delegate)> stop_hook;
+  std::function<void(FakeRoomConnection & connection)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<livekit::Result<void, livekit::LocalDataTrackTryPushError>(
     const std::string & name, const livekit::DataTrackFrame & frame)>
@@ -100,12 +103,12 @@ public:
     stop();
   }
 
-  void start(LiveKitConfig config, LiveKitRoomDelegate & delegate) override
+  void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
     state->started = true;
     state->access_token = std::move(config.access_token);
-    state->delegate = &delegate;
-    state->delegate->setReconnectRequestHandler([](const std::string &) { return true; });
+    state->callbacks = std::move(callbacks);
+    state->connection_state = livekit::ConnectionState::Disconnected;
   }
 
   bool registerRpc(const std::string & method_name, livekit::LocalParticipant::RpcHandler handler) override
@@ -187,12 +190,12 @@ public:
   std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
-    const livekit::TrackPublishOptions & config) override
+    const livekit::TrackPublishOptions & options) override
   {
     (void)source;
     state->event_log.push_back("publish_video_track:" + name);
     state->published_video_track_names.push_back(name);
-    state->published_video_configs.push_back(config);
+    state->published_video_options.push_back(options);
     if (state->publish_video_track_hook) {
       state->publish_video_track_hook(name);
     }
@@ -224,51 +227,77 @@ public:
 
     state->stopped = true;
     state->event_log.push_back("stop");
-    if (state->stop_hook && state->delegate != nullptr) {
-      state->stop_hook(*state->delegate);
+    if (state->stop_hook) {
+      state->stop_hook(*this);
     }
-    if (state->delegate != nullptr) {
-      state->delegate->clearReconnectRequestHandler();
-      state->delegate = nullptr;
-    }
-  }
-
-  void emitConnectionReset() const
-  {
-    if (state->delegate != nullptr) {
-      state->delegate->roomConnectionReset();
-    }
+    state->callbacks = RoomEventCallbacks{};
+    state->connection_state = livekit::ConnectionState::Disconnected;
   }
 
   void emitConnected() const
   {
-    if (state->delegate != nullptr) {
-      state->delegate->roomConnected();
-    }
+    emitConnectionState(livekit::ConnectionState::Connected);
+  }
+
+  void emitDisconnected() const
+  {
+    emitConnectionState(livekit::ConnectionState::Disconnected);
+  }
+
+  void emitRoomEos() const
+  {
+    emitConnectionState(livekit::ConnectionState::Disconnected);
+  }
+
+  void emitReconnecting() const
+  {
+    emitConnectionState(livekit::ConnectionState::Reconnecting);
+  }
+
+  void emitReconnected() const
+  {
+    emitConnectionState(livekit::ConnectionState::Connected);
   }
 
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(*state->delegate, requester_identity);
+    const bool should_forward = state->connection_state == livekit::ConnectionState::Connected &&
+                                !requester_identity.empty() &&
+                                static_cast<bool>(state->callbacks.on_participant_disconnected);
+    if (!should_forward) {
+      return;
     }
+
+    livekit::ParticipantDisconnectedEvent event;
+    auto participant = makeRemoteParticipant(requester_identity);
+    event.participant = &participant;
+    state->callbacks.on_participant_disconnected(event);
   }
 
   void emitUserPacket(
     std::vector<std::uint8_t> payload, std::string topic, const std::string & requester_identity) const
   {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
-        *state->delegate, std::move(payload), std::move(topic), requester_identity);
+    if (!state->callbacks.on_user_packet_received) {
+      return;
     }
+
+    livekit::UserDataPacketEvent event;
+    event.data = std::move(payload);
+    event.topic = std::move(topic);
+
+    if (requester_identity.empty()) {
+      state->callbacks.on_user_packet_received(event);
+      return;
+    }
+
+    auto participant = makeRemoteParticipant(requester_identity);
+    event.participant = &participant;
+    state->callbacks.on_user_packet_received(event);
   }
 
   void emitUserPacket(const std::string & payload, std::string topic, const std::string & requester_identity) const
   {
-    if (state->delegate != nullptr) {
-      test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
-        *state->delegate, payload, std::move(topic), requester_identity);
-    }
+    emitUserPacket(std::vector<std::uint8_t>(payload.begin(), payload.end()), std::move(topic), requester_identity);
   }
 
   std::shared_ptr<livekit::LocalDataTrack> makeSyntheticDataTrack()
@@ -286,6 +315,30 @@ public:
   std::shared_ptr<FakeRoomConnectionState> state;
 
 private:
+  void emitConnectionState(livekit::ConnectionState new_state) const
+  {
+    if (state->connection_state == new_state) {
+      return;
+    }
+    state->connection_state = new_state;
+    if (state->callbacks.on_connection_state_changed) {
+      state->callbacks.on_connection_state_changed(new_state);
+    }
+  }
+
+  static livekit::RemoteParticipant makeRemoteParticipant(std::string identity)
+  {
+    return livekit::RemoteParticipant(
+      livekit::FfiHandle{},
+      "fake-participant-sid",
+      "fake-participant-name",
+      std::move(identity),
+      "",
+      std::unordered_map<std::string, std::string>{},
+      livekit::ParticipantKind::Standard,
+      livekit::DisconnectReason::Unknown);
+  }
+
   std::string lookupDataTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
     const auto it = data_track_names_.find(track.get());

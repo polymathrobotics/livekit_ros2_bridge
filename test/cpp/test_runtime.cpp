@@ -28,9 +28,6 @@
 
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
-#include "livekit/room.h"
-#include "livekit/room_event_types.h"
-#include "livekit_room_delegate_test_support.hpp"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/constants.hpp"
@@ -46,7 +43,6 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-using test_support::LiveKitRoomDelegateTestEvents;
 using test_support::ScopedRclcppInit;
 using test_support::spinUntil;
 using test_support::waitForTopicType;
@@ -229,7 +225,7 @@ TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
   EXPECT_TRUE(harness.state->started);
-  EXPECT_NE(harness.state->delegate, nullptr);
+  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_user_packet_received));
   EXPECT_EQ(harness.state->registered_rpc_methods, expectedRpcMethods());
   EXPECT_EQ(harness.state->rpc_handlers.size(), expectedRpcMethods().size());
 }
@@ -267,7 +263,7 @@ TEST_F(RuntimeTest, WatchdogDoesNotExitAfterInitialConnectSucceeds)
     ".*");
 }
 
-TEST_F(RuntimeTest, WatchdogExitsWhenRecoveryTimeoutExpires)
+TEST_F(RuntimeTest, WatchdogExitsWhenSdkTerminalDisconnects)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 
@@ -279,8 +275,28 @@ TEST_F(RuntimeTest, WatchdogExitsWhenRecoveryTimeoutExpires)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          livekit::Room room;
-          harness.state->delegate->onDisconnected(room, livekit::DisconnectedEvent{});
+          harness.fake_room_connection->emitDisconnected();
+        },
+        kWatchdogObservationWindow,
+        kRuntimeScenarioTimedOutWithoutWatchdog);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
+}
+
+TEST_F(RuntimeTest, WatchdogExitsWhenSdkRoomEosArrives)
+{
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  EXPECT_EXIT(
+    {
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
+      runRuntimeScenario(
+        options,
+        [](RuntimeHarness & harness) {
+          harness.fake_room_connection->emitConnected();
+          harness.fake_room_connection->emitRoomEos();
         },
         kWatchdogObservationWindow,
         kRuntimeScenarioTimedOutWithoutWatchdog);
@@ -301,36 +317,12 @@ TEST_F(RuntimeTest, WatchdogExitsWhenSdkReconnectNeverRecovers)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          livekit::Room room;
-          harness.state->delegate->onReconnecting(room, livekit::ReconnectingEvent{});
+          harness.fake_room_connection->emitReconnecting();
         },
         kWatchdogObservationWindow,
         kRuntimeScenarioTimedOutWithoutWatchdog);
     },
     ::testing::ExitedWithCode(EXIT_FAILURE),
-    ".*");
-}
-
-TEST_F(RuntimeTest, WatchdogClearsRecoveryTimeoutAfterRecovery)
-{
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-
-  EXPECT_EXIT(
-    {
-      auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
-      runRuntimeScenario(
-        options,
-        [](RuntimeHarness & harness) {
-          harness.fake_room_connection->emitConnected();
-          livekit::Room room;
-          harness.state->delegate->onDisconnected(room, livekit::DisconnectedEvent{});
-          harness.fake_room_connection->emitConnected();
-        },
-        kHealthyConnectionObservationWindow,
-        kRuntimeScenarioCompleted);
-    },
-    ::testing::ExitedWithCode(kRuntimeScenarioCompleted),
     ".*");
 }
 
@@ -346,9 +338,8 @@ TEST_F(RuntimeTest, WatchdogClearsSdkReconnectTimeoutAfterRecovery)
         options,
         [](RuntimeHarness & harness) {
           harness.fake_room_connection->emitConnected();
-          livekit::Room room;
-          harness.state->delegate->onReconnecting(room, livekit::ReconnectingEvent{});
-          harness.state->delegate->onReconnected(room, livekit::ReconnectedEvent{});
+          harness.fake_room_connection->emitReconnecting();
+          harness.fake_room_connection->emitReconnected();
         },
         kHealthyConnectionObservationWindow,
         kRuntimeScenarioCompleted);
@@ -631,38 +622,6 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
 }
 
-TEST_F(RuntimeTest, ConnectionResetClearsSubscriptionsAndAllowsHeartbeatToRecreateDataTrack)
-{
-  auto options = makeStaticTokenOptions();
-  options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
-
-  auto harness = makeRuntimeHarness(options);
-
-  auto observer = std::make_shared<rclcpp::Node>(nextNodeName("connection_reset_observer"));
-  [[maybe_unused]] auto publisher =
-    observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(harness.node);
-  executor.add_node(observer);
-  ASSERT_TRUE(waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState"));
-
-  const std::string heartbeat =
-    R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
-  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
-
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
-
-  harness.fake_room_connection->emitConnectionReset();
-
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->unpublished_data_track_names.size() == 1U; }));
-  EXPECT_EQ(harness.state->unpublished_data_track_names.front(), harness.state->published_data_track_names.front());
-
-  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
-
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
-}
-
 TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
 {
   auto options = makeStaticTokenOptions();
@@ -722,10 +681,10 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
-    room_connection.state->stop_hook = [heartbeat](LiveKitRoomDelegate & delegate) {
-      delegate.roomConnectionReset();
-      LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, "participant-1");
-      LiveKitRoomDelegateTestEvents::emitUserPacket(delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+    room_connection.state->stop_hook = [heartbeat](FakeRoomConnection & connection) {
+      connection.emitDisconnected();
+      connection.emitParticipantDisconnected("participant-1");
+      connection.emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
     };
   });
 
@@ -791,9 +750,7 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
-  ASSERT_NE(harness.state->delegate, nullptr);
-  LiveKitRoomDelegateTestEvents::emitUserPacket(
-    *harness.state->delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+  harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   const bool publish_started_ready = publish_started.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
   EXPECT_TRUE(publish_started_ready);

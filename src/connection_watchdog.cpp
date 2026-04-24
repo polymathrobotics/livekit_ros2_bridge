@@ -33,6 +33,26 @@ constexpr auto kCheckInterval = std::chrono::milliseconds(250);
 constexpr auto kShutdownExitDelay = std::chrono::milliseconds(100);
 constexpr std::string_view kStartupConnectPendingReason = "startup_connect_pending";
 
+std::string_view connectionStateName(livekit::ConnectionState state)
+{
+  switch (state) {
+    case livekit::ConnectionState::Disconnected:
+      return "disconnected";
+    case livekit::ConnectionState::Connected:
+      return "connected";
+    case livekit::ConnectionState::Reconnecting:
+      return "reconnecting";
+  }
+  return "unknown";
+}
+
+// Long-outage reconnect probes showed that the C++ SDK can surface Reconnecting and then leave the
+// bridge alive but stale after the Rust reconnect loop logs terminal failure. In that state the
+// bridge did not reliably receive onDisconnected, RoomEos, Reconnected, or a fresh Connected event.
+// The watchdog therefore treats SDK lifecycle events as health hints, not as a complete recovery
+// contract: only an explicit Connected state clears the budget, and timeout exits the process so the
+// supervisor rebuilds a fresh room connection through the bridge's startup-token path.
+
 }  // namespace
 
 ConnectionWatchdog::ConnectionWatchdog(
@@ -61,6 +81,27 @@ ConnectionWatchdog::ConnectionWatchdog(
 ConnectionWatchdog::~ConnectionWatchdog()
 {
   timer_.reset();
+}
+
+void ConnectionWatchdog::observeConnectionState(livekit::ConnectionState state)
+{
+  const std::string_view state_name = connectionStateName(state);
+  if (state == livekit::ConnectionState::Connected) {
+    markHealthy(state_name);
+    LogEvent(logger_, "runtime_ready").field("connection_state", state_name).info();
+    return;
+  }
+
+  markUnhealthy(state_name);
+
+  LogEvent log = LogEvent(logger_, "runtime_disconnect_observed").field("connection_state", state_name);
+  if (!config_.watchdog_enabled) {
+    log.info();
+    return;
+  }
+
+  log.field("recovery_timeout_seconds", config_.watchdog_recovery_timeout.count() / 1000.0);
+  log.warn();
 }
 
 void ConnectionWatchdog::markHealthy(std::string_view reason)
@@ -100,7 +141,9 @@ void ConnectionWatchdog::markUnhealthy(std::string_view reason)
   const bool started = [&]() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (unhealthy_.has_value()) {
-      unhealthy_->deadline = now + config_.watchdog_recovery_timeout;
+      // Do not let repeated SDK reconnecting/disconnected noise extend the outage deadline. The
+      // terminal event may never arrive, so the bounded recovery window starts at the first
+      // unhealthy observation and ends only when markHealthy() clears it.
       return false;
     }
     unhealthy_ = UnhealthyState{now, now + config_.watchdog_recovery_timeout};

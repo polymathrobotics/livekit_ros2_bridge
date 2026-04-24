@@ -763,10 +763,10 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 
   ASSERT_TRUE(publishUntil(executor, first_publisher, makeRgbImage(2, 2), [&]() {
-    return session.state->published_video_configs.size() == 1U;
+    return session.state->published_video_options.size() == 1U;
   }));
   ASSERT_TRUE(publishUntil(executor, second_publisher, makeRgbImage(4, 4), [&]() {
-    return session.state->published_video_configs.size() == 2U;
+    return session.state->published_video_options.size() == 2U;
   }));
 
   EXPECT_EQ(
@@ -776,23 +776,21 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
       second_status["delivery"]["track_name"].get<std::string>(),
     }));
 
-  ASSERT_EQ(session.state->published_video_configs.size(), 2U);
-  const auto & actual_first_config = session.state->published_video_configs[0];
-  const auto & actual_second_config = session.state->published_video_configs[1];
-  EXPECT_EQ(actual_first_config.video_codec, first_publish_config.video_codec);
-  ASSERT_TRUE(actual_first_config.video_encoding.has_value());
+  ASSERT_EQ(session.state->published_video_options.size(), 2U);
+  const auto & first_options = session.state->published_video_options[0];
+  const auto & second_options = session.state->published_video_options[1];
+  EXPECT_EQ(first_options.video_codec, first_publish_config.video_codec);
+  ASSERT_TRUE(first_options.video_encoding.has_value());
   ASSERT_TRUE(first_publish_config.video_encoding.has_value());
-  EXPECT_EQ(actual_first_config.video_encoding->max_bitrate, first_publish_config.video_encoding->max_bitrate);
-  EXPECT_DOUBLE_EQ(
-    actual_first_config.video_encoding->max_framerate, first_publish_config.video_encoding->max_framerate);
-  EXPECT_EQ(actual_first_config.simulcast, first_publish_config.simulcast);
-  EXPECT_EQ(actual_second_config.video_codec, second_publish_config.video_codec);
-  ASSERT_TRUE(actual_second_config.video_encoding.has_value());
+  EXPECT_EQ(first_options.video_encoding->max_bitrate, first_publish_config.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(first_options.video_encoding->max_framerate, first_publish_config.video_encoding->max_framerate);
+  EXPECT_EQ(first_options.simulcast, first_publish_config.simulcast);
+  EXPECT_EQ(second_options.video_codec, second_publish_config.video_codec);
+  ASSERT_TRUE(second_options.video_encoding.has_value());
   ASSERT_TRUE(second_publish_config.video_encoding.has_value());
-  EXPECT_EQ(actual_second_config.video_encoding->max_bitrate, second_publish_config.video_encoding->max_bitrate);
-  EXPECT_DOUBLE_EQ(
-    actual_second_config.video_encoding->max_framerate, second_publish_config.video_encoding->max_framerate);
-  EXPECT_EQ(actual_second_config.simulcast, second_publish_config.simulcast);
+  EXPECT_EQ(second_options.video_encoding->max_bitrate, second_publish_config.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(second_options.video_encoding->max_framerate, second_publish_config.video_encoding->max_framerate);
+  EXPECT_EQ(second_options.simulcast, second_publish_config.simulcast);
 }
 
 TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)

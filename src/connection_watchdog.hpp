@@ -20,6 +20,7 @@
 #include <optional>
 #include <string_view>
 
+#include "livekit/room_event_types.h"
 #include "rclcpp/logger.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
@@ -51,10 +52,12 @@ public:
   ConnectionWatchdog(ConnectionWatchdog &&) = delete;
   ConnectionWatchdog & operator=(ConnectionWatchdog &&) = delete;
 
+  void observeConnectionState(livekit::ConnectionState state);
+
+private:
   void markHealthy(std::string_view reason);
   void markUnhealthy(std::string_view reason);
 
-private:
   RuntimeConfig::HealthConfig config_;
   rclcpp::Logger logger_;
   CloseCallback close_;
