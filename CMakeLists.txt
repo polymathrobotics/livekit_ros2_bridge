@@ -45,20 +45,15 @@ pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0)
 pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
 pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
 
-function(livekit_ros2_bridge_configure_internal_target target_name)
-  target_include_directories(${target_name} PRIVATE
-    "${livekit_ros2_bridge_public_include_dir}"
-    "${livekit_ros2_bridge_private_include_dir}"
-  )
-  set_target_properties(${target_name} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-endfunction()
-
-add_library(livekit_ros2_bridge_core STATIC
+add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
+  src/connection_watchdog.cpp
+  src/data_track_publisher.cpp
+  src/gstreamer_pipeline.cpp
+  src/gstreamer_video_stream.cpp
   src/interface_definition_lookup.cpp
-  src/runtime_config.cpp
-  src/subscription_qos.cpp
-  src/video_stream_spec.cpp
+  src/livekit_room_delegate.cpp
+  src/node.cpp
   src/protocol/cdr.cpp
   src/protocol/detail/base64.cpp
   src/protocol/interfaces_json.cpp
@@ -66,74 +61,18 @@ add_library(livekit_ros2_bridge_core STATIC
   src/protocol/services_json.cpp
   src/protocol/subscriptions_json.cpp
   src/protocol/topic_publish_json.cpp
-)
-livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_core)
-target_link_libraries(livekit_ros2_bridge_core PRIVATE
-  ${sensor_msgs_TARGETS}
-  ament_index_cpp::ament_index_cpp
-  LiveKit::livekit
-  livekit_ros2_bridge_parameters
-  nlohmann_json::nlohmann_json
-  OpenSSL::Crypto
-  PkgConfig::gstreamer
-  PkgConfig::gstreamer-app
-  PkgConfig::gstreamer-video
-  rclcpp::rclcpp
-  rmw::rmw
-)
-
-add_library(livekit_ros2_bridge_ros STATIC
+  src/room_connection.cpp
   src/ros_executor_queue.cpp
   src/ros_service_caller.cpp
   src/ros_topic_publisher.cpp
-)
-livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_ros)
-target_link_libraries(livekit_ros2_bridge_ros PRIVATE
-  LiveKit::livekit
-  livekit_ros2_bridge_core
-  rclcpp::rclcpp
-)
-
-add_library(livekit_ros2_bridge_livekit STATIC
-  src/livekit_room_delegate.cpp
-  src/room_connection.cpp
-)
-livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_livekit)
-target_link_libraries(livekit_ros2_bridge_livekit PRIVATE
-  ${sensor_msgs_TARGETS}
-  LiveKit::livekit
-  OpenSSL::Crypto
-  livekit_ros2_bridge_core
-  rclcpp::rclcpp
-)
-
-add_library(livekit_ros2_bridge_streams STATIC
-  src/data_track_publisher.cpp
-  src/rpc_router.cpp
-  src/subscription_lease_manager.cpp
-  src/gstreamer_pipeline.cpp
-  src/gstreamer_video_stream.cpp
   src/ros_video_stream.cpp
-  src/video_track_publisher.cpp
-)
-livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_streams)
-target_link_libraries(livekit_ros2_bridge_streams PRIVATE
-  ${sensor_msgs_TARGETS}
-  LiveKit::livekit
-  PkgConfig::gstreamer
-  PkgConfig::gstreamer-app
-  PkgConfig::gstreamer-video
-  livekit_ros2_bridge_core
-  livekit_ros2_bridge_livekit
-  livekit_ros2_bridge_ros
-  nlohmann_json::nlohmann_json
-  rclcpp::rclcpp
-)
-
-add_library(${PROJECT_NAME} SHARED
-  src/node.cpp
+  src/rpc_router.cpp
+  src/runtime_config.cpp
   src/runtime.cpp
-  src/connection_watchdog.cpp
+  src/subscription_lease_manager.cpp
+  src/subscription_qos.cpp
+  src/video_stream_spec.cpp
+  src/video_track_publisher.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"
@@ -145,17 +84,14 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 target_link_libraries(${PROJECT_NAME} PRIVATE
   ${sensor_msgs_TARGETS}
   ament_index_cpp::ament_index_cpp
-  livekit_ros2_bridge_core
-  livekit_ros2_bridge_livekit
   livekit_ros2_bridge_parameters
-  livekit_ros2_bridge_ros
-  livekit_ros2_bridge_streams
   LiveKit::livekit
   nlohmann_json::nlohmann_json
   OpenSSL::Crypto
   PkgConfig::gstreamer
   PkgConfig::gstreamer-app
   PkgConfig::gstreamer-video
+  rmw::rmw
 )
 rclcpp_components_register_node(${PROJECT_NAME}
   PLUGIN "livekit_ros2_bridge::Node"
