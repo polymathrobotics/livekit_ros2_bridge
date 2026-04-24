@@ -21,6 +21,7 @@
 
 #include "livekit/remote_participant.h"
 #include "livekit/room_event_types.h"
+#include "livekit_room_delegate.hpp"
 #include "protocol/constants.hpp"
 #include "utils/log_event.hpp"
 
@@ -61,6 +62,7 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
 , clock_(std::move(interfaces.clock))
 , logger_(interfaces.logger)
 , config_(std::move(config))
+, room_delegate_(std::make_unique<LiveKitRoomDelegate>(makeRoomEventCallbacks()))
 , room_connection_(requireRoomConnection(std::move(connection)))
 , ros_executor_queue_(base_, interfaces.waitables, clock_)
 , ros_topic_publisher_(interfaces.topics, graph_, clock_, config_.access_policy)
@@ -90,7 +92,7 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
     throw std::runtime_error("Failed to register required RPC methods");
   }
 
-  room_connection_->start(config_.livekit, makeRoomEventCallbacks());
+  room_connection_->start(config_.livekit, *room_delegate_);
 }
 
 Runtime::~Runtime()
@@ -118,7 +120,7 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
       .fieldOr("requester_identity", event.participant == nullptr ? "" : event.participant->identity())
       .warnThrottle(*clock_, std::chrono::seconds(5));
   };
-  callbacks.on_remote_participant_disconnected = [this](const std::string & remote_participant_identity) {
+  callbacks.on_participant_disconnected = [this](const std::string & remote_participant_identity) {
     (void)callback_gate_.runIfOpen(
       [this, &remote_participant_identity]() { onRoomRemoteParticipantDisconnected(remote_participant_identity); });
   };

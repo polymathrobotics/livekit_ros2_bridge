@@ -36,6 +36,8 @@ class VideoSource;
 namespace livekit_ros2_bridge
 {
 
+class LiveKitRoomDelegate;
+
 struct LiveKitConfig
 {
   std::string url;
@@ -159,7 +161,7 @@ struct RoomEventCallbacks
 
   // Called when a remote participant disconnects outside reconnect handling. During reconnect, the
   // connection suppresses transient participant disconnects so leases can survive browser refreshes.
-  std::function<void(const std::string &)> on_remote_participant_disconnected;
+  std::function<void(const std::string &)> on_participant_disconnected;
 
   // Called once when the current room connection begins a reconnect episode. The reason is a
   // stable internal string such as `room_disconnected` or `connection_state_disconnected`.
@@ -186,7 +188,7 @@ public:
 
   // Starts the background connection and reconnect loop using the supplied immutable LiveKit
   // startup config. Repeated calls after a successful start are ignored until stop() returns.
-  virtual void start(LiveKitConfig config, RoomEventCallbacks callbacks) = 0;
+  virtual void start(LiveKitConfig config, LiveKitRoomDelegate & delegate) = 0;
 
   // Stops the reconnect loop and waits for any connection-owned background thread to exit.
   virtual void stop() = 0;

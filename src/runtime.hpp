@@ -122,6 +122,7 @@ private:
   rclcpp::Logger logger_;
   RuntimeConfig config_;
   RuntimeCallbackGate callback_gate_;
+  std::unique_ptr<LiveKitRoomDelegate> room_delegate_;
   std::unique_ptr<RoomConnection> room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;

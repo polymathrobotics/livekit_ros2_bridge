@@ -226,15 +226,9 @@ TEST_F(RuntimeTest, RegistersRpcMethodsDuringStartup)
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
 
   EXPECT_TRUE(harness.state->started);
+  EXPECT_NE(harness.state->delegate, nullptr);
   EXPECT_EQ(harness.state->registered_rpc_methods, expectedRpcMethods());
   EXPECT_EQ(harness.state->rpc_handlers.size(), expectedRpcMethods().size());
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connected));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnect_requested));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnecting));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_reconnected));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_connection_reset));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_remote_participant_disconnected));
-  EXPECT_TRUE(static_cast<bool>(harness.state->callbacks.on_user_packet_received));
 }
 
 TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
@@ -619,6 +613,7 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":1000}}]})";
+  harness.fake_room_connection->emitConnected();
   harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
@@ -720,16 +715,10 @@ TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
   auto harness = makeRuntimeHarness(options, [&heartbeat](FakeRoomConnection & room_connection) {
-    room_connection.state->stop_hook = [heartbeat](const RoomEventCallbacks & callbacks) {
-      if (callbacks.on_connection_reset) {
-        callbacks.on_connection_reset();
-      }
-
-      if (callbacks.on_remote_participant_disconnected) {
-        callbacks.on_remote_participant_disconnected("participant-1");
-      }
-
-      emitUserPacket(callbacks, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+    room_connection.state->stop_hook = [heartbeat](LiveKitRoomDelegate & delegate) {
+      delegate.roomConnectionReset();
+      emitParticipantDisconnected(delegate, "participant-1");
+      emitUserPacket(delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
     };
   });
 
@@ -795,7 +784,8 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
 
   const std::string heartbeat =
     R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
-  emitUserPacket(harness.state->callbacks, heartbeat, protocol::kHeartbeatTopic, "participant-1");
+  ASSERT_NE(harness.state->delegate, nullptr);
+  emitUserPacket(*harness.state->delegate, heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   const bool publish_started_ready = publish_started.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
   EXPECT_TRUE(publish_started_ready);

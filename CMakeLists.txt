@@ -94,6 +94,7 @@ target_link_libraries(livekit_ros2_bridge_ros PRIVATE
 )
 
 add_library(livekit_ros2_bridge_livekit STATIC
+  src/livekit_room_delegate.cpp
   src/room_connection.cpp
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_livekit)
@@ -213,6 +214,7 @@ if(BUILD_TESTING)
     nlohmann_json::nlohmann_json
   )
   livekit_ros2_bridge_add_test(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
+  livekit_ros2_bridge_add_test(test_livekit_room_delegate test/cpp/test_livekit_room_delegate.cpp)
   livekit_ros2_bridge_add_test(test_log_event test/cpp/test_log_event.cpp)
   livekit_ros2_bridge_add_test(test_node test/cpp/test_node.cpp ${std_srvs_TARGETS})
   livekit_ros2_bridge_add_test(

@@ -21,12 +21,12 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "livekit/remote_participant.h"
 #include "livekit/room_event_types.h"
+#include "livekit_room_delegate.hpp"
+#include "livekit_room_delegate_test_support.hpp"
 #include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
@@ -42,7 +42,7 @@ struct PushedDataTrackFrame
 
 struct FakeRoomConnectionState
 {
-  RoomEventCallbacks callbacks;
+  LiveKitRoomDelegate * delegate = nullptr;
   bool started = false;
   bool stopped = false;
   std::string access_token;
@@ -64,7 +64,7 @@ struct FakeRoomConnectionState
   std::vector<std::string> rejected_rpc_methods;
   std::map<std::string, RpcHandler> rpc_handlers;
 
-  std::function<void(const RoomEventCallbacks & callbacks)> stop_hook;
+  std::function<void(LiveKitRoomDelegate & delegate)> stop_hook;
   std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> publish_data_track_handler;
   std::function<DataTrackPushResult(const std::string & name, const std::vector<std::uint8_t> & payload)>
     try_push_data_track_handler;
@@ -79,44 +79,27 @@ inline std::vector<std::uint8_t> userPacketPayloadBytes(const std::string & payl
 }
 
 inline void emitUserPacket(
-  const RoomEventCallbacks & callbacks,
+  LiveKitRoomDelegate & delegate,
   std::vector<std::uint8_t> payload,
   std::string topic,
   const std::string & requester_identity)
 {
-  if (!callbacks.on_user_packet_received) {
-    return;
-  }
-
-  livekit::UserDataPacketEvent event;
-  event.data = std::move(payload);
-  event.topic = std::move(topic);
-
-  if (requester_identity.empty()) {
-    callbacks.on_user_packet_received(event);
-    return;
-  }
-
-  livekit::RemoteParticipant participant(
-    livekit::FfiHandle{},
-    "fake-participant-sid",
-    "fake-participant-name",
-    requester_identity,
-    "",
-    std::unordered_map<std::string, std::string>{},
-    livekit::ParticipantKind::Standard,
-    livekit::DisconnectReason::Unknown);
-  event.participant = &participant;
-  callbacks.on_user_packet_received(event);
+  test_support::LiveKitRoomDelegateTestEvents::emitUserPacket(
+    delegate, std::move(payload), std::move(topic), requester_identity);
 }
 
 inline void emitUserPacket(
-  const RoomEventCallbacks & callbacks,
+  LiveKitRoomDelegate & delegate,
   const std::string & payload,
   std::string topic,
   const std::string & requester_identity)
 {
-  emitUserPacket(callbacks, userPacketPayloadBytes(payload), std::move(topic), requester_identity);
+  emitUserPacket(delegate, userPacketPayloadBytes(payload), std::move(topic), requester_identity);
+}
+
+inline void emitParticipantDisconnected(LiveKitRoomDelegate & delegate, const std::string & requester_identity)
+{
+  test_support::LiveKitRoomDelegateTestEvents::emitParticipantDisconnected(delegate, requester_identity);
 }
 
 class FakePublishedVideoTrack final : public PublishedVideoTrack
@@ -154,11 +137,12 @@ public:
     stop();
   }
 
-  void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
+  void start(LiveKitConfig config, LiveKitRoomDelegate & delegate) override
   {
     state->started = true;
     state->access_token = std::move(config.access_token);
-    state->callbacks = std::move(callbacks);
+    state->delegate = &delegate;
+    state->delegate->setReconnectRequestHandler([](const std::string &) { return true; });
   }
 
   bool registerRpc(const std::string & method_name, RpcHandler handler) override
@@ -252,62 +236,70 @@ public:
 
     state->stopped = true;
     state->event_log.push_back("stop");
-    if (state->stop_hook) {
-      state->stop_hook(state->callbacks);
+    if (state->stop_hook && state->delegate != nullptr) {
+      state->stop_hook(*state->delegate);
+    }
+    if (state->delegate != nullptr) {
+      state->delegate->clearReconnectRequestHandler();
+      state->delegate = nullptr;
     }
   }
 
   void emitConnectionReset() const
   {
-    if (state->callbacks.on_connection_reset) {
-      state->callbacks.on_connection_reset();
+    if (state->delegate != nullptr) {
+      state->delegate->roomConnectionReset();
     }
   }
 
   void emitConnected() const
   {
-    if (state->callbacks.on_connected) {
-      state->callbacks.on_connected();
+    if (state->delegate != nullptr) {
+      state->delegate->roomConnected();
     }
   }
 
   void emitReconnectRequested(const std::string & reason) const
   {
-    if (state->callbacks.on_reconnect_requested) {
-      state->callbacks.on_reconnect_requested(reason);
+    if (state->delegate != nullptr) {
+      test_support::LiveKitRoomDelegateTestEvents::emitReconnectRequested(*state->delegate, reason);
     }
   }
 
   void emitReconnecting(const std::string & reason) const
   {
-    if (state->callbacks.on_reconnecting) {
-      state->callbacks.on_reconnecting(reason);
+    if (state->delegate != nullptr) {
+      test_support::LiveKitRoomDelegateTestEvents::emitReconnecting(*state->delegate, reason);
     }
   }
 
   void emitReconnected() const
   {
-    if (state->callbacks.on_reconnected) {
-      state->callbacks.on_reconnected();
+    if (state->delegate != nullptr) {
+      test_support::LiveKitRoomDelegateTestEvents::emitReconnected(*state->delegate);
     }
   }
 
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
-    if (state->callbacks.on_remote_participant_disconnected) {
-      state->callbacks.on_remote_participant_disconnected(requester_identity);
+    if (state->delegate != nullptr) {
+      livekit_ros2_bridge::emitParticipantDisconnected(*state->delegate, requester_identity);
     }
   }
 
   void emitUserPacket(
     std::vector<std::uint8_t> payload, std::string topic, const std::string & requester_identity) const
   {
-    livekit_ros2_bridge::emitUserPacket(state->callbacks, std::move(payload), std::move(topic), requester_identity);
+    if (state->delegate != nullptr) {
+      livekit_ros2_bridge::emitUserPacket(*state->delegate, std::move(payload), std::move(topic), requester_identity);
+    }
   }
 
   void emitUserPacket(const std::string & payload, std::string topic, const std::string & requester_identity) const
   {
-    livekit_ros2_bridge::emitUserPacket(state->callbacks, payload, std::move(topic), requester_identity);
+    if (state->delegate != nullptr) {
+      livekit_ros2_bridge::emitUserPacket(*state->delegate, payload, std::move(topic), requester_identity);
+    }
   }
 
   std::shared_ptr<FakeRoomConnectionState> state;

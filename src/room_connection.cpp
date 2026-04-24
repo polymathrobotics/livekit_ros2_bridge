@@ -33,9 +33,9 @@
 #include "livekit/local_data_track.h"
 #include "livekit/local_participant.h"
 #include "livekit/local_video_track.h"
-#include "livekit/room_delegate.h"
 #include "livekit/rpc_error.h"
 #include "livekit/video_source.h"
+#include "livekit_room_delegate.hpp"
 #include "protocol/constants.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
@@ -109,9 +109,9 @@ struct VideoTrackEntry
   std::uint64_t room_generation = 0;
 };
 
-// Owns one reconnect worker thread and also serves as the LiveKit SDK delegate. Public API calls,
-// delegate callbacks, and reconnect teardown all synchronize through mutex_.
-class LiveKitRoomConnection final : public RoomConnection, public livekit::RoomDelegate
+// Owns one reconnect worker thread. Public API calls, delegate control callbacks, and reconnect
+// teardown all synchronize through mutex_.
+class LiveKitRoomConnection final : public RoomConnection
 {
 public:
   class PublishedVideoTrackLease final : public PublishedVideoTrack
@@ -138,7 +138,7 @@ public:
     stop();
   }
 
-  void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
+  void start(LiveKitConfig config, LiveKitRoomDelegate & delegate) override
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (worker_thread_.joinable()) {
@@ -146,7 +146,8 @@ public:
     }
 
     config_ = std::move(config);
-    callbacks_ = std::move(callbacks);
+    delegate_ = &delegate;
+    delegate_->setReconnectRequestHandler([this](const std::string & reason) { return requestReconnect(reason); });
     stop_requested_ = false;
     reconnect_reason_.reset();
     worker_thread_ = std::thread([this]() { run(); });
@@ -158,6 +159,7 @@ public:
     if (!worker_thread_.joinable()) {
       return;
     }
+    LiveKitRoomDelegate * delegate = delegate_;
     // Wake the worker regardless of whether it is currently waiting on an active connection or
     // sleeping in reconnect backoff; the stop path reuses the same condition variable.
     stop_requested_ = true;
@@ -166,6 +168,14 @@ public:
 
     // Join outside mutex_ because run() reacquires it during teardown before the thread exits.
     worker_thread_.join();
+
+    if (delegate != nullptr) {
+      delegate->clearReconnectRequestHandler();
+    }
+    std::lock_guard<std::mutex> clear_lock(mutex_);
+    if (delegate_ == delegate) {
+      delegate_ = nullptr;
+    }
   }
 
   bool registerRpc(const std::string & method, RpcHandler handler) override
@@ -371,106 +381,6 @@ public:
     }
   }
 
-  void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
-  {
-    const auto * participant = event.participant;
-    if (participant == nullptr) {
-      return;
-    }
-
-    std::function<void(const std::string &)> on_disconnect;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!participant_disconnects_enabled_) {
-        return;
-      }
-      on_disconnect = callbacks_.on_remote_participant_disconnected;
-    }
-
-    if (!on_disconnect) {
-      return;
-    }
-
-    const std::string identity = participant->identity();
-    if (identity.empty()) {
-      return;
-    }
-
-    on_disconnect(identity);
-  }
-
-  void onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event) override
-  {
-    std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      on_user_packet = callbacks_.on_user_packet_received;
-    }
-    if (!on_user_packet) {
-      return;
-    }
-
-    on_user_packet(event);
-  }
-
-  void onConnectionStateChanged(livekit::Room &, const livekit::ConnectionStateChangedEvent & event) override
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      // LiveKit can report participant disconnects as part of a transport loss. Suppress those
-      // until the room is fully connected again so runtime state survives reconnects and refreshes.
-      participant_disconnects_enabled_ = event.state == livekit::ConnectionState::Connected;
-    }
-
-    if (event.state == livekit::ConnectionState::Connected) {
-      notifyReconnected();
-      return;
-    }
-
-    if (event.state == livekit::ConnectionState::Reconnecting) {
-      notifyReconnecting("connection_state_reconnecting");
-      return;
-    }
-
-    requestReconnect("connection_state_disconnected");
-  }
-
-  void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent &) override
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      participant_disconnects_enabled_ = false;
-    }
-    requestReconnect("room_disconnected");
-  }
-
-  void onReconnecting(livekit::Room &, const livekit::ReconnectingEvent &) override
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      participant_disconnects_enabled_ = false;
-    }
-    notifyReconnecting("room_reconnecting");
-  }
-
-  void onReconnected(livekit::Room &, const livekit::ReconnectedEvent &) override
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      participant_disconnects_enabled_ = true;
-    }
-    notifyReconnected();
-  }
-
-  void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      participant_disconnects_enabled_ = false;
-    }
-    requestReconnect("room_eos");
-  }
-
 private:
   LocalParticipantSnapshot snapshotLocalParticipant() const
   {
@@ -539,14 +449,20 @@ private:
   bool connect()
   {
     LiveKitConfig config;
-    std::function<void()> on_connected;
+    LiveKitRoomDelegate * delegate = nullptr;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       config = config_;
+      delegate = delegate_;
+    }
+
+    if (delegate == nullptr) {
+      LogEvent(kLogger, "room_connect_failed").field("reason", "delegate_unavailable").error();
+      return false;
     }
 
     auto room = std::make_shared<livekit::Room>();
-    room->setDelegate(this);
+    room->setDelegate(delegate);
 
     livekit::RoomOptions options;
     options.auto_subscribe = true;
@@ -597,17 +513,12 @@ private:
       // binds against this connection's local participant under the same mutex.
       ++room_generation_;
       room_ = std::move(room);
-      reconnecting_ = false;
       reconnect_reason_.reset();
-      participant_disconnects_enabled_ = true;
       for (const auto & entry : rpc_handlers_) {
         if (!registerRpcLocked(entry.first)) {
           registered = false;
         }
       }
-      // Invoke user callbacks after releasing mutex_ so callback code can safely reenter the
-      // connection API without deadlocking the reconnect worker.
-      on_connected = callbacks_.on_connected;
     }
 
     if (!registered) {
@@ -622,22 +533,18 @@ private:
       .fieldOr("sid", info.sid.has_value() ? info.sid->c_str() : nullptr, kUnknownLogValue)
       .fieldOr("identity", identity, kUnknownLogValue)
       .info();
-    if (on_connected) {
-      on_connected();
-    }
+    delegate->roomConnected();
     return true;
   }
 
   void reset(bool notify)
   {
     std::shared_ptr<livekit::Room> room;
-    std::function<void()> on_reset;
+    LiveKitRoomDelegate * delegate = nullptr;
     std::string reason;
     std::size_t dropped_tracks = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      participant_disconnects_enabled_ = false;
-      reconnecting_ = false;
       room = std::move(room_);
       if (room != nullptr) {
         ++room_generation_;
@@ -648,7 +555,7 @@ private:
       video_tracks_.clear();
       reason = reconnect_reason_.value_or("");
       reconnect_reason_.reset();
-      on_reset = callbacks_.on_connection_reset;
+      delegate = delegate_;
     }
 
     if (room != nullptr) {
@@ -665,18 +572,14 @@ private:
       .fieldIf(dropped_tracks > 0U, "dropped_video_tracks", dropped_tracks)
       .info();
 
-    if (!on_reset) {
-      return;
+    if (delegate != nullptr) {
+      delegate->roomConnectionReset();
     }
-
-    on_reset();
   }
 
-  void requestReconnect(const char * reason)
+  bool requestReconnect(const std::string & reason)
   {
-    std::string reconnect_reason = reason;
     bool already_requested = false;
-    std::function<void(const std::string &)> on_reconnect;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       // Keep the first reconnect cause for this episode; later transport noise should not
@@ -684,67 +587,11 @@ private:
       already_requested = reconnect_reason_.has_value();
       if (!already_requested) {
         reconnect_reason_ = reason;
-        on_reconnect = callbacks_.on_reconnect_requested;
       }
       condition_.notify_all();
     }
 
-    if (already_requested) {
-      return;
-    }
-
-    LogEvent(kLogger, "room_reconnect_requested").field("reason", reason).warn();
-    if (!on_reconnect) {
-      return;
-    }
-
-    on_reconnect(reconnect_reason);
-  }
-
-  void notifyReconnecting(const char * reason)
-  {
-    std::string reconnect_reason = reason;
-    bool already_reconnecting = false;
-    std::function<void(const std::string &)> on_reconnecting;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      already_reconnecting = reconnecting_;
-      if (!already_reconnecting) {
-        reconnecting_ = true;
-        on_reconnecting = callbacks_.on_reconnecting;
-      }
-    }
-
-    if (already_reconnecting) {
-      return;
-    }
-
-    LogEvent(kLogger, "room_reconnecting").field("reason", reason).warn();
-    if (!on_reconnecting) {
-      return;
-    }
-
-    on_reconnecting(reconnect_reason);
-  }
-
-  void notifyReconnected()
-  {
-    std::function<void()> on_reconnected;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!reconnecting_) {
-        return;
-      }
-      reconnecting_ = false;
-      on_reconnected = callbacks_.on_reconnected;
-    }
-
-    LogEvent(kLogger, "room_reconnected").info();
-    if (!on_reconnected) {
-      return;
-    }
-
-    on_reconnected();
+    return !already_requested;
   }
 
   bool registerRpcLocked(const std::string & method)
@@ -800,7 +647,7 @@ private:
 
   std::shared_ptr<livekit::Room> room_;
   LiveKitConfig config_;
-  RoomEventCallbacks callbacks_;
+  LiveKitRoomDelegate * delegate_ = nullptr;
 
   std::unordered_map<std::string, RpcHandler> rpc_handlers_;
   // Indexed by the address of the RAII publication shared with callers. The room generation
@@ -811,13 +658,6 @@ private:
   std::chrono::milliseconds max_backoff_{kReconnectMaxBackoff};
 
   bool stop_requested_ = false;
-  // Guards runtime-facing disconnect callbacks so transient reconnect churn does not look like a
-  // requester disappearing permanently.
-  bool participant_disconnects_enabled_ = false;
-  // Tracks one SDK-owned reconnect episode so runtime-facing health callbacks only fire once per
-  // transport disruption and clear when the room recovers in place.
-  bool reconnecting_ = false;
-
   // Bumped whenever the active room changes or is cleared so in-flight video operations cannot
   // repopulate handle state across reconnect boundaries.
   std::uint64_t room_generation_ = 0;
