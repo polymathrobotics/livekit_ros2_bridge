@@ -19,8 +19,10 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "topic_publish_request.hpp"
-#include "wire/cdr.hpp"
+#include "protocol/cdr.hpp"
+#include "protocol/topic_publish.hpp"
+#include "protocol/topic_publish_json.hpp"
+#include "protocol_test_support.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -30,27 +32,18 @@ namespace
 
 TopicPublishRequest parse(const nlohmann::json & body)
 {
-  const auto payload = body.dump();
-  return parseTopicPublishRequest(std::vector<std::uint8_t>(payload.begin(), payload.end()));
+  const auto text = body.dump();
+  return protocol::topic_publish::parse(std::vector<std::uint8_t>(text.begin(), text.end()));
 }
 
-template <typename Fn>
-void expectInvalidArgument(Fn && fn, const char * expected_message)
-{
-  try {
-    fn();
-    FAIL() << "Expected std::invalid_argument";
-  } catch (const std::invalid_argument & error) {
-    EXPECT_EQ(error.what(), std::string(expected_message));
-  }
-}
+using test_support::expectInvalidArgument;
 
 nlohmann::json makeBody()
 {
   return nlohmann::json{
     {"topic", "/chatter"},
     {"interface_type", "std_msgs/msg/String"},
-    {"message", wire::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
+    {"message", protocol::cdr::serialize(std::vector<std::uint8_t>{0x01, 0x02, 0x03})},
   };
 }
 
@@ -62,7 +55,7 @@ TEST(TopicPublishRequestTest, ParsesValidRequestAndNormalizesFields)
 
   const auto request = parse(body);
 
-  EXPECT_EQ(request.topic, "/camera/image");
+  EXPECT_EQ(request.ros_topic, "/camera/image");
   EXPECT_EQ(request.interface_type, "std_msgs/msg/String");
   EXPECT_EQ(request.cdr, (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
 }
@@ -74,7 +67,7 @@ TEST(TopicPublishRequestTest, AcceptsRootTopicAfterNormalization)
 
   const auto request = parse(body);
 
-  EXPECT_EQ(request.topic, "/");
+  EXPECT_EQ(request.ros_topic, "/");
 }
 
 TEST(TopicPublishRequestTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayload)
@@ -83,19 +76,20 @@ TEST(TopicPublishRequestTest, NormalizesRelativeTopicNamesAndPreservesBinaryPayl
 
   auto body = makeBody();
   body["topic"] = "  battery/cmd  ";
-  body["message"] = wire::cdr::serialize(cdr);
+  body["message"] = protocol::cdr::serialize(cdr);
 
   const auto request = parse(body);
 
-  EXPECT_EQ(request.topic, "/battery/cmd");
+  EXPECT_EQ(request.ros_topic, "/battery/cmd");
   EXPECT_EQ(request.cdr, cdr);
 }
 
 TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
 {
-  EXPECT_THROW(parseTopicPublishRequest(std::vector<std::uint8_t>{'{'}), std::invalid_argument);
+  EXPECT_THROW(protocol::topic_publish::parse(std::vector<std::uint8_t>{'{'}), std::invalid_argument);
   EXPECT_THROW(
-    parseTopicPublishRequest(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}), std::invalid_argument);
+    protocol::topic_publish::parse(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}),
+    std::invalid_argument);
 }
 
 TEST(TopicPublishRequestTest, RejectsMissingOrBlankTopicField)
@@ -120,7 +114,7 @@ TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
 TEST(TopicPublishRequestTest, RejectsEmptyMessagePayload)
 {
   auto body = makeBody();
-  body["message"] = wire::cdr::serialize(std::vector<std::uint8_t>{});
+  body["message"] = protocol::cdr::serialize(std::vector<std::uint8_t>{});
   expectInvalidArgument(
     [&body]() { (void)parse(body); }, "Publish request requires a non-empty message.payload_base64 field.");
 }

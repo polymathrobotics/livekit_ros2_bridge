@@ -22,13 +22,23 @@
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "wire/protocol.hpp"
-#include "wire/subscriptions.hpp"
+#include "protocol/constants.hpp"
+#include "protocol/subscriptions_json.hpp"
 
 namespace livekit_ros2_bridge
 {
 namespace
 {
+
+std::vector<std::uint8_t> payloadBytes(const std::string & payload)
+{
+  return std::vector<std::uint8_t>(payload.begin(), payload.end());
+}
+
+SubscriptionHeartbeat parseHeartbeatPayload(const std::string & payload)
+{
+  return protocol::subscriptions::parseHeartbeat(payloadBytes(payload));
+}
 
 void expectDemand(
   const nlohmann::json & body,
@@ -36,10 +46,10 @@ void expectDemand(
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
-  ASSERT_EQ(heartbeat.subscriptions.size(), 1U);
+  const auto heartbeat = parseHeartbeatPayload(body.dump());
+  ASSERT_EQ(heartbeat.demands.size(), 1U);
 
-  const SubscriptionDemand & demand = heartbeat.subscriptions[0];
+  const SubscriptionDemand & demand = heartbeat.demands[0];
   EXPECT_EQ(demand.kind, expected_kind);
   EXPECT_EQ(demand.name, expected_name);
   EXPECT_EQ(demand.preferred_interval_ms, expected_interval_ms);
@@ -47,30 +57,34 @@ void expectDemand(
 
 void expectParseError(const nlohmann::json & body)
 {
-  EXPECT_THROW((void)wire::subscriptions::parseHeartbeat(body), std::invalid_argument);
+  EXPECT_THROW((void)parseHeartbeatPayload(body.dump()), std::invalid_argument);
 }
 
 SubscriptionStatus makeStatus(
-  SubscriptionTargetKind target_kind,
-  std::string target_name,
-  SubscriptionDeliveryKind delivery_kind,
-  std::string track_name)
+  SubscriptionTargetKind kind, std::string name, SubscriptionDeliveryKind delivery, std::string track_name)
 {
   SubscriptionStatus status;
-  status.kind = target_kind;
-  status.name = std::move(target_name);
-  status.delivery_kind = delivery_kind;
+  status.kind = kind;
+  status.name = std::move(name);
+  status.delivery = delivery;
   status.track_name = std::move(track_name);
   return status;
 }
 
 SubscriptionErrorStatus makeErrorStatus(
-  SubscriptionTargetKind target_kind,
-  std::string target_name,
-  SubscriptionStatusErrorReason reason,
-  std::string message)
+  SubscriptionTargetKind kind, std::string name, SubscriptionStatusErrorReason reason, std::string message)
 {
-  return {target_kind, std::move(target_name), reason, std::move(message)};
+  return {kind, std::move(name), reason, std::move(message)};
+}
+
+nlohmann::json parseSerializedStatusPayload(
+  const std::vector<SubscriptionReportedStatus> & statuses,
+  const std::optional<std::string> & session_id,
+  const std::optional<std::chrono::steady_clock::time_point> & expiry,
+  std::chrono::steady_clock::time_point now)
+{
+  const SubscriptionStatusReport report{statuses, session_id, expiry};
+  return nlohmann::json::parse(protocol::subscriptions::serializeStatusReport(report, now));
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
@@ -98,27 +112,26 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
 {
-  const auto trimmed = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
+  const auto trimmed = parseHeartbeatPayload(R"({
       "session_id":"  session-1  ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
-    })"));
+    })");
   ASSERT_TRUE(trimmed.session_id.has_value());
   EXPECT_EQ(*trimmed.session_id, "session-1");
 
-  const auto missing = wire::subscriptions::parseHeartbeat(
-    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})"));
+  const auto missing = parseHeartbeatPayload(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})");
   EXPECT_EQ(missing.session_id, std::nullopt);
 
-  const auto blank = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
+  const auto blank = parseHeartbeatPayload(R"({
       "session_id":"   ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
-    })"));
+    })");
   EXPECT_EQ(blank.session_id, std::nullopt);
 
-  const auto null_id = wire::subscriptions::parseHeartbeat(nlohmann::json::parse(R"({
+  const auto null_id = parseHeartbeatPayload(R"({
       "session_id":null,
       "subscriptions":[{"kind":"topic","name":"/battery"}]
-    })"));
+    })");
   EXPECT_EQ(null_id.session_id, std::nullopt);
 
   expectParseError(nlohmann::json::parse(R"({
@@ -132,6 +145,12 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrMalformedSubscripti
   expectParseError(nlohmann::json::parse(R"({})"));
   expectParseError(nlohmann::json::parse(R"({"subscriptions":{"topic":"/battery"}})"));
   expectParseError(nlohmann::json::parse(R"({"subscriptions":["/battery"]})"));
+}
+
+TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMalformedPayloads)
+{
+  EXPECT_THROW((void)parseHeartbeatPayload("{"), std::invalid_argument);
+  EXPECT_THROW((void)parseHeartbeatPayload(R"(["/battery"])"), std::invalid_argument);
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFields)
@@ -244,15 +263,15 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepara
       {"kind":"other_video","name":"front_camera","delivery_preferences":{"interval_ms":25}},
       {"kind":"other_video","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = wire::subscriptions::parseHeartbeat(body);
+  const auto heartbeat = parseHeartbeatPayload(body.dump());
 
-  ASSERT_EQ(heartbeat.subscriptions.size(), 4U);
-  EXPECT_EQ(heartbeat.subscriptions[0].kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(heartbeat.subscriptions[0].name, "/camera/front");
-  EXPECT_EQ(heartbeat.subscriptions[1].kind, SubscriptionTargetKind::OtherVideo);
-  EXPECT_EQ(heartbeat.subscriptions[1].name, "/camera/front");
-  EXPECT_EQ(heartbeat.subscriptions[2].name, "front_camera");
-  EXPECT_EQ(heartbeat.subscriptions[3].name, "front_camera/");
+  ASSERT_EQ(heartbeat.demands.size(), 4U);
+  EXPECT_EQ(heartbeat.demands[0].kind, SubscriptionTargetKind::Topic);
+  EXPECT_EQ(heartbeat.demands[0].name, "/camera/front");
+  EXPECT_EQ(heartbeat.demands[1].kind, SubscriptionTargetKind::OtherVideo);
+  EXPECT_EQ(heartbeat.demands[1].name, "/camera/front");
+  EXPECT_EQ(heartbeat.demands[2].name, "front_camera");
+  EXPECT_EQ(heartbeat.demands[3].name, "front_camera/");
 }
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnlyBody)
@@ -260,18 +279,18 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
   auto topic_data = makeStatus(
     SubscriptionTargetKind::Topic, "/lidar/points", SubscriptionDeliveryKind::Data, "lkros.data.lidar.points");
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
-  topic_data.applied_interval_ms = 50;
+  topic_data.interval_ms = 50;
 
   auto other_video = makeStatus(
     SubscriptionTargetKind::OtherVideo,
     "/sources/front",
     SubscriptionDeliveryKind::Video,
     "lkros.video.other.%2Fsources%2Ffront");
-  other_video.degraded_reason = "source warming up";
+  other_video.degradation_reason = "source warming up";
 
   nlohmann::json expected = {
-    {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kBridgeStatusTopic},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -294,7 +313,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(
+    parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{topic_data, other_video},
       std::nullopt,
       std::nullopt,
@@ -305,8 +324,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyBody)
 {
   nlohmann::json expected = {
-    {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kBridgeStatusTopic},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -329,7 +348,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(
+    parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
         makeErrorStatus(
           SubscriptionTargetKind::Topic,
@@ -358,15 +377,15 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
   auto topic_data = makeStatus(
     SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::Data, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
-  topic_data.applied_interval_ms = 100;
+  topic_data.interval_ms = 100;
 
   const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
   const auto session_id = std::optional<std::string>{"session-1"};
   const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
 
   nlohmann::json expected = {
-    {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kBridgeStatusTopic},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kStatusTopic},
     {"session_id", "session-1"},
     {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
@@ -384,8 +403,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(
-      std::vector<SubscriptionReportedStatus>{topic_data}, session_id, expiry, now),
+    parseSerializedStatusPayload(std::vector<SubscriptionReportedStatus>{topic_data}, session_id, expiry, now),
     expected);
 }
 
@@ -394,14 +412,14 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
   auto topic_data = makeStatus(
     SubscriptionTargetKind::Topic, "/battery_state", SubscriptionDeliveryKind::Data, "lkros.data.battery_state");
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
-  topic_data.applied_interval_ms = 100;
+  topic_data.interval_ms = 100;
 
   const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
   const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
 
   nlohmann::json expected = {
-    {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kBridgeStatusTopic},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kStatusTopic},
     {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
   };
@@ -418,8 +436,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(
-      std::vector<SubscriptionReportedStatus>{topic_data}, std::nullopt, expiry, now),
+    parseSerializedStatusPayload(std::vector<SubscriptionReportedStatus>{topic_data}, std::nullopt, expiry, now),
     expected);
 }
 
@@ -432,8 +449,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
     "lkros.video.other.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
-    {"v", wire::protocol::kProtocolVersion},
-    {"type", wire::protocol::kBridgeStatusTopic},
+    {"v", protocol::kProtocolVersion},
+    {"type", protocol::kStatusTopic},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -450,7 +467,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   });
 
   EXPECT_EQ(
-    wire::subscriptions::serializeStatuses(
+    parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
         other_video,
         makeErrorStatus(
@@ -470,14 +487,11 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDelive
   SubscriptionStatus status;
   status.kind = SubscriptionTargetKind::Topic;
   status.name = "/camera/image";
-  status.delivery_kind = static_cast<SubscriptionDeliveryKind>(99);
+  status.delivery = static_cast<SubscriptionDeliveryKind>(99);
 
   EXPECT_THROW(
-    (void)wire::subscriptions::serializeStatuses(
-      std::vector<SubscriptionReportedStatus>{status},
-      std::nullopt,
-      std::nullopt,
-      std::chrono::steady_clock::time_point{}),
+    (void)protocol::subscriptions::serializeStatusReport(
+      SubscriptionStatusReport{{status}, std::nullopt, std::nullopt}, std::chrono::steady_clock::time_point{}),
     std::invalid_argument);
 }
 

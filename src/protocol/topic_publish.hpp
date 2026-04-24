@@ -14,23 +14,21 @@
 
 #pragma once
 
-#include <functional>
+#include <cstdint>
 #include <string>
 #include <vector>
-
-#include "protocol/interfaces.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-/// Look up a fully-qualified ROS interface type and read its `.msg`, `.srv`, or `.action`
-/// definition plus any transitive message dependencies. The requested definition is always
-/// returned first, followed by unique dependencies in first-discovery order during recursive
-/// traversal.
-std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
-
-// Test-only helpers for validating negative-cache behavior.
-void setInterfaceLookupAttemptHookForTest(std::function<void(const std::string &)> hook);
-void resetInterfaceLookupForTest();
+/// Runtime form of a ROS publish request carried on a LiveKit data-packet topic.
+struct TopicPublishRequest
+{
+  /// Normalized absolute ROS topic name.
+  std::string ros_topic;
+  /// Trimmed interface type. Package/msg spelling stays exact for later ROS-graph validation.
+  std::string interface_type;
+  std::vector<std::uint8_t> cdr;
+};
 
 }  // namespace livekit_ros2_bridge

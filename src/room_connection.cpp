@@ -36,9 +36,9 @@
 #include "livekit/room_delegate.h"
 #include "livekit/rpc_error.h"
 #include "livekit/video_source.h"
+#include "protocol/constants.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -791,7 +791,7 @@ private:
               .fieldOr("requester_identity", invocation.caller_identity, kUnknownLogValue)
               .fieldException("error", std::current_exception())
               .error();
-            throw livekit::RpcError(wire::protocol::kRpcErrorInternal, "Internal error handling RPC method");
+            throw livekit::RpcError(protocol::kInternalRpcError, "Internal error handling RPC method");
           }
         });
     } catch (const std::exception & exc) {

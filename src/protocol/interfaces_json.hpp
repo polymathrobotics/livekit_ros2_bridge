@@ -14,15 +14,12 @@
 
 #pragma once
 
-#include <exception>
-#include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include "interface_definition_lookup.hpp"
+#include "protocol/interfaces.hpp"
 
-namespace livekit_ros2_bridge::wire::interfaces
+namespace livekit_ros2_bridge::protocol::interfaces
 {
 
 /// Parse a `ros2.interface.show` request body of the form
@@ -32,14 +29,11 @@ namespace livekit_ros2_bridge::wire::interfaces
 /// Unrelated top-level fields are ignored so the request envelope can grow without changing this parser.
 /// Throws `std::invalid_argument` with caller-fixable validation text that is surfaced through
 /// the RPC invalid-request path.
-std::vector<std::string> parse(const std::string & payload);
-
-/// Recover the request field associated with a parser validation failure when available.
-std::optional<std::string_view> invalidRequestField(const std::exception & exc);
+InterfaceShowRequest parse(const std::string & payload);
 
 /// Serialize interface definitions as
 /// `{ "interfaces": [{ "interface_type", "format", "definition" }, ...] }`
 /// while preserving the input order used by the caller to express dependency/result ordering.
 std::string serialize(const std::vector<InterfaceDefinition> & definitions);
 
-}  // namespace livekit_ros2_bridge::wire::interfaces
+}  // namespace livekit_ros2_bridge::protocol::interfaces

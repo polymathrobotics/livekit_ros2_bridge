@@ -25,11 +25,11 @@
 #include <vector>
 
 #include "access_policy.hpp"
+#include "protocol/topic_publish.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
-#include "topic_publish_request.hpp"
 
 namespace livekit_ros2_bridge
 {

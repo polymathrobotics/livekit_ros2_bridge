@@ -14,26 +14,29 @@
 
 #pragma once
 
-#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a ROS publish request carried on a LiveKit data-packet topic.
-struct TopicPublishRequest
+/// Parsed form of a `ros2.interface.show` request body.
+struct InterfaceShowRequest
 {
-  /// Normalized absolute topic name.
-  std::string topic;
-  /// Trimmed interface type. Package/msg spelling stays exact for later ROS-graph validation.
-  std::string interface_type;
-  std::vector<std::uint8_t> cdr;
+  /// Fully-qualified ROS interface types in caller-provided order. Duplicates are preserved so the
+  /// runtime boundary can decide how to collapse repeated definitions and dependencies.
+  std::vector<std::string> types;
 };
 
-/// Parse a JSON topic-publish request. Normalizes `topic`, trims `interface_type` without
-/// rewriting its package/msg spelling, and requires a non-empty CDR `message` payload. Throws
-/// `std::invalid_argument` on malformed JSON or protocol-contract violations.
-TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & payload);
+/// One ROS interface definition entry shared between lookup code and protocol serialization.
+struct InterfaceDefinition
+{
+  /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
+  std::string type;
+  /// Stable format label for `body`.
+  std::string format;
+  /// Raw `.msg`, `.srv`, or `.action` file contents as read from the ROS package share directory.
+  std::string body;
+};
 
 }  // namespace livekit_ros2_bridge

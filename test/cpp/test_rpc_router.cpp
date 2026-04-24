@@ -29,6 +29,8 @@
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
+#include "protocol/cdr.hpp"
+#include "protocol/constants.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_executor_queue.hpp"
@@ -37,8 +39,6 @@
 #include "rpc_router.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_srvs/srv/set_bool.hpp"
-#include "wire/cdr.hpp"
-#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -116,13 +116,13 @@ std::string nextNodeName(const std::string & prefix)
 std::string makeServiceCallRequestPayload(
   const std::string & service,
   const std::string & interface_type,
-  const std::vector<std::uint8_t> & request_payload,
+  const std::vector<std::uint8_t> & payload,
   std::optional<int> timeout_ms = std::nullopt)
 {
   auto body = nlohmann::json{
     {"service", service},
     {"interface_type", interface_type},
-    {"request", wire::cdr::serialize(request_payload)},
+    {"request", protocol::cdr::serialize(payload)},
   };
   if (timeout_ms.has_value()) {
     body["timeout_ms"] = *timeout_ms;
@@ -197,13 +197,13 @@ TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
             R"({not-json})",
           });
       },
-      wire::protocol::kRpcErrorUnauthorized);
+      protocol::kUnauthorizedRpcError);
   };
 
-  expectUnauthorized(wire::protocol::kRpcServiceCall);
-  expectUnauthorized(wire::protocol::kRpcInterfaceShow);
-  expectUnauthorized(wire::protocol::kRpcServiceList);
-  expectUnauthorized(wire::protocol::kRpcTopicList);
+  expectUnauthorized(protocol::kCallServiceRpc);
+  expectUnauthorized(protocol::kShowInterfaceRpc);
+  expectUnauthorized(protocol::kListServicesRpc);
+  expectUnauthorized(protocol::kListTopicsRpc);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
@@ -214,13 +214,13 @@ TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        wire::protocol::kRpcServiceCall,
+        protocol::kCallServiceRpc,
         RpcInvocation{
           "participant-1",
           R"({"service":"/rpc_router/set_bool"})",
         });
     },
-    wire::protocol::kRpcErrorInvalidRequest);
+    protocol::kInvalidRequestRpcError);
 }
 
 TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
@@ -231,13 +231,13 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        wire::protocol::kRpcServiceCall,
+        protocol::kCallServiceRpc,
         RpcInvocation{
           "participant-1",
           makeSetBoolRequestPayload("/denied_service"),
         });
     },
-    wire::protocol::kRpcErrorForbidden,
+    protocol::kForbiddenRpcError,
     "ROS service '/denied_service' not permitted.");
 }
 
@@ -249,13 +249,13 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        wire::protocol::kRpcInterfaceShow,
+        protocol::kShowInterfaceRpc,
         RpcInvocation{
           "participant-1",
           R"({"interface_types":["nonexistent_pkg/msg/Foo"]})",
         });
     },
-    wire::protocol::kRpcErrorInternal);
+    protocol::kInternalRpcError);
 }
 
 TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicatesRepeatedRequests)
@@ -264,7 +264,7 @@ TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicates
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
-    wire::protocol::kRpcInterfaceShow,
+    protocol::kShowInterfaceRpc,
     RpcInvocation{
       "participant-1",
       R"({"interface_types":["std_msgs/msg/String","  std_msgs/msg/String  "]})",
@@ -294,12 +294,12 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
             R"({"limit":0})",
           });
       },
-      wire::protocol::kRpcErrorInvalidRequest,
+      protocol::kInvalidRequestRpcError,
       "limit must be a positive integer");
   };
 
-  expectInvalidLimit(wire::protocol::kRpcServiceList);
-  expectInvalidLimit(wire::protocol::kRpcTopicList);
+  expectInvalidLimit(protocol::kListServicesRpc);
+  expectInvalidLimit(protocol::kListTopicsRpc);
 }
 
 TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
@@ -310,13 +310,13 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   RosServiceCaller caller(
     node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface());
   FakeRoomConnection connection;
-  connection.state->rejected_rpc_methods = {wire::protocol::kRpcServiceList};
+  connection.state->rejected_rpc_methods = {protocol::kListServicesRpc};
 
   const std::vector<std::string> expected_methods = {
-    wire::protocol::kRpcServiceCall,
-    wire::protocol::kRpcInterfaceShow,
-    wire::protocol::kRpcServiceList,
-    wire::protocol::kRpcTopicList,
+    protocol::kCallServiceRpc,
+    protocol::kShowInterfaceRpc,
+    protocol::kListServicesRpc,
+    protocol::kListTopicsRpc,
   };
 
   {
@@ -324,10 +324,10 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 
     EXPECT_FALSE(router.registerRpcs(connection));
     EXPECT_EQ(connection.state->registered_rpc_methods, expected_methods);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceCall), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcInterfaceShow), 1U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcServiceList), 0U);
-    EXPECT_EQ(connection.state->rpc_handlers.count(wire::protocol::kRpcTopicList), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kCallServiceRpc), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kShowInterfaceRpc), 1U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kListServicesRpc), 0U);
+    EXPECT_EQ(connection.state->rpc_handlers.count(protocol::kListTopicsRpc), 1U);
   }
 
   EXPECT_TRUE(connection.state->rpc_handlers.empty());
@@ -370,7 +370,7 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
 
   ScopedExecutorThread executor_thread(executor);
   const auto rpc_response = harness.invokeRpc(
-    wire::protocol::kRpcServiceCall,
+    protocol::kCallServiceRpc,
     RpcInvocation{
       "participant-1",
       makeSetBoolRequestPayload("/rpc_router/set_bool", true),
@@ -383,8 +383,8 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_FALSE(body.contains("ok"));
   EXPECT_FALSE(body.contains("elapsed_ms"));
 
-  const auto response_payload = wire::cdr::parse(body, "response");
-  const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(response_payload);
+  const auto payload = protocol::cdr::parse(body, protocol::cdr::Field::Response);
+  const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(payload);
   EXPECT_TRUE(response_message.success);
   EXPECT_EQ(response_message.message, "enabled");
 }
@@ -401,13 +401,13 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
   expectRpcHandlerError(
     [&]() {
       harness.invokeRpc(
-        wire::protocol::kRpcServiceCall,
+        protocol::kCallServiceRpc,
         RpcInvocation{
           "participant-1",
           makeSetBoolRequestPayload("/no_such_service", true, 200),
         });
     },
-    wire::protocol::kRpcErrorInternal,
+    protocol::kInternalRpcError,
     "Service call timed out.");
 }
 
@@ -436,7 +436,7 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
 
   ScopedExecutorThread executor_thread(executor);
   const auto response = harness.invokeRpc(
-    wire::protocol::kRpcServiceList,
+    protocol::kListServicesRpc,
     RpcInvocation{
       "participant-1",
       R"({"query":"rpc_router"})",
@@ -467,7 +467,7 @@ TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPo
 
   ScopedExecutorThread executor_thread(executor);
   const auto response = harness.invokeRpc(
-    wire::protocol::kRpcTopicList,
+    protocol::kListTopicsRpc,
     RpcInvocation{
       "participant-1",
       R"({"query":"BatteryState","limit":1})",

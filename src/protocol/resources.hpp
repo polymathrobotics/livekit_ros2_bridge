@@ -14,23 +14,27 @@
 
 #pragma once
 
-#include <functional>
+#include <cstddef>
+#include <optional>
 #include <string>
-#include <vector>
-
-#include "protocol/interfaces.hpp"
 
 namespace livekit_ros2_bridge
 {
 
-/// Look up a fully-qualified ROS interface type and read its `.msg`, `.srv`, or `.action`
-/// definition plus any transitive message dependencies. The requested definition is always
-/// returned first, followed by unique dependencies in first-discovery order during recursive
-/// traversal.
-std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
+/// Parsed form of a resource-list request. Unknown request fields are ignored.
+struct ResourceListRequest
+{
+  /// Optional trimmed query string. Missing, null, or blank values are treated as absent.
+  std::optional<std::string> query;
+  /// Optional positive integer result cap. Missing or null means no explicit limit.
+  std::optional<std::size_t> limit;
+};
 
-// Test-only helpers for validating negative-cache behavior.
-void setInterfaceLookupAttemptHookForTest(std::function<void(const std::string &)> hook);
-void resetInterfaceLookupForTest();
+/// A single ROS graph resource after runtime policy filtering and interface-type collapse.
+struct Resource
+{
+  std::string name;
+  std::string interface_type;
+};
 
 }  // namespace livekit_ros2_bridge

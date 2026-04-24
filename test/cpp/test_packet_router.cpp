@@ -25,13 +25,13 @@
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "packet_router.hpp"
+#include "protocol/cdr.hpp"
+#include "protocol/constants.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
 #include "ros_topic_publisher.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "subscription_lease_manager.hpp"
-#include "wire/cdr.hpp"
-#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -96,7 +96,7 @@ std::string publishPayload()
   return nlohmann::json{
     {"topic", "/battery/cmd"},
     {"interface_type", "sensor_msgs/msg/BatteryState"},
-    {"message", wire::cdr::serialize(serializeMessage(message))},
+    {"message", protocol::cdr::serialize(serializeMessage(message))},
   }
     .dump();
 }
@@ -110,7 +110,7 @@ nlohmann::json extractSinglePublishedStatusEnvelope(
   }
 
   const auto & packet = state.published_outgoing_packets.front();
-  EXPECT_EQ(packet.topic, wire::protocol::kBridgeStatusTopic);
+  EXPECT_EQ(packet.topic, protocol::kStatusTopic);
   EXPECT_EQ(packet.recipient_identities, (std::vector<std::string>{requester_identity}));
   return nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
 }
@@ -172,7 +172,7 @@ TEST_F(PacketRouterTest, RoutesHeartbeatPacketsViaSubscriptionLeaseManager)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(heartbeatPayload(), wire::protocol::kBridgeHeartbeatTopic)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(heartbeatPayload(), protocol::kHeartbeatTopic)));
 
   ASSERT_EQ(room_connection_->state->published_data_track_names.size(), 1U);
   const auto envelope = extractSinglePublishedStatusEnvelope(*room_connection_->state, "participant-1");
@@ -197,7 +197,7 @@ TEST_F(PacketRouterTest, RoutesPublishPacketsViaRosTopicPublisher)
   executor.add_node(observer);
   ASSERT_TRUE(waitForTopicType(executor, node_, "/battery/cmd", "sensor_msgs/msg/BatteryState"));
 
-  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), wire::protocol::kTopicPubTopic)));
+  EXPECT_NO_THROW(packet_router_->handle(makePacket(publishPayload(), protocol::kRosPublishTopic)));
 
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -209,7 +209,7 @@ TEST_F(PacketRouterTest, RejectsInvalidHeartbeatPayloadsWithoutDispatch)
   initRouter(makeAccessPolicy({}, {"/battery"}));
 
   const auto expect_rejected_heartbeat = [this](const std::string & payload) {
-    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kBridgeHeartbeatTopic)));
+    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, protocol::kHeartbeatTopic)));
     EXPECT_TRUE(room_connection_->state->published_outgoing_packets.empty());
     EXPECT_TRUE(room_connection_->state->published_data_track_names.empty());
   };
@@ -237,7 +237,7 @@ TEST_F(PacketRouterTest, RejectsInvalidPublishPacketsWithoutDispatch)
   const auto expect_rejected_publish = [this, &executor, &received_message](
                                          const std::string & payload,
                                          const std::string & requester_identity = "participant-1") {
-    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, wire::protocol::kTopicPubTopic, requester_identity)));
+    EXPECT_NO_THROW(packet_router_->handle(makePacket(payload, protocol::kRosPublishTopic, requester_identity)));
 
     executor.spin_some();
     EXPECT_FALSE(received_message.has_value());

@@ -19,13 +19,13 @@
 #include <stdexcept>
 #include <utility>
 
-#include "nlohmann/json.hpp"
+#include "protocol/constants.hpp"
+#include "protocol/subscriptions_json.hpp"
+#include "protocol/topic_publish_json.hpp"
 #include "rclcpp/logging.hpp"
 #include "ros_topic_publisher.hpp"
 #include "subscription_lease_manager.hpp"
 #include "utils/log_event.hpp"
-#include "wire/protocol.hpp"
-#include "wire/subscriptions.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -58,7 +58,7 @@ PacketRouter::PacketRouter(
 
 void PacketRouter::handle(const IncomingPacket & packet) const
 {
-  if (packet.topic == wire::protocol::kTopicPubTopic) {
+  if (packet.topic == protocol::kRosPublishTopic) {
     // Unlike heartbeats, publish requests have no session-based requester recovery path
     // downstream, so anonymous packets are rejected at the protocol boundary.
     if (packet.requester_identity.empty()) {
@@ -70,7 +70,7 @@ void PacketRouter::handle(const IncomingPacket & packet) const
     }
 
     try {
-      auto request = parseTopicPublishRequest(packet.payload);
+      auto request = protocol::topic_publish::parse(packet.payload);
       submitToExecutor([this, requester_identity = packet.requester_identity, request = std::move(request)]() mutable {
         ros_topic_publisher_.publish(requester_identity, request);
       });
@@ -81,10 +81,9 @@ void PacketRouter::handle(const IncomingPacket & packet) const
         .field("error", exc.what())
         .warnThrottle(*clock_, kLogThrottle);
     }
-  } else if (packet.topic == wire::protocol::kBridgeHeartbeatTopic) {
+  } else if (packet.topic == protocol::kHeartbeatTopic) {
     try {
-      nlohmann::json body = nlohmann::json::parse(packet.payload.begin(), packet.payload.end());
-      auto heartbeat = wire::subscriptions::parseHeartbeat(body);
+      auto heartbeat = protocol::subscriptions::parseHeartbeat(packet.payload);
       submitToExecutor(
         [this, requester_identity = packet.requester_identity, heartbeat = std::move(heartbeat)]() mutable {
           subscription_lease_manager_.handleHeartbeat(requester_identity, heartbeat);

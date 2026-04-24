@@ -54,7 +54,6 @@
 #include "utils/lru_cache.hpp"
 #include "utils/scope_exit.hpp"
 #include "utils/serialized_message.hpp"
-#include "wire/services.hpp"
 
 // rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
 #if !RCLCPP_VERSION_GTE(28, 0, 0)
@@ -886,7 +885,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
 
       std::unique_ptr<MessageStorage> body;
       try {
-        auto serialized = wrapSerializedPayload(request.request_payload);
+        auto serialized = wrapSerializedPayload(request.payload);
         body = std::make_unique<MessageStorage>(
           client->support->request.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
         client->support->request.serializer.deserialize_message(&serialized, body->data());
@@ -1256,12 +1255,12 @@ void RosServiceCaller::Impl::drainResponses()
         try {
           rclcpp::SerializedMessage serialized;
           client->support->response.serializer.serialize_message(response.data(), &serialized);
-          std::vector<std::uint8_t> response_payload;
+          std::vector<std::uint8_t> payload;
           const auto & raw = serialized.get_rcl_serialized_message();
           if (raw.buffer != nullptr && raw.buffer_length > 0U) {
-            response_payload.assign(raw.buffer, raw.buffer + raw.buffer_length);
+            payload.assign(raw.buffer, raw.buffer + raw.buffer_length);
           }
-          call.promise.set_value(Response{call.service, call.interface_type, std::move(response_payload)});
+          call.promise.set_value(Response{call.service, call.interface_type, std::move(payload)});
         } catch (const std::exception & exc) {
           call.promise.set_exception(
             std::make_exception_ptr(

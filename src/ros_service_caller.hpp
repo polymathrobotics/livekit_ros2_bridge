@@ -14,13 +14,12 @@
 
 #pragma once
 
-#include <cstdint>
 #include <functional>
 #include <future>
 #include <memory>
 #include <string>
-#include <vector>
 
+#include "protocol/services.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
@@ -28,22 +27,13 @@
 namespace livekit_ros2_bridge
 {
 
-struct ServiceCallRequest;
-
 // Owns dynamic ROS service clients and settles each request asynchronously from
 // a waitable so RPC handlers can enqueue work without blocking the executor
 // thread that created the request.
 class RosServiceCaller final
 {
 public:
-  // The payload stays serialized so callers can forward arbitrary service types
-  // without templating RosServiceCaller on generated ROS interfaces.
-  struct Response
-  {
-    std::string service;
-    std::string interface_type;
-    std::vector<std::uint8_t> response;
-  };
+  using Response = ServiceCallResponse;
 
   RosServiceCaller(
     rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,

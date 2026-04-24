@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "protocol/constants.hpp"
 #include "rclcpp/create_generic_subscription.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
@@ -34,7 +35,6 @@
 #include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
-#include "wire/protocol.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -288,7 +288,7 @@ private:
 
     LogEvent(kLogger, "subscription_qos_resolved")
       .field("resource", topic_)
-      .field("delivery", wire::protocol::kDeliveryKindData)
+      .field("delivery", protocol::kDataDeliveryKind)
       .field("interface_type", interface_type_)
       .field("publisher_count", qos.publisher_count)
       .field("source", subscriptionQosSourceString(qos.source))

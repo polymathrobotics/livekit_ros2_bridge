@@ -12,36 +12,33 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "topic_publish_request.hpp"
+#include "protocol/topic_publish_json.hpp"
 
 #include <stdexcept>
+#include <string>
 
 #include "nlohmann/json.hpp"
+#include "protocol/cdr.hpp"
+#include "protocol/detail/json_fields.hpp"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "utils/ros_resource_name_utils.hpp"
-#include "wire/cdr.hpp"
-#include "wire/detail/json_fields.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::protocol::topic_publish
 {
 
 namespace
 {
 
-constexpr char kTopicFieldError[] = "Publish request requires a string 'topic' field.";
-constexpr char kTopicEmptyError[] = "Publish request requires a non-empty 'topic' field.";
-constexpr char kInterfaceTypeError[] = "Publish request requires a non-empty 'interface_type' field.";
-constexpr char kMessagePayloadError[] = "Publish request requires a non-empty message.payload_base64 field.";
 const auto kLogger = rclcpp::get_logger("topic_publish_request");
 
 }  // namespace
 
-TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & payload)
+TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
 {
   nlohmann::json body;
   try {
-    body = nlohmann::json::parse(payload.begin(), payload.end());
+    body = nlohmann::json::parse(bytes.begin(), bytes.end());
   } catch (const nlohmann::json::exception & exc) {
     LogEvent(kLogger, "topic_publish_request_rejected").field("reason", "invalid_json").debug();
     throw std::invalid_argument(std::string("Invalid publish request JSON: ") + exc.what());
@@ -57,29 +54,34 @@ TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & p
   // can distinguish which contract boundary rejected the request without repeating that detail.
   TopicPublishRequest request;
   try {
-    request.topic = normalizeRosResourceName(
-      wire::detail::requiredTrimmedStringField(body, "topic", kTopicFieldError, kTopicEmptyError));
+    request.ros_topic = normalizeRosResourceName(
+      protocol::detail::requiredTrimmedStringField(
+        body,
+        "topic",
+        "Publish request requires a string 'topic' field.",
+        "Publish request requires a non-empty 'topic' field."));
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected").field("reason", "invalid_topic").debug();
     throw;
   }
 
   try {
-    request.interface_type = wire::detail::requiredTrimmedStringField(body, "interface_type", kInterfaceTypeError);
+    request.interface_type = protocol::detail::requiredTrimmedStringField(
+      body, "interface_type", "Publish request requires a non-empty 'interface_type' field.");
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_interface_type")
-      .field("topic", request.topic)
+      .field("topic", request.ros_topic)
       .debug();
     throw;
   }
 
   try {
-    request.cdr = wire::cdr::parse(body, "message");
+    request.cdr = protocol::cdr::parse(body, protocol::cdr::Field::Message);
   } catch (const std::invalid_argument &) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_message")
-      .field("topic", request.topic)
+      .field("topic", request.ros_topic)
       .debug();
     throw;
   }
@@ -89,15 +91,15 @@ TopicPublishRequest parseTopicPublishRequest(const std::vector<std::uint8_t> & p
   if (request.cdr.empty()) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_message")
-      .field("topic", request.topic)
+      .field("topic", request.ros_topic)
       .debug();
-    throw std::invalid_argument(kMessagePayloadError);
+    throw std::invalid_argument("Publish request requires a non-empty message.payload_base64 field.");
   }
 
-  // Normalize topic names here so policy checks, publisher lookup, and logs see one resource
+  // Normalize ROS topic names here so policy checks, publisher lookup, and logs see one resource
   // spelling. Keep `interface_type` trimmed-but-exact because publish-time validation compares it
   // against the ROS graph.
   return request;
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::protocol::topic_publish

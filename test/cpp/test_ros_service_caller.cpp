@@ -25,10 +25,10 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "protocol/services.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_test_support.hpp"
-#include "wire/services.hpp"
 
 #define private public
 #include "ros_service_caller.hpp"
@@ -161,7 +161,7 @@ ServiceCallRequest makeSetBoolRequest(
   request.interface_type = interface_type.value_or("");
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = data;
-  request.request_payload = serializeMessage(ros_request);
+  request.payload = serializeMessage(ros_request);
   request.timeout_ms = timeout_ms;
   return request;
 }
@@ -214,7 +214,7 @@ TEST_F(RosServiceCallerTest, CallsServiceAndReturnsResponse)
   ASSERT_TRUE(waitForFutureReady(executor, future));
 
   const RosServiceCaller::Response result = future.get();
-  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
+  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.payload);
   EXPECT_TRUE(response.success);
   EXPECT_EQ(response.message, "enabled");
 
@@ -256,13 +256,13 @@ TEST_F(RosServiceCallerTest, MatchesConcurrentResponsesByClientAndSequence)
 
   const auto alpha_result = alpha_future.get();
   EXPECT_EQ(alpha_result.service, "/test_set_bool_alpha");
-  const auto alpha_response = deserializeMessage<std_srvs::srv::SetBool::Response>(alpha_result.response);
+  const auto alpha_response = deserializeMessage<std_srvs::srv::SetBool::Response>(alpha_result.payload);
   EXPECT_TRUE(alpha_response.success);
   EXPECT_EQ(alpha_response.message, "alpha");
 
   const auto beta_result = beta_future.get();
   EXPECT_EQ(beta_result.service, "/test_set_bool_beta");
-  const auto beta_response = deserializeMessage<std_srvs::srv::SetBool::Response>(beta_result.response);
+  const auto beta_response = deserializeMessage<std_srvs::srv::SetBool::Response>(beta_result.payload);
   EXPECT_FALSE(beta_response.success);
   EXPECT_EQ(beta_response.message, "beta");
 
@@ -317,7 +317,7 @@ TEST_F(RosServiceCallerTest, ReleasesRequesterIdentityInflightQuotaWhenRequestBu
   saturateInflightQuota(caller, "requester-1", request, kMaxInflightPerRequester - 1);
 
   ServiceCallRequest malformed_request = request;
-  malformed_request.request_payload.clear();
+  malformed_request.payload.clear();
   auto malformed_future = caller.call("requester-1", malformed_request);
   const std::string malformed_error = expectRuntimeErrorMessage(malformed_future);
   EXPECT_NE(malformed_error.find("Failed to build service request:"), std::string::npos);
@@ -480,8 +480,8 @@ TEST_F(RosServiceCallerTest, DropsLateTimedOutResponseBeforeSettlingLaterCallOnS
     test_support::waitUntil(
       [&]() { return second_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready; },
       std::chrono::seconds(3)));
-  const auto second_response_payload = second_future.get();
-  const auto second_response = deserializeMessage<std_srvs::srv::SetBool::Response>(second_response_payload.response);
+  const auto second_result = second_future.get();
+  const auto second_response = deserializeMessage<std_srvs::srv::SetBool::Response>(second_result.payload);
   EXPECT_FALSE(second_response.success);
   EXPECT_EQ(second_response.message, "completed");
 
@@ -590,7 +590,7 @@ TEST_F(RosServiceCallerTest, ResolvesServiceTypeFromGraph)
 
   const RosServiceCaller::Response result = future.get();
   EXPECT_EQ(result.interface_type, "std_srvs/srv/SetBool");
-  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.response);
+  const auto response = deserializeMessage<std_srvs::srv::SetBool::Response>(result.payload);
   EXPECT_TRUE(response.success);
 
   caller.shutdown();
@@ -628,7 +628,7 @@ TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
   request.interface_type = "nonexistent_pkg/srv/Foo";
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = false;
-  request.request_payload = serializeMessage(ros_request);
+  request.payload = serializeMessage(ros_request);
   request.timeout_ms = 100;
 
   auto first_future = caller.call("requester-1", request);
@@ -674,13 +674,13 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
   auto first_future =
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
   ASSERT_TRUE(waitForFutureReady(executor, first_future));
-  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(first_future.get().response).success);
+  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(first_future.get().payload).success);
   EXPECT_EQ(type_support_load_attempts, 1);
 
   auto second_future =
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs, false));
   ASSERT_TRUE(waitForFutureReady(executor, second_future));
-  EXPECT_FALSE(deserializeMessage<std_srvs::srv::SetBool::Response>(second_future.get().response).success);
+  EXPECT_FALSE(deserializeMessage<std_srvs::srv::SetBool::Response>(second_future.get().payload).success);
   EXPECT_EQ(type_support_load_attempts, 1);
 
   caller.resetSessionState();
@@ -688,7 +688,7 @@ TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
   auto third_future =
     caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
   ASSERT_TRUE(waitForFutureReady(executor, third_future));
-  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(third_future.get().response).success);
+  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(third_future.get().payload).success);
   EXPECT_EQ(type_support_load_attempts, 2);
 
   caller.shutdown();

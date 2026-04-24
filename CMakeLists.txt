@@ -59,14 +59,14 @@ add_library(livekit_ros2_bridge_core STATIC
   src/interface_definition_lookup.cpp
   src/runtime_config.cpp
   src/subscription_qos.cpp
-  src/topic_publish_request.cpp
   src/video_stream_spec.cpp
-  src/wire/cdr.cpp
-  src/wire/detail/base64.cpp
-  src/wire/interfaces.cpp
-  src/wire/resources.cpp
-  src/wire/services.cpp
-  src/wire/subscriptions.cpp
+  src/protocol/cdr.cpp
+  src/protocol/detail/base64.cpp
+  src/protocol/interfaces_json.cpp
+  src/protocol/resources_json.cpp
+  src/protocol/services_json.cpp
+  src/protocol/subscriptions_json.cpp
+  src/protocol/topic_publish_json.cpp
 )
 livekit_ros2_bridge_configure_internal_target(livekit_ros2_bridge_core)
 target_link_libraries(livekit_ros2_bridge_core PRIVATE

@@ -53,10 +53,10 @@ std::vector<std::uint8_t> serializeMessageToCdr(const MessageT & message)
 }
 
 TopicPublishRequest makeRequest(
-  const std::string & topic, const std::string & interface_type, std::vector<std::uint8_t> cdr)
+  const std::string & ros_topic, const std::string & interface_type, std::vector<std::uint8_t> cdr)
 {
   TopicPublishRequest request;
-  request.topic = topic;
+  request.ros_topic = ros_topic;
   request.interface_type = interface_type;
   request.cdr = std::move(cdr);
   return request;

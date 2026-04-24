@@ -20,12 +20,12 @@
 #include <string_view>
 #include <vector>
 
-namespace livekit_ros2_bridge::wire::detail
+namespace livekit_ros2_bridge::protocol::detail::base64
 {
 
-// Internal wire helpers for canonical padded RFC 4648 base64 used by the CDR envelope.
+// Internal protocol helpers for canonical padded RFC 4648 base64 used by the CDR envelope.
 // They intentionally reject lenient variants that some decoders normalize.
-enum class Base64Status
+enum class Status
 {
   Ok,
   // Input is not canonical padded standard base64: wrong alphabet, misplaced '=',
@@ -36,25 +36,20 @@ enum class Base64Status
   MissingPadding,
 };
 
-struct Base64DecodeResult
+struct Result
 {
-  // Populated only when `status == Base64Status::Ok`; failed decodes do not expose partial output.
+  // Populated only when `status == Status::Ok`; failed decodes do not expose partial output.
   std::vector<std::uint8_t> bytes;
-  Base64Status status = Base64Status::Ok;
-
-  explicit operator bool() const noexcept
-  {
-    return status == Base64Status::Ok;
-  }
+  Status status = Status::Ok;
 };
 
 /// Encode raw bytes as padded standard base64. `bytes` may be null only when
 /// `size == 0`.
-std::string encodeBase64(const std::uint8_t * bytes, std::size_t size);
+std::string encode(const std::uint8_t * bytes, std::size_t size);
 
 /// Decode padded standard base64 without accepting whitespace or unpadded variants.
-/// Returns `Base64Status::MissingPadding` separately when the input is not quartet-aligned after
+/// Returns `Status::MissingPadding` separately when the input is not quartet-aligned after
 /// basic validation so higher-level payload parsers can surface a more specific error.
-Base64DecodeResult decodeBase64(std::string_view text);
+Result decode(std::string_view text);
 
-}  // namespace livekit_ros2_bridge::wire::detail
+}  // namespace livekit_ros2_bridge::protocol::detail::base64

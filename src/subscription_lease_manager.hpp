@@ -27,7 +27,7 @@
 #include <vector>
 
 #include "access_policy.hpp"
-#include "core/subscriptions.hpp"
+#include "protocol/subscriptions.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -99,7 +99,7 @@ private:
 
   struct Subscription
   {
-    SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
+    SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
     std::string name;
     std::string interface_type;
     std::map<std::string, Lease> leases;
@@ -115,9 +115,9 @@ private:
 
   struct ResolvedDemand
   {
-    SubscriptionTargetKind target_kind = SubscriptionTargetKind::Topic;
-    std::string canonical_name;
-    std::string subscription_key;
+    SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
+    std::string name;
+    std::string key;
     std::string interface_type;
     std::optional<VideoStreamSpec> video_spec;
   };
@@ -128,7 +128,7 @@ private:
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
   static std::vector<ExpiredLeaseRemoval> collectExpiredLeaseRemovals(
     const Subscription & subscription, Clock::time_point reference_time);
-  static bool isVideoSubscription(const Subscription & subscription);
+  static bool isVideo(const Subscription & subscription);
 
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters_;
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
@@ -165,8 +165,8 @@ private:
   void applyExpiredLeaseRemovals(
     Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time);
   void destroy(Subscription & subscription, bool log_destroy = true);
-  void pruneExpiredSubscriptionLeases(Clock::time_point reference_time);
-  void refreshDataSubscriptionInterval(const Subscription & subscription);
+  void pruneSubscriptionLeases(Clock::time_point reference_time);
+  void refreshDataInterval(const Subscription & subscription);
   void republishTracks(const std::string & requester_identity);
 };
 

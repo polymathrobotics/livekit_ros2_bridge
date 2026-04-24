@@ -90,9 +90,9 @@ TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
   const auto definitions = lookupInterfaceDefinitions("std_msgs/msg/String");
 
   ASSERT_EQ(definitions.size(), 1u);
-  EXPECT_EQ(definitions.front().interface_type, "std_msgs/msg/String");
+  EXPECT_EQ(definitions.front().type, "std_msgs/msg/String");
   EXPECT_EQ(definitions.front().format, "ros2msg");
-  EXPECT_NE(definitions.front().definition.find("string data"), std::string::npos);
+  EXPECT_NE(definitions.front().body.find("string data"), std::string::npos);
 }
 
 TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
@@ -102,10 +102,10 @@ TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
   ASSERT_EQ(definitions.size(), 2u);
   const auto & header = definitions[0];
   const auto & time = definitions[1];
-  EXPECT_EQ(header.interface_type, "std_msgs/msg/Header");
-  EXPECT_NE(header.definition.find("builtin_interfaces/Time stamp"), std::string::npos);
-  EXPECT_EQ(time.interface_type, "builtin_interfaces/msg/Time");
-  EXPECT_NE(time.definition.find("int32 sec"), std::string::npos);
+  EXPECT_EQ(header.type, "std_msgs/msg/Header");
+  EXPECT_NE(header.body.find("builtin_interfaces/Time stamp"), std::string::npos);
+  EXPECT_EQ(time.type, "builtin_interfaces/msg/Time");
+  EXPECT_NE(time.body.find("int32 sec"), std::string::npos);
 }
 
 TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicates)
@@ -113,10 +113,10 @@ TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicat
   const auto definitions = lookupInterfaceDefinitions("sensor_msgs/msg/BatteryState");
 
   ASSERT_EQ(definitions.size(), 3u);
-  EXPECT_EQ(definitions.front().interface_type, "sensor_msgs/msg/BatteryState");
+  EXPECT_EQ(definitions.front().type, "sensor_msgs/msg/BatteryState");
   std::set<std::string> types;
   for (auto it = definitions.begin() + 1; it != definitions.end(); ++it) {
-    types.insert(it->interface_type);
+    types.insert(it->type);
   }
   const std::set<std::string> expected = {
     "builtin_interfaces/msg/Time",
@@ -130,8 +130,8 @@ TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
   const auto definitions = lookupInterfaceDefinitions("std_srvs/srv/SetBool");
 
   ASSERT_EQ(definitions.size(), 1u);
-  EXPECT_EQ(definitions.front().interface_type, "std_srvs/srv/SetBool");
-  EXPECT_NE(definitions.front().definition.find("---"), std::string::npos);
+  EXPECT_EQ(definitions.front().type, "std_srvs/srv/SetBool");
+  EXPECT_NE(definitions.front().body.find("---"), std::string::npos);
 }
 
 TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesInTraversalOrder)
@@ -139,14 +139,14 @@ TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesI
   const auto definitions = lookupInterfaceDefinitions("sensor_msgs/srv/SetCameraInfo");
 
   ASSERT_EQ(definitions.size(), 5u);
-  EXPECT_EQ(definitions[0].interface_type, "sensor_msgs/srv/SetCameraInfo");
-  EXPECT_NE(definitions[0].definition.find("sensor_msgs/CameraInfo camera_info"), std::string::npos);
-  EXPECT_NE(definitions[0].definition.find("---"), std::string::npos);
+  EXPECT_EQ(definitions[0].type, "sensor_msgs/srv/SetCameraInfo");
+  EXPECT_NE(definitions[0].body.find("sensor_msgs/CameraInfo camera_info"), std::string::npos);
+  EXPECT_NE(definitions[0].body.find("---"), std::string::npos);
 
-  EXPECT_EQ(definitions[1].interface_type, "sensor_msgs/msg/CameraInfo");
-  EXPECT_EQ(definitions[2].interface_type, "std_msgs/msg/Header");
-  EXPECT_EQ(definitions[3].interface_type, "builtin_interfaces/msg/Time");
-  EXPECT_EQ(definitions[4].interface_type, "sensor_msgs/msg/RegionOfInterest");
+  EXPECT_EQ(definitions[1].type, "sensor_msgs/msg/CameraInfo");
+  EXPECT_EQ(definitions[2].type, "std_msgs/msg/Header");
+  EXPECT_EQ(definitions[3].type, "builtin_interfaces/msg/Time");
+  EXPECT_EQ(definitions[4].type, "sensor_msgs/msg/RegionOfInterest");
 }
 
 TEST(InterfaceDefinitionLookupTest, RejectsMalformedTypeShapeAndKind)

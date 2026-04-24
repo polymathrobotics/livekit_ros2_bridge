@@ -69,16 +69,16 @@ RosTopicPublisher::~RosTopicPublisher()
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)
 {
-  const std::string & topic = request.topic;
+  const std::string & ros_topic = request.ros_topic;
 
   if (is_shutdown_.load()) {
     return;
   }
 
-  if (!access_policy_.allows(AccessOperation::Publish, topic)) {
+  if (!access_policy_.allows(AccessOperation::Publish, ros_topic)) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "forbidden")
-      .field("topic", topic)
+      .field("topic", ros_topic)
       .field("requester_identity", requester_identity)
       .warnThrottle(*clock_, kLogThrottle);
 
@@ -94,14 +94,14 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     // clears the entry.
     {
       std::lock_guard<std::mutex> lock(publishers_mutex_);
-      const auto cached = publishers_.find(topic);
+      const auto cached = publishers_.find(ros_topic);
       if (cached != publishers_.end()) {
         type = cached->second.type;
         publisher = cached->second.publisher;
       } else if (publishers_.size() >= max_topics_) {
         LogEvent(kLogger, "publish_request_rejected")
           .field("reason", "publisher_cache_full")
-          .field("topic", topic)
+          .field("topic", ros_topic)
           .field("requester_identity", requester_identity)
           .field("max_topics", max_topics_)
           .warnThrottle(*clock_, kLogThrottle);
@@ -111,7 +111,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
     if (!publisher) {
       const auto topics = topic_graph_provider_ ? topic_graph_provider_() : graph_->get_topic_names_and_types();
-      type = requireSingleInterfaceType(topics, topic, "topic");
+      type = requireSingleInterfaceType(topics, ros_topic, "topic");
     }
 
     if (type != request.interface_type) {
@@ -120,7 +120,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "invalid_request")
-      .field("topic", topic)
+      .field("topic", ros_topic)
       .field("requester_identity", requester_identity)
       .field("interface_type", request.interface_type)
       .field("error", exc.what())
@@ -143,7 +143,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   try {
     if (!publisher) {
       const rclcpp::QoS qos(kPublisherDepth);
-      publisher = rclcpp::create_generic_publisher(topics_, topic, type, qos);
+      publisher = rclcpp::create_generic_publisher(topics_, ros_topic, type, qos);
     }
 
     if (before_publish_handler_) {
@@ -172,13 +172,13 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       }
 
       if (publishers_.size() < max_topics_) {
-        publishers_.emplace(topic, PublisherEntry{type, std::move(publisher)});
+        publishers_.emplace(ros_topic, PublisherEntry{type, std::move(publisher)});
       }
     }
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_failed")
       .field("reason", "internal")
-      .field("topic", topic)
+      .field("topic", ros_topic)
       .field("requester_identity", requester_identity)
       .field("interface_type", type)
       .field("error", exc.what())

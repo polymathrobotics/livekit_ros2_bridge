@@ -13,33 +13,23 @@
 // limitations under the License.
 
 #include <optional>
-#include <stdexcept>
-#include <string_view>
 
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
-#include "wire/resources.hpp"
+#include "protocol/resources_json.hpp"
+#include "protocol_test_support.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 namespace
 {
-void expectInvalidRequestField(
-  const std::string & payload, std::string_view expected_field, const char * expected_message)
-{
-  try {
-    (void)wire::resources::parse(payload);
-    FAIL() << "Expected std::invalid_argument";
-  } catch (const std::invalid_argument & error) {
-    EXPECT_EQ(std::string(error.what()), std::string(expected_message));
-    EXPECT_EQ(wire::resources::invalidRequestField(error), std::optional<std::string_view>(expected_field));
-  }
-}
+
+using test_support::expectInvalidArgument;
 
 TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
-  const auto request = wire::resources::parse(R"({
+  const auto request = protocol::resources::parseRequest(R"({
     "extra":"ignored",
     "query":"   ",
     "limit":null
@@ -48,7 +38,7 @@ TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbse
   EXPECT_EQ(request.query, std::nullopt);
   EXPECT_EQ(request.limit, std::nullopt);
 
-  const auto null_request = wire::resources::parse(R"({"query":null})");
+  const auto null_request = protocol::resources::parseRequest(R"({"query":null})");
 
   EXPECT_EQ(null_request.query, std::nullopt);
   EXPECT_EQ(null_request.limit, std::nullopt);
@@ -56,7 +46,7 @@ TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbse
 
 TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
 {
-  const auto request = wire::resources::parse(R"({"query":" /cortex/modify ","limit":25})");
+  const auto request = protocol::resources::parseRequest(R"({"query":" /cortex/modify ","limit":25})");
 
   EXPECT_EQ(request.query, std::optional<std::string>("/cortex/modify"));
   EXPECT_EQ(request.limit, std::optional<std::size_t>(25u));
@@ -64,21 +54,24 @@ TEST(ResourceListPayloadsTest, ParsesTrimmedQueryAndLimit)
 
 TEST(ResourceListPayloadsTest, RejectsInvalidRequestsWithFieldContext)
 {
-  expectInvalidRequestField("{", "payload", "Invalid JSON in list request");
-  expectInvalidRequestField(R"([])", "payload", "List request must be a JSON object");
-  expectInvalidRequestField(R"({"query":123})", "query", "query must be a string");
-  expectInvalidRequestField(R"({"limit":-1})", "limit", "limit must be a positive integer");
-  expectInvalidRequestField(R"({"limit":0})", "limit", "limit must be a positive integer");
-  expectInvalidRequestField(R"({"limit":1.5})", "limit", "limit must be a positive integer");
-
-  const std::invalid_argument unrelated_error("other_validation_error");
-  EXPECT_EQ(wire::resources::invalidRequestField(unrelated_error), std::nullopt);
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest("{"); }, "Invalid JSON in list request", "payload");
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest(R"([])"); }, "List request must be a JSON object", "payload");
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest(R"({"query":123})"); }, "query must be a string", "query");
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest(R"({"limit":-1})"); }, "limit must be a positive integer", "limit");
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest(R"({"limit":0})"); }, "limit must be a positive integer", "limit");
+  expectInvalidArgument(
+    []() { (void)protocol::resources::parseRequest(R"({"limit":1.5})"); }, "limit must be a positive integer", "limit");
 }
 
 TEST(ResourceListPayloadsTest, SerializesServices)
 {
   const auto body = nlohmann::json::parse(
-    wire::resources::serializeServices({
+    protocol::resources::serializeServices({
       {"/set_bool", "std_srvs/srv/SetBool"},
       {"/trigger", "std_srvs/srv/Trigger"},
     }));
@@ -94,7 +87,7 @@ TEST(ResourceListPayloadsTest, SerializesServices)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(wire::resources::serializeServices({})),
+    nlohmann::json::parse(protocol::resources::serializeServices({})),
     nlohmann::json({{"services", nlohmann::json::array()}}));
 }
 
@@ -102,7 +95,7 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
 {
   EXPECT_EQ(
     nlohmann::json::parse(
-      wire::resources::serializeTopics({
+      protocol::resources::serializeTopics({
         {"/camera/image_raw", "sensor_msgs/msg/Image"},
       })),
     nlohmann::json({
@@ -113,7 +106,8 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
     }));
 
   EXPECT_EQ(
-    nlohmann::json::parse(wire::resources::serializeTopics({})), nlohmann::json({{"topics", nlohmann::json::array()}}));
+    nlohmann::json::parse(protocol::resources::serializeTopics({})),
+    nlohmann::json({{"topics", nlohmann::json::array()}}));
 }
 
 }  // namespace

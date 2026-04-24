@@ -255,13 +255,13 @@ void collectInterfaceDefinitions(
     return;
   }
 
-  const std::string definition = loadInterfaceDefinition(interface_type);
-  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, definition});
+  const std::string body = loadInterfaceDefinition(interface_type);
+  definitions.push_back({interface_type, kDefinitionFormatRos2Msg, body});
 
   // Successful loads already validated the identifier; re-parse here instead of carrying the
   // package name through traversal state just for dependency qualification.
   const std::string package = TypeParts::parse(interface_type).package;
-  for (const auto & dependency : extractDependencies(definition, package)) {
+  for (const auto & dependency : extractDependencies(body, package)) {
     collectInterfaceDefinitions(dependency, visited, definitions);
   }
 }
