@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_frame_source/ros_topic_video_frame_sources.hpp"
+#include "ros_video_stream.hpp"
 
 #include <gst/video/video.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <memory>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 
 #include "builtin_interfaces/msg/time.hpp"
@@ -32,6 +30,7 @@
 #include "sensor_msgs/image_encodings.hpp"
 #include "utils/log_event.hpp"
 #include "utils/trim.hpp"
+#include "video_pipeline_description.hpp"
 #include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
@@ -40,7 +39,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.ros_topic_video_frame_source");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.ros_video_stream");
 
 const char * gstVideoFormatName(GstVideoFormat format)
 {
@@ -50,8 +49,6 @@ const char * gstVideoFormatName(GstVideoFormat format)
 
 GstVideoFormat gstFormatFromRosEncoding(const std::string & encoding)
 {
-  // Keep this intentionally limited to known raw formats instead of
-  // guessing caps for other ROS encodings.
   if (encoding == sensor_msgs::image_encodings::MONO8) return GST_VIDEO_FORMAT_GRAY8;
   if (encoding == sensor_msgs::image_encodings::MONO16) return GST_VIDEO_FORMAT_GRAY16_LE;
   if (encoding == sensor_msgs::image_encodings::RGB8) return GST_VIDEO_FORMAT_RGB;
@@ -63,11 +60,8 @@ GstVideoFormat gstFormatFromRosEncoding(const std::string & encoding)
   return GST_VIDEO_FORMAT_UNKNOWN;
 }
 
-std::optional<std::string> parseCompressedImageFormat(const std::string & format)
+std::optional<std::string> parseCompressedCodec(const std::string & format)
 {
-  // `sensor_msgs/msg/CompressedImage::format` is convention-based rather than
-  // strongly typed, so normalize the leading codec token and ignore any extra
-  // transport-specific suffixes such as `jpeg; quality=...`.
   const auto parse_token = [](std::string token) -> std::optional<std::string> {
     token = trim(token);
     const auto token_end = token.find_first_of(" \t\r\n");
@@ -91,21 +85,6 @@ std::optional<std::string> parseCompressedImageFormat(const std::string & format
   return parse_token(format.substr(sep + 1));
 }
 
-FrameLayout frameLayoutFromImage(const sensor_msgs::msg::Image & image, GstVideoFormat format)
-{
-  FrameLayout layout;
-  layout.width = static_cast<int>(image.width);
-  layout.height = static_cast<int>(image.height);
-  layout.format = format;
-  layout.stride = image.step;
-  return layout;
-}
-
-bool frameLayoutsMatch(const FrameLayout & lhs, const FrameLayout & rhs)
-{
-  return lhs.width == rhs.width && lhs.height == rhs.height && lhs.format == rhs.format && lhs.stride == rhs.stride;
-}
-
 void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & previous_layout, const FrameLayout & layout)
 {
   const auto & input = requireRosVideoInput(spec);
@@ -127,19 +106,9 @@ void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & prev
   event.info();
 }
 
-std::string compressedImageFormatFromImage(const sensor_msgs::msg::CompressedImage & image)
-{
-  const auto format = parseCompressedImageFormat(image.format);
-  if (!format.has_value()) {
-    throw std::runtime_error("Unsupported compressed image format '" + image.format + "'.");
-  }
-  return *format;
-}
-
 GstBufferPtr makeStampedGstBuffer(
   const std::uint8_t * data, std::size_t size, const builtin_interfaces::msg::Time & stamp)
 {
-  // appsrc consumes buffers asynchronously, so copy the ROS payload into an owned GstBuffer.
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, size, nullptr));
   if (buffer == nullptr) {
     throw std::runtime_error("Failed to allocate GStreamer buffer.");
@@ -155,7 +124,6 @@ GstBufferPtr makeStampedGstBuffer(
     }
   }
 
-  // Let rclcpp own ROS Time message validation before handing the timestamp to GStreamer.
   const GstClockTime pts = static_cast<GstClockTime>(rclcpp::Time(stamp).nanoseconds());
   GST_BUFFER_PTS(buffer.get()) = pts;
   GST_BUFFER_DTS(buffer.get()) = pts;
@@ -184,33 +152,42 @@ void logSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscription
 
 }  // namespace
 
-RosTopicVideoFrameSource::RosTopicVideoFrameSource(
+RosVideoStream::RosVideoStream(
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
     rclcpp::node_interfaces::NodeTopicsInterface,
     rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config,
-  VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer)
-: VideoPipelineFrameSource(std::move(spec), sink, observer)
+  VideoTrackPublisher & publisher)
+: spec_(std::move(spec))
+, publisher_(publisher)
+, pipeline_(
+    spec_,
+    GStreamerPipelineCallbacks{
+      [this]() { return isShutdown(); },
+      [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
+        publisher_.captureFrame(frame, timestamp_us);
+      },
+      [this](const std::string & error) { publisher_.onSampleUnpackFailed(error); },
+      [this](const std::string & error) { publisher_.onCaptureFailed(error); },
+      [this](const std::string & reason) { onPipelineFailure(reason); },
+    })
 , node_interfaces_(std::move(node_interfaces))
 , qos_config_(qos_config)
-, mode_(requireRosVideoInput(spec_).ingest_mode)
 {}
 
-RosTopicVideoFrameSource::~RosTopicVideoFrameSource()
+RosVideoStream::~RosVideoStream()
 {
   close();
 }
 
-void RosTopicVideoFrameSource::activate()
+void RosVideoStream::start()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
     throw std::runtime_error("Video stream is shut down.");
   }
-
   if (raw_subscription_ || compressed_subscription_) {
     return;
   }
@@ -221,11 +198,8 @@ void RosTopicVideoFrameSource::activate()
     resolveSubscriptionQos(node_interfaces_.get_node_graph_interface(), input.topic, base_qos, qos_config_);
   logSubscriptionQos(spec_, qos);
 
-  // The ROS subscription may still have queued callbacks during shutdown; the
-  // weak ref prevents that queue from extending this source's lifetime.
-  std::weak_ptr<RosTopicVideoFrameSource> weak_self =
-    std::static_pointer_cast<RosTopicVideoFrameSource>(shared_from_this());
-  switch (mode_) {
+  std::weak_ptr<RosVideoStream> weak_self = shared_from_this();
+  switch (input.ingest_mode) {
     case RosVideoIngestMode::RawImage:
       raw_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
         node_interfaces_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
@@ -248,38 +222,102 @@ void RosTopicVideoFrameSource::activate()
   }
 }
 
-void RosTopicVideoFrameSource::close()
+void RosVideoStream::close()
 {
-  PipelineHandles handles;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
-  std::thread recovery_thread;
+  std::thread failure_thread;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
       return;
     }
 
-    recovery_thread = beginShutdownLocked();
+    failure_thread = beginShutdownLocked();
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
   }
 
-  joinRecoveryThread(recovery_thread);
-
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    handles = takePipelineLocked();
+  if (failure_thread.joinable()) {
+    failure_thread.join();
   }
 
-  // Release ROS/GStreamer objects after unlocking so any destruction-triggered
-  // callbacks never re-enter this source while mutex_ is held.
   raw_subscription.reset();
   compressed_subscription.reset();
-  teardown(handles.pipeline, handles.appsrc, handles.appsink);
+  pipeline_.stop();
 }
 
-void RosTopicVideoFrameSource::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
+bool RosVideoStream::isShutdown() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return is_shutdown_;
+}
+
+void RosVideoStream::onPipelineFailure(const std::string & reason)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_ || !pipeline_.isActive()) {
+    return;
+  }
+  if (failure_pending_) {
+    return;
+  }
+
+  failure_pending_ = true;
+  LogEvent(kLogger, "video_stream_pipeline_recovery_disabled")
+    .field("stream_key", spec_.stream_key)
+    .field("track_name", spec_.track_name)
+    .field("reason", reason)
+    .warn();
+
+  startFailureThreadLocked();
+  failure_condition_.notify_one();
+}
+
+void RosVideoStream::startFailureThreadLocked()
+{
+  if (failure_thread_.joinable()) {
+    return;
+  }
+
+  failure_thread_ = std::thread([this]() { failureLoop(); });
+}
+
+void RosVideoStream::failureLoop()
+{
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (true) {
+    failure_condition_.wait(lock, [this]() { return is_shutdown_ || failure_pending_; });
+    if (is_shutdown_) {
+      return;
+    }
+
+    lock.unlock();
+    stopAfterFailure();
+    lock.lock();
+  }
+}
+
+void RosVideoStream::stopAfterFailure()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
+  }
+
+  resetPipelineStateLocked();
+  pipeline_.stop();
+  failure_pending_ = false;
+}
+
+std::thread RosVideoStream::beginShutdownLocked()
+{
+  is_shutdown_ = true;
+  failure_condition_.notify_all();
+  return std::move(failure_thread_);
+}
+
+void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -292,35 +330,36 @@ void RosTopicVideoFrameSource::onRawImage(const sensor_msgs::msg::Image::ConstSh
       throw std::runtime_error("Unsupported ROS image encoding '" + image->encoding + "'.");
     }
 
-    const FrameLayout layout = frameLayoutFromImage(*image, format);
-    // Raw appsrc caps are fixed when the pipeline starts. A frame-shape or
-    // stride change is treated as a stream reconfiguration and forces rebuild.
-    if (layout_) {
-      const FrameLayout & previous_layout = *layout_;
-      if (frameLayoutsMatch(previous_layout, layout)) {
-        if (pipeline_ != nullptr) {
-          pushRawLocked(*image);
-          return;
-        }
-      } else {
+    FrameLayout layout;
+    layout.width = static_cast<int>(image->width);
+    layout.height = static_cast<int>(image->height);
+    layout.format = format;
+    layout.stride = image->step;
+    if (raw_layout_) {
+      const FrameLayout & previous_layout = *raw_layout_;
+      if (
+        previous_layout.width != layout.width || previous_layout.height != layout.height ||
+        previous_layout.format != layout.format || previous_layout.stride != layout.stride)
+      {
         logFrameLayoutChange(spec_, previous_layout, layout);
+      } else if (pipeline_.isActive()) {
+        pushRawLocked(*image);
+        return;
       }
     }
 
-    auto handles = takePipelineLocked();
-    teardown(handles.pipeline, handles.appsrc, handles.appsink);
+    resetPipelineStateLocked();
+    pipeline_.stop();
     startRawPipelineLocked(layout);
     pushRawLocked(*image);
   } catch (const std::exception & exc) {
-    // Keep the ROS subscription alive after a frame-handling failure so the
-    // next frame can rebuild the pipeline from the latest observed layout.
-    observer_.onPushFailed(exc.what());
-    auto handles = takePipelineLocked();
-    teardown(handles.pipeline, handles.appsrc, handles.appsink);
+    publisher_.onPushFailed(exc.what());
+    resetPipelineStateLocked();
+    pipeline_.stop();
   }
 }
 
-void RosTopicVideoFrameSource::startRawPipelineLocked(const FrameLayout & layout)
+void RosVideoStream::startRawPipelineLocked(const FrameLayout & layout)
 {
   const char * format_name = gst_video_format_to_string(layout.format);
   if (format_name == nullptr) {
@@ -337,24 +376,22 @@ void RosTopicVideoFrameSource::startRawPipelineLocked(const FrameLayout & layout
   ingress += ",height=";
   ingress += std::to_string(layout.height);
   ingress += ",framerate=0/1";
-  startPipelineLocked(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
-  layout_ = layout;
+  pipeline_.start(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
+  raw_layout_ = layout;
 }
 
-void RosTopicVideoFrameSource::pushRawLocked(const sensor_msgs::msg::Image & image)
+void RosVideoStream::pushRawLocked(const sensor_msgs::msg::Image & image)
 {
-  if (appsrc_ == nullptr) {
+  if (pipeline_.appsrc() == nullptr) {
     throw std::runtime_error("Raw video appsrc is unavailable.");
   }
-  if (!layout_) {
+  if (!raw_layout_) {
     throw std::runtime_error("Raw video layout is unavailable.");
   }
 
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
-  const FrameLayout & layout = *layout_;
+  const FrameLayout & layout = *raw_layout_;
 
-  // Preserve the ROS row stride for downstream elements instead of assuming the
-  // image bytes are tightly packed for this format.
   gsize offsets[GST_VIDEO_MAX_PLANES] = {0};
   gint strides[GST_VIDEO_MAX_PLANES] = {static_cast<gint>(layout.stride)};
   (void)gst_buffer_add_video_meta_full(
@@ -367,12 +404,12 @@ void RosTopicVideoFrameSource::pushRawLocked(const sensor_msgs::msg::Image & ima
     offsets,
     strides);
 
-  if (gst_app_src_push_buffer(appsrc_.get(), buffer.release()) != GST_FLOW_OK) {
+  if (gst_app_src_push_buffer(pipeline_.appsrc(), buffer.release()) != GST_FLOW_OK) {
     throw std::runtime_error("Failed to push raw ROS image into GStreamer.");
   }
 }
 
-void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image)
+void RosVideoStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -380,72 +417,69 @@ void RosTopicVideoFrameSource::onCompressedImage(const sensor_msgs::msg::Compres
   }
 
   try {
-    const std::string format = compressedImageFormatFromImage(*image);
-
-    // The decoder chain differs per ROS compressed format (`jpegdec` vs
-    // `pngdec`), so the pipeline is recreated whenever the advertised format
-    // changes.
-    if (compressed_format_) {
-      if (*compressed_format_ == format) {
-        if (pipeline_ != nullptr) {
-          pushCompressedLocked(*image);
-          return;
-        }
-      } else {
+    const auto parsed_codec = parseCompressedCodec(image->format);
+    if (!parsed_codec.has_value()) {
+      throw std::runtime_error("Unsupported compressed image format '" + image->format + "'.");
+    }
+    const std::string codec = *parsed_codec;
+    if (compressed_codec_) {
+      if (*compressed_codec_ != codec) {
         LogEvent(kLogger, "video_stream_input_codec_changed")
           .field("stream_key", spec_.stream_key)
           .field("topic", requireRosVideoInput(spec_).topic)
-          .field("previous_codec", *compressed_format_)
-          .field("codec", format)
+          .field("previous_codec", *compressed_codec_)
+          .field("codec", codec)
           .info();
+      } else if (pipeline_.isActive()) {
+        pushCompressedLocked(*image);
+        return;
       }
     }
 
-    auto handles = takePipelineLocked();
-    teardown(handles.pipeline, handles.appsrc, handles.appsink);
-    startCompressedPipelineLocked(format);
+    resetPipelineStateLocked();
+    pipeline_.stop();
+    startCompressedPipelineLocked(codec);
     pushCompressedLocked(*image);
   } catch (const std::exception & exc) {
-    // Keep the ROS subscription alive after a frame-handling failure so the
-    // next frame can rebuild the decoder chain from the next advertised codec.
-    observer_.onPushFailed(exc.what());
-    auto handles = takePipelineLocked();
-    teardown(handles.pipeline, handles.appsrc, handles.appsink);
+    publisher_.onPushFailed(exc.what());
+    resetPipelineStateLocked();
+    pipeline_.stop();
   }
 }
 
-void RosTopicVideoFrameSource::startCompressedPipelineLocked(const std::string & format)
+void RosVideoStream::startCompressedPipelineLocked(const std::string & codec)
 {
   std::string ingress = "appsrc name=";
   ingress += kBridgeAppSrcName;
   ingress += " is-live=true block=false format=time do-timestamp=true";
-  if (format == "jpeg") {
+  if (codec == "jpeg") {
     ingress += " caps=image/jpeg ! jpegdec";
-  } else if (format == "png") {
+  } else if (codec == "png") {
     ingress += " caps=image/png ! pngdec";
   } else {
     throw std::logic_error("Unsupported compressed image format.");
   }
-  startPipelineLocked(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
-  compressed_format_ = format;
+  pipeline_.start(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
+  compressed_codec_ = codec;
 }
 
-void RosTopicVideoFrameSource::pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image)
+void RosVideoStream::pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image)
 {
-  if (appsrc_ == nullptr) {
+  if (pipeline_.appsrc() == nullptr) {
     throw std::runtime_error("Compressed video appsrc is unavailable.");
   }
 
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
-  if (gst_app_src_push_buffer(appsrc_.get(), buffer.release()) != GST_FLOW_OK) {
+  if (gst_app_src_push_buffer(pipeline_.appsrc(), buffer.release()) != GST_FLOW_OK) {
     throw std::runtime_error("Failed to push compressed ROS image into GStreamer.");
   }
 }
 
-void RosTopicVideoFrameSource::resetLocked()
+void RosVideoStream::resetPipelineStateLocked()
 {
-  layout_.reset();
-  compressed_format_.reset();
+  raw_layout_.reset();
+  compressed_codec_.reset();
+  failure_pending_ = false;
 }
 
 }  // namespace livekit_ros2_bridge

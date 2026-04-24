@@ -188,9 +188,17 @@ public:
   RpcRouter router;
 };
 
-TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
+class RpcRouterTest : public ::testing::Test
 {
-  test_support::ScopedRclcppInit init;
+protected:
+  static void SetUpTestSuite()
+  {
+    static test_support::ScopedRclcppInit rclcpp_init;
+  }
+};
+
+TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
+{
   RpcRouterHarness harness;
 
   const auto expectUnauthorized = [&](const std::string & method) {
@@ -204,9 +212,8 @@ TEST(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
   expectUnauthorized(protocol::kListTopicsRpc);
 }
 
-TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
+TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   expectRpcError(
@@ -217,9 +224,8 @@ TEST(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)
     protocol::kInvalidRequestRpcError);
 }
 
-TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
+TEST_F(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"/allowed_service"}));
 
   expectRpcError(
@@ -231,9 +237,8 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsForbiddenWhenServiceIsDenied)
     "ROS service '/denied_service' not permitted.");
 }
 
-TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
+TEST_F(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   expectRpcError(
@@ -245,9 +250,8 @@ TEST(RpcRouterTest, InterfacesGetRpcMapsUnknownTypeToInternalError)
     protocol::kInternalRpcError);
 }
 
-TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicatesRepeatedRequests)
+TEST_F(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicatesRepeatedRequests)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(
@@ -263,9 +267,8 @@ TEST(RpcRouterTest, InterfacesGetRpcReturnsDefinitionForKnownTypeAndDeduplicates
   EXPECT_FALSE(interface_definition["definition"].get<std::string>().empty());
 }
 
-TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
+TEST_F(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   const auto expectInvalidLimit = [&](const std::string & method) {
@@ -279,9 +282,8 @@ TEST(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
   expectInvalidLimit(protocol::kListTopicsRpc);
 }
 
-TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
+TEST_F(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 {
-  test_support::ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
   RosExecutorQueue queue(node);
   RosServiceCaller caller(
@@ -314,9 +316,8 @@ TEST(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
   queue.shutdown();
 }
 
-TEST(RpcRouterTest, LegacyRpcNamesAreNotRegistered)
+TEST_F(RpcRouterTest, LegacyRpcNamesAreNotRegistered)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness;
 
   EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.services.call"), 0U);
@@ -325,9 +326,8 @@ TEST(RpcRouterTest, LegacyRpcNamesAreNotRegistered)
   EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.topics.list"), 0U);
 }
 
-TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
+TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
   auto server_node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_service_server"));
   [[maybe_unused]] const auto service = server_node->create_service<std_srvs::srv::SetBool>(
@@ -363,9 +363,8 @@ TEST(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_EQ(response_message.message, "enabled");
 }
 
-TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
+TEST_F(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"*"}));
 
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -382,9 +381,8 @@ TEST(RpcRouterTest, ServiceCallRpcReturnsInternalErrorWhenServiceCallTimesOut)
     "Service call timed out.");
 }
 
-TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
+TEST_F(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeServicePolicy({"/rpc_router/allowed_service"}));
   [[maybe_unused]] const auto allowed_service = harness.node->create_service<std_srvs::srv::SetBool>(
     "/rpc_router/allowed_service",
@@ -415,9 +413,8 @@ TEST(RpcRouterTest, ServicesListRpcFiltersAllowedResourcesOnRosExecutorThread)
   EXPECT_EQ(body["services"][0]["interface_type"].get<std::string>(), "std_srvs/srv/SetBool");
 }
 
-TEST(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPolicyFiltering)
+TEST_F(RpcRouterTest, TopicsListRpcMatchesInterfaceTypeQueryAndAppliesLimitAfterPolicyFiltering)
 {
-  test_support::ScopedRclcppInit init;
   RpcRouterHarness harness(makeSubscribePolicy({"/rpc_router/visible_topic"}));
   [[maybe_unused]] const auto blocked_topic =
     harness.node->create_publisher<sensor_msgs::msg::BatteryState>("/rpc_router/a_blocked_topic", rclcpp::QoS(10));

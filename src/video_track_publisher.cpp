@@ -19,13 +19,13 @@
 #include <stdexcept>
 #include <utility>
 
+#include "gstreamer_video_stream.hpp"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
+#include "ros_video_stream.hpp"
 #include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
-#include "video_frame_source/ros_topic_video_frame_sources.hpp"
-#include "video_frame_source/video_pipeline_frame_source.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -47,26 +47,6 @@ void unpublishVideoTrackBestEffort(
   } catch (...) {}
 }
 
-std::shared_ptr<VideoFrameSource> makeVideoFrameSource(
-  rclcpp::node_interfaces::NodeInterfaces<
-    rclcpp::node_interfaces::NodeParametersInterface,
-    rclcpp::node_interfaces::NodeTopicsInterface,
-    rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
-  const VideoStreamSpec & spec,
-  const SubscriptionQosConfig * qos_config,
-  VideoFrameSink & sink,
-  VideoStreamLifecycleObserver & observer)
-{
-  if (otherVideoInput(spec) != nullptr) {
-    return makeOtherVideoFrameSource(spec, sink, observer);
-  }
-
-  auto source =
-    std::make_shared<RosTopicVideoFrameSource>(std::move(node_interfaces), spec, qos_config, sink, observer);
-  source->activate();
-  return source;
-}
-
 }  // namespace
 
 std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
@@ -78,9 +58,17 @@ std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
   VideoStreamSpec spec,
   const SubscriptionQosConfig * qos_config)
 {
-  auto publisher = std::shared_ptr<VideoTrackPublisher>(new VideoTrackPublisher(room_connection, std::move(spec)));
-  publisher->frame_source_ =
-    makeVideoFrameSource(std::move(node_interfaces), publisher->spec_, qos_config, *publisher, *publisher);
+  auto publisher = std::make_shared<VideoTrackPublisher>(room_connection, std::move(spec));
+  if (otherVideoInput(publisher->spec_) != nullptr) {
+    auto stream = std::make_unique<GStreamerVideoStream>(publisher->spec_, *publisher);
+    stream->start();
+    publisher->gstreamer_stream_ = std::move(stream);
+    return publisher;
+  }
+
+  auto stream = std::make_shared<RosVideoStream>(std::move(node_interfaces), publisher->spec_, qos_config, *publisher);
+  stream->start();
+  publisher->ros_stream_ = std::move(stream);
   return publisher;
 }
 
@@ -139,7 +127,8 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
 
 void VideoTrackPublisher::close()
 {
-  std::shared_ptr<VideoFrameSource> frame_source;
+  std::shared_ptr<RosVideoStream> ros_stream;
+  std::unique_ptr<GStreamerVideoStream> gstreamer_stream;
   std::shared_ptr<livekit::VideoSource> video_source;
   std::shared_ptr<livekit::LocalVideoTrack> published_video_track;
   {
@@ -153,13 +142,17 @@ void VideoTrackPublisher::close()
       was_published_ = false;
     }
     is_closed_ = true;
-    frame_source = std::move(frame_source_);
+    ros_stream = std::move(ros_stream_);
+    gstreamer_stream = std::move(gstreamer_stream_);
     video_source = std::move(video_source_);
     published_video_track = std::move(published_video_track_);
   }
 
-  if (frame_source != nullptr) {
-    frame_source->close();
+  if (ros_stream != nullptr) {
+    ros_stream->close();
+  }
+  if (gstreamer_stream != nullptr) {
+    gstreamer_stream->close();
   }
   unpublishVideoTrackBestEffort(room_connection_, published_video_track);
   published_video_track.reset();

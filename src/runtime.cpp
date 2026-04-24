@@ -88,6 +88,9 @@ Runtime::~Runtime()
   }
 
   ros_executor_queue_.shutdown();
+  subscription_lease_manager_.shutdown();
+  rpc_router_.unregisterRpcs();
+  room_connection_->stop();
 }
 
 RoomEventCallbacks Runtime::makeRoomEventCallbacks()

@@ -52,6 +52,8 @@ public:
   // room connection is still alive.
   bool registerRpcs(RoomConnection & connection);
 
+  void unregisterRpcs() noexcept;
+
 private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Copy the policy so registered callbacks do not depend on the caller
@@ -62,8 +64,6 @@ private:
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
   RoomConnection * registered_connection_ = nullptr;
-
-  void unregisterRpcs() noexcept;
 
   std::optional<std::string> callService(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> getInterfaces(const livekit::RpcInvocationData & invocation);

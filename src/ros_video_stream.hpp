@@ -14,10 +14,15 @@
 
 #pragma once
 
+#include <condition_variable>
 #include <cstdint>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
+#include "gstreamer_pipeline.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
@@ -26,64 +31,79 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
-#include "video_frame_source/video_pipeline_frame_source.hpp"
+#include "video_stream_spec.hpp"
 
 #include <gst/video/video-format.h>
 
 namespace livekit_ros2_bridge
 {
 
+class VideoTrackPublisher;
+
 struct FrameLayout
 {
-  // This reflects the observed raw frame layout used for appsrc caps and video
-  // metadata. Any change requires rebuilding the pipeline instead of mutating
-  // the existing appsrc in place.
   int width = 0;
   int height = 0;
   GstVideoFormat format = GST_VIDEO_FORMAT_UNKNOWN;
   std::uint32_t stride = 0;
 };
 
-class RosTopicVideoFrameSource final : public VideoPipelineFrameSource
+class RosVideoStream final : public std::enable_shared_from_this<RosVideoStream>
 {
 public:
-  RosTopicVideoFrameSource(
+  RosVideoStream(
     rclcpp::node_interfaces::NodeInterfaces<
       rclcpp::node_interfaces::NodeParametersInterface,
       rclcpp::node_interfaces::NodeTopicsInterface,
       rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config,
-    VideoFrameSink & sink,
-    VideoStreamLifecycleObserver & observer);
-  ~RosTopicVideoFrameSource() override;
+    VideoTrackPublisher & publisher);
+  ~RosVideoStream();
 
-  void activate();
-  void close() override;
+  RosVideoStream(const RosVideoStream &) = delete;
+  RosVideoStream & operator=(const RosVideoStream &) = delete;
+  RosVideoStream(RosVideoStream &&) = delete;
+  RosVideoStream & operator=(RosVideoStream &&) = delete;
+
+  void start();
+  void close();
 
 private:
-  rclcpp::node_interfaces::NodeInterfaces<
-    rclcpp::node_interfaces::NodeParametersInterface,
-    rclcpp::node_interfaces::NodeTopicsInterface,
-    rclcpp::node_interfaces::NodeGraphInterface>
-    node_interfaces_;
-  // Non-owning bridge-wide QoS policy. The pointed-to config must outlive this source.
-  const SubscriptionQosConfig * qos_config_;
-  RosVideoIngestMode mode_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
-  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
-  std::optional<FrameLayout> layout_;
-  std::optional<std::string> compressed_format_;
+  bool isShutdown() const;
+  void onPipelineFailure(const std::string & reason);
+  void startFailureThreadLocked();
+  void failureLoop();
+  void stopAfterFailure();
+  std::thread beginShutdownLocked();
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
 
   void startRawPipelineLocked(const FrameLayout & layout);
-  void startCompressedPipelineLocked(const std::string & format);
+  void startCompressedPipelineLocked(const std::string & codec);
   void pushRawLocked(const sensor_msgs::msg::Image & image);
   void pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image);
+  void resetPipelineStateLocked();
 
-  void resetLocked() override;
+  VideoStreamSpec spec_;
+  VideoTrackPublisher & publisher_;
+  GStreamerPipeline pipeline_;
+  rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeGraphInterface>
+    node_interfaces_;
+  const SubscriptionQosConfig * qos_config_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
+  std::optional<FrameLayout> raw_layout_;
+  std::optional<std::string> compressed_codec_;
+  mutable std::mutex mutex_;
+  bool is_shutdown_ = false;
+  bool failure_pending_ = false;
+  std::condition_variable failure_condition_;
+  std::thread failure_thread_;
 };
 
 }  // namespace livekit_ros2_bridge

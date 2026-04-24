@@ -33,41 +33,12 @@ namespace livekit_ros2_bridge
 
 struct SubscriptionQosConfig;
 
-// A video subscription runtime owns one frame source on the input side and wires it to a
-// VideoTrackPublisher through a sink. Sources produce frames into the sink.
-class VideoFrameSource
-{
-public:
-  virtual ~VideoFrameSource() = default;
+class GStreamerVideoStream;
+class RosVideoStream;
 
-  virtual void close() = 0;
-};
-
-class VideoFrameSink
-{
-public:
-  virtual ~VideoFrameSink() = default;
-
-  virtual void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us) = 0;
-};
-
-// Frame sources report transient ingress/egress failures through this observer so the
-// publisher can log and account for them. Track publish/unpublish events are not part of
-// this interface because they originate from the publisher itself.
-class VideoStreamLifecycleObserver
-{
-public:
-  virtual ~VideoStreamLifecycleObserver() = default;
-
-  virtual void onSampleUnpackFailed(const std::string & error) = 0;
-  virtual void onCaptureFailed(const std::string & error) = 0;
-  virtual void onRestartFailed(const std::string & error) = 0;
-  virtual void onPushFailed(const std::string & error) = 0;
-};
-
-// Owns one video subscription runtime: the paired VideoFrameSource on ingress and
-// one lazily republished LiveKit video track on egress.
-class VideoTrackPublisher final : public VideoFrameSink, private VideoStreamLifecycleObserver
+// Owns one concrete video ingress runtime and one lazily republished LiveKit
+// video track on egress.
+class VideoTrackPublisher final
 {
 public:
   static std::shared_ptr<VideoTrackPublisher> create(
@@ -95,15 +66,18 @@ public:
     return spec_;
   }
 
-  void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us) override;
+  void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
 private:
-  // Frame sources may fire these from ROS, GStreamer, or LiveKit worker threads,
+  friend class GStreamerVideoStream;
+  friend class RosVideoStream;
+
+  // Streams may fire these from ROS, GStreamer, or LiveKit worker threads,
   // including after close() has started.
-  void onSampleUnpackFailed(const std::string & error) override;
-  void onCaptureFailed(const std::string & error) override;
-  void onRestartFailed(const std::string & error) override;
-  void onPushFailed(const std::string & error) override;
+  void onSampleUnpackFailed(const std::string & error);
+  void onCaptureFailed(const std::string & error);
+  void onRestartFailed(const std::string & error);
+  void onPushFailed(const std::string & error);
 
   void close();
 
@@ -113,7 +87,8 @@ private:
   std::mutex mutex_;
   bool is_closed_ = false;
   bool was_published_ = false;
-  std::shared_ptr<VideoFrameSource> frame_source_;
+  std::shared_ptr<RosVideoStream> ros_stream_;
+  std::unique_ptr<GStreamerVideoStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> video_source_;
   std::shared_ptr<livekit::LocalVideoTrack> published_video_track_;
 };
