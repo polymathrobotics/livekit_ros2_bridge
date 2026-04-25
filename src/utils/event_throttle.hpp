@@ -28,15 +28,15 @@ public:
   {}
 
   // Returns the pending count on the first call and after each interval; otherwise returns 0.
-  std::size_t recordAndTakePendingCount()
+  std::size_t record()
   {
-    ++count_;
+    ++pending_;
     const auto now = std::chrono::steady_clock::now();
-    if (next_fire_at_ == TimePoint{} || now >= next_fire_at_) {
-      const std::size_t fired_count = count_;
-      count_ = 0U;
-      next_fire_at_ = now + interval_;
-      return fired_count;
+    if (next_allowed_at_ == TimePoint{} || now >= next_allowed_at_) {
+      const std::size_t pending = pending_;
+      pending_ = 0U;
+      next_allowed_at_ = now + interval_;
+      return pending;
     }
     return 0U;
   }
@@ -45,8 +45,8 @@ private:
   using TimePoint = std::chrono::steady_clock::time_point;
 
   std::chrono::steady_clock::duration interval_;
-  std::size_t count_ = 0U;
-  TimePoint next_fire_at_{};
+  std::size_t pending_ = 0U;
+  TimePoint next_allowed_at_{};
 };
 
 }  // namespace livekit_ros2_bridge

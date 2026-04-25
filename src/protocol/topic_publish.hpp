@@ -21,7 +21,7 @@
 namespace livekit_ros2_bridge
 {
 
-struct TopicPublishRequest
+struct RosPublishRequest
 {
   /// Relative topics are resolved in RosTopicPublisher's node context before access checks.
   std::string ros_topic;

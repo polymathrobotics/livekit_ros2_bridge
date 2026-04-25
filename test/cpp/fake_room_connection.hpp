@@ -111,24 +111,24 @@ public:
     state->connection_state = livekit::ConnectionState::Disconnected;
   }
 
-  bool registerRpc(const std::string & method_name, livekit::LocalParticipant::RpcHandler handler) override
+  bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) override
   {
-    state->registered_rpc_methods.push_back(method_name);
+    state->registered_rpc_methods.push_back(method);
     const bool registration_rejected =
-      std::find(state->rejected_rpc_methods.begin(), state->rejected_rpc_methods.end(), method_name) !=
+      std::find(state->rejected_rpc_methods.begin(), state->rejected_rpc_methods.end(), method) !=
       state->rejected_rpc_methods.end();
     if (registration_rejected) {
       return false;
     }
-    state->rpc_handlers[method_name] = std::move(handler);
+    state->rpc_handlers[method] = std::move(handler);
     return true;
   }
 
-  bool unregisterRpc(const std::string & method_name) override
+  bool unregisterRpc(const std::string & method) override
   {
-    state->event_log.push_back("unregister:" + method_name);
-    state->unregistered_rpc_methods.push_back(method_name);
-    state->rpc_handlers.erase(method_name);
+    state->event_log.push_back("unregister:" + method);
+    state->unregistered_rpc_methods.push_back(method);
+    state->rpc_handlers.erase(method);
     return true;
   }
 
@@ -321,8 +321,8 @@ private:
       return;
     }
     state->connection_state = new_state;
-    if (state->callbacks.on_connection_state_changed) {
-      state->callbacks.on_connection_state_changed(new_state);
+    if (state->callbacks.on_state_changed) {
+      state->callbacks.on_state_changed(new_state);
     }
   }
 

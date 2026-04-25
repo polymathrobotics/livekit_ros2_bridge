@@ -28,7 +28,7 @@ namespace livekit_ros2_bridge::protocol::resources
 
 using Json = nlohmann::json;
 
-ResourceListRequest parseRequest(const std::string & payload)
+ResourceListRequest parse(const std::string & payload)
 {
   Json body;
   try {
@@ -39,45 +39,45 @@ ResourceListRequest parseRequest(const std::string & payload)
 
   std::optional<std::string> query;
   try {
-    query = detail::optionalTrimmedStringField(body, "query", "query must be a string", true);
+    query = detail::optionalString(body, "query", "query must be a string", /*null_is_absent=*/true);
   } catch (const std::invalid_argument & exc) {
     throw ValidationError("query", exc.what());
   }
 
   std::optional<std::size_t> limit;
-  const auto limit_field = body.find("limit");
-  if (limit_field != body.end() && !limit_field->is_null()) {
-    constexpr char invalid_limit_message[] = "limit must be a positive integer";
-    if (!limit_field->is_number_integer()) {
-      throw ValidationError("limit", invalid_limit_message);
+  const auto field = body.find("limit");
+  if (field != body.end() && !field->is_null()) {
+    constexpr char reason[] = "limit must be a positive integer";
+    if (!field->is_number_integer()) {
+      throw ValidationError("limit", reason);
     }
 
     // Read signed so negative JSON integers fail before size_t conversion.
-    const auto parsed_limit = limit_field->get<std::int64_t>();
-    if (parsed_limit <= 0) {
-      throw ValidationError("limit", invalid_limit_message);
+    const auto value = field->get<std::int64_t>();
+    if (value <= 0) {
+      throw ValidationError("limit", reason);
     }
 
-    limit = static_cast<std::size_t>(parsed_limit);
+    limit = static_cast<std::size_t>(value);
   }
 
   return {std::move(query), limit};
 }
 
-std::string serializeServices(const ResourceNamesAndTypes & resources_by_name)
+std::string serializeServices(const ResourceTypesByName & resources)
 {
   Json entries = Json::array();
-  for (const auto & [service, types] : resources_by_name) {
+  for (const auto & [service, types] : resources) {
     entries.push_back({{"service", service}, {"interface_type", types.front()}});
   }
 
   return Json{{"services", std::move(entries)}}.dump();
 }
 
-std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name)
+std::string serializeTopics(const ResourceTypesByName & resources)
 {
   Json entries = Json::array();
-  for (const auto & [topic, types] : resources_by_name) {
+  for (const auto & [topic, types] : resources) {
     entries.push_back({{"topic", topic}, {"interface_type", types.front()}});
   }
 

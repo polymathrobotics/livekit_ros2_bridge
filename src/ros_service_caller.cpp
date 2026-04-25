@@ -105,59 +105,58 @@ const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * i
   return *static_cast<const MessageMembers *>(introspection_type_support->data);
 }
 
-void logServiceCallRejected(
+void logRejectedCall(
   const ServiceCallRequest & request,
   const std::string & requester,
-  const std::string & resolved_interface_type,
+  const std::string & interface_type,
   const char * reason,
   const std::exception & exc,
-  bool include_error = true)
+  bool log_error = true)
 {
-  const std::string & logged_interface_type =
-    resolved_interface_type.empty() ? request.interface_type : resolved_interface_type;
+  const std::string & logged_type = interface_type.empty() ? request.interface_type : interface_type;
   LogEvent(kLogger, "service_call_rejected")
     .field("reason", reason)
-    .fieldOr("service", request.service)
-    .fieldIfNotEmpty("interface_type", logged_interface_type)
+    .fieldOr("service", request.name)
+    .fieldIfNotEmpty("interface_type", logged_type)
     .fieldOr("requester_identity", requester)
-    .fieldIf(include_error, "error", exc.what())
+    .fieldIf(log_error, "error", exc.what())
     .warn();
 }
 
-class MessageStorage
+class MessageBuffer
 {
 public:
   // Pair introspection init/fini callbacks with the raw message buffer.
-  MessageStorage(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
+  MessageBuffer(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
   : members_(members)
-  , data_(::operator new(members.size_of_))
+  , buffer_(::operator new(members.size_of_))
   {
-    members_.init_function(data_, init);
+    members_.init_function(buffer_, init);
   }
 
-  ~MessageStorage()
+  ~MessageBuffer()
   {
-    members_.fini_function(data_);
-    ::operator delete(data_);
+    members_.fini_function(buffer_);
+    ::operator delete(buffer_);
   }
 
-  MessageStorage(const MessageStorage &) = delete;
-  MessageStorage & operator=(const MessageStorage &) = delete;
+  MessageBuffer(const MessageBuffer &) = delete;
+  MessageBuffer & operator=(const MessageBuffer &) = delete;
 
   void * data()
   {
-    return data_;
+    return buffer_;
   }
 
 private:
   const MessageMembers & members_;
-  void * data_;
+  void * buffer_;
 };
 
-struct MessageTypeSupport
+struct MessageSupport
 {
   // Keep the libraries alive while cached type-support handles may be used.
-  explicit MessageTypeSupport(const std::string & interface_type)
+  explicit MessageSupport(const std::string & interface_type)
   : serialization_library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
   , introspection_library(rclcpp::get_typesupport_library(interface_type, kIntrospectionTypeSupportIdentifier))
   , serialization(
@@ -228,8 +227,8 @@ struct ServiceClient : public rclcpp::ClientBase
 
     std::shared_ptr<rcpputils::SharedLibrary> library;
     const rosidl_service_type_support_t * service;
-    MessageTypeSupport request;
-    MessageTypeSupport response;
+    MessageSupport request;
+    MessageSupport response;
   };
 
   ServiceClient(
@@ -262,18 +261,18 @@ struct ServiceClient : public rclcpp::ClientBase
 
   std::shared_ptr<void> create_response() override
   {
-    struct ResponseStorage
+    struct ResponseBuffer
     {
-      explicit ResponseStorage(std::shared_ptr<TypeSupport> support)
+      explicit ResponseBuffer(std::shared_ptr<TypeSupport> support)
       : support(std::move(support))
       , message(this->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO)
       {}
 
       std::shared_ptr<TypeSupport> support;
-      MessageStorage message;
+      MessageBuffer message;
     };
 
-    auto storage = std::make_shared<ResponseStorage>(support);
+    auto storage = std::make_shared<ResponseBuffer>(support);
     void * data = storage->message.data();
     return std::shared_ptr<void>(std::move(storage), data);
   }
@@ -351,7 +350,7 @@ struct RosServiceCaller::Impl
     InflightReservation(const InflightReservation &) = delete;
     InflightReservation & operator=(const InflightReservation &) = delete;
 
-    void transferToInflightCall()
+    void commit()
     {
       active_ = false;
     }
@@ -817,14 +816,14 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
 
   if (!impl_->isWaitableOpen()) {
     const std::runtime_error exc("Service caller is shut down.");
-    logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
+    logRejectedCall(request, requester, interface_type, "shutdown", exc, false);
     promise.set_exception(std::make_exception_ptr(exc));
     return future;
   }
 
   if (requester.empty()) {
     const std::invalid_argument exc("requester_identity is required");
-    logServiceCallRejected(request, requester, interface_type, "missing_requester_identity", exc, false);
+    logRejectedCall(request, requester, interface_type, "missing_requester_identity", exc, false);
     promise.set_exception(std::make_exception_ptr(exc));
     return future;
   }
@@ -834,26 +833,26 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       interface_type = request.interface_type;
       if (interface_type.empty()) {
         interface_type =
-          requireSingleInterfaceType(impl_->graph->get_service_names_and_types(), request.service, "service");
+          requireSingleInterfaceType(impl_->graph->get_service_names_and_types(), request.name, "service");
       }
     } catch (const std::exception & exc) {
-      logServiceCallRejected(request, requester, interface_type, "interface_type_resolution_failed", exc);
+      logRejectedCall(request, requester, interface_type, "interface_type_resolution_failed", exc);
       throw;
     }
 
-    std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+    std::lock_guard<std::mutex> lock(impl_->state_mutex);
     if (!impl_->isWaitableOpen()) {
       const std::runtime_error exc("Service caller is shut down.");
-      logServiceCallRejected(request, requester, interface_type, "shutdown", exc, false);
+      logRejectedCall(request, requester, interface_type, "shutdown", exc, false);
       throw exc;
     }
 
     // Hold quota until inflight_calls takes over release ownership.
-    Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
+    Impl::InflightReservation reservation = [&]() -> Impl::InflightReservation {
       try {
         return Impl::InflightReservation(*impl_, requester);
       } catch (const std::runtime_error & exc) {
-        logServiceCallRejected(request, requester, interface_type, "requester_inflight_limit_reached", exc, false);
+        logRejectedCall(request, requester, interface_type, "requester_inflight_limit_reached", exc, false);
         throw;
       }
     }();
@@ -861,15 +860,15 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
     Impl::ClientPtr client;
     try {
       try {
-        client = impl_->getClient(request.service, interface_type);
+        client = impl_->getClient(request.name, interface_type);
       } catch (const std::exception & exc) {
         throw std::runtime_error(std::string("Failed creating service client: ") + exc.what());
       }
 
-      std::unique_ptr<MessageStorage> body;
+      std::unique_ptr<MessageBuffer> body;
       try {
         auto serialized = request.payload;
-        body = std::make_unique<MessageStorage>(
+        body = std::make_unique<MessageBuffer>(
           client->support->request.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
         client->support->request.serializer.deserialize_message(&serialized, body->data());
       } catch (const std::exception & exc) {
@@ -886,7 +885,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
     } catch (const std::exception & exc) {
       LogEvent(kLogger, "service_call_failed")
         .field("reason", "start_failed")
-        .fieldOr("service", request.service)
+        .fieldOr("service", request.name)
         .fieldIfNotEmpty("interface_type", interface_type)
         .fieldOr("requester_identity", requester)
         .field("error", exc.what())
@@ -906,13 +905,13 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       key,
       Impl::InflightCall{
         client,
-        request.service,
+        request.name,
         interface_type,
         requester,
         std::move(promise),
         std::chrono::steady_clock::now() + timeout,
       });
-    inflight_reservation.transferToInflightCall();
+    reservation.commit();
     impl_->syncWaitableLocked();
   } catch (const std::exception &) {
     promise.set_exception(std::current_exception());
@@ -927,7 +926,7 @@ void RosServiceCaller::cancelForRequester(const std::string & requester)
   if (requester.empty()) {
     return;
   }
-  std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
   impl_->failMatchingCalls(
     [&requester](const Impl::InflightCall & call) { return call.requester == requester; },
     "Requester identity disconnected.",
@@ -939,7 +938,7 @@ void RosServiceCaller::cancelForRequester(const std::string & requester)
 
 void RosServiceCaller::resetSessionState()
 {
-  std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
   impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "LiveKit session reset.", "session_reset");
 
   impl_->clearCacheLocked();
@@ -951,7 +950,7 @@ void RosServiceCaller::shutdown()
   impl_->awaitWaitableIdle();
   impl_->detachWaitable();
 
-  std::lock_guard<std::mutex> state_lock(impl_->state_mutex);
+  std::lock_guard<std::mutex> lock(impl_->state_mutex);
   impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "Service caller shut down.", "shutdown");
 
   impl_->clearCacheLocked();
@@ -976,7 +975,7 @@ RosServiceCaller::Impl::TypeSupportPtr RosServiceCaller::Impl::getTypeSupport(co
       dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
       dynamic_cast<const std::runtime_error *>(&exc) != nullptr)
     {
-      type_support_failures.insertOrAssign(interface_type, std::current_exception());
+      type_support_failures.set(interface_type, std::current_exception());
     }
     throw;
   }
@@ -1028,9 +1027,9 @@ void RosServiceCaller::Impl::executeWaitable()
     return;
   }
 
-  ScopeExit finish_waitable_callback([this]() { finishWaitableCallback(); });
+  ScopeExit finish([this]() { finishWaitableCallback(); });
 
-  std::lock_guard<std::mutex> state_lock(state_mutex);
+  std::lock_guard<std::mutex> lock(state_mutex);
   if (!isWaitableOpen()) {
     return;
   }
@@ -1088,13 +1087,13 @@ void RosServiceCaller::Impl::awaitWaitableIdle()
 
 void RosServiceCaller::Impl::syncWaitableLocked(bool wake)
 {
-  std::shared_ptr<ServiceWaitable> current_waitable;
+  std::shared_ptr<ServiceWaitable> current;
   {
     std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-    current_waitable = waitable;
+    current = waitable;
   }
 
-  if (current_waitable == nullptr) {
+  if (current == nullptr) {
     return;
   }
 
@@ -1105,7 +1104,7 @@ void RosServiceCaller::Impl::syncWaitableLocked(bool wake)
     clients.push_back(client);
   }
 
-  current_waitable->setClients(std::move(clients));
+  current->setClients(std::move(clients));
 
   std::optional<std::chrono::steady_clock::time_point> earliest_deadline;
   for (const auto & [key, call] : inflight_calls) {
@@ -1115,27 +1114,27 @@ void RosServiceCaller::Impl::syncWaitableLocked(bool wake)
     }
   }
 
-  current_waitable->setDeadline(earliest_deadline);
+  current->setDeadline(earliest_deadline);
   if (wake) {
-    current_waitable->wake();
+    current->wake();
   }
 }
 
 void RosServiceCaller::Impl::detachWaitable()
 {
-  std::shared_ptr<ServiceWaitable> removed_waitable;
+  std::shared_ptr<ServiceWaitable> removed;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr node_waitables;
   rclcpp::CallbackGroup::SharedPtr group;
 
   {
     std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-    removed_waitable = std::move(waitable);
+    removed = std::move(waitable);
     node_waitables = std::move(waitables);
     group = std::move(callback_group);
   }
 
-  if (removed_waitable != nullptr) {
-    node_waitables->remove_waitable(removed_waitable, group);
+  if (removed != nullptr) {
+    node_waitables->remove_waitable(removed, group);
   }
 }
 
@@ -1144,7 +1143,7 @@ void RosServiceCaller::Impl::drainResponses()
   for (auto & [cache_key, client] : cached_clients) {
     (void)cache_key;
     while (true) {
-      MessageStorage response(client->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
+      MessageBuffer response(client->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO);
       rmw_request_id_t header{};
       if (!client->take_type_erased_response(response.data(), header)) {
         break;
@@ -1155,12 +1154,12 @@ void RosServiceCaller::Impl::drainResponses()
       if (it == inflight_calls.end()) {
         // Never match late responses by service name; a newer call on the same
         // service may now be inflight.
-        if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
+        if (const std::size_t pending = late_response_throttle.record(); pending > 0U) {
           LogEvent(kLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
             .field("service", client->get_service_name())
             .field("interface_type", client->interface_type)
-            .field("count", count)
+            .field("count", pending)
             .warn();
         }
         continue;

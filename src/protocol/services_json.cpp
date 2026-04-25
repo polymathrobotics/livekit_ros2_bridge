@@ -31,59 +31,59 @@ using Json = nlohmann::json;
 namespace
 {
 
-constexpr char kServiceField[] = "service";
-constexpr char kInterfaceTypeField[] = "interface_type";
-constexpr char kRequestField[] = "request";
-constexpr char kResponseField[] = "response";
-constexpr char kTimeoutMsField[] = "timeout_ms";
-constexpr char kPayloadField[] = "payload";
+constexpr char kService[] = "service";
+constexpr char kInterfaceType[] = "interface_type";
+constexpr char kRequest[] = "request";
+constexpr char kResponse[] = "response";
+constexpr char kTimeoutMs[] = "timeout_ms";
+constexpr char kPayload[] = "payload";
 
 }  // namespace
 
-ServiceCallRequest parse(const std::string & text)
+ServiceCallRequest parse(const std::string & payload)
 {
   Json body;
   try {
-    body =
-      detail::parseObject(text, "Invalid JSON in service call request", "Service call request must be a JSON object");
+    body = detail::parseObject(
+      payload, "Invalid JSON in service call request", "Service call request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kPayloadField, exc.what());
+    throw ValidationError(kPayload, exc.what());
   }
 
   ServiceCallRequest request;
   try {
     // rclcpp owns service-name grammar; the protocol namespace resolves relatives globally.
-    request.service = rclcpp::expand_topic_or_service_name(
-      detail::requiredTrimmedStringField(body, kServiceField, "service is required"), "livekit_ros2_bridge", "/", true);
+    request.name = rclcpp::expand_topic_or_service_name(
+      detail::requiredString(body, kService, "service is required"), "livekit_ros2_bridge", "/", true);
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kServiceField, exc.what());
+    throw ValidationError(kService, exc.what());
   }
 
   try {
     request.interface_type =
-      detail::optionalTrimmedStringField(body, kInterfaceTypeField, "interface_type must be a string").value_or("");
+      detail::optionalString(body, kInterfaceType, "interface_type must be a string").value_or("");
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kInterfaceTypeField, exc.what());
+    throw ValidationError(kInterfaceType, exc.what());
   }
 
   try {
     // Empty requests would imply a typed default, but this boundary only forwards serialized ROS data.
-    request.payload = cdr::parseSerializedMessage(body, cdr::Field::Request);
+    request.payload = cdr::parse(body, cdr::Field::Request);
     if (request.payload.size() == 0U) {
       throw std::invalid_argument("request.payload_base64 must not be empty");
     }
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kRequestField, exc.what());
+    throw ValidationError(kRequest, exc.what());
   }
 
-  const auto timeout_field = body.find(kTimeoutMsField);
-  if (timeout_field != body.end()) {
-    if (!timeout_field->is_number_integer()) {
-      throw ValidationError(kTimeoutMsField, "timeout_ms must be an integer");
+  const auto timeout = body.find(kTimeoutMs);
+  if (timeout != body.end()) {
+    if (!timeout->is_number_integer()) {
+      throw ValidationError(kTimeoutMs, "timeout_ms must be an integer");
     }
 
     // Preserve explicit non-positive values; the runtime owns deadline policy.
-    request.timeout = std::chrono::milliseconds(timeout_field->get<std::chrono::milliseconds::rep>());
+    request.timeout = std::chrono::milliseconds(timeout->get<std::chrono::milliseconds::rep>());
   }
 
   return request;
@@ -92,9 +92,9 @@ ServiceCallRequest parse(const std::string & text)
 std::string serialize(const ServiceCallResponse & response)
 {
   return Json{
-    {kServiceField, response.service},
-    {kInterfaceTypeField, response.interface_type},
-    {kResponseField, cdr::serialize(response.payload)},
+    {kService, response.name},
+    {kInterfaceType, response.interface_type},
+    {kResponse, cdr::serialize(response.payload)},
   }
     .dump();
 }

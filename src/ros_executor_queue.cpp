@@ -30,7 +30,7 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-constexpr int kReadyEntityId = 0;
+constexpr int kGuardEntityId = 0;
 }  // namespace
 
 class RosExecutorQueue::DrainWaitable final : public rclcpp::Waitable
@@ -38,51 +38,51 @@ class RosExecutorQueue::DrainWaitable final : public rclcpp::Waitable
 public:
   DrainWaitable(RosExecutorQueue & queue, const rclcpp::Context::SharedPtr & context)
   : queue_(queue)
-  , guard_condition_(std::make_shared<rclcpp::GuardCondition>(context))
+  , guard_(std::make_shared<rclcpp::GuardCondition>(context))
   {}
 
 #if RCLCPP_VERSION_GTE(28, 0, 0)
   void add_to_wait_set(rcl_wait_set_t & wait_set) override
   {
-    guard_condition_->add_to_wait_set(wait_set);
+    guard_->add_to_wait_set(wait_set);
   }
 
   bool is_ready(const rcl_wait_set_t & wait_set) override
   {
-    const auto * rcl_guard_condition = &guard_condition_->get_rcl_guard_condition();
+    const auto * condition = &guard_->get_rcl_guard_condition();
     for (size_t i = 0; i < wait_set.size_of_guard_conditions; ++i) {
-      if (wait_set.guard_conditions[i] == rcl_guard_condition) {
+      if (wait_set.guard_conditions[i] == condition) {
         return true;
       }
     }
     return false;
   }
 
-  void execute(const std::shared_ptr<void> & ignored_data) override
+  void execute(const std::shared_ptr<void> & data) override
   {
-    (void)ignored_data;
+    (void)data;
     queue_.drain();
   }
 #else
   void add_to_wait_set(rcl_wait_set_t * wait_set) override
   {
-    guard_condition_->add_to_wait_set(wait_set);
+    guard_->add_to_wait_set(wait_set);
   }
 
   bool is_ready(rcl_wait_set_t * wait_set) override
   {
-    const auto * rcl_guard_condition = &guard_condition_->get_rcl_guard_condition();
+    const auto * condition = &guard_->get_rcl_guard_condition();
     for (size_t i = 0; i < wait_set->size_of_guard_conditions; ++i) {
-      if (wait_set->guard_conditions[i] == rcl_guard_condition) {
+      if (wait_set->guard_conditions[i] == condition) {
         return true;
       }
     }
     return false;
   }
 
-  void execute(std::shared_ptr<void> & ignored_data) override
+  void execute(std::shared_ptr<void> & data) override
   {
-    (void)ignored_data;
+    (void)data;
     queue_.drain();
   }
 #endif
@@ -110,13 +110,13 @@ public:
       return;
     }
 
-    guard_condition_->set_on_trigger_callback(
-      [on_ready = std::move(on_ready)](size_t wake_count) { on_ready(wake_count, kReadyEntityId); });
+    guard_->set_on_trigger_callback(
+      [on_ready = std::move(on_ready)](size_t count) { on_ready(count, kGuardEntityId); });
   }
 
   void clear_on_ready_callback() override
   {
-    guard_condition_->set_on_trigger_callback(nullptr);
+    guard_->set_on_trigger_callback(nullptr);
   }
 
   std::vector<std::shared_ptr<rclcpp::TimerBase>> get_timers() const
@@ -126,15 +126,15 @@ public:
 
   void wake()
   {
-    guard_condition_->trigger();
+    guard_->trigger();
   }
 
 private:
   RosExecutorQueue & queue_;
-  rclcpp::GuardCondition::SharedPtr guard_condition_;
+  rclcpp::GuardCondition::SharedPtr guard_;
 };
 
-RosExecutorQueue::RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock)
+RosExecutorQueue::RosExecutorQueue(RosExecutorQueue::NodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock)
 : waitables_(interfaces.get_node_waitables_interface())
 , log_clock_(std::move(clock))
 {
@@ -152,63 +152,63 @@ void RosExecutorQueue::shutdown()
 {
   // The thread that flips shutdown_ owns waitable teardown and queued task
   // cancellation. Concurrent shutdown callers only wait for drain() to go idle.
-  std::queue<Task> queued_tasks;
+  std::queue<Task> queued;
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
 
   std::unique_lock<std::mutex> lock(mutex_);
   if (shutdown_) {
     lock.unlock();
-    awaitDrainIdle();
+    awaitIdle();
     return;
   }
 
   shutdown_ = true;
-  queued_tasks = std::move(tasks_);
+  queued = std::move(tasks_);
   waitable = std::move(waitable_);
   waitables = std::move(waitables_);
   lock.unlock();
 
-  const std::size_t canceled_count = queued_tasks.size();
+  const std::size_t canceled = queued.size();
 
   if (waitable != nullptr && waitables != nullptr) {
     waitables->remove_waitable(waitable, nullptr);
   }
 
-  if (canceled_count > 0U) {
-    LogEvent(logger_, "executor_pending_tasks_canceled").field("count", canceled_count).warn();
+  if (canceled > 0U) {
+    LogEvent(logger_, "executor_pending_tasks_canceled").field("count", canceled).warn();
   }
 
-  while (!queued_tasks.empty()) {
-    Task task = std::move(queued_tasks.front());
-    queued_tasks.pop();
+  while (!queued.empty()) {
+    Task task = std::move(queued.front());
+    queued.pop();
     task.cancel();
   }
 
   // Already-started drain work runs to completion; only tasks still in the
   // moved-out task snapshot above are canceled during shutdown.
-  awaitDrainIdle();
+  awaitIdle();
 }
 
 void RosExecutorQueue::drain()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (shutdown_ || drain_active_) {
+    if (shutdown_ || draining_) {
       return;
     }
 
-    drain_active_ = true;
-    drain_owner_thread_id_ = std::this_thread::get_id();
+    draining_ = true;
+    drain_owner_ = std::this_thread::get_id();
   }
-  ScopeExit finish_drain([this]() {
+  ScopeExit finish([this]() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      drain_active_ = false;
-      drain_owner_thread_id_ = std::thread::id{};
+      draining_ = false;
+      drain_owner_ = std::thread::id{};
     }
 
-    drain_idle_.notify_all();
+    idle_.notify_all();
   });
 
   // Tasks submitted from active queue work are consumed by the same wakeup.
@@ -233,14 +233,13 @@ void RosExecutorQueue::drain()
   }
 }
 
-void RosExecutorQueue::awaitDrainIdle()
+void RosExecutorQueue::awaitIdle()
 {
-  const auto caller_thread_id = std::this_thread::get_id();
+  const auto caller = std::this_thread::get_id();
   std::unique_lock<std::mutex> lock(mutex_);
   // shutdown() can be called from queued work; the drain owner must not wait
   // for itself to leave drain().
-  drain_idle_.wait(
-    lock, [this, caller_thread_id]() { return !drain_active_ || drain_owner_thread_id_ == caller_thread_id; });
+  idle_.wait(lock, [this, caller]() { return !draining_ || drain_owner_ == caller; });
 }
 
 void RosExecutorQueue::wake()

@@ -63,19 +63,19 @@ std::string_view stateName(livekit::ConnectionState state)
   return "unknown";
 }
 
-struct LocalParticipantRef
+struct ParticipantRef
 {
   std::shared_ptr<livekit::Room> room;
   livekit::LocalParticipant * participant = nullptr;
-  std::uint64_t generation = 0;
+  std::uint64_t room_generation = 0;
 };
 
-class LiveKitRoomConnection final : public RoomConnection, private livekit::RoomDelegate
+class SdkRoomConnection final : public RoomConnection, private livekit::RoomDelegate
 {
 public:
-  LiveKitRoomConnection() = default;
+  SdkRoomConnection() = default;
 
-  ~LiveKitRoomConnection() override
+  ~SdkRoomConnection() override
   {
     stop();
   }
@@ -91,7 +91,7 @@ public:
     callbacks_ = std::move(callbacks);
     stop_requested_ = false;
     state_ = livekit::ConnectionState::Disconnected;
-    connect_task_ = std::thread([this]() { runConnect(); });
+    connect_task_ = std::thread([this]() { run(); });
   }
 
   void stop() override
@@ -153,7 +153,7 @@ public:
     const std::vector<std::string> & destination_identities,
     const std::string & topic) override
   {
-    const auto ref = localParticipantRef();
+    const auto ref = participantRef();
     if (ref.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
@@ -162,7 +162,7 @@ public:
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
   {
-    const auto ref = localParticipantRef();
+    const auto ref = participantRef();
     if (ref.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
@@ -204,7 +204,7 @@ public:
       throw std::invalid_argument("Video source is required.");
     }
 
-    const auto ref = localParticipantRef();
+    const auto ref = participantRef();
     if (ref.participant == nullptr) {
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
@@ -222,7 +222,7 @@ public:
       throw std::runtime_error("Failed to publish video track '" + name + "'.");
     }
 
-    recordTrackIfCurrent(name, track, ref.generation);
+    recordTrackIfCurrent(name, track, ref.room_generation);
     return track;
   }
 
@@ -246,12 +246,12 @@ public:
   }
 
 private:
-  LocalParticipantRef localParticipantRef() const
+  ParticipantRef participantRef() const
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    LocalParticipantRef ref;
+    ParticipantRef ref;
     ref.room = room_;
-    ref.generation = generation_;
+    ref.room_generation = room_generation_;
     if (state_ != livekit::ConnectionState::Disconnected && ref.room != nullptr) {
       ref.participant = ref.room->localParticipant();
     }
@@ -260,16 +260,16 @@ private:
 
   void unpublishVideoTrackIfCurrent(const std::shared_ptr<livekit::LocalVideoTrack> & track)
   {
-    std::uint64_t generation = 0;
+    std::uint64_t room_generation = 0;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      const auto it = video_track_generations_.find(track.get());
-      if (it == video_track_generations_.end()) {
+      const auto it = track_room_generations_.find(track.get());
+      if (it == track_room_generations_.end()) {
         return;
       }
 
-      generation = it->second;
-      video_track_generations_.erase(it);
+      room_generation = it->second;
+      track_room_generations_.erase(it);
     }
 
     const auto publication = track->publication();
@@ -277,11 +277,11 @@ private:
       return;
     }
 
-    auto ref = localParticipantRef();
+    auto ref = participantRef();
     if (ref.participant == nullptr) {
       return;
     }
-    if (ref.generation != generation) {
+    if (ref.room_generation != room_generation) {
       return;
     }
 
@@ -289,18 +289,18 @@ private:
   }
 
   void recordTrackIfCurrent(
-    const std::string & name, const std::shared_ptr<livekit::LocalVideoTrack> & track, std::uint64_t generation)
+    const std::string & name, const std::shared_ptr<livekit::LocalVideoTrack> & track, std::uint64_t room_generation)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (generation != generation_) {
+    if (room_generation != room_generation_) {
       // The room changed while publishTrack() was in flight; leave this stale track untracked.
       LogEvent(kLogger, "video_track_publish_stale").field("track_name", name).warn();
       return;
     }
-    video_track_generations_[track.get()] = generation;
+    track_room_generations_[track.get()] = room_generation;
   }
 
-  void runConnect()
+  void run()
   {
     if (!livekit::initialize()) {
       LogEvent(kLogger, "livekit_initialize_failed").error();
@@ -394,7 +394,7 @@ private:
   bool activateRoom(std::shared_ptr<livekit::Room> room)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    ++generation_;
+    ++room_generation_;
     room_ = std::move(room);
 
     bool registered = true;
@@ -413,10 +413,10 @@ private:
       std::lock_guard<std::mutex> lock(mutex_);
       detached_room = std::move(room_);
       if (detached_room != nullptr) {
-        ++generation_;
+        ++room_generation_;
       }
       // Old-room tracks must not unpublish from the replacement room.
-      video_track_generations_.clear();
+      track_room_generations_.clear();
       state_ = livekit::ConnectionState::Disconnected;
     }
 
@@ -435,7 +435,7 @@ private:
         return;
       }
       state_ = state;
-      callback = callbacks_.on_connection_state_changed;
+      callback = callbacks_.on_state_changed;
     }
 
     auto log = LogEvent(kLogger, "room_connection_state_changed").field("connection_state", stateName(state));
@@ -547,7 +547,7 @@ private:
               .fieldOr("requester_identity", invocation.caller_identity)
               .fieldException("error", std::current_exception())
               .error();
-            throw livekit::RpcError(protocol::kInternalRpcError, "Internal error handling RPC method");
+            throw livekit::RpcError(protocol::kInternalRpcCode, "Internal error handling RPC method");
           }
         });
     } catch (const std::exception & exc) {
@@ -566,11 +566,11 @@ private:
 
   std::unordered_map<std::string, livekit::LocalParticipant::RpcHandler> rpc_handlers_;
   // Guards video unpublish against tracks published by an older room.
-  std::unordered_map<const livekit::LocalVideoTrack *, std::uint64_t> video_track_generations_;
+  std::unordered_map<const livekit::LocalVideoTrack *, std::uint64_t> track_room_generations_;
 
   bool stop_requested_ = false;
   bool sdk_initialized_ = false;
-  std::uint64_t generation_ = 0;
+  std::uint64_t room_generation_ = 0;
   livekit::ConnectionState state_ = livekit::ConnectionState::Disconnected;
 };
 
@@ -578,7 +578,7 @@ private:
 
 std::unique_ptr<RoomConnection> createRoomConnection()
 {
-  return std::make_unique<LiveKitRoomConnection>();
+  return std::make_unique<SdkRoomConnection>();
 }
 
 }  // namespace livekit_ros2_bridge

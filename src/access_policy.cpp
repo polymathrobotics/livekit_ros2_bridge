@@ -26,11 +26,11 @@ namespace
 {
 
 constexpr char kMatchAllRule[] = "*";
-constexpr char kPolicyNodeName[] = "livekit_ros2_bridge_access_policy";
-constexpr char kPolicyNamespace[] = "/";
+constexpr char kNodeName[] = "livekit_ros2_bridge_access_policy";
+constexpr char kRosNamespace[] = "/";
 constexpr auto kSubtreeWildcardSize = sizeof(kRosResourceSubtreeWildcard) - 1U;
 
-std::string normalizePolicyResourcePattern(std::string_view pattern, bool is_service)
+std::string normalizePattern(std::string_view pattern, bool is_service)
 {
   if (pattern == kRosResourceSubtreeWildcard) {
     return std::string{kRosResourceSubtreeWildcard};
@@ -40,15 +40,15 @@ std::string normalizePolicyResourcePattern(std::string_view pattern, bool is_ser
     pattern.size() >= kSubtreeWildcardSize &&
     pattern.substr(pattern.size() - kSubtreeWildcardSize) == kRosResourceSubtreeWildcard)
   {
-    const auto prefix_pattern = pattern.substr(0, pattern.size() - kSubtreeWildcardSize);
-    const auto prefix = normalizeRosResourceName(prefix_pattern, kPolicyNodeName, kPolicyNamespace, is_service);
+    const auto prefix = normalizeRosResourceName(
+      pattern.substr(0, pattern.size() - kSubtreeWildcardSize), kNodeName, kRosNamespace, is_service);
     if (prefix.empty()) {
       return "";
     }
     return prefix + kRosResourceSubtreeWildcard;
   }
 
-  return normalizeRosResourceName(pattern, kPolicyNodeName, kPolicyNamespace, is_service);
+  return normalizeRosResourceName(pattern, kNodeName, kRosNamespace, is_service);
 }
 
 }  // namespace
@@ -62,10 +62,10 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 , service_deny_(Rules::parse(config.service.deny, true))
 {}
 
-bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resource) const
+bool AccessPolicy::allows(AccessOperation operation, std::string_view name) const
 {
   const bool is_service = operation == AccessOperation::CallService;
-  const auto resource = normalizeRosResourceName(raw_resource, kPolicyNodeName, kPolicyNamespace, is_service);
+  const auto resource = normalizeRosResourceName(name, kNodeName, kRosNamespace, is_service);
   if (resource.empty()) {
     return false;
   }
@@ -82,11 +82,11 @@ bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resour
   return false;
 }
 
-AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & raw_rules, bool is_service)
+AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & rule_entries, bool is_service)
 {
   Rules rules;
-  for (const auto & raw_rule : raw_rules) {
-    const std::string rule = trim(raw_rule);
+  for (const auto & entry : rule_entries) {
+    const std::string rule = trim(entry);
     if (rule.empty()) {
       continue;
     }
@@ -95,7 +95,7 @@ AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & 
       continue;
     }
 
-    const auto pattern = normalizePolicyResourcePattern(rule, is_service);
+    const auto pattern = normalizePattern(rule, is_service);
     if (pattern.empty()) {
       continue;
     }

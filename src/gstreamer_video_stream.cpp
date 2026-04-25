@@ -70,7 +70,7 @@ void GStreamerVideoStream::start()
 
 void GStreamerVideoStream::close()
 {
-  std::thread restart_thread;
+  std::thread worker;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -79,12 +79,12 @@ void GStreamerVideoStream::close()
 
     is_shutdown_ = true;
     restart_condition_.notify_all();
-    restart_thread = std::move(restart_thread_);
+    worker = std::move(restart_worker_);
   }
 
   // The restart worker captures this, so join it before members destruct.
-  if (restart_thread.joinable()) {
-    restart_thread.join();
+  if (worker.joinable()) {
+    worker.join();
   }
 
   pipeline_.stop();
@@ -107,13 +107,13 @@ void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
     .field("restart_delay_ms", kRestartDelay.count())
     .warn();
 
-  if (!restart_thread_.joinable()) {
-    restart_thread_ = std::thread([this]() { restartLoop(); });
+  if (!restart_worker_.joinable()) {
+    restart_worker_ = std::thread([this]() { runRestartLoop(); });
   }
   restart_condition_.notify_one();
 }
 
-void GStreamerVideoStream::restartLoop()
+void GStreamerVideoStream::runRestartLoop()
 {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {

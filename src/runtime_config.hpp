@@ -30,15 +30,15 @@ namespace livekit_ros2_bridge
 
 struct RuntimeConfig
 {
-  struct HealthConfig
+  struct Watchdog
   {
-    bool watchdog_enabled = true;
+    bool enabled = true;
     // Watchdog closes the room when SDK reconnect exceeds this window.
-    std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::seconds(75)};
+    std::chrono::milliseconds recovery_timeout{std::chrono::seconds(75)};
   };
 
   LiveKitConfig livekit;
-  HealthConfig health;
+  Watchdog watchdog;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos;
   VideoStreamConfig video_stream;

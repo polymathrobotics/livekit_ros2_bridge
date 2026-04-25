@@ -29,10 +29,10 @@ namespace
 {
 
 constexpr auto kCheckInterval = std::chrono::milliseconds(250);
-constexpr auto kShutdownExitDelay = std::chrono::milliseconds(100);
-constexpr std::string_view kStartupConnectPendingReason = "startup_connect_pending";
+constexpr auto kExitDelay = std::chrono::milliseconds(100);
+constexpr std::string_view kStartupPendingReason = "startup_connect_pending";
 
-std::string_view connectionStateName(livekit::ConnectionState state)
+std::string_view stateName(livekit::ConnectionState state)
 {
   switch (state) {
     case livekit::ConnectionState::Disconnected:
@@ -48,13 +48,12 @@ std::string_view connectionStateName(livekit::ConnectionState state)
 
 }  // namespace
 
-ConnectionWatchdog::ConnectionWatchdog(
-  RuntimeConfig::HealthConfig config, ConnectionWatchdogNodeInterfaces interfaces, CloseCallback close)
+ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, NodeInterfaces interfaces, CloseCallback close)
 : config_(config)
 , logger_(interfaces.get_node_logging_interface()->get_logger())
 , close_(std::move(close))
 {
-  if (!config_.watchdog_enabled) {
+  if (!config_.enabled) {
     return;
   }
 
@@ -64,34 +63,33 @@ ConnectionWatchdog::ConnectionWatchdog(
     nullptr,
     interfaces.get_node_base_interface().get(),
     interfaces.get_node_timers_interface().get());
-  markUnhealthy(kStartupConnectPendingReason);
+  startOutage(kStartupPendingReason);
 }
 
-void ConnectionWatchdog::observeConnectionState(livekit::ConnectionState state)
+void ConnectionWatchdog::onStateChanged(livekit::ConnectionState state)
 {
   if (state == livekit::ConnectionState::Connected) {
-    markHealthy();
+    clearOutage();
     return;
   }
 
-  const std::string_view state_name = connectionStateName(state);
-  markUnhealthy(state_name);
+  startOutage(stateName(state));
 }
 
-void ConnectionWatchdog::markHealthy()
+void ConnectionWatchdog::clearOutage()
 {
-  if (!config_.watchdog_enabled) {
+  if (!config_.enabled) {
     return;
   }
 
   const auto now = SteadyClock::now();
   const std::optional<double> duration = [&]() -> std::optional<double> {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!unhealthy_.has_value()) {
+    if (!outage_.has_value()) {
       return std::nullopt;
     }
-    const double seconds = std::chrono::duration<double>(now - unhealthy_->since).count();
-    unhealthy_.reset();
+    const double seconds = std::chrono::duration<double>(now - outage_->since).count();
+    outage_.reset();
     return seconds;
   }();
 
@@ -102,20 +100,20 @@ void ConnectionWatchdog::markHealthy()
   LogEvent(logger_, "runtime_watchdog_healthy").field("unhealthy_duration_seconds", *duration).info();
 }
 
-void ConnectionWatchdog::markUnhealthy(std::string_view reason)
+void ConnectionWatchdog::startOutage(std::string_view reason)
 {
-  if (!config_.watchdog_enabled) {
+  if (!config_.enabled) {
     return;
   }
 
   const auto now = SteadyClock::now();
   const bool started = [&]() {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (unhealthy_.has_value()) {
+    if (outage_.has_value()) {
       // Do not extend outage deadlines; reconnect failure may never emit a terminal event.
       return false;
     }
-    unhealthy_ = UnhealthyState{now, now + config_.watchdog_recovery_timeout};
+    outage_ = Outage{now, now + config_.recovery_timeout};
     return true;
   }();
 
@@ -125,8 +123,8 @@ void ConnectionWatchdog::markUnhealthy(std::string_view reason)
 
   LogEvent event = LogEvent(logger_, "runtime_watchdog_unhealthy")
                      .field("reason", reason)
-                     .field("recovery_timeout_seconds", config_.watchdog_recovery_timeout.count() / 1000.0);
-  if (reason == kStartupConnectPendingReason) {
+                     .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0);
+  if (reason == kStartupPendingReason) {
     event.info();
     return;
   }
@@ -138,10 +136,10 @@ void ConnectionWatchdog::check()
   const auto now = SteadyClock::now();
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!unhealthy_.has_value()) {
+    if (!outage_.has_value()) {
       return;
     }
-    if (now < unhealthy_->deadline) {
+    if (now < outage_->deadline) {
       return;
     }
   }
@@ -152,14 +150,14 @@ void ConnectionWatchdog::check()
 
   LogEvent(logger_, "runtime_watchdog_triggered")
     .field("disconnect_reason", "recovery_timeout")
-    .field("recovery_timeout_seconds", config_.watchdog_recovery_timeout.count() / 1000.0)
+    .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
     .error();
 
   if (rclcpp::ok()) {
     rclcpp::shutdown();
   }
 
-  std::this_thread::sleep_for(kShutdownExitDelay);
+  std::this_thread::sleep_for(kExitDelay);
   std::_Exit(EXIT_FAILURE);
 }
 

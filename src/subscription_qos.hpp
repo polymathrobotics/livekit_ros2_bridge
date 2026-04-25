@@ -60,19 +60,19 @@ struct ResolvedSubscriptionQos
   std::string override_id;
 };
 
-// Per-axis precedence: override, discovered publisher QoS, then `base_qos`.
-// `publisher_qos_profiles` must come from one graph snapshot; `config` may be null.
+// Per-axis precedence: override, discovered publisher QoS, then the base QoS.
+// `publisher_qos` must come from one graph snapshot; `config` may be null.
 ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
-  const rclcpp::QoS & base_qos,
+  const rclcpp::QoS & base,
   const SubscriptionQosConfig * config,
-  const std::vector<rclcpp::QoS> & publisher_qos_profiles);
+  const std::vector<rclcpp::QoS> & publisher_qos);
 
 // Throws if `graph` is null.
 ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::node_interfaces::NodeGraphInterface::SharedPtr & graph,
   std::string_view topic,
-  const rclcpp::QoS & base_qos,
+  const rclcpp::QoS & base,
   const SubscriptionQosConfig * config);
 
 const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source);

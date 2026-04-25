@@ -23,17 +23,17 @@
 namespace livekit_ros2_bridge
 {
 
-inline std::string trim(std::string_view value)
+inline std::string trim(std::string_view text)
 {
-  const auto is_not_whitespace = [](unsigned char ch) { return std::isspace(ch) == 0; };
-  const auto begin = std::find_if(value.begin(), value.end(), is_not_whitespace);
-  const auto end = std::find_if(value.rbegin(), value.rend(), is_not_whitespace).base();
+  const auto is_non_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
+  const auto first = std::find_if(text.begin(), text.end(), is_non_space);
+  const auto last = std::find_if(text.rbegin(), text.rend(), is_non_space).base();
 
-  if (begin >= end) {
+  if (first >= last) {
     return "";
   }
 
-  return std::string(begin, end);
+  return std::string(first, last);
 }
 
 }  // namespace livekit_ros2_bridge

@@ -76,7 +76,7 @@ private:
   // A failure stops the current pipeline; the next accepted ROS frame rebuilds
   // appsrc state.
   void onPipelineFailure(const std::string & reason);
-  void failureLoop();
+  void runFailureLoop();
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
@@ -99,14 +99,14 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
   // Current appsrc caps; layout or codec changes restart the pipeline on the
   // next accepted frame.
-  std::optional<FrameLayout> raw_layout_;
-  std::optional<std::string> compressed_codec_;
+  std::optional<FrameLayout> layout_;
+  std::optional<std::string> codec_;
   // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_pending_ = false;
   std::condition_variable failure_condition_;
-  std::thread failure_thread_;
+  std::thread failure_worker_;
 };
 
 }  // namespace livekit_ros2_bridge

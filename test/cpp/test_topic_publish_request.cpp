@@ -30,7 +30,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-TopicPublishRequest parse(const nlohmann::json & body)
+RosPublishRequest parse(const nlohmann::json & body)
 {
   const auto text = body.dump();
   return protocol::topic_publish::parse(std::vector<std::uint8_t>(text.begin(), text.end()));
@@ -53,7 +53,7 @@ std::vector<std::uint8_t> serializedPayload(const rclcpp::SerializedMessage & me
   return {rcl_message.buffer, rcl_message.buffer + rcl_message.buffer_length};
 }
 
-TEST(TopicPublishRequestTest, ParsesValidRequestAndTrimsFields)
+TEST(RosPublishRequestTest, ParsesValidRequestAndTrimsFields)
 {
   auto body = makeBody();
   body["topic"] = " /camera/image ";
@@ -66,7 +66,7 @@ TEST(TopicPublishRequestTest, ParsesValidRequestAndTrimsFields)
   EXPECT_EQ(serializedPayload(request.message), (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
 }
 
-TEST(TopicPublishRequestTest, PreservesRelativeTopicNamesAndBinaryPayload)
+TEST(RosPublishRequestTest, PreservesRelativeTopicNamesAndBinaryPayload)
 {
   const std::vector<std::uint8_t> cdr = {0x00, 0x01, 0x7f, 0x80, 0xff};
 
@@ -80,7 +80,7 @@ TEST(TopicPublishRequestTest, PreservesRelativeTopicNamesAndBinaryPayload)
   EXPECT_EQ(serializedPayload(request.message), cdr);
 }
 
-TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
+TEST(RosPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
 {
   expectInvalidArgument(
     []() { (void)protocol::topic_publish::parse(std::vector<std::uint8_t>{'{'}); },
@@ -92,14 +92,14 @@ TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
     "payload");
 }
 
-TEST(TopicPublishRequestTest, RejectsMissingTopicField)
+TEST(RosPublishRequestTest, RejectsMissingTopicField)
 {
   auto body = makeBody();
   body.erase("topic");
   expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a string 'topic' field.", "topic");
 }
 
-TEST(TopicPublishRequestTest, RejectsBlankTopicField)
+TEST(RosPublishRequestTest, RejectsBlankTopicField)
 {
   auto body = makeBody();
   body["topic"] = "   ";
@@ -108,7 +108,7 @@ TEST(TopicPublishRequestTest, RejectsBlankTopicField)
     [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'topic' field.", "topic");
 }
 
-TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
+TEST(RosPublishRequestTest, RejectsMissingInterfaceTypeField)
 {
   auto body = makeBody();
   body.erase("interface_type");
@@ -116,7 +116,7 @@ TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
     [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'interface_type' field.", "interface_type");
 }
 
-TEST(TopicPublishRequestTest, RejectsEmptyMessagePayload)
+TEST(RosPublishRequestTest, RejectsEmptyMessagePayload)
 {
   auto body = makeBody();
   body["message"] = protocol::cdr::serialize(std::vector<std::uint8_t>{});

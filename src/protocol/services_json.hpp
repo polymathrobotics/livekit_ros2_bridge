@@ -22,7 +22,7 @@ namespace livekit_ros2_bridge::protocol::services
 {
 
 /// Unknown top-level fields are ignored so new optional protocol fields remain backward-compatible.
-ServiceCallRequest parse(const std::string & text);
+ServiceCallRequest parse(const std::string & payload);
 
 std::string serialize(const ServiceCallResponse & response);
 

@@ -25,8 +25,8 @@ namespace livekit_ros2_bridge::protocol
 class ValidationError final : public std::invalid_argument
 {
 public:
-  ValidationError(std::string field, std::string message)
-  : std::invalid_argument(message)
+  ValidationError(std::string field, std::string reason)
+  : std::invalid_argument(reason)
   , field_(std::move(field))
   {}
 

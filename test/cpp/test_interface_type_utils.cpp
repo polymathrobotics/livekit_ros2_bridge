@@ -27,10 +27,12 @@ namespace
 {
 
 std::string requireSingleInterfaceTypeError(
-  const std::map<std::string, std::vector<std::string>> & names, const std::string & name, const char * resource_kind)
+  const std::map<std::string, std::vector<std::string>> & types_by_name,
+  const std::string & resource,
+  const char * kind)
 {
   try {
-    static_cast<void>(requireSingleInterfaceType(names, name, resource_kind));
+    static_cast<void>(requireSingleInterfaceType(types_by_name, resource, kind));
     ADD_FAILURE() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     return error.what();
@@ -42,10 +44,10 @@ std::string requireSingleInterfaceTypeError(
 
 TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
 {
-  const std::map<std::string, std::vector<std::string>> names{
+  const std::map<std::string, std::vector<std::string>> types_by_name{
     {"/foo", {"bar/msg/Baz"}},
   };
-  EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
+  EXPECT_EQ(requireSingleInterfaceType(types_by_name, "/foo", "topic"), "bar/msg/Baz");
 }
 
 TEST(RequireSingleInterfaceTypeTest, RejectsMissingTypeSetsAsNoTypesFound)

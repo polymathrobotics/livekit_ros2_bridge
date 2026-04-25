@@ -60,10 +60,10 @@ constexpr char kDeliveryPreferencesIntervalMsField[] = "subscriptions.delivery_p
 constexpr char kHeartbeatTopicExpansionNodeName[] = "livekit_ros2_bridge";
 constexpr char kHeartbeatTopicExpansionNamespace[] = "/";
 
-int parseClampedInt(const nlohmann::json & value, const char * message)
+int parseClampedInt(const nlohmann::json & value, const char * reason)
 {
   if (!value.is_number_integer()) {
-    throw ValidationError(kDeliveryPreferencesIntervalMsField, message);
+    throw ValidationError(kDeliveryPreferencesIntervalMsField, reason);
   }
 
   if (value.is_number_unsigned()) {
@@ -99,27 +99,27 @@ std::optional<int> parseIntervalMs(const nlohmann::json & entry)
     throw ValidationError(kDeliveryPreferencesField, "delivery_preferences must be an object");
   }
 
-  const auto interval_it = preferences->find("interval_ms");
-  if (interval_it == preferences->end()) {
+  const auto interval = preferences->find("interval_ms");
+  if (interval == preferences->end()) {
     return std::nullopt;
   }
 
-  const auto interval = parseClampedInt(*interval_it, "delivery_preferences.interval_ms must be an integer");
-  if (interval == 0) {
+  const auto ms = parseClampedInt(*interval, "delivery_preferences.interval_ms must be an integer");
+  if (ms == 0) {
     return std::nullopt;
   }
 
-  return interval;
+  return ms;
 }
 
 void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
 {
-  const auto kind_it = entry.find("kind");
-  if (kind_it == entry.end() || !kind_it->is_string()) {
+  const auto kind_field = entry.find("kind");
+  if (kind_field == entry.end() || !kind_field->is_string()) {
     throw ValidationError(kSubscriptionKindField, "heartbeat subscription 'kind' must be a string");
   }
 
-  const std::string kind = trim(kind_it->get_ref<const std::string &>());
+  const std::string kind = trim(kind_field->get_ref<const std::string &>());
   if (kind == "topic") {
     demand.kind = SubscriptionTargetKind::Topic;
   } else if (kind == "other_video") {
@@ -128,24 +128,24 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
     throw ValidationError(kSubscriptionKindField, "heartbeat subscription 'kind' must be 'topic' or 'other_video'");
   }
 
-  const auto name_it = entry.find("name");
-  if (name_it == entry.end() || !name_it->is_string()) {
+  const auto name_field = entry.find("name");
+  if (name_field == entry.end() || !name_field->is_string()) {
     throw ValidationError(kSubscriptionNameField, "heartbeat subscription 'name' must be a string");
   }
 
-  const auto & raw_name = name_it->get_ref<const std::string &>();
+  const auto & raw = name_field->get_ref<const std::string &>();
   if (demand.kind == SubscriptionTargetKind::Topic) {
-    const std::string trimmed_name = trim(raw_name);
+    const std::string name = trim(raw);
     try {
-      demand.name = rclcpp::expand_topic_or_service_name(
-        trimmed_name, kHeartbeatTopicExpansionNodeName, kHeartbeatTopicExpansionNamespace);
+      demand.name =
+        rclcpp::expand_topic_or_service_name(name, kHeartbeatTopicExpansionNodeName, kHeartbeatTopicExpansionNamespace);
     } catch (const std::exception & exc) {
       throw ValidationError(kSubscriptionNameField, exc.what());
     }
     return;
   }
 
-  demand.name = trim(raw_name);
+  demand.name = trim(raw);
   if (demand.name.empty()) {
     throw ValidationError(
       kSubscriptionNameField, "heartbeat subscription other video name must trim to a non-empty name");
@@ -198,10 +198,10 @@ nlohmann::json serialize(const SubscriptionErrorStatus & status)
 {
   const char * reason = nullptr;
   switch (status.reason) {
-    case SubscriptionStatusErrorReason::Forbidden:
+    case SubscriptionErrorReason::Forbidden:
       reason = "forbidden";
       break;
-    case SubscriptionStatusErrorReason::NotFound:
+    case SubscriptionErrorReason::NotFound:
       reason = "not_found";
       break;
   }
@@ -220,10 +220,10 @@ nlohmann::json serialize(const SubscriptionErrorStatus & status)
 SubscriptionHeartbeat parse(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
-  std::unordered_map<std::string, std::size_t> index_by_key;
+  std::unordered_map<std::string, std::size_t> index_by_target;
   try {
-    heartbeat.session_id =
-      protocol::detail::optionalTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
+    heartbeat.session_id = protocol::detail::optionalString(
+      body, "session_id", "heartbeat session_id must be a string", /*null_is_absent=*/true);
   } catch (const std::invalid_argument & exc) {
     throw ValidationError(kSessionIdField, exc.what());
   }
@@ -248,8 +248,8 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
       demand.preferred_interval_ms = *interval;
     }
 
-    const auto [it, inserted] =
-      index_by_key.emplace(std::string(toWire(demand.kind)) + ":" + demand.name, heartbeat.demands.size());
+    const auto [pos, inserted] =
+      index_by_target.emplace(std::string(toWire(demand.kind)) + ":" + demand.name, heartbeat.demands.size());
     if (inserted) {
       heartbeat.demands.push_back(std::move(demand));
       continue;
@@ -260,7 +260,7 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
     }
 
     const int requested = *demand.preferred_interval_ms;
-    auto & current = heartbeat.demands[it->second].preferred_interval_ms;
+    auto & current = heartbeat.demands[pos->second].preferred_interval_ms;
     if (current.has_value() && requested >= *current) {
       continue;
     }
@@ -273,7 +273,7 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
 
 }  // namespace
 
-SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload)
+SubscriptionHeartbeat parse(const std::vector<std::uint8_t> & payload)
 {
   try {
     return parse(
@@ -286,7 +286,7 @@ SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload)
   }
 }
 
-std::string serializeStatusReport(const SubscriptionStatusReport & report)
+std::string serialize(const SubscriptionStatusReport & report)
 {
   nlohmann::json entries = nlohmann::json::array();
   for (const auto & status : report.statuses) {

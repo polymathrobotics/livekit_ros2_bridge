@@ -28,17 +28,17 @@
 namespace livekit_ros2_bridge
 {
 
-constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
-constexpr std::string_view kUnknownExceptionLogFieldValue = "unknown_exception";
+constexpr std::string_view kUnknownFieldValue = "<unknown>";
+constexpr std::string_view kUnknownExceptionValue = "unknown_exception";
 
 // Builds event=<name> plus ordered key=value fields; keys and values must be log-parser-safe.
 class LogEvent
 {
 public:
-  explicit LogEvent(rclcpp::Logger logger, std::string_view event_name)
+  explicit LogEvent(rclcpp::Logger logger, std::string_view name)
   : logger_(std::move(logger))
   {
-    stream_ << std::boolalpha << "event=" << event_name;
+    message_ << std::boolalpha << "event=" << name;
   }
 
   LogEvent(const LogEvent &) = delete;
@@ -49,7 +49,7 @@ public:
   template <typename T>
   LogEvent & field(std::string_view key, const T & value) &
   {
-    stream_ << " " << key << "=" << value;
+    message_ << " " << key << "=" << value;
     return *this;
   }
 
@@ -62,7 +62,7 @@ public:
 
   LogEvent & field(std::string_view key, const char * value) &
   {
-    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
+    message_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
     return *this;
   }
 
@@ -73,18 +73,18 @@ public:
   }
 
   template <typename T>
-  LogEvent & fieldIf(bool condition, std::string_view key, const T & value) &
+  LogEvent & fieldIf(bool include, std::string_view key, const T & value) &
   {
-    if (condition) {
+    if (include) {
       field(key, value);
     }
     return *this;
   }
 
   template <typename T>
-  LogEvent && fieldIf(bool condition, std::string_view key, const T & value) &&
+  LogEvent && fieldIf(bool include, std::string_view key, const T & value) &&
   {
-    static_cast<LogEvent &>(*this).fieldIf(condition, key, value);
+    static_cast<LogEvent &>(*this).fieldIf(include, key, value);
     return std::move(*this);
   }
 
@@ -130,71 +130,69 @@ public:
     return std::move(*this);
   }
 
-  LogEvent & fieldOr(
-    std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &
+  LogEvent & fieldOr(std::string_view key, const std::string & value, std::string_view fallback = kUnknownFieldValue) &
   {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
+    message_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
     return *this;
   }
 
   LogEvent && fieldOr(
-    std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &&
+    std::string_view key, const std::string & value, std::string_view fallback = kUnknownFieldValue) &&
   {
     static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
-  LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &
+  LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownFieldValue) &
   {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
+    message_ << " " << key << "=" << (value.empty() ? fallback : value);
     return *this;
   }
 
-  LogEvent && fieldOr(
-    std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &&
+  LogEvent && fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownFieldValue) &&
   {
     static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
-  LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &
+  LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownFieldValue) &
   {
-    stream_ << " " << key << "=";
+    message_ << " " << key << "=";
     if (value == nullptr || value[0] == '\0') {
-      stream_ << fallback;
+      message_ << fallback;
     } else {
-      stream_ << value;
+      message_ << value;
     }
     return *this;
   }
 
-  LogEvent && fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &&
+  LogEvent && fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownFieldValue) &&
   {
     static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
-  LogEvent & fieldException(std::string_view key, std::exception_ptr exception) &
+  LogEvent & fieldException(std::string_view key, std::exception_ptr error) &
   {
     try {
-      std::rethrow_exception(exception);
+      std::rethrow_exception(error);
     } catch (const std::exception & exc) {
       field(key, exc.what());
     } catch (...) {
-      field(key, kUnknownExceptionLogFieldValue);
+      field(key, kUnknownExceptionValue);
     }
     return *this;
   }
 
-  LogEvent && fieldException(std::string_view key, std::exception_ptr exception) &&
+  LogEvent && fieldException(std::string_view key, std::exception_ptr error) &&
   {
-    static_cast<LogEvent &>(*this).fieldException(key, std::move(exception));
+    static_cast<LogEvent &>(*this).fieldException(key, std::move(error));
     return std::move(*this);
   }
 
   std::string str() const
   {
-    return stream_.str();
+    return message_.str();
   }
 
   void debug() const
@@ -221,13 +219,13 @@ public:
   void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
   {
     // ROS throttle macros take integer millisecond periods.
-    const auto throttle_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
-    RCLCPP_WARN_STREAM_THROTTLE(logger_, clock, throttle_interval_ms, str());
+    const auto interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
+    RCLCPP_WARN_STREAM_THROTTLE(logger_, clock, interval_ms, str());
   }
 
 private:
   rclcpp::Logger logger_;
-  std::ostringstream stream_;
+  std::ostringstream message_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -23,9 +23,9 @@ namespace livekit_ros2_bridge
 inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
 
-inline std::string buildPipelineDescription(const std::string & ingress, const std::string & transform)
+inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
 {
-  std::string description = ingress;
+  std::string description = source;
   if (!transform.empty()) {
     description += " ! ";
     description += transform;

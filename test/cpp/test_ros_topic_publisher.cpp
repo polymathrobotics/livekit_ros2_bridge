@@ -55,10 +55,10 @@ std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage
   return std::vector<std::uint8_t>(rcl_msg.buffer, rcl_msg.buffer + rcl_msg.buffer_length);
 }
 
-TopicPublishRequest makeRequest(
+RosPublishRequest makeRequest(
   const std::string & ros_topic, const std::string & interface_type, rclcpp::SerializedMessage message)
 {
-  TopicPublishRequest request;
+  RosPublishRequest request;
   request.ros_topic = ros_topic;
   request.interface_type = interface_type;
   request.message = std::move(message);
@@ -66,7 +66,7 @@ TopicPublishRequest makeRequest(
 }
 
 template <typename MessageT>
-TopicPublishRequest makeRequest(const std::string & ros_topic, const MessageT & message)
+RosPublishRequest makeRequest(const std::string & ros_topic, const MessageT & message)
 {
   return makeRequest(ros_topic, rosidl_generator_traits::name<MessageT>(), serializeMessage(message));
 }
@@ -76,7 +76,7 @@ std::vector<std::uint8_t> payloadBytes(const std::string & payload)
   return std::vector<std::uint8_t>(payload.begin(), payload.end());
 }
 
-std::vector<std::uint8_t> makePublishPayload(
+std::vector<std::uint8_t> makePayload(
   const std::string & ros_topic, const std::string & interface_type, const rclcpp::SerializedMessage & message)
 {
   const std::string payload =
@@ -90,9 +90,9 @@ std::vector<std::uint8_t> makePublishPayload(
 }
 
 template <typename MessageT>
-std::vector<std::uint8_t> makePublishPayload(const std::string & ros_topic, const MessageT & message)
+std::vector<std::uint8_t> makePayload(const std::string & ros_topic, const MessageT & message)
 {
-  return makePublishPayload(ros_topic, rosidl_generator_traits::name<MessageT>(), serializeMessage(message));
+  return makePayload(ros_topic, rosidl_generator_traits::name<MessageT>(), serializeMessage(message));
 }
 
 AccessPolicy makeAccessPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -301,7 +301,7 @@ TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
 }
 
-TEST(TopicPublisherTest, PublishPayloadParsesAndPublishesMessagesToRequestedTopic)
+TEST(TopicPublisherTest, PayloadParsesAndPublishesMessageToRequestedTopic)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/payload_cmd";
@@ -318,18 +318,18 @@ TEST(TopicPublisherTest, PublishPayloadParsesAndPublishesMessagesToRequestedTopi
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
-  const std::vector<std::uint8_t> payload = makePublishPayload(topic, message);
-  publisher.handlePublishPayload("alice", payload);
+  const std::vector<std::uint8_t> payload = makePayload(topic, message);
+  publisher.handlePayload("alice", payload);
   ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
   received_message.reset();
-  publisher.handlePublishPayload("alice", payload);
+  publisher.handlePayload("alice", payload);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
   EXPECT_NEAR(received_message->percentage, 0.75F, 1e-6F);
 }
 
-TEST(TopicPublisherTest, PublishPayloadResolvesTopicWithPublisherNodeContext)
+TEST(TopicPublisherTest, PayloadResolvesTopicWithPublisherNodeContext)
 {
   RosTopicPublisherHarness harness;
   harness.resetPublisher("topic_publisher_node", "/robot");
@@ -348,17 +348,17 @@ TEST(TopicPublisherTest, PublishPayloadResolvesTopicWithPublisherNodeContext)
   sensor_msgs::msg::BatteryState message;
   message.voltage = 24.5F;
 
-  const std::vector<std::uint8_t> payload = makePublishPayload(request_topic, message);
-  publisher.handlePublishPayload("alice", payload);
+  const std::vector<std::uint8_t> payload = makePayload(request_topic, message);
+  publisher.handlePayload("alice", payload);
   ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(resolved_topic));
   received_message.reset();
-  publisher.handlePublishPayload("alice", payload);
+  publisher.handlePayload("alice", payload);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 24.5F, 1e-6F);
 }
 
-TEST(TopicPublisherTest, InvalidPublishPayloadIsDroppedWithoutPublishing)
+TEST(TopicPublisherTest, InvalidPayloadIsDroppedWithoutPublishing)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/invalid_payload";
@@ -371,12 +371,12 @@ TEST(TopicPublisherTest, InvalidPublishPayloadIsDroppedWithoutPublishing)
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
-  EXPECT_NO_THROW(publisher.handlePublishPayload("alice", payloadBytes("{")));
+  EXPECT_NO_THROW(publisher.handlePayload("alice", payloadBytes("{")));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
 
-TEST(TopicPublisherTest, PublishPayloadWithoutRequesterIdentityIsDropped)
+TEST(TopicPublisherTest, PayloadWithoutRequesterIdentityIsDropped)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/anonymous_payload";
@@ -390,7 +390,7 @@ TEST(TopicPublisherTest, PublishPayloadWithoutRequesterIdentityIsDropped)
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
 
-  publisher.handlePublishPayload("", makePublishPayload(topic, message));
+  publisher.handlePayload("", makePayload(topic, message));
 
   expectTopicNotPublished(harness, topic, received_message);
 }

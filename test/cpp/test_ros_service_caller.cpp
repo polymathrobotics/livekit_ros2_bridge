@@ -66,7 +66,7 @@ rclcpp::SerializedMessage serializeMessage(const MessageT & message)
 template <typename MessageT>
 MessageT deserializeMessage(const std::vector<std::uint8_t> & payload)
 {
-  auto serialized = wrapSerializedPayload(payload);
+  auto serialized = makeSerializedMessage(payload);
   rclcpp::Serialization<MessageT> serialization;
   MessageT message;
   serialization.deserialize_message(&serialized, &message);
@@ -152,7 +152,7 @@ ServiceCallRequest makeSetBoolRequest(
   const std::string & service, int timeout_ms, std::optional<std::string> interface_type, bool data = true)
 {
   ServiceCallRequest request;
-  request.service = service;
+  request.name = service;
   request.interface_type = interface_type.value_or("");
   std_srvs::srv::SetBool::Request ros_request;
   ros_request.data = data;
@@ -250,13 +250,13 @@ TEST_F(RosServiceCallerTest, MatchesConcurrentResponsesByClientAndSequence)
   ASSERT_TRUE(waitForFutureReady(executor, beta_future));
 
   const auto alpha_result = alpha_future.get();
-  EXPECT_EQ(alpha_result.service, "/test_set_bool_alpha");
+  EXPECT_EQ(alpha_result.name, "/test_set_bool_alpha");
   const auto alpha_response = deserializeMessage<std_srvs::srv::SetBool::Response>(alpha_result.payload);
   EXPECT_TRUE(alpha_response.success);
   EXPECT_EQ(alpha_response.message, "alpha");
 
   const auto beta_result = beta_future.get();
-  EXPECT_EQ(beta_result.service, "/test_set_bool_beta");
+  EXPECT_EQ(beta_result.name, "/test_set_bool_beta");
   const auto beta_response = deserializeMessage<std_srvs::srv::SetBool::Response>(beta_result.payload);
   EXPECT_FALSE(beta_response.success);
   EXPECT_EQ(beta_response.message, "beta");

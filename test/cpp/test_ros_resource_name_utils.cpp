@@ -25,7 +25,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-std::string expandRosResourceName(std::string_view name)
+std::string expandName(std::string_view name)
 {
   return rclcpp::expand_topic_or_service_name(std::string{name}, "livekit_ros2_bridge_resource_name", "/");
 }
@@ -40,15 +40,15 @@ TEST(NormalizeRosResourceNameTest, EmptyAndWhitespaceOnlyInputsReturnEmpty)
 
 TEST(NormalizeRosResourceNameTest, TrimsAndDelegatesExpansionToRclcpp)
 {
-  EXPECT_EQ(normalizeRosResourceName("camera"), expandRosResourceName("camera"));
-  EXPECT_EQ(normalizeRosResourceName("  /camera/front/image  "), expandRosResourceName("/camera/front/image"));
-  EXPECT_EQ(normalizeRosResourceName("{node}/image"), expandRosResourceName("{node}/image"));
+  EXPECT_EQ(normalizeRosResourceName("camera"), expandName("camera"));
+  EXPECT_EQ(normalizeRosResourceName("  /camera/front/image  "), expandName("/camera/front/image"));
+  EXPECT_EQ(normalizeRosResourceName("{node}/image"), expandName("{node}/image"));
 }
 
 TEST(NormalizeRosResourceNameTest, RosValidationFailuresReturnEmpty)
 {
   constexpr char kInvalidName[] = "/camera///front/image/";
-  EXPECT_THROW(expandRosResourceName(kInvalidName), rclcpp::exceptions::NameValidationError);
+  EXPECT_THROW(expandName(kInvalidName), rclcpp::exceptions::NameValidationError);
   EXPECT_EQ(normalizeRosResourceName(kInvalidName), "");
 }
 

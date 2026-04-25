@@ -61,10 +61,10 @@ const char * batteryStateInterfaceType()
 }
 
 std::shared_ptr<DataTrackPublisher> createDataTrackPublisher(
-  rclcpp::Node & node, FakeRoomConnection & room_connection, const std::string & topic)
+  rclcpp::Node & node, FakeRoomConnection & room_connection, const std::string & ros_topic)
 {
   return std::make_shared<DataTrackPublisher>(
-    topic,
+    ros_topic,
     batteryStateInterfaceType(),
     node.get_node_topics_interface(),
     node.get_node_graph_interface(),
@@ -258,13 +258,13 @@ TEST(DataTrackPublisherTest, DestructionAllowsSameTopicToBeRepublishedWithSameTr
 
   auto first = createDataTrackPublisher(*node, room_connection, topic);
   first->publish();
-  const std::string track_name = first->name();
+  const std::string track_name = first->trackName();
 
   first.reset();
 
   auto second = createDataTrackPublisher(*node, room_connection, topic);
   second->publish();
-  EXPECT_EQ(second->name(), track_name);
+  EXPECT_EQ(second->trackName(), track_name);
   EXPECT_EQ(room_connection.state->published_data_track_names, (std::vector<std::string>{track_name, track_name}));
 }
 
@@ -293,7 +293,7 @@ TEST(DataTrackPublisherTest, DestructionWaitsForActiveSerializedMessageCallback)
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->publish();
-  const std::string track_name = track_publisher->name();
+  const std::string track_name = track_publisher->trackName();
 
   std::thread spin_thread([&executor]() { executor.spin(); });
 
@@ -328,7 +328,7 @@ TEST(DataTrackPublisherTest, DestructionUnpublishesPublishedTrackAndDropsSubscri
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->publish();
-  const std::string track_name = track_publisher->name();
+  const std::string track_name = track_publisher->trackName();
   const auto message = makeBatteryState();
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
@@ -355,7 +355,7 @@ TEST(DataTrackPublisherTest, DestructionSwallowsUnpublishFailure)
 
   auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
   track_publisher->publish();
-  const std::string track_name = track_publisher->name();
+  const std::string track_name = track_publisher->trackName();
   room_connection.state->unpublish_rejected_data_track_names.push_back(track_name);
 
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, makeBatteryState(), room_connection, 1U));

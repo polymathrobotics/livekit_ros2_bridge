@@ -55,7 +55,7 @@ class SubscriptionLeaseManager final
 
 public:
   using Clock = std::chrono::steady_clock;
-  using SubmitToExecutorFunction = std::function<void(std::function<void()> work)>;
+  using ExecutorSubmitter = std::function<void(std::function<void()> work)>;
 
   SubscriptionLeaseManager(
     rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
@@ -70,10 +70,10 @@ public:
   ~SubscriptionLeaseManager();
 
   // Runs lease expiry through the executor path shared with heartbeat handling.
-  void startLeaseGcTimer(
+  void startPruneTimer(
     rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
     rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
-    SubmitToExecutorFunction submit_to_executor);
+    ExecutorSubmitter submit_to_executor);
   void handleHeartbeatPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
 
   // Defer republish until a later heartbeat proves the data subscription is still live.
@@ -108,7 +108,7 @@ private:
     std::shared_ptr<VideoTrackPublisher> publisher;
   };
 
-  using SubscriptionRuntime = std::variant<DataRuntime, VideoRuntime>;
+  using Runtime = std::variant<DataRuntime, VideoRuntime>;
 
   struct Subscription
   {
@@ -116,7 +116,7 @@ private:
     std::string name;
     std::string interface_type;
     std::map<std::string, Lease> leases;
-    SubscriptionRuntime runtime;
+    Runtime runtime;
   };
 
   struct ResolvedDemand
@@ -128,10 +128,10 @@ private:
     std::optional<VideoStreamSpec> video_spec;
   };
 
-  using SubscriptionMap = std::unordered_map<std::string, Subscription>;
+  using Subscriptions = std::unordered_map<std::string, Subscription>;
 
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
-  static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
+  static int minimumIntervalMs(const std::map<std::string, Lease> & leases);
 
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
@@ -146,13 +146,13 @@ private:
   Clock::duration heartbeat_lease_duration_;
 
   std::atomic<bool> is_shutdown_{false};
-  rclcpp::TimerBase::SharedPtr lease_gc_timer_;
+  rclcpp::TimerBase::SharedPtr prune_timer_;
 
   // Browser-tab scoped leases resolve anonymous heartbeats when LiveKit omits identity.
   std::unordered_map<std::string, SessionLease> session_leases_;
 
   // Canonical target (`kind:name`) to the data or video runtime shared by live requesters.
-  SubscriptionMap subscriptions_;
+  Subscriptions subscriptions_;
 
   std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
@@ -170,7 +170,7 @@ private:
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   SubscriptionStatus status(const Subscription & subscription) const;
 
-  void pruneSubscriptionLeases(Clock::time_point reference_time);
+  void pruneLeases(Clock::time_point now);
   void republishTracks(const std::string & requester_identity);
 };
 

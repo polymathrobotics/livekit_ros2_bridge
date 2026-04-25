@@ -52,16 +52,16 @@ inline std::string normalizeRosResourceName(std::string_view name)
 }
 
 /// A terminal `/*` matches names under that prefix; `/*` also matches `/`.
-inline bool rosResourceMatchesPattern(std::string_view name, std::string_view pattern)
+inline bool rosResourceMatchesPattern(std::string_view resource, std::string_view pattern)
 {
-  const bool is_subtree_pattern =
-    pattern.size() >= sizeof(kRosResourceSubtreeWildcard) - 1U &&
-    pattern.substr(pattern.size() - (sizeof(kRosResourceSubtreeWildcard) - 1U)) == kRosResourceSubtreeWildcard;
-  if (is_subtree_pattern) {
-    const std::string prefix(pattern.substr(0, pattern.size() - (sizeof(kRosResourceSubtreeWildcard) - 1U)));
-    return name.rfind(prefix + "/", 0) == 0;
+  const auto suffix_size = sizeof(kRosResourceSubtreeWildcard) - 1U;
+  const bool is_subtree =
+    pattern.size() >= suffix_size && pattern.substr(pattern.size() - suffix_size) == kRosResourceSubtreeWildcard;
+  if (is_subtree) {
+    const std::string prefix(pattern.substr(0, pattern.size() - suffix_size));
+    return resource.rfind(prefix + "/", 0) == 0;
   }
-  return name == pattern;
+  return resource == pattern;
 }
 
 }  // namespace livekit_ros2_bridge

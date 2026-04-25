@@ -34,15 +34,14 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
 
-void unpublishVideoTrackBestEffort(
-  RoomConnection & room_connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
+void unpublishBestEffort(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
   if (track == nullptr) {
     return;
   }
 
   try {
-    room_connection.unpublishVideoTrack(track);
+    connection.unpublishVideoTrack(track);
   } catch (...) {}
 }
 
@@ -72,7 +71,7 @@ std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
 }
 
 VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec)
-: room_connection_(room_connection)
+: connection_(room_connection)
 , spec_(std::move(spec))
 {}
 
@@ -84,26 +83,25 @@ VideoTrackPublisher::~VideoTrackPublisher()
 void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_closed_) {
+  if (closed_) {
     return;
   }
 
   const int width = frame.width();
   const int height = frame.height();
-  if (video_source_ == nullptr || video_source_->width() != width || video_source_->height() != height) {
-    const bool is_republish = was_published_;
+  if (source_ == nullptr || source_->width() != width || source_->height() != height) {
+    const bool republish = published_once_;
 
     try {
-      unpublishVideoTrackBestEffort(room_connection_, published_video_track_);
-      published_video_track_.reset();
-      video_source_.reset();
-      auto video_source = std::make_shared<livekit::VideoSource>(width, height);
-      auto published_video_track =
-        room_connection_.publishVideoTrack(spec_.track_name, video_source, spec_.publish_config);
-      video_source_ = std::move(video_source);
-      published_video_track_ = std::move(published_video_track);
+      unpublishBestEffort(connection_, track_);
+      track_.reset();
+      source_.reset();
+      auto source = std::make_shared<livekit::VideoSource>(width, height);
+      auto track = connection_.publishVideoTrack(spec_.track_name, source, spec_.publish_options);
+      source_ = std::move(source);
+      track_ = std::move(track);
     } catch (...) {
-      LogEvent(kLogger, is_republish ? "video_track_republish_failed" : "video_track_publish_failed")
+      LogEvent(kLogger, republish ? "video_track_republish_failed" : "video_track_publish_failed")
         .field("track_name", spec_.track_name)
         .field("width", width)
         .field("height", height)
@@ -112,8 +110,8 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
       throw;
     }
 
-    was_published_ = true;
-    if (is_republish) {
+    published_once_ = true;
+    if (republish) {
       LogEvent(kLogger, "video_stream_track_republished")
         .field("stream_key", spec_.stream_key)
         .field("width", width)
@@ -122,7 +120,7 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
     }
   }
 
-  video_source_->captureFrame(frame, timestamp_us);
+  source_->captureFrame(frame, timestamp_us);
 }
 
 void VideoTrackPublisher::close()
@@ -130,20 +128,20 @@ void VideoTrackPublisher::close()
   // Stop streams outside mutex_; their callbacks can re-enter this publisher.
   std::shared_ptr<RosVideoStream> ros_stream;
   std::unique_ptr<GStreamerVideoStream> gstreamer_stream;
-  std::shared_ptr<livekit::VideoSource> video_source;
-  std::shared_ptr<livekit::LocalVideoTrack> published_video_track;
+  std::shared_ptr<livekit::VideoSource> source;
+  std::shared_ptr<livekit::LocalVideoTrack> track;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_closed_) {
+    if (closed_) {
       return;
     }
 
-    was_published_ = false;
-    is_closed_ = true;
+    published_once_ = false;
+    closed_ = true;
     ros_stream = std::move(ros_stream_);
     gstreamer_stream = std::move(gstreamer_stream_);
-    video_source = std::move(video_source_);
-    published_video_track = std::move(published_video_track_);
+    source = std::move(source_);
+    track = std::move(track_);
   }
 
   if (ros_stream != nullptr) {
@@ -152,15 +150,15 @@ void VideoTrackPublisher::close()
   if (gstreamer_stream != nullptr) {
     gstreamer_stream->close();
   }
-  unpublishVideoTrackBestEffort(room_connection_, published_video_track);
-  published_video_track.reset();
-  video_source.reset();
+  unpublishBestEffort(connection_, track);
+  track.reset();
+  source.reset();
 }
 
 void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_closed_) {
+  if (closed_) {
     return;
   }
 
@@ -173,7 +171,7 @@ void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
 void VideoTrackPublisher::onCaptureFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_closed_) {
+  if (closed_) {
     return;
   }
 
@@ -183,7 +181,7 @@ void VideoTrackPublisher::onCaptureFailed(const std::string & error)
 void VideoTrackPublisher::onRestartFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_closed_) {
+  if (closed_) {
     return;
   }
 
@@ -193,7 +191,7 @@ void VideoTrackPublisher::onRestartFailed(const std::string & error)
 void VideoTrackPublisher::onPushFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_closed_) {
+  if (closed_) {
     return;
   }
 

@@ -53,7 +53,7 @@ TEST(ServiceCallPayloadsTest, ParsesValidRequestAndExpandsFields)
   body["interface_type"] = "  std_srvs/srv/SetBool  ";
   const auto request = protocol::services::parse(body.dump());
 
-  EXPECT_EQ(request.service, "/set_bool");
+  EXPECT_EQ(request.name, "/set_bool");
   EXPECT_EQ(request.interface_type, "std_srvs/srv/SetBool");
   EXPECT_EQ(serializedMessageBytes(request.payload), (std::vector<std::uint8_t>{0x01, 0x02, 0x03}));
   EXPECT_EQ(request.timeout, std::chrono::milliseconds(500));

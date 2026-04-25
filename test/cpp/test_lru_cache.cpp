@@ -32,11 +32,11 @@ namespace
 TEST(LruCacheTest, GetReturnsStoredValueRefreshesRecencyAndMissesMissingKeys)
 {
   LruCache<std::string, int> cache(2U);
-  cache.insertOrAssign("alpha", 1);
-  cache.insertOrAssign("beta", 2);
+  cache.set("alpha", 1);
+  cache.set("beta", 2);
 
   EXPECT_EQ(cache.get("alpha"), std::optional<int>{1});
-  cache.insertOrAssign("gamma", 3);
+  cache.set("gamma", 3);
 
   EXPECT_EQ(cache.get("alpha"), std::optional<int>{1});
   EXPECT_FALSE(cache.get("beta").has_value());
@@ -44,25 +44,25 @@ TEST(LruCacheTest, GetReturnsStoredValueRefreshesRecencyAndMissesMissingKeys)
   EXPECT_FALSE(cache.get("missing").has_value());
 }
 
-TEST(LruCacheTest, InsertOrAssignExistingKeyUpdatesValueAndRefreshesRecency)
+TEST(LruCacheTest, SetExistingKeyUpdatesValueAndRefreshesRecency)
 {
   LruCache<std::string, int> cache(2U);
-  cache.insertOrAssign("alpha", 1);
-  cache.insertOrAssign("beta", 2);
+  cache.set("alpha", 1);
+  cache.set("beta", 2);
 
-  cache.insertOrAssign("alpha", 10);
+  cache.set("alpha", 10);
 
-  cache.insertOrAssign("gamma", 3);
+  cache.set("gamma", 3);
   EXPECT_EQ(cache.get("alpha"), std::optional<int>{10});
   EXPECT_FALSE(cache.get("beta").has_value());
 }
 
-TEST(LruCacheTest, InsertOrAssignEvictsLeastRecentEntry)
+TEST(LruCacheTest, SetEvictsLeastRecentEntry)
 {
   LruCache<std::string, int> cache(1U);
-  cache.insertOrAssign("alpha", 1);
+  cache.set("alpha", 1);
 
-  cache.insertOrAssign("beta", 2);
+  cache.set("beta", 2);
 
   EXPECT_FALSE(cache.get("alpha").has_value());
   EXPECT_EQ(cache.get("beta"), std::optional<int>{2});
@@ -71,7 +71,7 @@ TEST(LruCacheTest, InsertOrAssignEvictsLeastRecentEntry)
 TEST(LruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
 {
   LruCache<std::string, std::exception_ptr> cache(2U);
-  cache.insertOrAssign("alpha", std::make_exception_ptr(std::runtime_error("bad alpha")));
+  cache.set("alpha", std::make_exception_ptr(std::runtime_error("bad alpha")));
 
   const auto failure = cache.get("alpha");
   ASSERT_TRUE(failure.has_value());
@@ -106,7 +106,7 @@ TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsable)
         const std::string key = "key_" + std::to_string((thread_index + iteration) % static_cast<int>(kCapacity * 2U));
 
         if (iteration % 3 == 0) {
-          cache.insertOrAssign(key, thread_index * 1000 + iteration);
+          cache.set(key, thread_index * 1000 + iteration);
         } else {
           (void)cache.get(key);
         }
@@ -123,7 +123,7 @@ TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsable)
     thread.join();
   }
 
-  cache.insertOrAssign("sentinel", 42);
+  cache.set("sentinel", 42);
   EXPECT_EQ(cache.get("sentinel"), std::optional<int>{42});
 }
 

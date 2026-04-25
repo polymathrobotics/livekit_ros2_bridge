@@ -48,11 +48,11 @@ constexpr std::size_t kSubscriptionDepth = 2U;
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("data_track_publisher");
 
-std::string makeTrackName(const std::string & topic)
+std::string makeTrackName(const std::string & ros_topic)
 {
   std::string name = "lkros.data";
-  name.reserve(name.size() + topic.size());
-  for (char ch : topic) {
+  name.reserve(name.size() + ros_topic.size());
+  for (char ch : ros_topic) {
     name.push_back(ch == '/' ? '.' : ch);
   }
   return name;
@@ -68,14 +68,14 @@ public:
   {
   public:
     State(
-      std::string topic,
+      std::string ros_topic,
       std::string track_name,
       int interval_ms,
       rclcpp::Clock::SharedPtr clock,
       RoomConnection & room_connection)
     : clock_(std::move(clock))
     , room_connection_(room_connection)
-    , topic_(std::move(topic))
+    , ros_topic_(std::move(ros_topic))
     , track_name_(std::move(track_name))
     , track_(room_connection_.publishDataTrack(track_name_))
     {
@@ -93,14 +93,14 @@ public:
     void closeAndWait()
     {
       std::unique_lock<std::mutex> lock(lifecycle_mutex_);
-      is_closed_ = true;
+      closed_ = true;
       idle_.wait(lock, [this]() { return active_callbacks_ == 0U; });
     }
 
     bool tryEnter()
     {
       std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-      if (is_closed_) {
+      if (closed_) {
         return false;
       }
 
@@ -124,18 +124,18 @@ public:
       interval_ms_ = interval_ms;
     }
 
-    void pushMessage(const rclcpp::SerializedMessage & message)
+    void push(const rclcpp::SerializedMessage & message)
     {
       {
         std::lock_guard<std::mutex> lock(throttle_mutex_);
         if (interval_ms_ != 0) {
           const auto now = std::chrono::steady_clock::now();
-          if (!last_delivery_at_) {
-            last_delivery_at_ = now;
-          } else if (now - *last_delivery_at_ < std::chrono::milliseconds(interval_ms_)) {
+          if (!last_push_at_) {
+            last_push_at_ = now;
+          } else if (now - *last_push_at_ < std::chrono::milliseconds(interval_ms_)) {
             return;
           } else {
-            last_delivery_at_ = now;
+            last_push_at_ = now;
           }
         }
       }
@@ -150,7 +150,7 @@ public:
       const auto & error = result.error();
       if (error.code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL) {
         LogEvent(kLogger, "data_track_delivery_dropped")
-          .field("resource", topic_)
+          .field("resource", ros_topic_)
           .field("track_name", track_name_)
           .field("reason", "queue_full")
           .warnThrottle(*clock_, kLogThrottle);
@@ -158,14 +158,14 @@ public:
       }
 
       LogEvent(kLogger, "data_track_push_failed")
-        .field("resource", topic_)
+        .field("resource", ros_topic_)
         .field("track_name", track_name_)
         .field("sdk_error_code", static_cast<std::uint32_t>(error.code))
         .fieldOr("error", error.message)
         .warnThrottle(*clock_, kLogThrottle);
     }
 
-    void unpublishTrack()
+    void unpublish()
     {
       if (track_ == nullptr) {
         return;
@@ -176,7 +176,7 @@ public:
         track_.reset();
       } catch (...) {
         LogEvent(kLogger, "data_track_unpublish_failed")
-          .field("resource", topic_)
+          .field("resource", ros_topic_)
           .field("track_name", track_name_)
           .fieldException("error", std::current_exception())
           .warn();
@@ -186,22 +186,22 @@ public:
   private:
     rclcpp::Clock::SharedPtr clock_;
     RoomConnection & room_connection_;
-    std::string topic_;
+    std::string ros_topic_;
     std::string track_name_;
     std::shared_ptr<livekit::LocalDataTrack> track_;
 
     std::mutex lifecycle_mutex_;
     std::condition_variable idle_;
-    bool is_closed_ = false;
+    bool closed_ = false;
     std::size_t active_callbacks_ = 0U;
 
     std::mutex throttle_mutex_;
     int interval_ms_ = 0;
-    std::optional<std::chrono::steady_clock::time_point> last_delivery_at_;
+    std::optional<std::chrono::steady_clock::time_point> last_push_at_;
   };
 
   Publication(
-    std::string topic,
+    std::string ros_topic,
     std::string interface_type,
     std::string track_name,
     int interval_ms,
@@ -213,14 +213,14 @@ public:
   : topics_(std::move(topics))
   , graph_(std::move(graph))
   , qos_config_(qos_config)
-  , topic_(std::move(topic))
+  , ros_topic_(std::move(ros_topic))
   , interface_type_(std::move(interface_type))
-  , state_(std::make_shared<State>(topic_, std::move(track_name), interval_ms, std::move(clock), room_connection))
+  , state_(std::make_shared<State>(ros_topic_, std::move(track_name), interval_ms, std::move(clock), room_connection))
   {
     try {
       subscribe();
     } catch (...) {
-      state_->unpublishTrack();
+      state_->unpublish();
       throw;
     }
   }
@@ -229,7 +229,7 @@ public:
   {
     state_->closeAndWait();
     subscription_.reset();
-    state_->unpublishTrack();
+    state_->unpublish();
   }
 
   Publication(const Publication &) = delete;
@@ -246,11 +246,11 @@ private:
   void subscribe()
   {
     const rclcpp::QoS base_qos{rclcpp::KeepLast(kSubscriptionDepth)};
-    const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, topic_, base_qos, qos_config_);
+    const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, ros_topic_, base_qos, qos_config_);
 
     if (qos.source != SubscriptionQosResolutionSource::Fallback || qos.mixed_reliability || qos.mixed_durability) {
       LogEvent(kLogger, "subscription_qos_resolved")
-        .field("resource", topic_)
+        .field("resource", ros_topic_)
         .field("interface_type", interface_type_)
         .field("publisher_count", qos.publisher_count)
         .field("source", subscriptionQosSourceString(qos.source))
@@ -264,7 +264,7 @@ private:
 
     subscription_ = rclcpp::create_generic_subscription(
       topics_,
-      topic_,
+      ros_topic_,
       interface_type_,
       qos.qos,
       [weak_state = std::weak_ptr<State>(state_)](std::shared_ptr<rclcpp::SerializedMessage> message) {
@@ -272,8 +272,8 @@ private:
         if (state == nullptr || !state->tryEnter()) {
           return;
         }
-        ScopeExit leave_state([&state]() { state->leave(); });
-        state->pushMessage(*message);
+        ScopeExit leave([&state]() { state->leave(); });
+        state->push(*message);
       });
   }
 
@@ -281,7 +281,7 @@ private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   const SubscriptionQosConfig * qos_config_;
 
-  std::string topic_;
+  std::string ros_topic_;
   std::string interface_type_;
 
   std::shared_ptr<State> state_;
@@ -289,7 +289,7 @@ private:
 };
 
 DataTrackPublisher::DataTrackPublisher(
-  std::string topic,
+  std::string ros_topic,
   std::string interface_type,
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
@@ -301,9 +301,9 @@ DataTrackPublisher::DataTrackPublisher(
 , clock_(std::move(clock))
 , room_connection_(room_connection)
 , qos_config_(qos_config)
-, topic_(std::move(topic))
+, ros_topic_(std::move(ros_topic))
 , interface_type_(std::move(interface_type))
-, track_name_(makeTrackName(topic_))
+, track_name_(makeTrackName(ros_topic_))
 {}
 
 DataTrackPublisher::~DataTrackPublisher() = default;
@@ -316,10 +316,10 @@ void DataTrackPublisher::publish()
 
   try {
     publication_ = std::make_unique<Publication>(
-      topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
+      ros_topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
   } catch (...) {
     LogEvent(kLogger, "data_track_publish_error")
-      .field("resource", topic_)
+      .field("resource", ros_topic_)
       .field("track_name", track_name_)
       .fieldException("error", std::current_exception())
       .warn();
@@ -352,7 +352,7 @@ void DataTrackPublisher::setIntervalMs(int interval_ms)
   publication_->setIntervalMs(interval_ms);
 }
 
-const std::string & DataTrackPublisher::name() const
+const std::string & DataTrackPublisher::trackName() const
 {
   return track_name_;
 }

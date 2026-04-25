@@ -32,9 +32,9 @@ class RpcRouter
 public:
   RpcRouter(
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
-    const AccessPolicy & access_policy,
-    RosExecutorQueue & ros_executor_queue,
-    RosServiceCaller & ros_service_caller);
+    const AccessPolicy & policy,
+    RosExecutorQueue & queue,
+    RosServiceCaller & caller);
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -51,15 +51,15 @@ public:
 private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   // Registered callbacks must not depend on caller-owned config.
-  AccessPolicy access_policy_;
+  AccessPolicy policy_;
   // Borrowed by registered callbacks; must outlive this router.
-  RosExecutorQueue & ros_executor_queue_;
-  RosServiceCaller & ros_service_caller_;
+  RosExecutorQueue & queue_;
+  RosServiceCaller & caller_;
   // Borrowed only for unregistration; must outlive unregisterRpcs()/destruction.
   RoomConnection * registered_connection_ = nullptr;
 
   std::optional<std::string> callService(const livekit::RpcInvocationData & invocation);
-  std::optional<std::string> getInterfaces(const livekit::RpcInvocationData & invocation);
+  std::optional<std::string> showInterfaces(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> listServices(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> listTopics(const livekit::RpcInvocationData & invocation);
 };

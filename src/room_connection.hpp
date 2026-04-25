@@ -48,7 +48,7 @@ struct LiveKitConfig
 struct RoomEventCallbacks
 {
   // Initial successful Connect() is reported as Connected before delegate events are reliable.
-  std::function<void(livekit::ConnectionState)> on_connection_state_changed;
+  std::function<void(livekit::ConnectionState)> on_state_changed;
 
   // Runs on a connection-managed thread, not necessarily a ROS executor thread.
   std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet_received;

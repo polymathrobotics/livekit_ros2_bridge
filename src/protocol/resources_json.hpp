@@ -22,11 +22,11 @@ namespace livekit_ros2_bridge::protocol::resources
 {
 
 /// Unknown JSON fields are ignored for envelope compatibility.
-ResourceListRequest parseRequest(const std::string & payload);
+ResourceListRequest parse(const std::string & payload);
 
 /// Callers pass filtered resources with one interface type per name.
-std::string serializeServices(const ResourceNamesAndTypes & resources_by_name);
+std::string serializeServices(const ResourceTypesByName & resources);
 
-std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name);
+std::string serializeTopics(const ResourceTypesByName & resources);
 
 }  // namespace livekit_ros2_bridge::protocol::resources

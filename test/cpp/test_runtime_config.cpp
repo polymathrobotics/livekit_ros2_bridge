@@ -105,7 +105,7 @@ livekit::TrackPublishOptions makeExpectedPublishOptions(
   return options;
 }
 
-void expectPublishConfigEq(const livekit::TrackPublishOptions & actual, const livekit::TrackPublishOptions & expected)
+void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const livekit::TrackPublishOptions & expected)
 {
   EXPECT_EQ(actual.video_codec, expected.video_codec);
   EXPECT_EQ(
@@ -178,7 +178,7 @@ TEST_F(RuntimeConfigTest, DefaultVideoConfigAddsBuiltInCatchAllRosRule)
   EXPECT_EQ(rule.rule_id, "default_ros");
   EXPECT_EQ(rule.pattern, "/*");
   EXPECT_EQ(rule.transform_fragment, "");
-  expectPublishConfigEq(rule.publish_config, config.video_stream.default_publish_config);
+  expectPublishOptionsEq(rule.publish_options, config.video_stream.default_publish_options);
 }
 
 TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
@@ -186,8 +186,8 @@ TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
   const RuntimeConfig default_config =
     loadRuntimeConfigForNode("startup_config_watchdog_defaults", makeStaticTokenOptions());
 
-  EXPECT_TRUE(default_config.health.watchdog_enabled);
-  EXPECT_EQ(default_config.health.watchdog_recovery_timeout, std::chrono::seconds(75));
+  EXPECT_TRUE(default_config.watchdog.enabled);
+  EXPECT_EQ(default_config.watchdog.recovery_timeout, std::chrono::seconds(75));
 
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("health.watchdog.enabled", false);
@@ -195,8 +195,8 @@ TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
 
   const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_watchdog_overrides", options);
 
-  EXPECT_FALSE(overridden_config.health.watchdog_enabled);
-  EXPECT_EQ(overridden_config.health.watchdog_recovery_timeout, std::chrono::milliseconds(12500));
+  EXPECT_FALSE(overridden_config.watchdog.enabled);
+  EXPECT_EQ(overridden_config.watchdog.recovery_timeout, std::chrono::milliseconds(12500));
 }
 
 TEST_F(RuntimeConfigTest, AccessRulesLoadIntoRuntimeAccessPolicy)
@@ -278,8 +278,8 @@ TEST_F(RuntimeConfigTest, TrackPublishOptionsLoadFromUnifiedParams)
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_video_publish_params", options);
 
-  expectPublishConfigEq(
-    config.video_stream.default_publish_config,
+  expectPublishOptionsEq(
+    config.video_stream.default_publish_options,
     makeExpectedPublishOptions(kLivekitVideoCodecH264, 900000U, 24.0, true));
 }
 
@@ -392,7 +392,7 @@ TEST_F(RuntimeConfigTest, RosVideoEntryWithoutTransformUsesEmptyTransform)
   EXPECT_EQ(rule.rule_id, "front");
   EXPECT_EQ(rule.pattern, "/camera/front/*");
   EXPECT_EQ(rule.transform_fragment, "");
-  expectPublishConfigEq(rule.publish_config, config.video_stream.default_publish_config);
+  expectPublishOptionsEq(rule.publish_options, config.video_stream.default_publish_options);
 }
 
 TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformForEachEntryType)
@@ -407,8 +407,8 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
     const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_ros_publish_override", options);
 
     ASSERT_FALSE(config.video_stream.ros_topic_rules.empty());
-    expectPublishConfigEq(
-      config.video_stream.ros_topic_rules.front().publish_config,
+    expectPublishOptionsEq(
+      config.video_stream.ros_topic_rules.front().publish_options,
       makeExpectedPublishOptions(kLivekitVideoCodecH264, 900000U, 15.0, true));
   }
 
@@ -421,8 +421,8 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
 
     const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_publish_override", options);
 
-    expectPublishConfigEq(
-      config.video_stream.other_video_sources.at("front").publish_config,
+    expectPublishOptionsEq(
+      config.video_stream.other_video_sources.at("front").publish_options,
       makeExpectedPublishOptions(kLivekitVideoCodecH265, 500000U, 30.0, false));
   }
 }
@@ -441,8 +441,8 @@ TEST_F(RuntimeConfigTest, EntryPublishOverrideCanResetFieldsToSdkDefaults)
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_publish_override_reset", options);
 
   ASSERT_FALSE(config.video_stream.ros_topic_rules.empty());
-  expectPublishConfigEq(
-    config.video_stream.ros_topic_rules.front().publish_config,
+  expectPublishOptionsEq(
+    config.video_stream.ros_topic_rules.front().publish_options,
     makeExpectedPublishOptions(std::nullopt, 0U, 0.0, std::nullopt));
 }
 

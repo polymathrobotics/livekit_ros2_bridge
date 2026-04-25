@@ -42,50 +42,50 @@ public:
   std::optional<Value> get(const Key & key)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entry_index_.find(key);
-    if (it == entry_index_.end()) {
+    const auto it = index_.find(key);
+    if (it == index_.end()) {
       return std::nullopt;
     }
 
-    entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
+    entries_.splice(entries_.end(), entries_, it->second);
     return it->second->value;
   }
 
-  void insertOrAssign(Key key, Value value)
+  void set(Key key, Value value)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entry_index_.find(key);
-    if (it != entry_index_.end()) {
+    const auto it = index_.find(key);
+    if (it != index_.end()) {
       it->second->value = std::move(value);
-      entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
+      entries_.splice(entries_.end(), entries_, it->second);
       return;
     }
 
-    entries_by_recency_.push_back(LruEntry{std::move(key), std::move(value)});
-    auto lru_entry_it = std::prev(entries_by_recency_.end());
-    entry_index_.emplace(lru_entry_it->key, lru_entry_it);
-    if (entry_index_.size() > capacity_) {
-      entry_index_.erase(entries_by_recency_.front().key);
-      entries_by_recency_.pop_front();
+    entries_.push_back(Entry{std::move(key), std::move(value)});
+    auto entry = std::prev(entries_.end());
+    index_.emplace(entry->key, entry);
+    if (index_.size() > capacity_) {
+      index_.erase(entries_.front().key);
+      entries_.pop_front();
     }
   }
 
 private:
-  struct LruEntry
+  struct Entry
   {
     Key key;
     Value value;
   };
 
-  using LruEntries = std::list<LruEntry>;
-  using EntryIndex = std::unordered_map<Key, typename LruEntries::iterator, Hash, KeyEqual>;
+  using Entries = std::list<Entry>;
+  using Index = std::unordered_map<Key, typename Entries::iterator, Hash, KeyEqual>;
 
   std::size_t capacity_;
   std::mutex mutex_;
   // Front is least-recent, back is most-recent. The index stores list iterators;
   // same-list splice moves entries without invalidating them.
-  LruEntries entries_by_recency_;
-  EntryIndex entry_index_;
+  Entries entries_;
+  Index index_;
 };
 
 }  // namespace livekit_ros2_bridge

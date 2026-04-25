@@ -26,23 +26,23 @@ TEST(EventThrottleTest, FirstEventFiresImmediately)
 {
   EventThrottle throttle(kThrottleInterval);
 
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
+  EXPECT_EQ(throttle.record(), 1U);
 }
 
 TEST(EventThrottleTest, SuppressesEventsBeforeIntervalBoundary)
 {
   EventThrottle throttle(std::chrono::hours(1));
 
-  ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
+  ASSERT_EQ(throttle.record(), 1U);
+  EXPECT_EQ(throttle.record(), 0U);
 }
 
 TEST(EventThrottleTest, ZeroIntervalFiresOnEveryCall)
 {
   EventThrottle throttle(std::chrono::milliseconds(0));
 
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
+  EXPECT_EQ(throttle.record(), 1U);
+  EXPECT_EQ(throttle.record(), 1U);
 }
 
 }  // namespace livekit_ros2_bridge

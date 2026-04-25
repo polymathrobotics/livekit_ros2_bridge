@@ -41,7 +41,7 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.ros_video_stream");
 
-GstVideoFormat gstFormatFromRosEncoding(const std::string & encoding)
+GstVideoFormat formatFromEncoding(const std::string & encoding)
 {
   if (encoding == sensor_msgs::image_encodings::MONO8) return GST_VIDEO_FORMAT_GRAY8;
   if (encoding == sensor_msgs::image_encodings::MONO16) return GST_VIDEO_FORMAT_GRAY16_LE;
@@ -79,30 +79,29 @@ std::optional<std::string> parseCompressedCodec(const std::string & format)
   return parse_token(format.substr(sep + 1));
 }
 
-void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & previous_layout, const FrameLayout & layout)
+void logLayoutChange(const VideoStreamSpec & spec, const FrameLayout & previous, const FrameLayout & layout)
 {
   const auto & input = requireRosVideoInput(spec);
   LogEvent event(kLogger, "video_stream_input_layout_changed");
   event.field("stream_key", spec.stream_key).field("topic", input.topic);
-  if (previous_layout.width != layout.width) {
-    event.field("previous_width", previous_layout.width).field("width", layout.width);
+  if (previous.width != layout.width) {
+    event.field("previous_width", previous.width).field("width", layout.width);
   }
-  if (previous_layout.height != layout.height) {
-    event.field("previous_height", previous_layout.height).field("height", layout.height);
+  if (previous.height != layout.height) {
+    event.field("previous_height", previous.height).field("height", layout.height);
   }
-  if (previous_layout.stride != layout.stride) {
-    event.field("previous_stride", previous_layout.stride).field("stride", layout.stride);
+  if (previous.stride != layout.stride) {
+    event.field("previous_stride", previous.stride).field("stride", layout.stride);
   }
-  if (previous_layout.format != layout.format) {
-    const char * previous_format_name = gst_video_format_to_string(previous_layout.format);
-    const char * format_name = gst_video_format_to_string(layout.format);
-    event.fieldOr("previous_format", previous_format_name).fieldOr("format", format_name);
+  if (previous.format != layout.format) {
+    const char * previous_format = gst_video_format_to_string(previous.format);
+    const char * format = gst_video_format_to_string(layout.format);
+    event.fieldOr("previous_format", previous_format).fieldOr("format", format);
   }
   event.info();
 }
 
-GstBufferPtr makeStampedGstBuffer(
-  const std::uint8_t * data, std::size_t size, const builtin_interfaces::msg::Time & stamp)
+GstBufferPtr makeStampedBuffer(const std::uint8_t * data, std::size_t size, const builtin_interfaces::msg::Time & stamp)
 {
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, size, nullptr));
   if (buffer == nullptr) {
@@ -110,7 +109,7 @@ GstBufferPtr makeStampedGstBuffer(
   }
 
   {
-    GstMapGuard map(*buffer, GST_MAP_WRITE);
+    GstBufferMap map(*buffer, GST_MAP_WRITE);
     if (!map.is_valid()) {
       throw std::runtime_error("Failed to map GStreamer buffer.");
     }
@@ -187,29 +186,26 @@ void RosVideoStream::start()
     return;
   }
 
-  const rclcpp::QoS base_qos(rclcpp::KeepLast(1));
+  const rclcpp::QoS base(rclcpp::KeepLast(1));
   const auto & input = requireRosVideoInput(spec_);
   ResolvedSubscriptionQos qos =
-    resolveSubscriptionQos(node_interfaces_.get_node_graph_interface(), input.topic, base_qos, qos_config_);
+    resolveSubscriptionQos(node_interfaces_.get_node_graph_interface(), input.topic, base, qos_config_);
   logSubscriptionQos(spec_, qos);
 
-  std::weak_ptr<RosVideoStream> weak_self = shared_from_this();
+  std::weak_ptr<RosVideoStream> weak = shared_from_this();
   switch (input.ingest_mode) {
     case RosVideoIngestMode::RawImage:
       raw_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::Image>(
-        node_interfaces_, input.topic, qos.qos, [weak_self](const sensor_msgs::msg::Image::ConstSharedPtr image) {
-          if (const auto self = weak_self.lock(); self) {
+        node_interfaces_, input.topic, qos.qos, [weak](const sensor_msgs::msg::Image::ConstSharedPtr image) {
+          if (const auto self = weak.lock(); self) {
             self->onRawImage(image);
           }
         });
       return;
     case RosVideoIngestMode::CompressedImage:
       compressed_subscription_ = rclcpp::create_subscription<sensor_msgs::msg::CompressedImage>(
-        node_interfaces_,
-        input.topic,
-        qos.qos,
-        [weak_self](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
-          if (const auto self = weak_self.lock(); self) {
+        node_interfaces_, input.topic, qos.qos, [weak](const sensor_msgs::msg::CompressedImage::ConstSharedPtr image) {
+          if (const auto self = weak.lock(); self) {
             self->onCompressedImage(image);
           }
         });
@@ -221,7 +217,7 @@ void RosVideoStream::close()
 {
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
-  std::thread failure_thread;
+  std::thread worker;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -230,13 +226,13 @@ void RosVideoStream::close()
 
     is_shutdown_ = true;
     failure_condition_.notify_all();
-    failure_thread = std::move(failure_thread_);
+    worker = std::move(failure_worker_);
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
   }
 
-  if (failure_thread.joinable()) {
-    failure_thread.join();
+  if (worker.joinable()) {
+    worker.join();
   }
 
   // Subscription teardown can wait for executor callbacks, which take mutex_.
@@ -267,13 +263,13 @@ void RosVideoStream::onPipelineFailure(const std::string & reason)
     .field("reason", reason)
     .warn();
 
-  if (!failure_thread_.joinable()) {
-    failure_thread_ = std::thread([this]() { failureLoop(); });
+  if (!failure_worker_.joinable()) {
+    failure_worker_ = std::thread([this]() { runFailureLoop(); });
   }
   failure_condition_.notify_one();
 }
 
-void RosVideoStream::failureLoop()
+void RosVideoStream::runFailureLoop()
 {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
@@ -302,7 +298,7 @@ void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & 
   }
 
   try {
-    const GstVideoFormat format = gstFormatFromRosEncoding(image->encoding);
+    const GstVideoFormat format = formatFromEncoding(image->encoding);
     if (format == GST_VIDEO_FORMAT_UNKNOWN) {
       throw std::runtime_error("Unsupported ROS image encoding '" + image->encoding + "'.");
     }
@@ -312,13 +308,13 @@ void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & 
     layout.height = static_cast<int>(image->height);
     layout.format = format;
     layout.stride = image->step;
-    if (raw_layout_) {
-      const FrameLayout & previous_layout = *raw_layout_;
+    if (layout_) {
+      const FrameLayout & previous = *layout_;
       if (
-        previous_layout.width != layout.width || previous_layout.height != layout.height ||
-        previous_layout.format != layout.format || previous_layout.stride != layout.stride)
+        previous.width != layout.width || previous.height != layout.height || previous.format != layout.format ||
+        previous.stride != layout.stride)
       {
-        logFrameLayoutChange(spec_, previous_layout, layout);
+        logLayoutChange(spec_, previous, layout);
       } else if (pipeline_.isActive()) {
         pushRawLocked(*image);
         return;
@@ -338,26 +334,26 @@ void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & 
 
 void RosVideoStream::startRawPipelineLocked(const FrameLayout & layout)
 {
-  const char * format_name = gst_video_format_to_string(layout.format);
+  const char * format = gst_video_format_to_string(layout.format);
 
-  std::string ingress = "appsrc name=";
-  ingress += kBridgeAppSrcName;
-  ingress += " is-live=true block=false format=time do-timestamp=true";
-  ingress += " caps=video/x-raw,format=";
-  ingress += format_name;
-  ingress += ",width=";
-  ingress += std::to_string(layout.width);
-  ingress += ",height=";
-  ingress += std::to_string(layout.height);
-  ingress += ",framerate=0/1";
-  pipeline_.start(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
-  raw_layout_ = layout;
+  std::string source = "appsrc name=";
+  source += kBridgeAppSrcName;
+  source += " is-live=true block=false format=time do-timestamp=true";
+  source += " caps=video/x-raw,format=";
+  source += format;
+  source += ",width=";
+  source += std::to_string(layout.width);
+  source += ",height=";
+  source += std::to_string(layout.height);
+  source += ",framerate=0/1";
+  pipeline_.start(buildPipelineDescription(source, requireRosVideoInput(spec_).transform_fragment), true);
+  layout_ = layout;
 }
 
 void RosVideoStream::pushRawLocked(const sensor_msgs::msg::Image & image)
 {
-  GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
-  const FrameLayout & layout = *raw_layout_;
+  GstBufferPtr buffer = makeStampedBuffer(image.data.data(), image.data.size(), image.header.stamp);
+  const FrameLayout & layout = *layout_;
 
   gsize offsets[GST_VIDEO_MAX_PLANES] = {0};
   gint strides[GST_VIDEO_MAX_PLANES] = {static_cast<gint>(layout.stride)};
@@ -384,30 +380,30 @@ void RosVideoStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::
   }
 
   try {
-    const auto parsed_codec = parseCompressedCodec(image->format);
-    if (!parsed_codec.has_value()) {
+    const auto parsed = parseCompressedCodec(image->format);
+    if (!parsed.has_value()) {
       throw std::runtime_error("Unsupported compressed image format '" + image->format + "'.");
     }
-    const std::string codec = *parsed_codec;
-    bool start_pipeline = true;
-    if (compressed_codec_) {
-      if (*compressed_codec_ != codec) {
+    const std::string codec = *parsed;
+    bool should_start = true;
+    if (codec_) {
+      if (*codec_ != codec) {
         const auto & input = requireRosVideoInput(spec_);
         LogEvent event(kLogger, "video_stream_input_codec_changed");
         event.field("stream_key", spec_.stream_key).field("topic", input.topic);
-        event.field("previous_codec", *compressed_codec_).field("codec", codec).info();
+        event.field("previous_codec", *codec_).field("codec", codec).info();
       } else if (pipeline_.isActive()) {
-        start_pipeline = false;
+        should_start = false;
       }
     }
 
-    if (start_pipeline) {
+    if (should_start) {
       resetPipelineStateLocked();
       pipeline_.stop();
       startCompressedPipelineLocked(codec);
     }
 
-    GstBufferPtr buffer = makeStampedGstBuffer(image->data.data(), image->data.size(), image->header.stamp);
+    GstBufferPtr buffer = makeStampedBuffer(image->data.data(), image->data.size(), image->header.stamp);
     if (gst_app_src_push_buffer(pipeline_.appsrc(), buffer.release()) != GST_FLOW_OK) {
       throw std::runtime_error("Failed to push compressed ROS image into GStreamer.");
     }
@@ -420,18 +416,18 @@ void RosVideoStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::
 
 void RosVideoStream::startCompressedPipelineLocked(const std::string & codec)
 {
-  std::string ingress = "appsrc name=";
-  ingress += kBridgeAppSrcName;
-  ingress += " is-live=true block=false format=time do-timestamp=true";
-  ingress += codec == "jpeg" ? " caps=image/jpeg ! jpegdec" : " caps=image/png ! pngdec";
-  pipeline_.start(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
-  compressed_codec_ = codec;
+  std::string source = "appsrc name=";
+  source += kBridgeAppSrcName;
+  source += " is-live=true block=false format=time do-timestamp=true";
+  source += codec == "jpeg" ? " caps=image/jpeg ! jpegdec" : " caps=image/png ! pngdec";
+  pipeline_.start(buildPipelineDescription(source, requireRosVideoInput(spec_).transform_fragment), true);
+  codec_ = codec;
 }
 
 void RosVideoStream::resetPipelineStateLocked()
 {
-  raw_layout_.reset();
-  compressed_codec_.reset();
+  layout_.reset();
+  codec_.reset();
   failure_pending_ = false;
 }
 

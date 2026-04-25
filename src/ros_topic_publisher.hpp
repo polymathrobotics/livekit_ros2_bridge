@@ -40,27 +40,27 @@ public:
     rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     rclcpp::Clock::SharedPtr clock,
-    AccessPolicy access_policy);
+    AccessPolicy policy);
   RosTopicPublisher(
     rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     rclcpp::Clock::SharedPtr clock,
-    AccessPolicy access_policy,
+    AccessPolicy policy,
     std::size_t max_topics);
   ~RosTopicPublisher();
 
   // Invalid or denied requests, ROS publisher errors, and calls after shutdown
   // are dropped without throwing. `request.message` is serialized ROS CDR bytes
   // for `request.interface_type`; first publish pins the topic to its graph type.
-  void publish(const std::string & requester_identity, const TopicPublishRequest & request);
+  void publish(const std::string & requester_identity, const RosPublishRequest & request);
 
   // Malformed payloads and missing requester identities are logged and dropped.
-  void handlePublishPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
+  void handlePayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
 
   void shutdown();
 
 private:
-  struct PublisherEntry
+  struct Entry
   {
     std::string type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher;
@@ -69,13 +69,13 @@ private:
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   rclcpp::Clock::SharedPtr clock_;
-  AccessPolicy access_policy_;
+  AccessPolicy policy_;
   std::atomic<bool> is_shutdown_{false};
   std::size_t max_topics_;
 
-  std::mutex publishers_mutex_;
+  std::mutex mutex_;
   // shared_ptr lets an in-flight publish finish after shutdown() clears the map.
-  std::unordered_map<std::string, PublisherEntry> publishers_;
+  std::unordered_map<std::string, Entry> publishers_;
 };
 
 }  // namespace livekit_ros2_bridge

@@ -23,26 +23,26 @@ namespace livekit_ros2_bridge
 
 TEST(ScopeExitTest, InvokesCallbackDuringExceptionUnwinding)
 {
-  int call_count = 0;
+  int calls = 0;
 
   try {
-    ScopeExit guard([&call_count]() { ++call_count; });
+    ScopeExit guard([&calls]() { ++calls; });
     throw std::runtime_error("boom");
   } catch (const std::runtime_error &) {}
 
-  EXPECT_EQ(call_count, 1);
+  EXPECT_EQ(calls, 1);
 }
 
 TEST(ScopeExitTest, InvokesCallbacksOnNormalScopeExitInReverseConstructionOrder)
 {
-  std::vector<int> callback_order;
+  std::vector<int> order;
 
   {
-    ScopeExit first_guard([&callback_order]() { callback_order.push_back(1); });
-    ScopeExit second_guard([&callback_order]() { callback_order.push_back(2); });
+    ScopeExit first([&order]() { order.push_back(1); });
+    ScopeExit second([&order]() { order.push_back(2); });
   }
 
-  EXPECT_EQ((std::vector<int>{2, 1}), callback_order);
+  EXPECT_EQ((std::vector<int>{2, 1}), order);
 }
 
 TEST(ScopeExitTest, TerminatesWhenCallbackThrowsDuringDestruction)

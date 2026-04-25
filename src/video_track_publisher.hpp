@@ -78,17 +78,17 @@ private:
 
   void close();
 
-  RoomConnection & room_connection_;
+  RoomConnection & connection_;
   VideoStreamSpec spec_;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
-  bool is_closed_ = false;
-  bool was_published_ = false;
+  bool closed_ = false;
+  bool published_once_ = false;
   std::shared_ptr<RosVideoStream> ros_stream_;
   std::unique_ptr<GStreamerVideoStream> gstreamer_stream_;
-  std::shared_ptr<livekit::VideoSource> video_source_;
-  std::shared_ptr<livekit::LocalVideoTrack> published_video_track_;
+  std::shared_ptr<livekit::VideoSource> source_;
+  std::shared_ptr<livekit::LocalVideoTrack> track_;
 };
 
 }  // namespace livekit_ros2_bridge

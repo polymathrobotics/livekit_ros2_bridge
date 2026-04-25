@@ -30,7 +30,7 @@ enum class Field
 };
 
 /// Accepts empty payloads; endpoint parsers decide whether that is valid.
-rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field);
+rclcpp::SerializedMessage parse(const nlohmann::json & body, Field field);
 
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes);
 

@@ -46,7 +46,7 @@ public:
 private:
   // Coalesces repeated EOS/error messages while a restart is pending.
   void onPipelineFailure(const std::string & reason);
-  void restartLoop();
+  void runRestartLoop();
 
   VideoStreamSpec spec_;
   VideoTrackPublisher & publisher_;
@@ -55,7 +55,7 @@ private:
   bool is_shutdown_ = false;
   bool restart_pending_ = false;
   std::condition_variable restart_condition_;
-  std::thread restart_thread_;
+  std::thread restart_worker_;
 };
 
 }  // namespace livekit_ros2_bridge

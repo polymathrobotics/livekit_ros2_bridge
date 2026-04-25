@@ -24,7 +24,7 @@ namespace livekit_ros2_bridge::protocol::detail::base64
 namespace
 {
 
-int sextetValue(char c) noexcept
+int decodeSextet(char c) noexcept
 {
   if (c >= 'A' && c <= 'Z') {
     return c - 'A';
@@ -53,12 +53,12 @@ std::string encode(const std::uint8_t * bytes, std::size_t size)
   }
 
   std::string text(((size + 2U) / 3U) * 4U, '\0');
-  const int encoded = EVP_EncodeBlock(
+  const int written = EVP_EncodeBlock(
     reinterpret_cast<unsigned char *>(text.data()),
     reinterpret_cast<const unsigned char *>(bytes),
     static_cast<int>(size));
 
-  text.resize(static_cast<std::size_t>(encoded));
+  text.resize(static_cast<std::size_t>(written));
   return text;
 }
 
@@ -78,7 +78,7 @@ Result decode(std::string_view text)
       continue;
     }
 
-    if (padding != 0U || sextetValue(c) < 0) {
+    if (padding != 0U || decodeSextet(c) < 0) {
       return {{}, Status::InvalidEncoding};
     }
   }
@@ -94,7 +94,7 @@ Result decode(std::string_view text)
 
   // RFC 4648 requires zero unused bits in the final quantum; OpenSSL accepts aliases.
   if (padding != 0U) {
-    const int sextet = sextetValue(text[size - (padding + 1U)]);
+    const int sextet = decodeSextet(text[size - (padding + 1U)]);
     const int mask = (padding == 2U) ? 0x0F : 0x03;
     if ((sextet & mask) != 0) {
       return {{}, Status::InvalidEncoding};
@@ -102,12 +102,12 @@ Result decode(std::string_view text)
   }
 
   std::vector<std::uint8_t> bytes((size / 4U) * 3U, 0U);
-  const int decoded = EVP_DecodeBlock(
+  const int written = EVP_DecodeBlock(
     reinterpret_cast<unsigned char *>(bytes.data()),
     reinterpret_cast<const unsigned char *>(text.data()),
     static_cast<int>(size));
 
-  bytes.resize(static_cast<std::size_t>(decoded) - padding);
+  bytes.resize(static_cast<std::size_t>(written) - padding);
   return {std::move(bytes), Status::Ok};
 }
 

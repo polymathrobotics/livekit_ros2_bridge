@@ -25,15 +25,15 @@
 namespace livekit_ros2_bridge
 {
 
-inline rclcpp::SerializedMessage wrapSerializedPayload(const std::vector<std::uint8_t> & payload)
+inline rclcpp::SerializedMessage makeSerializedMessage(const std::vector<std::uint8_t> & payload)
 {
-  auto source = rmw_get_zero_initialized_serialized_message();
+  auto view = rmw_get_zero_initialized_serialized_message();
   // SerializedMessage copies this non-owning RMW view, so the const-cast buffer is not retained.
-  source.buffer = const_cast<std::uint8_t *>(payload.data());
-  source.buffer_length = payload.size();
-  source.buffer_capacity = payload.size();
-  source.allocator = rcl_get_default_allocator();
-  return rclcpp::SerializedMessage(source);
+  view.buffer = const_cast<std::uint8_t *>(payload.data());
+  view.buffer_length = payload.size();
+  view.buffer_capacity = payload.size();
+  view.allocator = rcl_get_default_allocator();
+  return rclcpp::SerializedMessage(view);
 }
 
 }  // namespace livekit_ros2_bridge

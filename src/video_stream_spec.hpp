@@ -31,14 +31,14 @@ struct RosVideoTopicRule
   std::string pattern;
   std::string rule_id;
   std::string transform_fragment;
-  livekit::TrackPublishOptions publish_config;
+  livekit::TrackPublishOptions publish_options;
 };
 
 struct OtherVideoSource
 {
   std::string ingress_fragment;
   std::string transform_fragment;
-  livekit::TrackPublishOptions publish_config;
+  livekit::TrackPublishOptions publish_options;
 };
 
 struct VideoStreamConfig
@@ -46,14 +46,14 @@ struct VideoStreamConfig
   std::vector<RosVideoTopicRule> ros_topic_rules;
   // Keyed by the trimmed other-video-source name.
   std::unordered_map<std::string, OtherVideoSource> other_video_sources;
-  livekit::TrackPublishOptions default_publish_config;
+  livekit::TrackPublishOptions default_publish_options;
 };
 
 inline VideoStreamConfig makeDefaultVideoStreamConfig()
 {
-  VideoStreamConfig stream_config;
-  stream_config.ros_topic_rules.push_back({"/*", "default_ros", "", stream_config.default_publish_config});
-  return stream_config;
+  VideoStreamConfig config;
+  config.ros_topic_rules.push_back({"/*", "default_ros", "", config.default_publish_options});
+  return config;
 }
 
 enum class RosVideoIngestMode
@@ -88,7 +88,7 @@ struct VideoStreamSpec
   std::string track_name;
 
   VideoStreamInput input;
-  livekit::TrackPublishOptions publish_config;
+  livekit::TrackPublishOptions publish_options;
 };
 
 std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type);
@@ -98,7 +98,7 @@ const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec);
 
 // ROS topics are normalized before matching and identifier generation. Longest match wins; ties keep declaration order.
 VideoStreamSpec resolveRosVideoTopicSpec(
-  const VideoStreamConfig & config, const std::string & topic, const std::string & interface_type);
-VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & requested_name);
+  const VideoStreamConfig & config, const std::string & requested_topic, const std::string & interface_type);
+VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name);
 
 }  // namespace livekit_ros2_bridge

@@ -48,9 +48,9 @@ std::string expandHeartbeatTopicName(const std::string & topic)
   return rclcpp::expand_topic_or_service_name(topic, kTestTopicExpansionNodeName, kTestTopicExpansionNamespace);
 }
 
-SubscriptionHeartbeat parseHeartbeatPayload(const std::string & payload)
+SubscriptionHeartbeat parsePayload(const std::string & payload)
 {
-  return protocol::subscriptions::parseHeartbeat(payloadBytes(payload));
+  return protocol::subscriptions::parse(payloadBytes(payload));
 }
 
 void expectDemand(
@@ -59,7 +59,7 @@ void expectDemand(
   const std::string & expected_name,
   std::optional<int> expected_interval_ms)
 {
-  const auto heartbeat = parseHeartbeatPayload(body.dump());
+  const auto heartbeat = parsePayload(body.dump());
   ASSERT_EQ(heartbeat.demands.size(), 1U);
 
   const SubscriptionDemand & demand = heartbeat.demands[0];
@@ -70,7 +70,7 @@ void expectDemand(
 
 void expectParseError(const nlohmann::json & body, const char * expected_message, const char * expected_field)
 {
-  expectInvalidArgument([&body]() { (void)parseHeartbeatPayload(body.dump()); }, expected_message, expected_field);
+  expectInvalidArgument([&body]() { (void)parsePayload(body.dump()); }, expected_message, expected_field);
 }
 
 SubscriptionStatus makeStatus(
@@ -85,18 +85,18 @@ SubscriptionStatus makeStatus(
 }
 
 SubscriptionErrorStatus makeErrorStatus(
-  SubscriptionTargetKind kind, std::string name, SubscriptionStatusErrorReason reason, std::string message)
+  SubscriptionTargetKind kind, std::string name, SubscriptionErrorReason reason, std::string message)
 {
   return {kind, std::move(name), reason, std::move(message)};
 }
 
-nlohmann::json parseSerializedStatusPayload(
-  const std::vector<SubscriptionReportedStatus> & statuses,
+nlohmann::json statusBody(
+  const std::vector<SubscriptionStatusEntry> & statuses,
   const std::optional<std::string> & session_id,
   const std::optional<std::chrono::steady_clock::time_point> & expiry)
 {
   const SubscriptionStatusReport report{statuses, session_id, expiry};
-  return nlohmann::json::parse(protocol::subscriptions::serializeStatusReport(report));
+  return nlohmann::json::parse(protocol::subscriptions::serialize(report));
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
@@ -124,23 +124,23 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
 {
-  const auto trimmed = parseHeartbeatPayload(R"({
+  const auto trimmed = parsePayload(R"({
       "session_id":"  session-1  ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })");
   ASSERT_TRUE(trimmed.session_id.has_value());
   EXPECT_EQ(*trimmed.session_id, "session-1");
 
-  const auto missing = parseHeartbeatPayload(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})");
+  const auto missing = parsePayload(R"({"subscriptions":[{"kind":"topic","name":"/battery"}]})");
   EXPECT_EQ(missing.session_id, std::nullopt);
 
-  const auto blank = parseHeartbeatPayload(R"({
+  const auto blank = parsePayload(R"({
       "session_id":"   ",
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })");
   EXPECT_EQ(blank.session_id, std::nullopt);
 
-  const auto null_id = parseHeartbeatPayload(R"({
+  const auto null_id = parsePayload(R"({
       "session_id":null,
       "subscriptions":[{"kind":"topic","name":"/battery"}]
     })");
@@ -170,12 +170,9 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrMalformedSubscripti
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMalformedPayloads)
 {
+  expectInvalidArgument([]() { (void)parsePayload("{"); }, "Invalid JSON in subscription heartbeat", "payload");
   expectInvalidArgument(
-    []() { (void)parseHeartbeatPayload("{"); }, "Invalid JSON in subscription heartbeat", "payload");
-  expectInvalidArgument(
-    []() { (void)parseHeartbeatPayload(R"(["/battery"])"); },
-    "Subscription heartbeat must be a JSON object",
-    "payload");
+    []() { (void)parsePayload(R"(["/battery"])"); }, "Subscription heartbeat must be a JSON object", "payload");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFields)
@@ -198,7 +195,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
 {
   const auto blank_topic_body = nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})");
   try {
-    (void)parseHeartbeatPayload(blank_topic_body.dump());
+    (void)parsePayload(blank_topic_body.dump());
     ADD_FAILURE() << "Expected protocol::ValidationError";
   } catch (const std::invalid_argument & error) {
     const auto * validation = dynamic_cast<const protocol::ValidationError *>(&error);
@@ -309,7 +306,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatTreatsEmptyDeliveryPreferencesAsNoP
     ]})");
 }
 
-TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSeparate)
+TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctTargetsSeparate)
 {
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
@@ -318,7 +315,7 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctSubscriptionKeysSepara
       {"kind":"other_video","name":"front_camera","delivery_preferences":{"interval_ms":25}},
       {"kind":"other_video","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
-  const auto heartbeat = parseHeartbeatPayload(body.dump());
+  const auto heartbeat = parsePayload(body.dump());
 
   ASSERT_EQ(heartbeat.demands.size(), 4U);
   EXPECT_EQ(heartbeat.demands[0].kind, SubscriptionTargetKind::Topic);
@@ -368,9 +365,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
   });
 
   EXPECT_EQ(
-    parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{
-        SubscriptionReportedStatus{topic_data}, SubscriptionReportedStatus{other_video}},
+    statusBody(
+      std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{topic_data}, SubscriptionStatusEntry{other_video}},
       std::nullopt,
       std::nullopt),
     expected);
@@ -397,17 +393,17 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
   });
 
   EXPECT_EQ(
-    parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{
-        SubscriptionReportedStatus{makeErrorStatus(
+    statusBody(
+      std::vector<SubscriptionStatusEntry>{
+        SubscriptionStatusEntry{makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/battery_state",
-          SubscriptionStatusErrorReason::Forbidden,
+          SubscriptionErrorReason::Forbidden,
           "ROS topic '/battery_state' not permitted.")},
-        SubscriptionReportedStatus{makeErrorStatus(
+        SubscriptionStatusEntry{makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
-          SubscriptionStatusErrorReason::NotFound,
+          SubscriptionErrorReason::NotFound,
           "Unknown other video source '/sources/missing'.")},
       },
       std::nullopt,
@@ -444,13 +440,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
       {"interval_ms", 100}}},
   });
 
-  auto serialized = parseSerializedStatusPayload(
-    std::vector<SubscriptionReportedStatus>{SubscriptionReportedStatus{topic_data}}, session_id, expiry);
-  ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
-  EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
-  EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
-  serialized.erase("lease_expires_in_ms");
-  EXPECT_EQ(serialized, expected);
+  auto body = statusBody(std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{topic_data}}, session_id, expiry);
+  ASSERT_TRUE(body["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(body["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  EXPECT_LE(body["lease_expires_in_ms"].get<std::int64_t>(), 45000);
+  body.erase("lease_expires_in_ms");
+  EXPECT_EQ(body, expected);
 }
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWithoutSessionId)
@@ -480,13 +475,13 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
       {"interval_ms", 100}}},
   });
 
-  auto serialized = parseSerializedStatusPayload(
-    std::vector<SubscriptionReportedStatus>{SubscriptionReportedStatus{topic_data}}, std::nullopt, expiry);
-  ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
-  EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
-  EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
-  serialized.erase("lease_expires_in_ms");
-  EXPECT_EQ(serialized, expected);
+  auto body =
+    statusBody(std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{topic_data}}, std::nullopt, expiry);
+  ASSERT_TRUE(body["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(body["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  EXPECT_LE(body["lease_expires_in_ms"].get<std::int64_t>(), 45000);
+  body.erase("lease_expires_in_ms");
+  EXPECT_EQ(body, expected);
 }
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
@@ -516,13 +511,13 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   });
 
   EXPECT_EQ(
-    parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{
-        SubscriptionReportedStatus{other_video},
-        SubscriptionReportedStatus{makeErrorStatus(
+    statusBody(
+      std::vector<SubscriptionStatusEntry>{
+        SubscriptionStatusEntry{other_video},
+        SubscriptionStatusEntry{makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",
-          SubscriptionStatusErrorReason::NotFound,
+          SubscriptionErrorReason::NotFound,
           "No ROS types found for topic '/nonexistent_topic'.")},
       },
       std::nullopt,

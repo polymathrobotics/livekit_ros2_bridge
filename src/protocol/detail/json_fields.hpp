@@ -59,11 +59,11 @@ inline nlohmann::json parseObject(
   return body;
 }
 
-/// Blank strings become absent; null is absent only when `null_absent` is true.
-inline std::optional<std::string> optionalTrimmedString(
-  const nlohmann::json & value, const char * invalid, bool null_absent = false)
+/// Blank strings become absent; null is absent only when `null_is_absent` is true.
+inline std::optional<std::string> trimmedString(
+  const nlohmann::json & value, const char * invalid, bool null_is_absent = false)
 {
-  if (null_absent && value.is_null()) {
+  if (null_is_absent && value.is_null()) {
     return std::nullopt;
   }
   if (!value.is_string()) {
@@ -78,30 +78,30 @@ inline std::optional<std::string> optionalTrimmedString(
   return trimmed;
 }
 
-inline std::string requiredTrimmedStringField(
-  const nlohmann::json & body, const char * name, const char * invalid, const char * empty = nullptr)
+inline std::string requiredString(
+  const nlohmann::json & body, const char * field, const char * invalid, const char * empty_message = nullptr)
 {
-  const auto it = body.find(name);
-  if (it == body.end()) {
+  const auto value = body.find(field);
+  if (value == body.end()) {
     throw std::invalid_argument(invalid);
   }
 
-  if (const auto trimmed = optionalTrimmedString(*it, invalid)) {
-    return *trimmed;
+  if (const auto text = trimmedString(*value, invalid)) {
+    return *text;
   }
 
-  throw std::invalid_argument(empty == nullptr ? invalid : empty);
+  throw std::invalid_argument(empty_message == nullptr ? invalid : empty_message);
 }
 
-inline std::optional<std::string> optionalTrimmedStringField(
-  const nlohmann::json & body, const char * name, const char * invalid, bool null_absent = false)
+inline std::optional<std::string> optionalString(
+  const nlohmann::json & body, const char * field, const char * invalid, bool null_is_absent = false)
 {
-  const auto it = body.find(name);
-  if (it == body.end()) {
+  const auto value = body.find(field);
+  if (value == body.end()) {
     return std::nullopt;
   }
 
-  return optionalTrimmedString(*it, invalid, null_absent);
+  return trimmedString(*value, invalid, null_is_absent);
 }
 
 }  // namespace livekit_ros2_bridge::protocol::detail

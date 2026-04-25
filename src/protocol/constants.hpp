@@ -20,13 +20,13 @@ namespace livekit_ros2_bridge::protocol
 {
 
 // These values are wire protocol tokens; change them only with a protocol-version bump.
-inline constexpr char kRosPublishTopic[] = "ros2.topic.pub";
+inline constexpr char kPublishRequestTopic[] = "ros2.topic.pub";
 inline constexpr char kHeartbeatTopic[] = "lkros.heartbeat";
 inline constexpr char kStatusTopic[] = "lkros.status";
-inline constexpr char kCallServiceRpc[] = "ros2.service.call";
-inline constexpr char kShowInterfaceRpc[] = "ros2.interface.show";
-inline constexpr char kListServicesRpc[] = "ros2.service.list";
-inline constexpr char kListTopicsRpc[] = "ros2.topic.list";
+inline constexpr char kCallServiceMethod[] = "ros2.service.call";
+inline constexpr char kShowInterfaceMethod[] = "ros2.interface.show";
+inline constexpr char kListServicesMethod[] = "ros2.service.list";
+inline constexpr char kListTopicsMethod[] = "ros2.topic.list";
 
 inline constexpr char kCdrContentType[] = "application/x-ros-cdr";
 
@@ -35,9 +35,9 @@ inline constexpr char kDataDeliveryKind[] = "data";
 
 inline constexpr int kProtocolVersion = 2;
 
-inline constexpr std::uint32_t kInvalidRequestRpcError = 2400;
-inline constexpr std::uint32_t kUnauthorizedRpcError = 2401;
-inline constexpr std::uint32_t kForbiddenRpcError = 2403;
-inline constexpr std::uint32_t kInternalRpcError = 2500;
+inline constexpr std::uint32_t kInvalidRequestRpcCode = 2400;
+inline constexpr std::uint32_t kUnauthorizedRpcCode = 2401;
+inline constexpr std::uint32_t kForbiddenRpcCode = 2403;
+inline constexpr std::uint32_t kInternalRpcCode = 2500;
 
 }  // namespace livekit_ros2_bridge::protocol

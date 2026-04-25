@@ -75,17 +75,13 @@ GStreamerPipelineCallbacks makeNoOpPipelineCallbacks()
 }
 
 void expectStartErrorContains(
-  GStreamerPipeline & pipeline,
-  const std::string & description,
-  bool require_appsrc,
-  const char * expected_error_fragment)
+  GStreamerPipeline & pipeline, const std::string & description, bool require_appsrc, const char * fragment)
 {
   try {
     pipeline.start(description, require_appsrc);
-    FAIL() << "Expected startPipeline to throw an error containing '" << expected_error_fragment << "'";
+    FAIL() << "Expected start to throw an error containing '" << fragment << "'";
   } catch (const std::runtime_error & error) {
-    EXPECT_NE(std::string(error.what()).find(expected_error_fragment), std::string::npos)
-      << "actual error: " << error.what();
+    EXPECT_NE(std::string(error.what()).find(fragment), std::string::npos) << "actual error: " << error.what();
   }
 }
 
@@ -94,7 +90,7 @@ class VideoStreamTest : public ::testing::Test
 protected:
   static void SetUpTestSuite()
   {
-    ensureGstreamerInitialized();
+    ensureGStreamerInitialized();
     static test_support::ScopedRclcppInit rclcpp_init;
   }
 };

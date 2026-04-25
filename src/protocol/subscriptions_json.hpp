@@ -26,8 +26,8 @@ namespace livekit_ros2_bridge::protocol::subscriptions
 
 /// ROS topic names use rclcpp expansion and validation; `other_video` names are bridge-local.
 /// Duplicate canonical targets keep first-seen order and the smallest non-zero interval.
-SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload);
+SubscriptionHeartbeat parse(const std::vector<std::uint8_t> & payload);
 
-std::string serializeStatusReport(const SubscriptionStatusReport & report);
+std::string serialize(const SubscriptionStatusReport & report);
 
 }  // namespace livekit_ros2_bridge::protocol::subscriptions

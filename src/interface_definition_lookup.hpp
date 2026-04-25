@@ -23,6 +23,6 @@ namespace livekit_ros2_bridge
 {
 
 /// Returns the requested ROS interface definition first, then transitive dependencies in discovery order.
-std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type);
+std::vector<InterfaceDefinition> lookupDefinitions(const std::string & type);
 
 }  // namespace livekit_ros2_bridge

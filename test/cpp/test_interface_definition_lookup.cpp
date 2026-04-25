@@ -39,7 +39,7 @@ std::string captureException(Fn && fn, const char * type_name)
 
 TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
 {
-  const auto definitions = lookupInterfaceDefinitions("std_msgs/msg/String");
+  const auto definitions = lookupDefinitions("std_msgs/msg/String");
 
   ASSERT_EQ(definitions.size(), 1u);
   EXPECT_EQ(definitions.front().type, "std_msgs/msg/String");
@@ -48,7 +48,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
 
 TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
 {
-  const auto definitions = lookupInterfaceDefinitions("std_msgs/msg/Header");
+  const auto definitions = lookupDefinitions("std_msgs/msg/Header");
 
   ASSERT_EQ(definitions.size(), 2u);
   const auto & header = definitions[0];
@@ -61,7 +61,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
 
 TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicates)
 {
-  const auto definitions = lookupInterfaceDefinitions("sensor_msgs/msg/BatteryState");
+  const auto definitions = lookupDefinitions("sensor_msgs/msg/BatteryState");
 
   ASSERT_EQ(definitions.size(), 3u);
   EXPECT_EQ(definitions.front().type, "sensor_msgs/msg/BatteryState");
@@ -78,7 +78,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicat
 
 TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependencies)
 {
-  const auto definitions = lookupInterfaceDefinitions("std_srvs/srv/SetBool");
+  const auto definitions = lookupDefinitions("std_srvs/srv/SetBool");
 
   ASSERT_EQ(definitions.size(), 1u);
   EXPECT_EQ(definitions.front().type, "std_srvs/srv/SetBool");
@@ -87,7 +87,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
 
 TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesInTraversalOrder)
 {
-  const auto definitions = lookupInterfaceDefinitions("sensor_msgs/srv/SetCameraInfo");
+  const auto definitions = lookupDefinitions("sensor_msgs/srv/SetCameraInfo");
 
   ASSERT_EQ(definitions.size(), 5u);
   EXPECT_EQ(definitions[0].type, "sensor_msgs/srv/SetCameraInfo");
@@ -102,21 +102,19 @@ TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesI
 
 TEST(InterfaceDefinitionLookupTest, RejectsMalformedTypeShapeAndKind)
 {
-  EXPECT_THROW([]() { static_cast<void>(lookupInterfaceDefinitions("sensor_msgs/msg/")); }(), std::invalid_argument);
-  EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("std_msgs/msg/String/Extra")); }(), std::invalid_argument);
-  EXPECT_THROW(
-    []() { static_cast<void>(lookupInterfaceDefinitions("std_msgs/topic/String")); }(), std::invalid_argument);
+  EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("sensor_msgs/msg/")); }(), std::invalid_argument);
+  EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("std_msgs/msg/String/Extra")); }(), std::invalid_argument);
+  EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("std_msgs/topic/String")); }(), std::invalid_argument);
 }
 
 TEST(InterfaceDefinitionLookupTest, ReportsLookupFailures)
 {
-  const auto missing_package = []() { (void)lookupInterfaceDefinitions("nonexistent_pkg/msg/Foo"); };
+  const auto missing_package = []() { (void)lookupDefinitions("nonexistent_pkg/msg/Foo"); };
   EXPECT_EQ(
     captureException<std::runtime_error>(missing_package, "std::runtime_error"),
     "Package 'nonexistent_pkg' not found in ament index");
 
-  const auto missing_definition = []() { (void)lookupInterfaceDefinitions("std_msgs/msg/NonexistentMessage"); };
+  const auto missing_definition = []() { (void)lookupDefinitions("std_msgs/msg/NonexistentMessage"); };
   const std::string error = captureException<std::runtime_error>(missing_definition, "std::runtime_error");
   EXPECT_EQ(error.find("Cannot open interface definition file: "), 0u);
   EXPECT_NE(error.find("/msg/NonexistentMessage.msg"), std::string::npos);
@@ -124,7 +122,7 @@ TEST(InterfaceDefinitionLookupTest, ReportsLookupFailures)
 
 TEST(InterfaceDefinitionLookupTest, ReportsMalformedTypeFailures)
 {
-  const auto malformed_type = []() { (void)lookupInterfaceDefinitions("BatteryState"); };
+  const auto malformed_type = []() { (void)lookupDefinitions("BatteryState"); };
   EXPECT_EQ(
     captureException<std::invalid_argument>(malformed_type, "std::invalid_argument"),
     "Invalid ROS interface type 'BatteryState': expected package/kind/Name");

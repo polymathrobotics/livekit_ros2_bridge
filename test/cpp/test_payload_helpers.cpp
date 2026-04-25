@@ -43,7 +43,7 @@ nlohmann::json makeMessageBody()
   };
 }
 
-std::vector<std::uint8_t> serializedPayload(const rclcpp::SerializedMessage & message)
+std::vector<std::uint8_t> payloadBytes(const rclcpp::SerializedMessage & message)
 {
   if (message.size() == 0U) {
     return {};
@@ -53,9 +53,9 @@ std::vector<std::uint8_t> serializedPayload(const rclcpp::SerializedMessage & me
   return {rcl_message.buffer, rcl_message.buffer + message.size()};
 }
 
-std::vector<std::uint8_t> parseSerializedPayload(const nlohmann::json & body, protocol::cdr::Field field)
+std::vector<std::uint8_t> parsePayload(const nlohmann::json & body, protocol::cdr::Field field)
 {
-  return serializedPayload(protocol::cdr::parseSerializedMessage(body, field));
+  return payloadBytes(protocol::cdr::parse(body, field));
 }
 
 TEST(PayloadHelpersTest, ParseObjectRejectsInvalidJsonAndNonObjectRoot)
@@ -81,7 +81,7 @@ TEST(PayloadHelpersTest, ParseObjectAcceptsByteVectorPayloads)
   EXPECT_EQ(body, nlohmann::json({{"name", " /camera "}}));
 }
 
-TEST(PayloadHelpersTest, RequiredTrimmedStringFieldTrimsAndRejectsInvalidValues)
+TEST(PayloadHelpersTest, RequiredStringTrimsAndRejectsInvalidValues)
 {
   const nlohmann::json body = {
     {"trimmed", "  /camera/image  "},
@@ -89,23 +89,21 @@ TEST(PayloadHelpersTest, RequiredTrimmedStringFieldTrimsAndRejectsInvalidValues)
     {"wrong_type", 42},
   };
 
-  EXPECT_EQ(protocol::detail::requiredTrimmedStringField(body, "trimmed", "field is required"), "/camera/image");
+  EXPECT_EQ(protocol::detail::requiredString(body, "trimmed", "field is required"), "/camera/image");
 
   expectInvalidArgument(
-    [&body]() { (void)protocol::detail::requiredTrimmedStringField(body, "missing", "field is required"); },
-    "field is required");
+    [&body]() { (void)protocol::detail::requiredString(body, "missing", "field is required"); }, "field is required");
   expectInvalidArgument(
     [&body]() {
-      (void)protocol::detail::requiredTrimmedStringField(
-        body, "blank", "field must be a string", "field must not be empty");
+      (void)protocol::detail::requiredString(body, "blank", "field must be a string", "field must not be empty");
     },
     "field must not be empty");
   expectInvalidArgument(
-    [&body]() { (void)protocol::detail::requiredTrimmedStringField(body, "wrong_type", "field must be a string"); },
+    [&body]() { (void)protocol::detail::requiredString(body, "wrong_type", "field must be a string"); },
     "field must be a string");
 }
 
-TEST(PayloadHelpersTest, OptionalTrimmedStringFieldHandlesAbsentBlankNullAndInvalidValues)
+TEST(PayloadHelpersTest, OptionalStringHandlesAbsentBlankNullAndInvalidValues)
 {
   const nlohmann::json body = {
     {"blank", "   "},
@@ -114,19 +112,20 @@ TEST(PayloadHelpersTest, OptionalTrimmedStringFieldHandlesAbsentBlankNullAndInva
     {"wrong_type", 125},
   };
 
-  EXPECT_EQ(protocol::detail::optionalTrimmedStringField(body, "missing", "field must be a string"), std::nullopt);
-  EXPECT_EQ(protocol::detail::optionalTrimmedStringField(body, "blank", "field must be a string"), std::nullopt);
+  EXPECT_EQ(protocol::detail::optionalString(body, "missing", "field must be a string"), std::nullopt);
+  EXPECT_EQ(protocol::detail::optionalString(body, "blank", "field must be a string"), std::nullopt);
   EXPECT_EQ(
-    protocol::detail::optionalTrimmedStringField(body, "null_value", "field must be a string", true), std::nullopt);
+    protocol::detail::optionalString(body, "null_value", "field must be a string", /*null_is_absent=*/true),
+    std::nullopt);
   EXPECT_EQ(
-    protocol::detail::optionalTrimmedStringField(body, "trimmed", "field must be a string"),
+    protocol::detail::optionalString(body, "trimmed", "field must be a string"),
     std::optional<std::string>("/camera/image"));
 
   expectInvalidArgument(
-    [&body]() { (void)protocol::detail::optionalTrimmedStringField(body, "null_value", "field must be a string"); },
+    [&body]() { (void)protocol::detail::optionalString(body, "null_value", "field must be a string"); },
     "field must be a string");
   expectInvalidArgument(
-    [&body]() { (void)protocol::detail::optionalTrimmedStringField(body, "wrong_type", "field must be a string"); },
+    [&body]() { (void)protocol::detail::optionalString(body, "wrong_type", "field must be a string"); },
     "field must be a string");
 }
 
@@ -135,13 +134,13 @@ TEST(PayloadHelpersTest, ParseCdrRoundTripsEmptyAndBinaryPayloads)
   const nlohmann::json empty_body = {
     {"message", protocol::cdr::serialize(std::vector<std::uint8_t>{})},
   };
-  EXPECT_TRUE(parseSerializedPayload(empty_body, protocol::cdr::Field::Message).empty());
+  EXPECT_TRUE(parsePayload(empty_body, protocol::cdr::Field::Message).empty());
 
   const std::vector<std::uint8_t> payload = {0x00, 0x01, 0x7f, 0x80, 0xff};
   const nlohmann::json binary_body = {
     {"message", protocol::cdr::serialize(payload)},
   };
-  EXPECT_EQ(parseSerializedPayload(binary_body, protocol::cdr::Field::Message), payload);
+  EXPECT_EQ(parsePayload(binary_body, protocol::cdr::Field::Message), payload);
 }
 
 TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldName)
@@ -149,14 +148,14 @@ TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldName)
   const std::vector<std::uint8_t> payload = {0x01, 0x02, 0x03};
   const auto envelope = protocol::cdr::serialize(payload);
 
-  EXPECT_EQ(parseSerializedPayload(nlohmann::json{{"request", envelope}}, protocol::cdr::Field::Request), payload);
+  EXPECT_EQ(parsePayload(nlohmann::json{{"request", envelope}}, protocol::cdr::Field::Request), payload);
 }
 
 TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldNameInOuterEnvelopeErrors)
 {
   expectInvalidArgument(
     []() {
-      (void)protocol::cdr::parseSerializedMessage(
+      (void)protocol::cdr::parse(
         nlohmann::json{
           {"message",
            {
@@ -170,7 +169,7 @@ TEST(PayloadHelpersTest, ParseCdrUsesRequestedOuterFieldNameInOuterEnvelopeError
 
   expectInvalidArgument(
     []() {
-      (void)protocol::cdr::parseSerializedMessage(
+      (void)protocol::cdr::parse(
         nlohmann::json{
           {"request",
            {
@@ -205,17 +204,13 @@ TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrNonObjectEnvelope)
   auto missing_message = makeMessageBody();
   missing_message.erase("message");
   expectInvalidArgument(
-    [&missing_message]() {
-      (void)protocol::cdr::parseSerializedMessage(missing_message, protocol::cdr::Field::Message);
-    },
+    [&missing_message]() { (void)protocol::cdr::parse(missing_message, protocol::cdr::Field::Message); },
     "message must be an object.");
 
   auto non_object_message = makeMessageBody();
   non_object_message["message"] = nlohmann::json::array({1, 2});
   expectInvalidArgument(
-    [&non_object_message]() {
-      (void)protocol::cdr::parseSerializedMessage(non_object_message, protocol::cdr::Field::Message);
-    },
+    [&non_object_message]() { (void)protocol::cdr::parse(non_object_message, protocol::cdr::Field::Message); },
     "message must be an object.");
 }
 
@@ -224,25 +219,21 @@ TEST(PayloadHelpersTest, ParseCdrRejectsMissingOrMistypedNestedFields)
   auto missing_content_type = makeMessageBody();
   missing_content_type["message"].erase("content_type");
   expectInvalidArgument(
-    [&missing_content_type]() {
-      (void)protocol::cdr::parseSerializedMessage(missing_content_type, protocol::cdr::Field::Message);
-    },
+    [&missing_content_type]() { (void)protocol::cdr::parse(missing_content_type, protocol::cdr::Field::Message); },
     "content_type must be a string.");
 
   auto mistyped_payload_base64 = makeMessageBody();
   mistyped_payload_base64["message"]["payload_base64"] = false;
   expectInvalidArgument(
     [&mistyped_payload_base64]() {
-      (void)protocol::cdr::parseSerializedMessage(mistyped_payload_base64, protocol::cdr::Field::Message);
+      (void)protocol::cdr::parse(mistyped_payload_base64, protocol::cdr::Field::Message);
     },
     "payload_base64 must be a string.");
 
   auto missing_payload_base64 = makeMessageBody();
   missing_payload_base64["message"].erase("payload_base64");
   expectInvalidArgument(
-    [&missing_payload_base64]() {
-      (void)protocol::cdr::parseSerializedMessage(missing_payload_base64, protocol::cdr::Field::Message);
-    },
+    [&missing_payload_base64]() { (void)protocol::cdr::parse(missing_payload_base64, protocol::cdr::Field::Message); },
     "payload_base64 must be a string.");
 }
 
@@ -251,25 +242,19 @@ TEST(PayloadHelpersTest, ParseCdrRejectsWrongContentTypeAndInvalidBase64Encoding
   auto wrong_content_type = makeMessageBody();
   wrong_content_type["message"]["content_type"] = "application/json";
   expectInvalidArgument(
-    [&wrong_content_type]() {
-      (void)protocol::cdr::parseSerializedMessage(wrong_content_type, protocol::cdr::Field::Message);
-    },
+    [&wrong_content_type]() { (void)protocol::cdr::parse(wrong_content_type, protocol::cdr::Field::Message); },
     "message.content_type must be application/x-ros-cdr.");
 
   auto missing_padding = makeMessageBody();
   missing_padding["message"]["payload_base64"] = "AQI";
   expectInvalidArgument(
-    [&missing_padding]() {
-      (void)protocol::cdr::parseSerializedMessage(missing_padding, protocol::cdr::Field::Message);
-    },
+    [&missing_padding]() { (void)protocol::cdr::parse(missing_padding, protocol::cdr::Field::Message); },
     "payload_base64 must be padded standard base64.");
 
   auto invalid_encoding = makeMessageBody();
   invalid_encoding["message"]["payload_base64"] = "AQI?";
   expectInvalidArgument(
-    [&invalid_encoding]() {
-      (void)protocol::cdr::parseSerializedMessage(invalid_encoding, protocol::cdr::Field::Message);
-    },
+    [&invalid_encoding]() { (void)protocol::cdr::parse(invalid_encoding, protocol::cdr::Field::Message); },
     "payload_base64 is not valid base64.");
 }
 

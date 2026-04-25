@@ -33,7 +33,7 @@ struct ResourceListRequest
   std::optional<std::size_t> limit;
 };
 
-using ResourceNamesAndTypes =
+using ResourceTypesByName =
   decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
 
 }  // namespace livekit_ros2_bridge

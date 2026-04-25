@@ -24,19 +24,19 @@
 namespace livekit_ros2_bridge::protocol::topic_publish
 {
 
-TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
+RosPublishRequest parse(const std::vector<std::uint8_t> & payload)
 {
   nlohmann::json body;
   try {
-    body =
-      protocol::detail::parseObject(bytes, "Invalid JSON in publish request", "Publish request must be a JSON object");
+    body = protocol::detail::parseObject(
+      payload, "Invalid JSON in publish request", "Publish request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
     throw ValidationError("payload", exc.what());
   }
 
-  TopicPublishRequest request;
+  RosPublishRequest request;
   try {
-    request.ros_topic = protocol::detail::requiredTrimmedStringField(
+    request.ros_topic = protocol::detail::requiredString(
       body,
       "topic",
       "Publish request requires a string 'topic' field.",
@@ -46,14 +46,14 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
   }
 
   try {
-    request.interface_type = protocol::detail::requiredTrimmedStringField(
+    request.interface_type = protocol::detail::requiredString(
       body, "interface_type", "Publish request requires a non-empty 'interface_type' field.");
   } catch (const std::invalid_argument & exc) {
     throw ValidationError("interface_type", exc.what());
   }
 
   try {
-    request.message = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Message);
+    request.message = protocol::cdr::parse(body, protocol::cdr::Field::Message);
   } catch (const std::invalid_argument & exc) {
     throw ValidationError("message", exc.what());
   }

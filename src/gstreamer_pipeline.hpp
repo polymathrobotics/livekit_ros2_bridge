@@ -37,7 +37,7 @@ struct GStreamerPipelineCallbacks
   std::function<void(const livekit::VideoFrame & frame, std::int64_t timestamp_us)> on_frame;
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
-  std::function<void(const std::string & reason)> on_pipeline_failed;
+  std::function<void(const std::string & reason)> on_failed;
 };
 
 class GStreamerPipeline final

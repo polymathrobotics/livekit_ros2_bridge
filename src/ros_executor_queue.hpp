@@ -40,15 +40,15 @@
 namespace livekit_ros2_bridge
 {
 
-using RosExecutorQueueNodeInterfaces = rclcpp::node_interfaces::
-  NodeInterfaces<rclcpp::node_interfaces::NodeBaseInterface, rclcpp::node_interfaces::NodeWaitablesInterface>;
-
 // Runs submitted work from the node's ROS executor via a default-group waitable.
 // Pending futures fail on shutdown; the node must outlive the queue.
 class RosExecutorQueue final
 {
 public:
-  RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock);
+  using NodeInterfaces = rclcpp::node_interfaces::
+    NodeInterfaces<rclcpp::node_interfaces::NodeBaseInterface, rclcpp::node_interfaces::NodeWaitablesInterface>;
+
+  RosExecutorQueue(NodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock);
   ~RosExecutorQueue();
 
   // Enqueues work in FIFO order. If shutdown() wins before drain() claims the
@@ -127,13 +127,13 @@ private:
 
   // Identifies the active drain so shutdown() can wait without deadlocking when
   // called by the drain owner.
-  std::condition_variable drain_idle_;
-  bool drain_active_ = false;
-  std::thread::id drain_owner_thread_id_{};
+  std::condition_variable idle_;
+  bool draining_ = false;
+  std::thread::id drain_owner_{};
 
   void drain();
   void wake();
-  void awaitDrainIdle();
+  void awaitIdle();
 };
 
 }  // namespace livekit_ros2_bridge

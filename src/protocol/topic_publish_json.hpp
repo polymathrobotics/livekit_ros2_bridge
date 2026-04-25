@@ -23,6 +23,6 @@ namespace livekit_ros2_bridge::protocol::topic_publish
 {
 
 /// Boundary-trims string fields and ignores unknown top-level fields.
-TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes);
+RosPublishRequest parse(const std::vector<std::uint8_t> & payload);
 
 }  // namespace livekit_ros2_bridge::protocol::topic_publish

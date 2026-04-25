@@ -84,26 +84,25 @@ std::string encodeOtherVideoTrackSuffix(std::string_view name)
   return suffix;
 }
 
-const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
-  const std::vector<RosVideoTopicRule> & rules, std::string_view normalized_topic)
+const RosVideoTopicRule & selectRosTopicRule(const std::vector<RosVideoTopicRule> & rules, std::string_view topic)
 {
   const RosVideoTopicRule * match = nullptr;
   for (const auto & rule : rules) {
-    if (!rosResourceMatchesPattern(normalized_topic, rule.pattern)) {
+    if (!rosResourceMatchesPattern(topic, rule.pattern)) {
       continue;
     }
-    const auto pattern_size = rule.pattern.size();
-    if (match != nullptr && pattern_size <= match->pattern.size()) {
+    const auto size = rule.pattern.size();
+    if (match != nullptr && size <= match->pattern.size()) {
       continue;
     }
     match = &rule;
   }
   if (match == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
-      .field("resource", normalized_topic)
+      .field("resource", topic)
       .field("reason", "no_matching_ros_topic_rule")
       .warn();
-    throw std::runtime_error("no matching video rule for topic '" + std::string(normalized_topic) + "'");
+    throw std::runtime_error("no matching video rule for topic '" + std::string(topic) + "'");
   }
   return *match;
 }
@@ -138,41 +137,41 @@ const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec)
 }
 
 VideoStreamSpec resolveRosVideoTopicSpec(
-  const VideoStreamConfig & config, const std::string & topic, const std::string & interface_type)
+  const VideoStreamConfig & config, const std::string & requested_topic, const std::string & interface_type)
 {
-  const std::string normalized_topic = normalizeRosResourceName(topic);
-  if (normalized_topic.empty()) {
+  const std::string topic = normalizeRosResourceName(requested_topic);
+  if (topic.empty()) {
     throw std::invalid_argument("Invalid ROS topic.");
   }
   const auto ingest_mode = classifyRosVideoIngestMode(interface_type);
   if (!ingest_mode.has_value()) {
     LogEvent(kLogger, "video_stream_spec_rejected")
-      .field("resource", normalized_topic)
+      .field("resource", topic)
       .fieldOr("interface_type", interface_type)
       .field("reason", "unsupported_ros_interface_type")
       .warn();
     throw std::invalid_argument("ROS topic is not a supported video type.");
   }
 
-  const auto & rule = selectBestMatchingRosVideoTopicRule(config.ros_topic_rules, normalized_topic);
+  const auto & rule = selectRosTopicRule(config.ros_topic_rules, topic);
 
   VideoStreamSpec spec;
-  spec.stream_key = std::string{kTopicKeyPrefix} + ":" + normalized_topic;
-  spec.track_name = std::string{kTopicTrackPrefix} + makeTopicTrackSuffix(normalized_topic);
+  spec.stream_key = std::string{kTopicKeyPrefix} + ":" + topic;
+  spec.track_name = std::string{kTopicTrackPrefix} + makeTopicTrackSuffix(topic);
   spec.input = RosVideoInput{
-    normalized_topic,
+    topic,
     interface_type,
     *ingest_mode,
     rule.rule_id,
     rule.transform_fragment,
   };
-  spec.publish_config = rule.publish_config;
+  spec.publish_options = rule.publish_options;
   return spec;
 }
 
-VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & requested_name)
+VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name)
 {
-  const std::string name = trim(requested_name);
+  const std::string name = trim(source_name);
   if (name.empty()) {
     throw std::invalid_argument("Invalid other video name.");
   }
@@ -182,17 +181,17 @@ VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, co
     throw std::invalid_argument("Unknown other video source '" + name + "'.");
   }
 
-  const auto & source_config = it->second;
+  const auto & source = it->second;
 
   VideoStreamSpec spec;
   spec.stream_key = std::string{kOtherVideoKeyPrefix} + ":" + name;
   spec.track_name = std::string{kOtherVideoTrackPrefix} + encodeOtherVideoTrackSuffix(name);
   spec.input = OtherVideoInput{
     name,
-    source_config.ingress_fragment,
-    source_config.transform_fragment,
+    source.ingress_fragment,
+    source.transform_fragment,
   };
-  spec.publish_config = source_config.publish_config;
+  spec.publish_options = source.publish_options;
 
   return spec;
 }

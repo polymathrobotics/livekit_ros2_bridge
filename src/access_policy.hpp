@@ -22,7 +22,7 @@
 namespace livekit_ros2_bridge
 {
 
-struct AccessRuleConfig
+struct AccessRulesConfig
 {
   std::vector<std::string> allow;
   std::vector<std::string> deny;
@@ -30,9 +30,9 @@ struct AccessRuleConfig
 
 struct AccessPolicyConfig
 {
-  AccessRuleConfig publish;
-  AccessRuleConfig subscribe;
-  AccessRuleConfig service;
+  AccessRulesConfig publish;
+  AccessRulesConfig subscribe;
+  AccessRulesConfig service;
 };
 
 enum class AccessOperation
@@ -51,12 +51,12 @@ public:
   AccessPolicy() = default;
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
-  bool allows(AccessOperation operation, std::string_view raw_resource) const;
+  bool allows(AccessOperation operation, std::string_view name) const;
 
 private:
   struct Rules
   {
-    static Rules parse(const std::vector<std::string> & raw_rules, bool is_service);
+    static Rules parse(const std::vector<std::string> & rule_entries, bool is_service);
 
     bool matches_all = false;
     std::set<std::string> patterns;

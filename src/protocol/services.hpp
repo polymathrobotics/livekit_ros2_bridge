@@ -27,7 +27,7 @@ namespace livekit_ros2_bridge
 
 struct ServiceCallRequest
 {
-  std::string service;
+  std::string name;
   // Optional `pkg/srv/Type` hint. Empty means resolve the type from the ROS graph.
   std::string interface_type;
   // Empty payloads are invalid.
@@ -38,7 +38,7 @@ struct ServiceCallRequest
 
 struct ServiceCallResponse
 {
-  std::string service;
+  std::string name;
   std::string interface_type;
   // Serialized so callers can forward arbitrary service types without generated ROS interfaces.
   std::vector<std::uint8_t> payload;

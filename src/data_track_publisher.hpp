@@ -33,7 +33,7 @@ class DataTrackPublisher final
 public:
   // room_connection is borrowed; qos_config is optional and borrowed.
   DataTrackPublisher(
-    std::string topic,
+    std::string ros_topic,
     std::string interface_type,
     rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
@@ -59,7 +59,7 @@ public:
   // Zero disables suppression; nonzero values update active and future publications.
   void setIntervalMs(int interval_ms);
 
-  const std::string & name() const;
+  const std::string & trackName() const;
 
 private:
   class Publication;
@@ -70,7 +70,7 @@ private:
   RoomConnection & room_connection_;
   const SubscriptionQosConfig * qos_config_;
 
-  std::string topic_;
+  std::string ros_topic_;
   std::string interface_type_;
   std::string track_name_;
 

@@ -63,10 +63,10 @@ std::string nextNodeName(const std::string & prefix)
 const std::vector<std::string> & expectedRpcMethods()
 {
   static const std::vector<std::string> methods{
-    protocol::kCallServiceRpc,
-    protocol::kShowInterfaceRpc,
-    protocol::kListServicesRpc,
-    protocol::kListTopicsRpc,
+    protocol::kCallServiceMethod,
+    protocol::kShowInterfaceMethod,
+    protocol::kListServicesMethod,
+    protocol::kListTopicsMethod,
   };
   return methods;
 }
@@ -388,7 +388,7 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   RuntimeConfig config = loadRuntimeConfig(node->get_node_parameters_interface());
   auto room_connection = std::make_unique<FakeRoomConnection>();
   auto state = room_connection->state;
-  state->rejected_rpc_methods = {protocol::kShowInterfaceRpc};
+  state->rejected_rpc_methods = {protocol::kShowInterfaceMethod};
 
   try {
     Runtime runtime(*node, std::move(room_connection), std::move(config));
@@ -539,7 +539,7 @@ TEST_F(RuntimeTest, UserPacketPublishesAfterExecutorDispatch)
       {"message", protocol::cdr::serialize(serializeMessage(expected_message))},
     }
       .dump();
-  harness.fake_room_connection->emitUserPacket(payload, protocol::kRosPublishTopic, "participant-1");
+  harness.fake_room_connection->emitUserPacket(payload, protocol::kPublishRequestTopic, "participant-1");
 
   EXPECT_FALSE(received_message.has_value());
   ASSERT_TRUE(spinUntil(executor, [&received_message]() { return received_message.has_value(); }));

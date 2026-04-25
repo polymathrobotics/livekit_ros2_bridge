@@ -31,13 +31,13 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kServiceDefinitionSeparator[] = "---";
-constexpr char kRosidlInterfacesResourceType[] = "rosidl_interfaces";
-constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
+constexpr char kSectionSeparator[] = "---";
+constexpr char kAmentResourceType[] = "rosidl_interfaces";
+constexpr std::size_t kFailureCacheCapacity = 256U;
 
-[[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
+[[noreturn]] void throwInvalidType(const std::string & type, const char * reason)
 {
-  throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);
+  throw std::invalid_argument("Invalid ROS interface type '" + type + "': " + reason);
 }
 
 struct TypeParts
@@ -46,68 +46,68 @@ struct TypeParts
   std::string kind;
   std::string name;
 
-  static TypeParts parse(const std::string & interface_type)
+  static TypeParts parse(const std::string & type)
   {
-    const auto first_slash = interface_type.find('/');
+    const auto first_slash = type.find('/');
     if (first_slash == std::string::npos) {
-      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+      throwInvalidType(type, "expected package/kind/Name");
     }
 
-    const auto second_slash = interface_type.find('/', first_slash + 1);
+    const auto second_slash = type.find('/', first_slash + 1);
     if (second_slash == std::string::npos) {
-      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+      throwInvalidType(type, "expected package/kind/Name");
     }
 
-    const std::string package = interface_type.substr(0, first_slash);
-    const std::string kind = interface_type.substr(first_slash + 1, second_slash - first_slash - 1);
-    const std::string name = interface_type.substr(second_slash + 1);
+    const std::string package = type.substr(0, first_slash);
+    const std::string kind = type.substr(first_slash + 1, second_slash - first_slash - 1);
+    const std::string name = type.substr(second_slash + 1);
     if (package.empty() || kind.empty() || name.empty()) {
-      throwInvalidInterfaceType(interface_type, "empty component");
+      throwInvalidType(type, "empty component");
     }
     if (name.find('/') != std::string::npos) {
-      throwInvalidInterfaceType(interface_type, "expected package/kind/Name");
+      throwInvalidType(type, "expected package/kind/Name");
     }
     if (kind != "msg" && kind != "srv" && kind != "action") {
-      throwInvalidInterfaceType(interface_type, "kind must be msg, srv, or action");
+      throwInvalidType(type, "kind must be msg, srv, or action");
     }
 
     return {package, kind, name};
   }
 };
 
-std::filesystem::path resolveInterfaceDefinitionPath(const TypeParts & parts)
+std::filesystem::path resolvePath(const TypeParts & parts)
 {
-  std::string resource_content;
-  std::string package_prefix;
-  if (!ament_index_cpp::get_resource(kRosidlInterfacesResourceType, parts.package, resource_content, &package_prefix)) {
+  std::string index;
+  std::string prefix;
+  if (!ament_index_cpp::get_resource(kAmentResourceType, parts.package, index, &prefix)) {
     throw std::runtime_error("Package '" + parts.package + "' not found in ament index");
   }
 
-  const std::string requested_relative_path = parts.kind + "/" + parts.name + "." + parts.kind;
-  std::istringstream lines(resource_content);
-  std::string registered_relative_path;
-  while (std::getline(lines, registered_relative_path)) {
-    if (registered_relative_path == requested_relative_path) {
-      return std::filesystem::path(package_prefix) / "share" / parts.package / registered_relative_path;
+  const std::string requested_path = parts.kind + "/" + parts.name + "." + parts.kind;
+  std::istringstream lines(index);
+  std::string registered_path;
+  while (std::getline(lines, registered_path)) {
+    if (registered_path == requested_path) {
+      return std::filesystem::path(prefix) / "share" / parts.package / registered_path;
     }
   }
 
   // Preserve the requested definition path in the eventual filesystem error.
-  return std::filesystem::path(package_prefix) / "share" / parts.package / requested_relative_path;
+  return std::filesystem::path(prefix) / "share" / parts.package / requested_path;
 }
 
-std::string loadInterfaceDefinition(const std::string & interface_type)
+std::string loadDefinition(const std::string & type)
 {
-  static LruCache<std::string, std::exception_ptr> failure_cache(kInvalidTypeCacheCapacity);
+  static LruCache<std::string, std::exception_ptr> failures(kFailureCacheCapacity);
 
-  if (const auto failure = failure_cache.get(interface_type)) {
+  if (const auto failure = failures.get(type)) {
     std::rethrow_exception(*failure);
   }
 
   try {
-    const TypeParts parts = TypeParts::parse(interface_type);
+    const TypeParts parts = TypeParts::parse(type);
 
-    const std::filesystem::path path = resolveInterfaceDefinitionPath(parts);
+    const std::filesystem::path path = resolvePath(parts);
     std::ifstream file(path);
     if (!file.is_open()) {
       throw std::runtime_error("Cannot open interface definition file: " + path.string());
@@ -117,16 +117,16 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
     body << file.rdbuf();
     return body.str();
   } catch (const std::invalid_argument &) {
-    failure_cache.insertOrAssign(interface_type, std::current_exception());
+    failures.set(type, std::current_exception());
     throw;
   } catch (const std::runtime_error &) {
-    failure_cache.insertOrAssign(interface_type, std::current_exception());
+    failures.set(type, std::current_exception());
     throw;
   }
 }
 
 // Field dependencies are messages; normalize shorthand references to `pkg/msg/Type`.
-std::vector<std::string> extractDependencies(const std::string & definition, const std::string & package)
+std::vector<std::string> parseDependencies(const std::string & definition, const std::string & package)
 {
   std::vector<std::string> dependencies;
   std::istringstream stream(definition);
@@ -137,7 +137,7 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
     const auto first_non_space = line.find_first_not_of(" \t");
     if (
       first_non_space == std::string::npos ||
-      line.compare(first_non_space, sizeof(kServiceDefinitionSeparator) - 1U, kServiceDefinitionSeparator) == 0)
+      line.compare(first_non_space, sizeof(kSectionSeparator) - 1U, kSectionSeparator) == 0)
     {
       continue;
     }
@@ -176,29 +176,29 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
   return dependencies;
 }
 
-void collectInterfaceDefinitions(
-  const std::string & interface_type, std::set<std::string> & visited, std::vector<InterfaceDefinition> & definitions)
+void collectDefinitions(
+  const std::string & type, std::set<std::string> & seen, std::vector<InterfaceDefinition> & definitions)
 {
-  if (!visited.insert(interface_type).second) {
+  if (!seen.insert(type).second) {
     return;
   }
 
-  const std::string body = loadInterfaceDefinition(interface_type);
-  definitions.push_back({interface_type, body});
+  const std::string body = loadDefinition(type);
+  definitions.push_back({type, body});
 
-  const TypeParts parts = TypeParts::parse(interface_type);
-  for (const auto & dependency : extractDependencies(body, parts.package)) {
-    collectInterfaceDefinitions(dependency, visited, definitions);
+  const TypeParts parts = TypeParts::parse(type);
+  for (const auto & dependency : parseDependencies(body, parts.package)) {
+    collectDefinitions(dependency, seen, definitions);
   }
 }
 
 }  // namespace
 
-std::vector<InterfaceDefinition> lookupInterfaceDefinitions(const std::string & interface_type)
+std::vector<InterfaceDefinition> lookupDefinitions(const std::string & type)
 {
-  std::set<std::string> visited;
+  std::set<std::string> seen;
   std::vector<InterfaceDefinition> definitions;
-  collectInterfaceDefinitions(interface_type, visited, definitions);
+  collectDefinitions(type, seen, definitions);
   return definitions;
 }
 

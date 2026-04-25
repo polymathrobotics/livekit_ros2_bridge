@@ -85,7 +85,7 @@ using GstSamplePtr = std::unique_ptr<GstSample, GstSampleDeleter>;
 
 // Thread-safe process-wide initialization for call sites that may touch
 // GStreamer before the node runtime has established ordering.
-inline void ensureGstreamerInitialized()
+inline void ensureGStreamerInitialized()
 {
   static std::once_flag init_once;
   std::call_once(init_once, []() { gst_init(nullptr, nullptr); });
@@ -93,12 +93,12 @@ inline void ensureGstreamerInitialized()
 
 // Owns GstIterator's reusable GValue slot. Call reset() after consuming
 // GST_ITERATOR_OK; destruction unsets any remaining payload.
-class GValueGuard final
+class GValueSlot final
 {
 public:
-  GValueGuard() = default;
+  GValueSlot() = default;
 
-  ~GValueGuard()
+  ~GValueSlot()
   {
     if (G_IS_VALUE(&value_)) {
       g_value_unset(&value_);
@@ -106,10 +106,10 @@ public:
     }
   }
 
-  GValueGuard(const GValueGuard &) = delete;
-  GValueGuard & operator=(const GValueGuard &) = delete;
-  GValueGuard(GValueGuard &&) = delete;
-  GValueGuard & operator=(GValueGuard &&) = delete;
+  GValueSlot(const GValueSlot &) = delete;
+  GValueSlot & operator=(const GValueSlot &) = delete;
+  GValueSlot(GValueSlot &&) = delete;
+  GValueSlot & operator=(GValueSlot &&) = delete;
 
   GValue * get()
   {
@@ -127,25 +127,25 @@ private:
   GValue value_ = G_VALUE_INIT;
 };
 
-class GstMapGuard final
+class GstBufferMap final
 {
 public:
-  GstMapGuard(GstBuffer & buffer, GstMapFlags flags)
+  GstBufferMap(GstBuffer & buffer, GstMapFlags flags)
   : buffer_(&buffer)
   , mapped_(gst_buffer_map(buffer_, &info_, flags))
   {}
 
-  ~GstMapGuard()
+  ~GstBufferMap()
   {
     if (mapped_) {
       gst_buffer_unmap(buffer_, &info_);
     }
   }
 
-  GstMapGuard(const GstMapGuard &) = delete;
-  GstMapGuard & operator=(const GstMapGuard &) = delete;
-  GstMapGuard(GstMapGuard &&) = delete;
-  GstMapGuard & operator=(GstMapGuard &&) = delete;
+  GstBufferMap(const GstBufferMap &) = delete;
+  GstBufferMap & operator=(const GstBufferMap &) = delete;
+  GstBufferMap(GstBufferMap &&) = delete;
+  GstBufferMap & operator=(GstBufferMap &&) = delete;
 
   bool is_valid() const
   {
@@ -163,24 +163,24 @@ private:
   bool mapped_ = false;
 };
 
-class GstVideoFrameGuard final
+class GstVideoFrameMap final
 {
 public:
-  GstVideoFrameGuard(const GstVideoInfo & info, GstBuffer & buffer, GstMapFlags flags)
+  GstVideoFrameMap(const GstVideoInfo & info, GstBuffer & buffer, GstMapFlags flags)
   : mapped_(gst_video_frame_map(&frame_, &info, &buffer, flags))
   {}
 
-  ~GstVideoFrameGuard()
+  ~GstVideoFrameMap()
   {
     if (mapped_) {
       gst_video_frame_unmap(&frame_);
     }
   }
 
-  GstVideoFrameGuard(const GstVideoFrameGuard &) = delete;
-  GstVideoFrameGuard & operator=(const GstVideoFrameGuard &) = delete;
-  GstVideoFrameGuard(GstVideoFrameGuard &&) = delete;
-  GstVideoFrameGuard & operator=(GstVideoFrameGuard &&) = delete;
+  GstVideoFrameMap(const GstVideoFrameMap &) = delete;
+  GstVideoFrameMap & operator=(const GstVideoFrameMap &) = delete;
+  GstVideoFrameMap(GstVideoFrameMap &&) = delete;
+  GstVideoFrameMap & operator=(GstVideoFrameMap &&) = delete;
 
   bool is_valid() const
   {

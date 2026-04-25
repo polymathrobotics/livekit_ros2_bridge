@@ -50,19 +50,19 @@ std::vector<std::string> parse(const std::string & payload)
   }
 
   try {
-    const auto values = body.find(kTypesField);
-    if (values == body.end() || !values->is_array()) {
+    const auto entries = body.find(kTypesField);
+    if (entries == body.end() || !entries->is_array()) {
       throw std::invalid_argument("interface_types must be an array");
     }
 
     std::vector<std::string> types;
-    types.reserve(values->size());
-    for (const auto & value : *values) {
-      if (!value.is_string()) {
+    types.reserve(entries->size());
+    for (const auto & entry : *entries) {
+      if (!entry.is_string()) {
         throw std::invalid_argument("interface_types entries must be strings");
       }
 
-      const auto type = trim(value.get_ref<const std::string &>());
+      const auto type = trim(entry.get_ref<const std::string &>());
       if (type.empty()) {
         throw std::invalid_argument("interface_types entries must not be empty");
       }
@@ -82,10 +82,10 @@ std::vector<std::string> parse(const std::string & payload)
 
 std::string serialize(const std::vector<InterfaceDefinition> & definitions)
 {
-  Json::array_t interfaces;
-  interfaces.reserve(definitions.size());
+  Json::array_t entries;
+  entries.reserve(definitions.size());
   for (const auto & definition : definitions) {
-    interfaces.push_back(
+    entries.push_back(
       Json{
         {kTypeField, definition.type},
         {kFormatField, "ros2msg"},
@@ -93,7 +93,7 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
       });
   }
 
-  return Json{{kInterfacesField, std::move(interfaces)}}.dump();
+  return Json{{kInterfacesField, std::move(entries)}}.dump();
 }
 
 }  // namespace livekit_ros2_bridge::protocol::interfaces

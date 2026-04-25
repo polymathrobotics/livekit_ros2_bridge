@@ -32,36 +32,34 @@
 namespace livekit_ros2_bridge
 {
 
-using ConnectionWatchdogNodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
-  rclcpp::node_interfaces::NodeBaseInterface,
-  rclcpp::node_interfaces::NodeLoggingInterface,
-  rclcpp::node_interfaces::NodeTimersInterface>;
-
 class ConnectionWatchdog final
 {
 public:
   using CloseCallback = std::function<bool()>;
+  using NodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeBaseInterface,
+    rclcpp::node_interfaces::NodeLoggingInterface,
+    rclcpp::node_interfaces::NodeTimersInterface>;
   using SteadyClock = std::chrono::steady_clock;
 
-  ConnectionWatchdog(
-    RuntimeConfig::HealthConfig config, ConnectionWatchdogNodeInterfaces interfaces, CloseCallback close);
+  ConnectionWatchdog(RuntimeConfig::Watchdog config, NodeInterfaces interfaces, CloseCallback close);
 
   ConnectionWatchdog(const ConnectionWatchdog &) = delete;
   ConnectionWatchdog & operator=(const ConnectionWatchdog &) = delete;
   ConnectionWatchdog(ConnectionWatchdog &&) = delete;
   ConnectionWatchdog & operator=(ConnectionWatchdog &&) = delete;
 
-  void observeConnectionState(livekit::ConnectionState state);
+  void onStateChanged(livekit::ConnectionState state);
 
 private:
-  void markHealthy();
-  void markUnhealthy(std::string_view reason);
+  void clearOutage();
+  void startOutage(std::string_view reason);
 
-  RuntimeConfig::HealthConfig config_;
+  RuntimeConfig::Watchdog config_;
   rclcpp::Logger logger_;
   CloseCallback close_;
 
-  struct UnhealthyState
+  struct Outage
   {
     SteadyClock::time_point since;
     SteadyClock::time_point deadline;
@@ -69,7 +67,7 @@ private:
 
   // LiveKit state callbacks and the ROS timer can run on different threads.
   std::mutex mutex_;
-  std::optional<UnhealthyState> unhealthy_;
+  std::optional<Outage> outage_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   void check();

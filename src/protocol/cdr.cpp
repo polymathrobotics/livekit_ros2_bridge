@@ -35,43 +35,43 @@ constexpr char kPayloadBase64[] = "payload_base64";
 
 }  // namespace
 
-rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field)
+rclcpp::SerializedMessage parse(const nlohmann::json & body, Field field)
 {
-  const char * key = nullptr;
+  const char * field_name = nullptr;
   switch (field) {
     case Field::Message:
-      key = "message";
+      field_name = "message";
       break;
     case Field::Request:
-      key = "request";
+      field_name = "request";
       break;
   }
-  if (key == nullptr) {
+  if (field_name == nullptr) {
     throw std::logic_error("Unhandled CDR envelope field.");
   }
 
-  const auto it = body.find(key);
-  if (it == body.end() || !it->is_object()) {
-    throw std::invalid_argument(std::string(key) + " must be an object.");
+  const auto envelope_it = body.find(field_name);
+  if (envelope_it == body.end() || !envelope_it->is_object()) {
+    throw std::invalid_argument(std::string(field_name) + " must be an object.");
   }
 
-  const auto & envelope = *it;
-  const auto content_type = envelope.find(kContentType);
-  if (content_type == envelope.end() || !content_type->is_string()) {
+  const auto & envelope = *envelope_it;
+  const auto content_type_it = envelope.find(kContentType);
+  if (content_type_it == envelope.end() || !content_type_it->is_string()) {
     throw std::invalid_argument(std::string(kContentType) + " must be a string.");
   }
-  if (content_type->get_ref<const std::string &>() != protocol::kCdrContentType) {
-    throw std::invalid_argument(std::string(key) + "." + kContentType + " must be application/x-ros-cdr.");
+  if (content_type_it->get_ref<const std::string &>() != protocol::kCdrContentType) {
+    throw std::invalid_argument(std::string(field_name) + "." + kContentType + " must be application/x-ros-cdr.");
   }
 
-  const auto payload = envelope.find(kPayloadBase64);
-  if (payload == envelope.end() || !payload->is_string()) {
+  const auto payload_it = envelope.find(kPayloadBase64);
+  if (payload_it == envelope.end() || !payload_it->is_string()) {
     throw std::invalid_argument(std::string(kPayloadBase64) + " must be a string.");
   }
-  const auto & encoded = payload->get_ref<const std::string &>();
+  const auto & encoded = payload_it->get_ref<const std::string &>();
   switch (auto result = detail::base64::decode(encoded); result.status) {
     case detail::base64::Status::Ok:
-      return wrapSerializedPayload(result.bytes);
+      return makeSerializedMessage(result.bytes);
     case detail::base64::Status::MissingPadding:
       throw std::invalid_argument("payload_base64 must be padded standard base64.");
     case detail::base64::Status::InvalidEncoding:

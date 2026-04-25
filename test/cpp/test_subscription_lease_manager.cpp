@@ -136,18 +136,18 @@ bool publishUntil(
 
 VideoStreamConfig makeOtherVideoSourceConfig()
 {
-  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
+  VideoStreamConfig config = makeDefaultVideoStreamConfig();
   OtherVideoSource other_video_source;
   other_video_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  stream_config.other_video_sources.emplace("/sources/front", std::move(other_video_source));
-  return stream_config;
+  config.other_video_sources.emplace("/sources/front", std::move(other_video_source));
+  return config;
 }
 
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
   AccessPolicy access_policy,
-  const VideoStreamConfig * video_stream_config = nullptr,
+  const VideoStreamConfig * video_config = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   return SubscriptionLeaseManager(
@@ -158,20 +158,19 @@ SubscriptionLeaseManager makeLeaseManager(
     session,
     std::move(access_policy),
     nullptr,
-    video_stream_config,
+    video_config,
     heartbeat_lease_duration);
 }
 
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
-  const VideoStreamConfig * video_stream_config = nullptr,
+  const VideoStreamConfig * video_config = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   AccessPolicyConfig access_policy_config;
   access_policy_config.subscribe.allow = {"*"};
-  return makeLeaseManager(
-    node, session, AccessPolicy(access_policy_config), video_stream_config, heartbeat_lease_duration);
+  return makeLeaseManager(node, session, AccessPolicy(access_policy_config), video_config, heartbeat_lease_duration);
 }
 
 SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
@@ -357,10 +356,9 @@ protected:
     access_policy_ = makeSubscribePolicy({"*"});
   }
 
-  SubscriptionLeaseManager makeManager(
-    AccessPolicy access_policy, const VideoStreamConfig * video_stream_config = nullptr)
+  SubscriptionLeaseManager makeManager(AccessPolicy access_policy, const VideoStreamConfig * video_config = nullptr)
   {
-    return makeLeaseManager(*node_, *fake_room_connection_, std::move(access_policy), video_stream_config);
+    return makeLeaseManager(*node_, *fake_room_connection_, std::move(access_policy), video_config);
   }
 
   std::shared_ptr<rclcpp::Node> node_;
@@ -630,7 +628,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOther
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomConnection session;
-  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
+  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
   (void)publisher;
@@ -639,7 +637,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOther
   executor.add_node(node);
   ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, video_topic));
 
-  auto registry = makeLeaseManager(*node, session, &video_stream_config);
+  auto registry = makeLeaseManager(*node, session, &video_config);
 
   const auto topic_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(video_topic)}));
@@ -689,11 +687,11 @@ TEST(SubscriptionLeaseManagerTest, EquivalentOtherVideoRequestsShareCanonicalSub
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_canonical_other_test");
   FakeRoomConnection session;
-  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
+  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
   const std::string canonical_source = "/sources/front";
   const std::string variant_source = "  /sources/front  ";
 
-  auto registry = makeLeaseManager(*node, session, &video_stream_config);
+  auto registry = makeLeaseManager(*node, session, &video_config);
 
   const auto first = sendHeartbeatAndExtractStatus(
     registry, *session.state, "alice", makeHeartbeat({makeOtherVideoDemand(canonical_source)}));
@@ -745,25 +743,25 @@ TEST(SubscriptionLeaseManagerTest, VideoLeaseExpiryBeforeFirstFrameAllowsLaterRe
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
 }
 
-TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishedVideoTrack)
+TEST(SubscriptionLeaseManagerTest, PerStreamPublishOptionsAreAppliedToEachPublishedVideoTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_publish_config_test");
   FakeRoomConnection session;
   const std::string first_topic = "/camera/publish_config/one";
   const std::string second_topic = "/camera/publish_config/two";
-  livekit::TrackPublishOptions first_publish_config;
-  first_publish_config.video_codec = static_cast<livekit::VideoCodec>(1);
-  first_publish_config.video_encoding = livekit::VideoEncodingOptions{900000, 24.0};
-  first_publish_config.simulcast = true;
-  livekit::TrackPublishOptions second_publish_config;
-  second_publish_config.video_codec = static_cast<livekit::VideoCodec>(3);
-  second_publish_config.video_encoding = livekit::VideoEncodingOptions{250000, 12.0};
-  second_publish_config.simulcast = false;
+  livekit::TrackPublishOptions first_publish_options;
+  first_publish_options.video_codec = static_cast<livekit::VideoCodec>(1);
+  first_publish_options.video_encoding = livekit::VideoEncodingOptions{900000, 24.0};
+  first_publish_options.simulcast = true;
+  livekit::TrackPublishOptions second_publish_options;
+  second_publish_options.video_codec = static_cast<livekit::VideoCodec>(3);
+  second_publish_options.video_encoding = livekit::VideoEncodingOptions{250000, 12.0};
+  second_publish_options.simulcast = false;
 
-  VideoStreamConfig stream_config = makeDefaultVideoStreamConfig();
-  stream_config.ros_topic_rules.push_back({first_topic, "first_publish_config", "", first_publish_config});
-  stream_config.ros_topic_rules.push_back({second_topic, "second_publish_config", "", second_publish_config});
+  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  config.ros_topic_rules.push_back({first_topic, "first_publish_config", "", first_publish_options});
+  config.ros_topic_rules.push_back({second_topic, "second_publish_config", "", second_publish_options});
 
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));
@@ -773,7 +771,7 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
   ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, first_topic));
   ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, second_topic));
 
-  auto registry = makeLeaseManager(*node, session, &stream_config);
+  auto registry = makeLeaseManager(*node, session, &config);
   const auto first_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(first_topic)}));
   const auto second_status =
@@ -799,18 +797,18 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishConfigIsAppliedToEachPublishe
   ASSERT_EQ(session.state->published_video_options.size(), 2U);
   const auto & first_options = session.state->published_video_options[0];
   const auto & second_options = session.state->published_video_options[1];
-  EXPECT_EQ(first_options.video_codec, first_publish_config.video_codec);
+  EXPECT_EQ(first_options.video_codec, first_publish_options.video_codec);
   ASSERT_TRUE(first_options.video_encoding.has_value());
-  ASSERT_TRUE(first_publish_config.video_encoding.has_value());
-  EXPECT_EQ(first_options.video_encoding->max_bitrate, first_publish_config.video_encoding->max_bitrate);
-  EXPECT_DOUBLE_EQ(first_options.video_encoding->max_framerate, first_publish_config.video_encoding->max_framerate);
-  EXPECT_EQ(first_options.simulcast, first_publish_config.simulcast);
-  EXPECT_EQ(second_options.video_codec, second_publish_config.video_codec);
+  ASSERT_TRUE(first_publish_options.video_encoding.has_value());
+  EXPECT_EQ(first_options.video_encoding->max_bitrate, first_publish_options.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(first_options.video_encoding->max_framerate, first_publish_options.video_encoding->max_framerate);
+  EXPECT_EQ(first_options.simulcast, first_publish_options.simulcast);
+  EXPECT_EQ(second_options.video_codec, second_publish_options.video_codec);
   ASSERT_TRUE(second_options.video_encoding.has_value());
-  ASSERT_TRUE(second_publish_config.video_encoding.has_value());
-  EXPECT_EQ(second_options.video_encoding->max_bitrate, second_publish_config.video_encoding->max_bitrate);
-  EXPECT_DOUBLE_EQ(second_options.video_encoding->max_framerate, second_publish_config.video_encoding->max_framerate);
-  EXPECT_EQ(second_options.simulcast, second_publish_config.simulcast);
+  ASSERT_TRUE(second_publish_options.video_encoding.has_value());
+  EXPECT_EQ(second_options.video_encoding->max_bitrate, second_publish_options.video_encoding->max_bitrate);
+  EXPECT_DOUBLE_EQ(second_options.video_encoding->max_framerate, second_publish_options.video_encoding->max_framerate);
+  EXPECT_EQ(second_options.simulcast, second_publish_options.simulcast);
 }
 
 TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)
@@ -1080,9 +1078,9 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
+  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
 
-  auto manager = makeManager(deny_all, &video_stream_config);
+  auto manager = makeManager(deny_all, &video_config);
 
   sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
 
@@ -1095,9 +1093,9 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyA
 
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingOtherVideoReturnsErrorOnSourceIdField)
 {
-  const VideoStreamConfig video_stream_config = makeOtherVideoSourceConfig();
+  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
 
-  auto manager = makeManager(access_policy_, &video_stream_config);
+  auto manager = makeManager(access_policy_, &video_config);
 
   sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/missing")}));
 

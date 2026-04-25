@@ -45,22 +45,12 @@
 namespace livekit_ros2_bridge
 {
 
-using RuntimeNodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
-  rclcpp::node_interfaces::NodeBaseInterface,
-  rclcpp::node_interfaces::NodeClockInterface,
-  rclcpp::node_interfaces::NodeGraphInterface,
-  rclcpp::node_interfaces::NodeLoggingInterface,
-  rclcpp::node_interfaces::NodeParametersInterface,
-  rclcpp::node_interfaces::NodeTimersInterface,
-  rclcpp::node_interfaces::NodeTopicsInterface,
-  rclcpp::node_interfaces::NodeWaitablesInterface>;
-
-class RuntimeCallbackGate final
+class CallbackGate final
 {
 public:
   // Prevents SDK-thread callbacks from outliving Runtime-owned targets.
   template <typename Fn>
-  bool runIfOpen(Fn && fn)
+  bool run(Fn && fn)
   {
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -68,23 +58,23 @@ public:
         return false;
       }
 
-      ++active_count_;
+      ++active_;
     }
 
-    struct ActiveDispatch
+    struct Active
     {
-      RuntimeCallbackGate & gate;
+      CallbackGate & gate;
 
-      ~ActiveDispatch()
+      ~Active()
       {
         {
           std::lock_guard<std::mutex> lock(gate.mutex_);
-          --gate.active_count_;
+          --gate.active_;
         }
 
         gate.idle_.notify_all();
       }
-    } active_dispatch{*this};
+    } active{*this};
 
     std::forward<Fn>(fn)();
     return true;
@@ -97,13 +87,23 @@ private:
   std::mutex mutex_;
   std::condition_variable idle_;
   bool closed_ = false;
-  std::size_t active_count_ = 0U;
+  std::size_t active_ = 0U;
 };
 
 class Runtime final
 {
 public:
-  Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config);
+  using NodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
+    rclcpp::node_interfaces::NodeBaseInterface,
+    rclcpp::node_interfaces::NodeClockInterface,
+    rclcpp::node_interfaces::NodeGraphInterface,
+    rclcpp::node_interfaces::NodeLoggingInterface,
+    rclcpp::node_interfaces::NodeParametersInterface,
+    rclcpp::node_interfaces::NodeTimersInterface,
+    rclcpp::node_interfaces::NodeTopicsInterface,
+    rclcpp::node_interfaces::NodeWaitablesInterface>;
+
+  Runtime(NodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config);
   ~Runtime();
 
   Runtime(const Runtime &) = delete;
@@ -112,14 +112,14 @@ public:
   Runtime & operator=(Runtime &&) = delete;
 
 private:
-  void onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event);
-  void submitToExecutor(std::function<void()> work);
-  RoomEventCallbacks makeRoomEventCallbacks();
+  void onUserPacketReceived(const livekit::UserDataPacketEvent & event);
+  void submitRosWork(std::function<void()> work);
+  RoomEventCallbacks makeRoomCallbacks();
 
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Logger logger_;
   RuntimeConfig config_;
-  RuntimeCallbackGate callback_gate_;
+  CallbackGate callback_gate_;
   std::unique_ptr<RoomConnection> room_connection_;
   RosExecutorQueue ros_executor_queue_;
   RosTopicPublisher ros_topic_publisher_;

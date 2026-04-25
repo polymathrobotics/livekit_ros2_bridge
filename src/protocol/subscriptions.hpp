@@ -63,7 +63,7 @@ struct SubscriptionStatus
   std::string track_name;
 };
 
-enum class SubscriptionStatusErrorReason
+enum class SubscriptionErrorReason
 {
   Forbidden,
   NotFound,
@@ -73,15 +73,15 @@ struct SubscriptionErrorStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
   std::string name;
-  SubscriptionStatusErrorReason reason = SubscriptionStatusErrorReason::NotFound;
+  SubscriptionErrorReason reason = SubscriptionErrorReason::NotFound;
   std::string message;
 };
 
-using SubscriptionReportedStatus = std::variant<SubscriptionStatus, SubscriptionErrorStatus>;
+using SubscriptionStatusEntry = std::variant<SubscriptionStatus, SubscriptionErrorStatus>;
 
 struct SubscriptionStatusReport
 {
-  std::vector<SubscriptionReportedStatus> statuses;
+  std::vector<SubscriptionStatusEntry> statuses;
   std::optional<std::string> session_id;
   // Steady-clock expiry converted to relative `lease_expires_in_ms` during serialization.
   std::optional<std::chrono::steady_clock::time_point> lease_expiry;

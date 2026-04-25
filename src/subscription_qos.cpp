@@ -28,80 +28,80 @@ namespace
 {
 
 template <typename Policy>
-struct PublisherPolicySummary
+struct PolicySummary
 {
-  std::optional<Policy> resolved_policy;
+  std::optional<Policy> policy;
   bool mixed = false;
 };
 
 template <typename Policy, typename Mutator>
-bool qosPoliciesAreCompatible(Policy publisher_policy, Policy subscription_policy, Mutator mutator)
+bool areCompatible(Policy offered, Policy requested, Mutator mutator)
 {
-  rclcpp::QoS publisher_qos{rclcpp::KeepLast(1)};
-  rclcpp::QoS subscription_qos{rclcpp::KeepLast(1)};
-  mutator(publisher_qos, publisher_policy);
-  mutator(subscription_qos, subscription_policy);
-  return rclcpp::qos_check_compatible(publisher_qos, subscription_qos).compatibility == rclcpp::QoSCompatibility::Ok;
+  rclcpp::QoS publisher{rclcpp::KeepLast(1)};
+  rclcpp::QoS subscription{rclcpp::KeepLast(1)};
+  mutator(publisher, offered);
+  mutator(subscription, requested);
+  return rclcpp::qos_check_compatible(publisher, subscription).compatibility == rclcpp::QoSCompatibility::Ok;
 }
 
 template <typename Policy>
-bool containsPolicy(std::initializer_list<Policy> policies, Policy policy)
+bool contains(std::initializer_list<Policy> policies, Policy policy)
 {
   return std::find(policies.begin(), policies.end(), policy) != policies.end();
 }
 
 template <typename Policy, typename Accessor, typename Mutator>
-PublisherPolicySummary<Policy> summarizePublisherPolicy(
-  const std::vector<rclcpp::QoS> & publisher_qos_profiles,
+PolicySummary<Policy> summarizePolicy(
+  const std::vector<rclcpp::QoS> & publisher_qos,
   Accessor accessor,
   Mutator mutator,
-  std::initializer_list<Policy> candidate_subscription_policies)
+  std::initializer_list<Policy> candidates)
 {
-  PublisherPolicySummary<Policy> summary;
-  for (const auto & publisher_qos : publisher_qos_profiles) {
-    const Policy policy = accessor(publisher_qos);
-    if (!containsPolicy(candidate_subscription_policies, policy)) {
+  PolicySummary<Policy> summary;
+  for (const auto & qos : publisher_qos) {
+    const Policy policy = accessor(qos);
+    if (!contains(candidates, policy)) {
       // Unknown and system-default entries are not concrete publisher offers.
       continue;
     }
-    if (!summary.resolved_policy.has_value()) {
-      summary.resolved_policy = policy;
+    if (!summary.policy.has_value()) {
+      summary.policy = policy;
       continue;
     }
-    if (*summary.resolved_policy != policy) {
+    if (*summary.policy != policy) {
       summary.mixed = true;
     }
   }
 
-  if (!summary.resolved_policy.has_value()) {
+  if (!summary.policy.has_value()) {
     return summary;
   }
 
   // Candidates run strongest to weakest; keep the weakest compatible request.
-  std::optional<Policy> compatible_policy;
-  for (const Policy subscription_policy : candidate_subscription_policies) {
-    bool compatible_with_all_publishers = true;
-    for (const auto & publisher_qos : publisher_qos_profiles) {
-      const Policy publisher_policy = accessor(publisher_qos);
-      if (!containsPolicy(candidate_subscription_policies, publisher_policy)) {
+  std::optional<Policy> compatible;
+  for (const Policy requested : candidates) {
+    bool all_compatible = true;
+    for (const auto & qos : publisher_qos) {
+      const Policy offered = accessor(qos);
+      if (!contains(candidates, offered)) {
         continue;
       }
-      if (!qosPoliciesAreCompatible(publisher_policy, subscription_policy, mutator)) {
-        compatible_with_all_publishers = false;
+      if (!areCompatible(offered, requested, mutator)) {
+        all_compatible = false;
         break;
       }
     }
-    if (compatible_with_all_publishers) {
-      compatible_policy = subscription_policy;
+    if (all_compatible) {
+      compatible = requested;
     }
   }
 
-  if (compatible_policy.has_value()) {
-    summary.resolved_policy = *compatible_policy;
+  if (compatible.has_value()) {
+    summary.policy = *compatible;
   } else if (summary.mixed) {
     // If compatibility cannot prove a common request across mixed publishers,
     // prefer the least restrictive candidate over the first publisher seen.
-    summary.resolved_policy = *(candidate_subscription_policies.end() - 1);
+    summary.policy = *(candidates.end() - 1);
   }
 
   return summary;
@@ -111,13 +111,13 @@ PublisherPolicySummary<Policy> summarizePublisherPolicy(
 
 ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
-  const rclcpp::QoS & base_qos,
+  const rclcpp::QoS & base,
   const SubscriptionQosConfig * config,
-  const std::vector<rclcpp::QoS> & publisher_qos_profiles)
+  const std::vector<rclcpp::QoS> & publisher_qos)
 {
   ResolvedSubscriptionQos resolved;
-  resolved.qos = base_qos;
-  resolved.publisher_count = publisher_qos_profiles.size();
+  resolved.qos = base;
+  resolved.publisher_count = publisher_qos.size();
 
   const TopicSubscriptionQosOverride * match = nullptr;
   if (config != nullptr) {
@@ -135,41 +135,41 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     resolved.override_id = match->id;
   }
 
-  const auto reliability = summarizePublisherPolicy(
-    publisher_qos_profiles,
-    [](const rclcpp::QoS & publisher_qos) { return publisher_qos.reliability(); },
+  const auto reliability = summarizePolicy(
+    publisher_qos,
+    [](const rclcpp::QoS & qos) { return qos.reliability(); },
     [](rclcpp::QoS & qos, rclcpp::ReliabilityPolicy policy) { qos.reliability(policy); },
     {rclcpp::ReliabilityPolicy::Reliable, rclcpp::ReliabilityPolicy::BestEffort});
-  const auto durability = summarizePublisherPolicy(
-    publisher_qos_profiles,
-    [](const rclcpp::QoS & publisher_qos) { return publisher_qos.durability(); },
+  const auto durability = summarizePolicy(
+    publisher_qos,
+    [](const rclcpp::QoS & qos) { return qos.durability(); },
     [](rclcpp::QoS & qos, rclcpp::DurabilityPolicy policy) { qos.durability(policy); },
     {rclcpp::DurabilityPolicy::TransientLocal, rclcpp::DurabilityPolicy::Volatile});
   resolved.mixed_reliability = reliability.mixed;
   resolved.mixed_durability = durability.mixed;
 
-  if (match == nullptr && !reliability.resolved_policy.has_value() && !durability.resolved_policy.has_value()) {
+  if (match == nullptr && !reliability.policy.has_value() && !durability.policy.has_value()) {
     return resolved;
   }
 
-  bool used_publisher_qos = false;
+  bool used_publisher_policy = false;
   if (match != nullptr && match->reliability.has_value()) {
     resolved.qos.reliability(*match->reliability);
-  } else if (reliability.resolved_policy.has_value()) {
-    resolved.qos.reliability(*reliability.resolved_policy);
-    used_publisher_qos = true;
+  } else if (reliability.policy.has_value()) {
+    resolved.qos.reliability(*reliability.policy);
+    used_publisher_policy = true;
   }
 
   if (match != nullptr && match->durability.has_value()) {
     resolved.qos.durability(*match->durability);
-  } else if (durability.resolved_policy.has_value()) {
-    resolved.qos.durability(*durability.resolved_policy);
-    used_publisher_qos = true;
+  } else if (durability.policy.has_value()) {
+    resolved.qos.durability(*durability.policy);
+    used_publisher_policy = true;
   }
 
   if (match != nullptr) {
     resolved.source = SubscriptionQosResolutionSource::Override;
-  } else if (used_publisher_qos) {
+  } else if (used_publisher_policy) {
     resolved.source = SubscriptionQosResolutionSource::PublisherQos;
   }
 
@@ -179,20 +179,20 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::node_interfaces::NodeGraphInterface::SharedPtr & graph,
   std::string_view topic,
-  const rclcpp::QoS & base_qos,
+  const rclcpp::QoS & base,
   const SubscriptionQosConfig * config)
 {
-  std::vector<rclcpp::QoS> publisher_qos_profiles;
+  std::vector<rclcpp::QoS> publisher_qos;
   if (graph == nullptr) {
     throw std::invalid_argument("subscription QoS graph interface is null");
   }
   // Keep one graph view even if publishers change after this query.
-  const auto publisher_infos = graph->get_publishers_info_by_topic(std::string(topic));
-  publisher_qos_profiles.reserve(publisher_infos.size());
-  for (const auto & info : publisher_infos) {
-    publisher_qos_profiles.push_back(info.qos_profile());
+  const auto publishers = graph->get_publishers_info_by_topic(std::string(topic));
+  publisher_qos.reserve(publishers.size());
+  for (const auto & publisher : publishers) {
+    publisher_qos.push_back(publisher.qos_profile());
   }
-  return resolveSubscriptionQos(topic, base_qos, config, publisher_qos_profiles);
+  return resolveSubscriptionQos(topic, base, config, publisher_qos);
 }
 
 const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)

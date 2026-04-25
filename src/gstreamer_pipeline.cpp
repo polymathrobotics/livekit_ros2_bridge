@@ -35,16 +35,16 @@ void validateI420Plane(const GstVideoFrame * frame, guint component, const livek
   if (plane.stride == 0U || plane.size % plane.stride != 0U) {
     throw std::runtime_error("LiveKit I420 plane layout is invalid.");
   }
-  const std::size_t expected_height = static_cast<std::size_t>(plane.size / plane.stride);
+  const std::size_t height = static_cast<std::size_t>(plane.size / plane.stride);
   if (
     static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_WIDTH(frame, component)) != plane.stride ||
-    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(frame, component)) != expected_height)
+    static_cast<std::size_t>(GST_VIDEO_FRAME_COMP_HEIGHT(frame, component)) != height)
   {
     throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
   }
 }
 
-void copyI420Plane(const GstVideoFrame * frame, guint component, const livekit::VideoPlaneInfo & dst_plane)
+void copyI420Plane(const GstVideoFrame * frame, guint component, const livekit::VideoPlaneInfo & plane)
 {
   const auto * src = static_cast<const std::uint8_t *>(GST_VIDEO_FRAME_COMP_DATA(frame, component));
   const int src_stride = GST_VIDEO_FRAME_COMP_STRIDE(frame, component);
@@ -56,11 +56,11 @@ void copyI420Plane(const GstVideoFrame * frame, guint component, const livekit::
   if (src_stride < 0 || width <= 0 || height <= 0) {
     throw std::runtime_error("I420 frame plane layout is invalid.");
   }
-  if (dst_plane.data_ptr == 0U) {
+  if (plane.data_ptr == 0U) {
     throw std::runtime_error("LiveKit I420 plane data is unavailable.");
   }
-  auto * dst = reinterpret_cast<std::uint8_t *>(dst_plane.data_ptr);
-  const std::size_t dst_stride = dst_plane.stride;
+  auto * dst = reinterpret_cast<std::uint8_t *>(plane.data_ptr);
+  const std::size_t dst_stride = plane.stride;
   if (static_cast<std::size_t>(width) > dst_stride || src_stride < width) {
     throw std::runtime_error("I420 frame plane stride is unsupported.");
   }
@@ -83,38 +83,38 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
     throw std::runtime_error("GStreamer sample is missing caps or buffer.");
   }
 
-  GstVideoInfo video_info;
-  if (!gst_video_info_from_caps(&video_info, caps)) {
+  GstVideoInfo info;
+  if (!gst_video_info_from_caps(&info, caps)) {
     throw std::runtime_error("Failed to parse GStreamer video caps.");
   }
-  if (GST_VIDEO_INFO_FORMAT(&video_info) != GST_VIDEO_FORMAT_I420) {
+  if (GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_I420) {
     throw std::runtime_error("Video pipeline did not output I420 frames.");
   }
 
-  const int width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&video_info));
-  const int height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&video_info));
+  const int width = static_cast<int>(GST_VIDEO_INFO_WIDTH(&info));
+  const int height = static_cast<int>(GST_VIDEO_INFO_HEIGHT(&info));
   if (width <= 0 || height <= 0) {
     throw std::runtime_error("I420 sample dimensions are invalid.");
   }
 
-  GstVideoFrameGuard mapped_frame(video_info, *buffer, GST_MAP_READ);
-  if (!mapped_frame.is_valid()) {
+  GstVideoFrameMap mapping(info, *buffer, GST_MAP_READ);
+  if (!mapping.is_valid()) {
     throw std::runtime_error("Failed to map GStreamer video frame.");
   }
 
   // LiveKit wants tightly packed I420; copy padded GStreamer planes row-by-row.
-  const auto * gst_frame = mapped_frame.get();
+  const auto * src_frame = mapping.get();
   auto frame = livekit::VideoFrame::create(width, height, livekit::VideoBufferType::I420);
   const auto planes = frame.planeInfos();
   if (planes.size() != 3U) {
     throw std::runtime_error("LiveKit I420 plane layout is invalid.");
   }
-  validateI420Plane(gst_frame, 0, planes[0]);
-  validateI420Plane(gst_frame, 1, planes[1]);
-  validateI420Plane(gst_frame, 2, planes[2]);
-  copyI420Plane(gst_frame, 0, planes[0]);
-  copyI420Plane(gst_frame, 1, planes[1]);
-  copyI420Plane(gst_frame, 2, planes[2]);
+  validateI420Plane(src_frame, 0, planes[0]);
+  validateI420Plane(src_frame, 1, planes[1]);
+  validateI420Plane(src_frame, 2, planes[2]);
+  copyI420Plane(src_frame, 0, planes[0]);
+  copyI420Plane(src_frame, 1, planes[1]);
+  copyI420Plane(src_frame, 2, planes[2]);
   return frame;
 }
 
@@ -141,7 +141,7 @@ GstAppSrc * GStreamerPipeline::appsrc() const noexcept
 
 void GStreamerPipeline::start(const std::string & description, bool require_appsrc)
 {
-  ensureGstreamerInitialized();
+  ensureGStreamerInitialized();
   stop();
 
   GError * raw_error = nullptr;
@@ -155,33 +155,33 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
     throw std::runtime_error("Video pipeline must resolve to a GstBin.");
   }
 
-  GstElementPtr appsink(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeAppSinkName));
-  if (appsink == nullptr) {
+  GstElementPtr sink_element(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeAppSinkName));
+  if (sink_element == nullptr) {
     throw std::runtime_error("Video pipeline did not create the expected appsink.");
   }
-  if (!GST_IS_APP_SINK(appsink.get())) {
+  if (!GST_IS_APP_SINK(sink_element.get())) {
     throw std::runtime_error(std::string("Video pipeline named ") + kBridgeAppSinkName + " must be a GstAppSink.");
   }
 
   GstAppSrcPtr appsrc;
   if (require_appsrc) {
-    GstElementPtr raw_appsrc(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeAppSrcName));
-    if (raw_appsrc == nullptr) {
+    GstElementPtr appsrc_element(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeAppSrcName));
+    if (appsrc_element == nullptr) {
       throw std::runtime_error("Video pipeline did not create the expected appsrc.");
     }
-    if (!GST_IS_APP_SRC(raw_appsrc.get())) {
+    if (!GST_IS_APP_SRC(appsrc_element.get())) {
       throw std::runtime_error(std::string("Video pipeline named ") + kBridgeAppSrcName + " must be a GstAppSrc.");
     }
-    appsrc = GstAppSrcPtr(GST_APP_SRC(raw_appsrc.release()));
+    appsrc = GstAppSrcPtr(GST_APP_SRC(appsrc_element.release()));
   }
 
-  GstAppSinkPtr checked_appsink(GST_APP_SINK(appsink.release()));
+  GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
   // stop() clears raw this callbacks before releasing the bin.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
     return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
   };
-  gst_app_sink_set_callbacks(checked_appsink.get(), &callbacks, this, nullptr);
+  gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
   GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
@@ -196,8 +196,8 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   pipeline_ = std::move(pipeline);
   appsrc_ = std::move(appsrc);
 
-  const GstStateChangeReturn state_change = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
-  if (state_change == GST_STATE_CHANGE_FAILURE) {
+  const GstStateChangeReturn result = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
+  if (result == GST_STATE_CHANGE_FAILURE) {
     stop();
     throw std::runtime_error("Failed to set video pipeline to PLAYING.");
   }
@@ -258,12 +258,12 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
 
 void GStreamerPipeline::onBusMessage(GstMessage * message)
 {
-  const GstMessageType message_type = GST_MESSAGE_TYPE(message);
-  if (message_type == GST_MESSAGE_EOS) {
-    callbacks_.on_pipeline_failed("eos");
+  const GstMessageType type = GST_MESSAGE_TYPE(message);
+  if (type == GST_MESSAGE_EOS) {
+    callbacks_.on_failed("eos");
     return;
   }
-  if (message_type != GST_MESSAGE_ERROR) {
+  if (type != GST_MESSAGE_ERROR) {
     return;
   }
 
@@ -271,7 +271,7 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   gst_message_parse_error(message, &raw_error, nullptr);
   GErrorPtr error(raw_error);
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-  callbacks_.on_pipeline_failed(reason);
+  callbacks_.on_failed(reason);
 }
 
 }  // namespace livekit_ros2_bridge
