@@ -54,7 +54,7 @@ public:
   void observeConnectionState(livekit::ConnectionState state);
 
 private:
-  void markHealthy(std::string_view reason);
+  void markHealthy();
   void markUnhealthy(std::string_view reason);
 
   RuntimeConfig::HealthConfig config_;

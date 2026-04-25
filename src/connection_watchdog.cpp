@@ -69,26 +69,16 @@ ConnectionWatchdog::ConnectionWatchdog(
 
 void ConnectionWatchdog::observeConnectionState(livekit::ConnectionState state)
 {
-  const std::string_view state_name = connectionStateName(state);
   if (state == livekit::ConnectionState::Connected) {
-    markHealthy(state_name);
-    LogEvent(logger_, "runtime_ready").field("connection_state", state_name).info();
+    markHealthy();
     return;
   }
 
+  const std::string_view state_name = connectionStateName(state);
   markUnhealthy(state_name);
-
-  LogEvent log = LogEvent(logger_, "runtime_disconnect_observed").field("connection_state", state_name);
-  if (!config_.watchdog_enabled) {
-    log.info();
-    return;
-  }
-
-  log.field("recovery_timeout_seconds", config_.watchdog_recovery_timeout.count() / 1000.0);
-  log.warn();
 }
 
-void ConnectionWatchdog::markHealthy(std::string_view reason)
+void ConnectionWatchdog::markHealthy()
 {
   if (!config_.watchdog_enabled) {
     return;
@@ -109,10 +99,7 @@ void ConnectionWatchdog::markHealthy(std::string_view reason)
     return;
   }
 
-  LogEvent(logger_, "runtime_watchdog_healthy")
-    .field("reason", reason)
-    .field("unhealthy_duration_seconds", *duration)
-    .info();
+  LogEvent(logger_, "runtime_watchdog_healthy").field("unhealthy_duration_seconds", *duration).info();
 }
 
 void ConnectionWatchdog::markUnhealthy(std::string_view reason)

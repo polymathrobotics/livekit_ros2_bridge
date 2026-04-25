@@ -76,18 +76,6 @@ const char * deliveryKindLabel(SubscriptionDeliveryKind delivery)
   throw std::invalid_argument("subscription delivery kind is invalid");
 }
 
-const char * intervalClampBoundaryLabel(SubscriptionIntervalClampBoundary boundary)
-{
-  switch (boundary) {
-    case SubscriptionIntervalClampBoundary::IntMin:
-      return "int_min";
-    case SubscriptionIntervalClampBoundary::IntMax:
-      return "int_max";
-  }
-
-  throw std::invalid_argument("subscription interval clamp boundary is invalid");
-}
-
 std::string makeSubscriptionKey(SubscriptionTargetKind kind, const std::string & name)
 {
   const auto kind_string = targetKindLabel(kind);
@@ -169,16 +157,6 @@ void SubscriptionLeaseManager::handleHeartbeatPayload(
     }
     event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
     return;
-  }
-
-  for (const auto & clamp : heartbeat->interval_clamps) {
-    LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
-      .field("kind", targetKindLabel(clamp.kind))
-      .field("name", clamp.name)
-      .field("boundary", intervalClampBoundaryLabel(clamp.boundary))
-      .fieldOr("requester_identity", requester_identity)
-      .fieldOr("session_id", heartbeat->session_id.value_or(""), "<absent>")
-      .warnThrottle(*clock_, kLogThrottle);
   }
 
   handleHeartbeat(requester_identity, *heartbeat);
@@ -287,11 +265,6 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
 
       return std::nullopt;
     }
-
-    LogEvent(kLogger, "heartbeat_client_session_fallback")
-      .field("requester_identity", it->second.requester_identity)
-      .fieldOr("session_id", session_id.value_or(""), "<absent>")
-      .warnThrottle(*clock_, kLogThrottle);
 
     return it->second.requester_identity;
   }
@@ -605,20 +578,6 @@ void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point referen
       }
 
       removed_any_lease = true;
-      const auto remaining_requesters = subscription.leases.size() - 1U;
-      const auto delta_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(lease_it->second.expiry - reference_time).count();
-      if (remaining_requesters > 0U) {
-        LogEvent(kLogger, "requester_lease_removed")
-          .field("resource", subscription.name)
-          .field("kind", targetKindLabel(subscription.kind))
-          .field("requester_identity", lease_it->first)
-          .field("reason", kLeaseExpiredReason)
-          .field("remaining_requesters", remaining_requesters)
-          .field("expired_by_ms", static_cast<long>(-delta_ms))
-          .info();
-      }
-
       republish_requesters_.erase(lease_it->first);
       lease_it = subscription.leases.erase(lease_it);
     }
@@ -652,7 +611,9 @@ void SubscriptionLeaseManager::shutdown()
   if (is_shutdown_.exchange(true)) {
     return;
   }
-  LogEvent(kLogger, "subscription_registry_shutdown_begin").field("subscription_count", subscriptions_.size()).info();
+  if (!subscriptions_.empty()) {
+    LogEvent(kLogger, "subscription_registry_shutdown_begin").field("subscription_count", subscriptions_.size()).info();
+  }
   session_leases_.clear();
   auto owned_subscriptions = std::move(subscriptions_);
   subscriptions_.clear();

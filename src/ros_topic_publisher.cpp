@@ -76,7 +76,6 @@ void RosTopicPublisher::handlePublishPayload(
   if (requester_identity.empty()) {
     LogEvent(kLogger, "packet_rejected")
       .field("reason", "missing_requester_identity")
-      .fieldOr("requester_identity", requester_identity)
       .warnThrottle(*clock_, kLogThrottle);
     return;
   }
@@ -107,9 +106,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "invalid_request")
-      .field("topic", request.ros_topic)
-      .field("requester_identity", requester_identity)
-      .field("interface_type", request.interface_type)
+      .fieldOr("topic", request.ros_topic)
+      .fieldOr("requester_identity", requester_identity)
       .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
 
@@ -119,8 +117,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   if (!access_policy_.allows(AccessOperation::Publish, ros_topic)) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "forbidden")
-      .field("topic", ros_topic)
-      .field("requester_identity", requester_identity)
+      .fieldOr("topic", ros_topic)
+      .fieldOr("requester_identity", requester_identity)
       .warnThrottle(*clock_, kLogThrottle);
 
     return;
@@ -139,8 +137,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       } else if (publishers_.size() >= max_topics_) {
         LogEvent(kLogger, "publish_request_rejected")
           .field("reason", "publisher_cache_full")
-          .field("topic", ros_topic)
-          .field("requester_identity", requester_identity)
+          .fieldOr("topic", ros_topic)
+          .fieldOr("requester_identity", requester_identity)
           .field("max_topics", max_topics_)
           .warnThrottle(*clock_, kLogThrottle);
         return;
@@ -157,8 +155,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_rejected")
       .field("reason", "invalid_request")
-      .field("topic", ros_topic)
-      .field("requester_identity", requester_identity)
+      .fieldOr("topic", ros_topic)
+      .fieldOr("requester_identity", requester_identity)
       .field("interface_type", request.interface_type)
       .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
@@ -196,9 +194,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     }
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "publish_request_failed")
-      .field("reason", "internal")
-      .field("topic", ros_topic)
-      .field("requester_identity", requester_identity)
+      .fieldOr("topic", ros_topic)
+      .fieldOr("requester_identity", requester_identity)
       .field("interface_type", type)
       .field("error", exc.what())
       .error();
@@ -218,6 +215,10 @@ void RosTopicPublisher::shutdown()
     std::lock_guard<std::mutex> lock(publishers_mutex_);
     publisher_count = publishers_.size();
     publishers_.clear();
+  }
+
+  if (publisher_count == 0U) {
+    return;
   }
 
   LogEvent(kLogger, "topic_publisher_state_changed")

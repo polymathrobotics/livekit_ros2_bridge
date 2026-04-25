@@ -176,10 +176,7 @@ void RosExecutorQueue::shutdown()
   }
 
   if (canceled_count > 0U) {
-    LogEvent(logger_, "executor_pending_tasks_canceled")
-      .field("reason", "shutdown")
-      .field("count", canceled_count)
-      .warn();
+    LogEvent(logger_, "executor_pending_tasks_canceled").field("count", canceled_count).warn();
   }
 
   while (!queued_tasks.empty()) {
@@ -231,10 +228,7 @@ void RosExecutorQueue::drain()
       // Queued work keeps the callback-group affinity of the consuming executor thread.
       task.run();
     } catch (...) {
-      LogEvent(logger_, "executor_task_failed")
-        .field("action", "continue")
-        .fieldException("error", std::current_exception())
-        .error();
+      LogEvent(logger_, "executor_task_failed").fieldException("error", std::current_exception()).error();
     }
   }
 }

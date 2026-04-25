@@ -93,7 +93,7 @@ TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
       makePublisherQos(rclcpp::ReliabilityPolicy::Reliable, rclcpp::DurabilityPolicy::TransientLocal),
     });
 
-  EXPECT_TRUE(qos.used_publisher_qos);
+  EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::PublisherQos);
   EXPECT_FALSE(qos.mixed_reliability);
   EXPECT_FALSE(qos.mixed_durability);
   EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::Reliable);
@@ -144,12 +144,10 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
     });
 
   EXPECT_EQ(without_publisher_durability.source, SubscriptionQosResolutionSource::Override);
-  EXPECT_FALSE(without_publisher_durability.used_publisher_qos);
   EXPECT_EQ(without_publisher_durability.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(without_publisher_durability.qos.durability(), base_qos.durability());
 
   EXPECT_EQ(with_publisher_durability.source, SubscriptionQosResolutionSource::Override);
-  EXPECT_TRUE(with_publisher_durability.used_publisher_qos);
   EXPECT_EQ(with_publisher_durability.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(with_publisher_durability.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
 }
@@ -172,8 +170,6 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUses
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::Override);
   EXPECT_EQ(qos.override_id, "camera");
-  EXPECT_EQ(qos.override_pattern, "/camera/*");
-  EXPECT_TRUE(qos.used_publisher_qos);
   EXPECT_EQ(qos.qos.reliability(), rclcpp::ReliabilityPolicy::BestEffort);
   EXPECT_EQ(qos.qos.durability(), rclcpp::DurabilityPolicy::TransientLocal);
 }

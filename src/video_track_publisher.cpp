@@ -103,22 +103,23 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
       video_source_ = std::move(video_source);
       published_video_track_ = std::move(published_video_track);
     } catch (...) {
-      LogEvent(kLogger, "video_track_publish_failed")
+      LogEvent(kLogger, is_republish ? "video_track_republish_failed" : "video_track_publish_failed")
         .field("track_name", spec_.track_name)
         .field("width", width)
         .field("height", height)
-        .fieldIfNotEmpty("stage", is_republish ? "republish_publish" : nullptr)
         .fieldException("error", std::current_exception())
         .warn();
       throw;
     }
 
     was_published_ = true;
-    LogEvent(kLogger, is_republish ? "video_stream_track_republished" : "video_stream_track_published")
-      .field("stream_key", spec_.stream_key)
-      .field("width", width)
-      .field("height", height)
-      .info();
+    if (is_republish) {
+      LogEvent(kLogger, "video_stream_track_republished")
+        .field("stream_key", spec_.stream_key)
+        .field("width", width)
+        .field("height", height)
+        .info();
+    }
   }
 
   video_source_->captureFrame(frame, timestamp_us);
@@ -137,10 +138,7 @@ void VideoTrackPublisher::close()
       return;
     }
 
-    if (was_published_) {
-      LogEvent(kLogger, "video_stream_track_unpublishing").field("stream_key", spec_.stream_key).info();
-      was_published_ = false;
-    }
+    was_published_ = false;
     is_closed_ = true;
     ros_stream = std::move(ros_stream_);
     gstreamer_stream = std::move(gstreamer_stream_);

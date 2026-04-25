@@ -60,13 +60,7 @@ constexpr char kDeliveryPreferencesIntervalMsField[] = "subscriptions.delivery_p
 constexpr char kHeartbeatTopicExpansionNodeName[] = "livekit_ros2_bridge";
 constexpr char kHeartbeatTopicExpansionNamespace[] = "/";
 
-struct ClampedInt
-{
-  int value;
-  std::optional<SubscriptionIntervalClampBoundary> boundary;
-};
-
-ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
+int parseClampedInt(const nlohmann::json & value, const char * message)
 {
   if (!value.is_number_integer()) {
     throw ValidationError(kDeliveryPreferencesIntervalMsField, message);
@@ -76,25 +70,25 @@ ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
     const auto raw = value.get<std::uint64_t>();
     const auto max = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
     if (raw > max) {
-      return {std::numeric_limits<int>::max(), SubscriptionIntervalClampBoundary::IntMax};
+      return std::numeric_limits<int>::max();
     }
-    return {static_cast<int>(raw), std::nullopt};
+    return static_cast<int>(raw);
   }
 
   const auto raw = value.get<std::int64_t>();
   const auto min = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw < min) {
-    return {std::numeric_limits<int>::min(), SubscriptionIntervalClampBoundary::IntMin};
+    return std::numeric_limits<int>::min();
   }
   if (raw > max) {
-    return {std::numeric_limits<int>::max(), SubscriptionIntervalClampBoundary::IntMax};
+    return std::numeric_limits<int>::max();
   }
 
-  return {static_cast<int>(raw), std::nullopt};
+  return static_cast<int>(raw);
 }
 
-std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
+std::optional<int> parseIntervalMs(const nlohmann::json & entry)
 {
   const auto preferences = entry.find("delivery_preferences");
   if (preferences == entry.end()) {
@@ -111,7 +105,7 @@ std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
   }
 
   const auto interval = parseClampedInt(*interval_it, "delivery_preferences.interval_ms must be an integer");
-  if (interval.value == 0) {
+  if (interval == 0) {
     return std::nullopt;
   }
 
@@ -251,10 +245,7 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
     SubscriptionDemand demand;
     parseTarget(entry, demand);
     if (const auto interval = parseIntervalMs(entry)) {
-      demand.preferred_interval_ms = interval->value;
-      if (interval->boundary.has_value()) {
-        heartbeat.interval_clamps.push_back(SubscriptionIntervalClamp{demand.kind, demand.name, *interval->boundary});
-      }
+      demand.preferred_interval_ms = *interval;
     }
 
     const auto [it, inserted] =

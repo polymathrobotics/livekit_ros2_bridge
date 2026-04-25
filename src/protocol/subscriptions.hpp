@@ -36,26 +36,11 @@ struct SubscriptionDemand
   std::optional<int> preferred_interval_ms;
 };
 
-enum class SubscriptionIntervalClampBoundary
-{
-  IntMin,
-  IntMax,
-};
-
-struct SubscriptionIntervalClamp
-{
-  SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
-  std::string name;
-  SubscriptionIntervalClampBoundary boundary = SubscriptionIntervalClampBoundary::IntMax;
-};
-
 struct SubscriptionHeartbeat
 {
   // Normalized client-session identifier; absent for missing, null, or blank wire values.
   std::optional<std::string> session_id;
   std::vector<SubscriptionDemand> demands;
-  // Parser-side normalization events that ingress logs with caller/session context.
-  std::vector<SubscriptionIntervalClamp> interval_clamps;
 };
 
 enum class SubscriptionDeliveryKind

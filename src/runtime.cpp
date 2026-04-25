@@ -50,11 +50,6 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
 , rpc_router_(interfaces.get_node_graph_interface(), config_.access_policy, ros_executor_queue_, ros_service_caller_)
 , watchdog_(config_.health, interfaces, [this]() { return callback_gate_.closeAndWait(); })
 {
-  LogEvent(logger_, "runtime_startup_begin")
-    .fieldOr("url", config_.livekit.url, "<unset>")
-    .field("token_present", !config_.livekit.access_token.empty())
-    .info();
-
   subscription_lease_manager_.startLeaseGcTimer(
     interfaces.get_node_base_interface(), interfaces.get_node_timers_interface(), [this](std::function<void()> work) {
       submitToExecutor(std::move(work));
@@ -87,16 +82,7 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
     (void)callback_gate_.runIfOpen([this, state]() { watchdog_.observeConnectionState(state); });
   };
   callbacks.on_user_packet_received = [this](const livekit::UserDataPacketEvent & event) {
-    const bool handled = callback_gate_.runIfOpen([this, &event]() { onRoomUserPacketReceived(event); });
-    if (handled) {
-      return;
-    }
-
-    LogEvent(logger_, "packet_dropped")
-      .field("reason", "shutdown")
-      .field("topic", event.topic)
-      .fieldOr("requester_identity", event.participant == nullptr ? "" : event.participant->identity())
-      .warnThrottle(*clock_, std::chrono::seconds(5));
+    (void)callback_gate_.runIfOpen([this, &event]() { onRoomUserPacketReceived(event); });
   };
   callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
     (void)callback_gate_.runIfOpen([this, &event]() {
@@ -142,7 +128,7 @@ void Runtime::onRoomUserPacketReceived(const livekit::UserDataPacketEvent & even
 
   LogEvent(logger_, "packet_dropped")
     .field("reason", "unsupported_topic")
-    .field("topic", topic)
+    .fieldOr("topic", topic)
     .fieldOr("requester_identity", requester_identity)
     .warnThrottle(*clock_, std::chrono::seconds(5));
 }

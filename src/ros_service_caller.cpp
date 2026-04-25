@@ -895,24 +895,12 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
     }
 
     if (impl_->inflight_calls.find(key) != impl_->inflight_calls.end()) {
-      LogEvent(kLogger, "service_call_failed")
-        .field("reason", "duplicate_pending_key")
-        .fieldOr("service", request.service)
-        .fieldIfNotEmpty("interface_type", interface_type)
-        .fieldOr("requester_identity", requester)
-        .error();
       throw std::runtime_error("Duplicate pending service call key.");
     }
 
     const auto timeout = request.timeout.has_value() && *request.timeout > std::chrono::milliseconds::zero()
                            ? *request.timeout
                            : kDefaultTimeout;
-
-    LogEvent(kLogger, "service_call_started")
-      .fieldOr("service", request.service)
-      .fieldIfNotEmpty("interface_type", interface_type)
-      .fieldOr("requester_identity", requester)
-      .info();
 
     impl_->inflight_calls.emplace(
       key,

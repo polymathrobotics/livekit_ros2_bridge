@@ -22,8 +22,6 @@
 #include <utility>
 
 #include "livekit/video_source.h"
-#include "rclcpp/logging.hpp"
-#include "utils/log_event.hpp"
 #include "video_pipeline_description.hpp"
 
 namespace livekit_ros2_bridge
@@ -31,8 +29,6 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-
-const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.gstreamer_pipeline");
 
 void validateI420Plane(const GstVideoFrame * frame, guint component, const livekit::VideoPlaneInfo & plane)
 {
@@ -124,9 +120,8 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
 
 }  // namespace
 
-GStreamerPipeline::GStreamerPipeline(VideoStreamSpec spec, GStreamerPipelineCallbacks callbacks)
-: spec_(std::move(spec))
-, callbacks_(std::move(callbacks))
+GStreamerPipeline::GStreamerPipeline(GStreamerPipelineCallbacks callbacks)
+: callbacks_(std::move(callbacks))
 {}
 
 GStreamerPipeline::~GStreamerPipeline()
@@ -206,11 +201,6 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
     stop();
     throw std::runtime_error("Failed to set video pipeline to PLAYING.");
   }
-
-  LogEvent(kLogger, "video_stream_pipeline_playing")
-    .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
-    .info();
 }
 
 void GStreamerPipeline::stop()

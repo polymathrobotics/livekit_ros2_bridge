@@ -34,10 +34,7 @@ Node::Node(const rclcpp::NodeOptions & options)
     runtime_ =
       std::make_unique<Runtime>(*this, createRoomConnection(), loadRuntimeConfig(get_node_parameters_interface()));
   } catch (...) {
-    LogEvent(get_logger(), "node_startup_failed")
-      .field("reason", "runtime_initialization_failed")
-      .fieldException("error", std::current_exception())
-      .error();
+    LogEvent(get_logger(), "node_startup_failed").fieldException("error", std::current_exception()).error();
     throw;
   }
 }

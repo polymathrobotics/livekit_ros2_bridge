@@ -38,7 +38,6 @@ GStreamerVideoStream::GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPubli
 : spec_(std::move(spec))
 , publisher_(publisher)
 , pipeline_(
-    spec_,
     GStreamerPipelineCallbacks{
       [this]() {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -88,16 +87,6 @@ void GStreamerVideoStream::close()
     restart_thread.join();
   }
 
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (pipeline_.isActive() || restart_pending_) {
-      LogEvent(kLogger, "video_stream_source_shutdown")
-        .field("stream_key", spec_.stream_key)
-        .fieldIf(restart_pending_, "restart_pending", true)
-        .info();
-    }
-  }
-
   pipeline_.stop();
 }
 
@@ -114,7 +103,6 @@ void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
   restart_pending_ = true;
   LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
     .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
     .warn();

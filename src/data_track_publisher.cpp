@@ -29,7 +29,6 @@
 #include "livekit/data_track_error.h"
 #include "livekit/data_track_frame.h"
 #include "livekit/result.h"
-#include "protocol/constants.hpp"
 #include "rclcpp/create_generic_subscription.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
@@ -177,6 +176,7 @@ public:
         track_.reset();
       } catch (...) {
         LogEvent(kLogger, "data_track_unpublish_failed")
+          .field("resource", topic_)
           .field("track_name", track_name_)
           .fieldException("error", std::current_exception())
           .warn();
@@ -248,20 +248,19 @@ private:
     const rclcpp::QoS base_qos{rclcpp::KeepLast(kSubscriptionDepth)};
     const ResolvedSubscriptionQos qos = resolveSubscriptionQos(graph_, topic_, base_qos, qos_config_);
 
-    LogEvent(kLogger, "subscription_qos_resolved")
-      .field("resource", topic_)
-      .field("delivery", protocol::kDataDeliveryKind)
-      .field("interface_type", interface_type_)
-      .field("publisher_count", qos.publisher_count)
-      .field("source", subscriptionQosSourceString(qos.source))
-      .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-      .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
-      .fieldIf(qos.used_publisher_qos, "used_publisher_qos", true)
-      .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
-      .fieldIf(qos.mixed_durability, "mixed_durability", true)
-      .fieldIfNotEmpty("override_id", qos.override_id)
-      .fieldIfNotEmpty("override_pattern", qos.override_pattern)
-      .info();
+    if (qos.source != SubscriptionQosResolutionSource::Fallback || qos.mixed_reliability || qos.mixed_durability) {
+      LogEvent(kLogger, "subscription_qos_resolved")
+        .field("resource", topic_)
+        .field("interface_type", interface_type_)
+        .field("publisher_count", qos.publisher_count)
+        .field("source", subscriptionQosSourceString(qos.source))
+        .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
+        .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+        .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
+        .fieldIf(qos.mixed_durability, "mixed_durability", true)
+        .fieldIfNotEmpty("override_id", qos.override_id)
+        .info();
+    }
 
     subscription_ = rclcpp::create_generic_subscription(
       topics_,
@@ -315,25 +314,13 @@ void DataTrackPublisher::publish()
     return;
   }
 
-  if (publish_failed_) {
-    LogEvent(kLogger, "data_track_pending")
-      .field("resource", topic_)
-      .field("track_name", track_name_)
-      .field("reason", "retry_after_publish_failure")
-      .info();
-  }
-
   try {
     publication_ = std::make_unique<Publication>(
       topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
-    publish_failed_ = false;
-    LogEvent(kLogger, "data_track_published").field("resource", topic_).field("track_name", track_name_).info();
   } catch (...) {
-    publish_failed_ = true;
     LogEvent(kLogger, "data_track_publish_error")
       .field("resource", topic_)
       .field("track_name", track_name_)
-      .field("stage", "activate_publication")
       .fieldException("error", std::current_exception())
       .warn();
   }

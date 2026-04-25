@@ -71,9 +71,11 @@ EventT && addLogFields(EventT && event, const char * method_name, const livekit:
                                     dynamic_cast<const std::out_of_range *>(&exc) != nullptr;
   const auto code = validation_exception ? protocol::kInvalidRequestRpcError : protocol::kInternalRpcError;
   const bool internal_error = code == protocol::kInternalRpcError;
-  const char * reason = internal_error ? "internal" : "invalid_request";
   LogEvent event(kLogger, internal_error ? "rpc_request_failed" : "rpc_request_rejected");
-  addLogFields(event, method_name, invocation).field("reason", reason);
+  addLogFields(event, method_name, invocation);
+  if (!internal_error) {
+    event.field("reason", "invalid_request");
+  }
   const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
   if (validation != nullptr) {
     event.field("request_field", validation->field());
@@ -133,9 +135,10 @@ std::optional<std::string> withCallerIdentity(
 {
   // Reject anonymous callers before parsing; validation details must not leak.
   if (invocation.caller_identity.empty()) {
-    addLogFields(LogEvent(kLogger, "rpc_request_rejected"), method_name, invocation)
+    LogEvent(kLogger, "rpc_request_rejected")
+      .field("method", method_name)
+      .fieldOr("request_id", invocation.request_id)
       .field("reason", "unauthorized")
-      .field("error", "caller_identity_required")
       .warn();
     throw livekit::RpcError(protocol::kUnauthorizedRpcError, "caller_identity is required for this RPC");
   }
@@ -217,7 +220,6 @@ std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationDa
       addLogFields(LogEvent(kLogger, "rpc_request_rejected"), protocol::kCallServiceRpc, invocation)
         .field("reason", "forbidden")
         .field("service", request.service)
-        .field("error", "service_not_permitted")
         .warn();
       throw livekit::RpcError(protocol::kForbiddenRpcError, "ROS service '" + request.service + "' not permitted.");
     }

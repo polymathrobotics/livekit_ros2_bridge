@@ -101,7 +101,7 @@ protected:
 
 TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSink)
 {
-  GStreamerPipeline pipeline(makeOtherVideoSpec(), makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline, "videotestsrc is-live=true ! fakesink name=bridge_video_sink", false, "must be a GstAppSink");
@@ -109,7 +109,7 @@ TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSink)
 
 TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 {
-  GStreamerPipeline pipeline(makeOtherVideoSpec(), makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline,
@@ -120,7 +120,7 @@ TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 
 TEST_F(VideoStreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 {
-  GStreamerPipeline pipeline(makeOtherVideoSpec(), makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
   pipeline.start("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 

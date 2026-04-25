@@ -23,7 +23,6 @@
 #include <string>
 
 #include "ament_index_cpp/get_resource.hpp"
-#include "utils/log_event.hpp"
 #include "utils/lru_cache.hpp"
 
 namespace livekit_ros2_bridge
@@ -35,7 +34,6 @@ namespace
 constexpr char kServiceDefinitionSeparator[] = "---";
 constexpr char kRosidlInterfacesResourceType[] = "rosidl_interfaces";
 constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
-const auto kLogger = rclcpp::get_logger("interface_definition_lookup");
 
 [[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
 {
@@ -106,12 +104,10 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
     std::rethrow_exception(*failure);
   }
 
-  const char * reason = "package_not_found";
   try {
     const TypeParts parts = TypeParts::parse(interface_type);
 
     const std::filesystem::path path = resolveInterfaceDefinitionPath(parts);
-    reason = "definition_file_unavailable";
     std::ifstream file(path);
     if (!file.is_open()) {
       throw std::runtime_error("Cannot open interface definition file: " + path.string());
@@ -120,20 +116,11 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
     std::ostringstream body;
     body << file.rdbuf();
     return body.str();
-  } catch (const std::invalid_argument & exc) {
+  } catch (const std::invalid_argument &) {
     failure_cache.insertOrAssign(interface_type, std::current_exception());
-    LogEvent(kLogger, "interface_definition_lookup_rejected")
-      .field("interface_type", interface_type)
-      .field("error", exc.what())
-      .warn();
     throw;
-  } catch (const std::runtime_error & exc) {
+  } catch (const std::runtime_error &) {
     failure_cache.insertOrAssign(interface_type, std::current_exception());
-    LogEvent(kLogger, "interface_definition_lookup_failed")
-      .field("interface_type", interface_type)
-      .field("reason", reason)
-      .field("error", exc.what())
-      .error();
     throw;
   }
 }

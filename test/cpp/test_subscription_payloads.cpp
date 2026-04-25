@@ -251,23 +251,6 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
     unsigned_body, SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/lidar"), std::numeric_limits<int>::max());
 }
 
-TEST(SubscriptionPayloadsTest, ParseHeartbeatRecordsIntervalClampMetadata)
-{
-  const nlohmann::json body = {
-    {"session_id", "session-1"},
-    {"subscriptions",
-     {{{"kind", "topic"},
-       {"name", "/lidar"},
-       {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::int64_t>::max()}}}}}}};
-
-  const auto heartbeat = parseHeartbeatPayload(body.dump());
-
-  ASSERT_EQ(heartbeat.interval_clamps.size(), 1U);
-  EXPECT_EQ(heartbeat.interval_clamps.front().kind, SubscriptionTargetKind::Topic);
-  EXPECT_EQ(heartbeat.interval_clamps.front().name, expandHeartbeatTopicName("/lidar"));
-  EXPECT_EQ(heartbeat.interval_clamps.front().boundary, SubscriptionIntervalClampBoundary::IntMax);
-}
-
 TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)
 {
   expectDemand(

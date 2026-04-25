@@ -102,7 +102,6 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", normalized_topic)
       .field("reason", "no_matching_ros_topic_rule")
-      .field("configured_rules", rules.size())
       .warn();
     throw std::runtime_error("no matching video rule for topic '" + std::string(normalized_topic) + "'");
   }
@@ -149,7 +148,7 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   if (!ingest_mode.has_value()) {
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", normalized_topic)
-      .field("interface_type", interface_type)
+      .fieldOr("interface_type", interface_type)
       .field("reason", "unsupported_ros_interface_type")
       .warn();
     throw std::invalid_argument("ROS topic is not a supported video type.");

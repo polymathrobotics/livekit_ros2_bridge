@@ -24,7 +24,6 @@
 
 #include "livekit/video_frame.h"
 #include "utils/gstreamer_raii.hpp"
-#include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -44,7 +43,7 @@ struct GStreamerPipelineCallbacks
 class GStreamerPipeline final
 {
 public:
-  GStreamerPipeline(VideoStreamSpec spec, GStreamerPipelineCallbacks callbacks);
+  explicit GStreamerPipeline(GStreamerPipelineCallbacks callbacks);
   ~GStreamerPipeline();
 
   GStreamerPipeline(const GStreamerPipeline &) = delete;
@@ -63,7 +62,6 @@ private:
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
 
-  VideoStreamSpec spec_;
   GStreamerPipelineCallbacks callbacks_;
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;

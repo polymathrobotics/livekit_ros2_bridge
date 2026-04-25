@@ -96,8 +96,7 @@ void logFrameLayoutChange(const VideoStreamSpec & spec, const FrameLayout & prev
   if (previous_layout.format != layout.format) {
     const char * previous_format_name = gst_video_format_to_string(previous_layout.format);
     const char * format_name = gst_video_format_to_string(layout.format);
-    event.field("previous_format", previous_format_name != nullptr ? previous_format_name : "unknown")
-      .field("format", format_name != nullptr ? format_name : "unknown");
+    event.fieldOr("previous_format", previous_format_name).fieldOr("format", format_name);
   }
   event.info();
 }
@@ -129,20 +128,21 @@ GstBufferPtr makeStampedGstBuffer(
 
 void logSubscriptionQos(const VideoStreamSpec & spec, const ResolvedSubscriptionQos & qos)
 {
+  if (qos.source == SubscriptionQosResolutionSource::Fallback && !qos.mixed_reliability && !qos.mixed_durability) {
+    return;
+  }
+
   const auto & input = requireRosVideoInput(spec);
   LogEvent(kLogger, "subscription_qos_resolved")
     .field("resource", input.topic)
-    .field("delivery", "video")
     .field("interface_type", input.interface_type)
     .field("publisher_count", qos.publisher_count)
     .field("source", subscriptionQosSourceString(qos.source))
     .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
     .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
-    .fieldIf(qos.used_publisher_qos, "used_publisher_qos", true)
     .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
     .fieldIf(qos.mixed_durability, "mixed_durability", true)
     .fieldIfNotEmpty("override_id", qos.override_id)
-    .fieldIfNotEmpty("override_pattern", qos.override_pattern)
     .info();
 }
 
@@ -159,7 +159,6 @@ RosVideoStream::RosVideoStream(
 : spec_(std::move(spec))
 , publisher_(publisher)
 , pipeline_(
-    spec_,
     GStreamerPipelineCallbacks{
       [this]() { return isShutdown(); },
       [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
@@ -265,7 +264,6 @@ void RosVideoStream::onPipelineFailure(const std::string & reason)
   failure_pending_ = true;
   LogEvent(kLogger, "video_stream_pipeline_recovery_disabled")
     .field("stream_key", spec_.stream_key)
-    .field("track_name", spec_.track_name)
     .field("reason", reason)
     .warn();
 
@@ -394,12 +392,10 @@ void RosVideoStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::
     bool start_pipeline = true;
     if (compressed_codec_) {
       if (*compressed_codec_ != codec) {
-        LogEvent(kLogger, "video_stream_input_codec_changed")
-          .field("stream_key", spec_.stream_key)
-          .field("topic", requireRosVideoInput(spec_).topic)
-          .field("previous_codec", *compressed_codec_)
-          .field("codec", codec)
-          .info();
+        const auto & input = requireRosVideoInput(spec_);
+        LogEvent event(kLogger, "video_stream_input_codec_changed");
+        event.field("stream_key", spec_.stream_key).field("topic", input.topic);
+        event.field("previous_codec", *compressed_codec_).field("codec", codec).info();
       } else if (pipeline_.isActive()) {
         start_pipeline = false;
       }

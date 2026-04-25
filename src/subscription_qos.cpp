@@ -133,7 +133,6 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 
   if (match != nullptr) {
     resolved.override_id = match->id;
-    resolved.override_pattern = match->pattern;
   }
 
   const auto reliability = summarizePublisherPolicy(
@@ -153,23 +152,24 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     return resolved;
   }
 
+  bool used_publisher_qos = false;
   if (match != nullptr && match->reliability.has_value()) {
     resolved.qos.reliability(*match->reliability);
   } else if (reliability.resolved_policy.has_value()) {
     resolved.qos.reliability(*reliability.resolved_policy);
-    resolved.used_publisher_qos = true;
+    used_publisher_qos = true;
   }
 
   if (match != nullptr && match->durability.has_value()) {
     resolved.qos.durability(*match->durability);
   } else if (durability.resolved_policy.has_value()) {
     resolved.qos.durability(*durability.resolved_policy);
-    resolved.used_publisher_qos = true;
+    used_publisher_qos = true;
   }
 
   if (match != nullptr) {
     resolved.source = SubscriptionQosResolutionSource::Override;
-  } else if (resolved.used_publisher_qos) {
+  } else if (used_publisher_qos) {
     resolved.source = SubscriptionQosResolutionSource::PublisherQos;
   }
 

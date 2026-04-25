@@ -54,12 +54,10 @@ struct ResolvedSubscriptionQos
   rclcpp::QoS qos{rclcpp::KeepLast(2)};
   // Stays `Override` when publisher QoS fills auto axes under a matching override.
   SubscriptionQosResolutionSource source = SubscriptionQosResolutionSource::Fallback;
-  bool used_publisher_qos = false;
   bool mixed_reliability = false;
   bool mixed_durability = false;
   std::size_t publisher_count = 0;
   std::string override_id;
-  std::string override_pattern;
 };
 
 // Per-axis precedence: override, discovered publisher QoS, then `base_qos`.

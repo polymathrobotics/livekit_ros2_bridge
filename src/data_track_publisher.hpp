@@ -75,7 +75,6 @@ private:
   std::string track_name_;
 
   int interval_ms_ = 0;
-  bool publish_failed_ = false;
   std::unique_ptr<Publication> publication_;
 };
 
