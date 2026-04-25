@@ -46,12 +46,10 @@ TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
   EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
 }
 
-TEST(RequireSingleInterfaceTypeTest, RejectsMissingOrEmptyTypeSetsAsNoTypesFound)
+TEST(RequireSingleInterfaceTypeTest, RejectsMissingTypeSetsAsNoTypesFound)
 {
-  const std::string expected_error = "No ROS types found for topic '/foo'.";
-
-  EXPECT_EQ(requireSingleInterfaceTypeError(RosGraphNamesAndTypes{}, "/foo", "topic"), expected_error);
-  EXPECT_EQ(requireSingleInterfaceTypeError(RosGraphNamesAndTypes{{"/foo", {}}}, "/foo", "topic"), expected_error);
+  EXPECT_EQ(
+    requireSingleInterfaceTypeError(RosGraphNamesAndTypes{}, "/foo", "topic"), "No ROS types found for topic '/foo'.");
 }
 
 TEST(RequireSingleInterfaceTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)

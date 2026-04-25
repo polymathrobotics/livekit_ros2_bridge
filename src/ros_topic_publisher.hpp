@@ -16,11 +16,12 @@
 
 #include <atomic>
 #include <cstddef>
-#include <functional>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "access_policy.hpp"
 #include "protocol/topic_publish.hpp"
@@ -28,19 +29,10 @@
 #include "rclcpp/generic_publisher.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
-#include "utils/interface_type_utils.hpp"
-
-namespace livekit
-{
-struct UserDataPacketEvent;
-}  // namespace livekit
 
 namespace livekit_ros2_bridge
 {
 
-// Best-effort LiveKit -> ROS topic publisher that caches concrete ROS
-// publishers per topic. Failed publish attempts are logged and dropped rather
-// than surfacing exceptions to the caller.
 class RosTopicPublisher final
 {
 public:
@@ -57,26 +49,19 @@ public:
     std::size_t max_topics);
   ~RosTopicPublisher();
 
-  // Publishes best-effort: denied topics, type mismatches, shutdown, and ROS
-  // publisher errors are logged and ignored without throwing to the caller.
-  // `request.message` must already contain serialized ROS CDR bytes for
-  // `request.interface_type`. Cold topics must already exist in the ROS graph
-  // with exactly one interface type. After the first successful publish, later
-  // requests are checked against the cached publisher/type instead of
-  // consulting the graph again. Once the bounded publisher cache is full, new
-  // topics are rejected until shutdown clears the cached handles.
+  // Invalid or denied requests, ROS publisher errors, and calls after shutdown
+  // are dropped without throwing. `request.message` is serialized ROS CDR bytes
+  // for `request.interface_type`; first publish pins the topic to its graph type.
   void publish(const std::string & requester_identity, const TopicPublishRequest & request);
-  void handlePublishPacket(const std::string & requester_identity, const livekit::UserDataPacketEvent & event);
 
-  // Idempotently rejects later publish() calls and clears the bridge-owned
-  // cached publisher handles.
+  // Malformed payloads and missing requester identities are logged and dropped.
+  void handlePublishPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
+
   void shutdown();
 
 private:
   struct PublisherEntry
   {
-    // Cache the validated interface type alongside the reusable publisher so
-    // cache hits can reject mismatched requests without another graph lookup.
     std::string type;
     std::shared_ptr<rclcpp::GenericPublisher> publisher;
   };
@@ -85,23 +70,12 @@ private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
   rclcpp::Clock::SharedPtr clock_;
   AccessPolicy access_policy_;
-  // Terminal lifecycle bit shared with in-flight publish() calls. publish()
-  // rechecks it before reusing or updating cache state so shutdown() does not
-  // resurrect bridge-owned publishers after teardown begins.
   std::atomic<bool> is_shutdown_{false};
   std::size_t max_topics_;
-  // Cache entries own the bridge's reusable publisher handles. The shared_ptr
-  // lets an in-flight publish finish even if shutdown() clears the cache
-  // concurrently.
+
   std::mutex publishers_mutex_;
+  // shared_ptr lets an in-flight publish finish after shutdown() clears the map.
   std::unordered_map<std::string, PublisherEntry> publishers_;
-  // Test-only seam used to force deterministic failures or shutdown after
-  // publisher resolution/creation but immediately before publish().
-  std::function<void()> before_publish_handler_;
-  // Test-only topic graph provider used for graph states that ROS itself will
-  // not let a single test process construct, such as conflicting in-process
-  // subscriptions on the same topic.
-  std::function<RosGraphNamesAndTypes()> topic_graph_provider_;
 };
 
 }  // namespace livekit_ros2_bridge

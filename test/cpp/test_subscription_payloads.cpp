@@ -100,11 +100,10 @@ SubscriptionReportedStatus reportedError(SubscriptionErrorStatus status)
 nlohmann::json parseSerializedStatusPayload(
   const std::vector<SubscriptionReportedStatus> & statuses,
   const std::optional<std::string> & session_id,
-  const std::optional<std::chrono::steady_clock::time_point> & expiry,
-  std::chrono::steady_clock::time_point now)
+  const std::optional<std::chrono::steady_clock::time_point> & expiry)
 {
   const SubscriptionStatusReport report{statuses, session_id, expiry};
-  return nlohmann::json::parse(protocol::subscriptions::serializeStatusReport(report, now));
+  return nlohmann::json::parse(protocol::subscriptions::serializeStatusReport(report));
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
@@ -337,8 +336,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
     parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data), reportedStatus(other_video)},
       std::nullopt,
-      std::nullopt,
-      std::chrono::steady_clock::time_point{}),
+      std::nullopt),
     expected);
 }
 
@@ -356,12 +354,6 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
     {"error", {{"reason", "forbidden"}, {"message", "ROS topic '/battery_state' not permitted."}}},
   });
   expected["subscriptions"].push_back({
-    {"kind", "topic"},
-    {"name", "/camera/front"},
-    {"status", "error"},
-    {"error", {{"reason", "unavailable"}, {"message", "Video stream is unavailable."}}},
-  });
-  expected["subscriptions"].push_back({
     {"kind", "other_video"},
     {"name", "/sources/missing"},
     {"status", "error"},
@@ -377,19 +369,13 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
           SubscriptionStatusErrorReason::Forbidden,
           "ROS topic '/battery_state' not permitted.")),
         reportedError(makeErrorStatus(
-          SubscriptionTargetKind::Topic,
-          "/camera/front",
-          SubscriptionStatusErrorReason::Unavailable,
-          "Video stream is unavailable.")),
-        reportedError(makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
           SubscriptionStatusErrorReason::NotFound,
           "Unknown other video source '/sources/missing'.")),
       },
       std::nullopt,
-      std::nullopt,
-      std::chrono::steady_clock::time_point{}),
+      std::nullopt),
     expected);
 }
 
@@ -400,15 +386,14 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.interval_ms = 100;
 
-  const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
   const auto session_id = std::optional<std::string>{"session-1"};
-  const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
+  const auto expiry =
+    std::optional<std::chrono::steady_clock::time_point>{std::chrono::steady_clock::now() + std::chrono::seconds(45)};
 
   nlohmann::json expected = {
     {"v", protocol::kProtocolVersion},
     {"type", protocol::kStatusTopic},
     {"session_id", "session-1"},
-    {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -423,10 +408,13 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
       {"interval_ms", 100}}},
   });
 
-  EXPECT_EQ(
-    parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, session_id, expiry, now),
-    expected);
+  auto serialized = parseSerializedStatusPayload(
+    std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, session_id, expiry);
+  ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
+  serialized.erase("lease_expires_in_ms");
+  EXPECT_EQ(serialized, expected);
 }
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWithoutSessionId)
@@ -436,13 +424,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
   topic_data.interface_type = "sensor_msgs/msg/BatteryState";
   topic_data.interval_ms = 100;
 
-  const auto now = std::chrono::steady_clock::time_point{std::chrono::milliseconds(1000)};
-  const auto expiry = std::optional<std::chrono::steady_clock::time_point>{now + std::chrono::milliseconds(45000)};
+  const auto expiry =
+    std::optional<std::chrono::steady_clock::time_point>{std::chrono::steady_clock::now() + std::chrono::seconds(45)};
 
   nlohmann::json expected = {
     {"v", protocol::kProtocolVersion},
     {"type", protocol::kStatusTopic},
-    {"lease_expires_in_ms", 45000},
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
@@ -457,10 +444,13 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
       {"interval_ms", 100}}},
   });
 
-  EXPECT_EQ(
-    parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, std::nullopt, expiry, now),
-    expected);
+  auto serialized = parseSerializedStatusPayload(
+    std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, std::nullopt, expiry);
+  ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
+  EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
+  EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
+  serialized.erase("lease_expires_in_ms");
+  EXPECT_EQ(serialized, expected);
 }
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
@@ -500,27 +490,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
           "No ROS types found for topic '/nonexistent_topic'.")),
       },
       std::nullopt,
-      std::nullopt,
-      std::chrono::steady_clock::time_point{}),
+      std::nullopt),
     expected);
-}
-
-TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesRejectsUnknownDeliveryKind)
-{
-  SubscriptionStatus status;
-  status.kind = SubscriptionTargetKind::Topic;
-  status.name = "/camera/image";
-  status.delivery = static_cast<SubscriptionDeliveryKind>(99);
-
-  EXPECT_THROW(
-    (void)protocol::subscriptions::serializeStatusReport(
-      SubscriptionStatusReport{
-        std::vector<SubscriptionReportedStatus>{reportedStatus(status)},
-        std::nullopt,
-        std::nullopt,
-      },
-      std::chrono::steady_clock::time_point{}),
-    std::invalid_argument);
 }
 
 }  // namespace

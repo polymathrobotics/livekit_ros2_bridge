@@ -105,8 +105,6 @@ const char * toWire(SubscriptionStatusErrorReason reason)
   switch (reason) {
     case SubscriptionStatusErrorReason::Forbidden:
       return "forbidden";
-    case SubscriptionStatusErrorReason::Unavailable:
-      return "unavailable";
     case SubscriptionStatusErrorReason::NotFound:
       return "not_found";
   }
@@ -120,8 +118,6 @@ ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
     throw std::invalid_argument(message);
   }
 
-  // Heartbeats can carry JSON integers wider than the local `int` storage used by
-  // `SubscriptionDemand`, so clamp before assigning instead of relying on narrowing casts.
   if (value.is_number_unsigned()) {
     const auto raw = value.get<std::uint64_t>();
     const auto max = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
@@ -205,15 +201,6 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
 
 nlohmann::json serialize(const SubscriptionStatus & status)
 {
-  if (status.delivery != SubscriptionDeliveryKind::Video && status.delivery != SubscriptionDeliveryKind::Data) {
-    LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", toWire(status.kind))
-      .field("name", status.name)
-      .field("delivery_kind", static_cast<int>(status.delivery))
-      .error();
-    throw std::invalid_argument("subscription status delivery kind is invalid");
-  }
-
   nlohmann::json body = {
     {"kind", toWire(status.kind)},
     {"name", status.name},
@@ -232,8 +219,7 @@ nlohmann::json serialize(const SubscriptionStatus & status)
     {"track_name", status.track_name},
   };
   if (status.delivery == SubscriptionDeliveryKind::Data) {
-    // Control-path data subscriptions currently transport ROS messages as CDR bytes on a
-    // LiveKit data track, so the content type is fixed by protocol rather than caller input.
+    // CDR content type is fixed by the subscription protocol, not caller-selected metadata.
     delivery["content_type"] = protocol::kCdrContentType;
     delivery["interval_ms"] = status.interval_ms;
   }
@@ -244,23 +230,11 @@ nlohmann::json serialize(const SubscriptionStatus & status)
 
 nlohmann::json serialize(const SubscriptionErrorStatus & status)
 {
-  const char * reason = nullptr;
-  try {
-    reason = toWire(status.reason);
-  } catch (const std::invalid_argument &) {
-    LogEvent(kLogger, "subscription_status_serialize_failed")
-      .field("kind", toWire(status.kind))
-      .field("name", status.name)
-      .field("error_reason", static_cast<int>(status.reason))
-      .error();
-    throw;
-  }
-
   return {
     {"kind", toWire(status.kind)},
     {"name", status.name},
     {"status", "error"},
-    {"error", {{"reason", reason}, {"message", status.message}}},
+    {"error", {{"reason", toWire(status.reason)}, {"message", status.message}}},
   };
 }
 
@@ -298,9 +272,6 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
       }
     }
 
-    // Coalesce within one heartbeat on the canonical `(kind, name)` pair. Topic and
-    // other-video identifiers may share the same text, so name alone would alias
-    // distinct protocol targets.
     const auto [it, inserted] =
       index_by_key.emplace(std::string(toWire(demand.kind)) + ":" + demand.name, heartbeat.demands.size());
     if (inserted) {
@@ -333,7 +304,7 @@ SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload)
       payload, "Invalid JSON in subscription heartbeat", "Subscription heartbeat must be a JSON object"));
 }
 
-std::string serializeStatusReport(const SubscriptionStatusReport & report, std::chrono::steady_clock::time_point now)
+std::string serializeStatusReport(const SubscriptionStatusReport & report)
 {
   nlohmann::json entries = nlohmann::json::array();
   for (const auto & status : report.statuses) {
@@ -343,23 +314,18 @@ std::string serializeStatusReport(const SubscriptionStatusReport & report, std::
   nlohmann::json body = {
     {"v", protocol::kProtocolVersion},
     {"type", protocol::kStatusTopic},
-    // The protocol contract keeps the broad `subscriptions` array name even though each object is one
-    // reported subscription-status entry.
+    // Protocol compatibility keeps status entries under `subscriptions`.
     {"subscriptions", entries},
   };
   if (report.session_id.has_value()) {
     body["session_id"] = *report.session_id;
   }
   if (report.lease_expiry.has_value()) {
+    const auto now = std::chrono::steady_clock::now();
     body["lease_expires_in_ms"] =
       std::chrono::duration_cast<std::chrono::milliseconds>(*report.lease_expiry - now).count();
   }
 
   return body.dump();
-}
-
-std::string serializeStatusReport(const SubscriptionStatusReport & report)
-{
-  return serializeStatusReport(report, std::chrono::steady_clock::now());
 }
 }  // namespace livekit_ros2_bridge::protocol::subscriptions

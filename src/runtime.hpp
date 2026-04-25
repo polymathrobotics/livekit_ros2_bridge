@@ -58,6 +58,7 @@ using RuntimeNodeInterfaces = rclcpp::node_interfaces::NodeInterfaces<
 class RuntimeCallbackGate final
 {
 public:
+  // Prevents SDK-thread callbacks from outliving Runtime-owned targets.
   template <typename Fn>
   bool runIfOpen(Fn && fn)
   {
@@ -79,6 +80,7 @@ public:
     return true;
   }
 
+  // Waits for active callbacks; returns true only for the first close.
   bool closeAndWait();
 
 private:
@@ -108,9 +110,6 @@ private:
   void submitToExecutor(std::function<void()> work);
   RoomEventCallbacks makeRoomEventCallbacks();
 
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base_;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
-  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers_;
   rclcpp::Clock::SharedPtr clock_;
   rclcpp::Logger logger_;
   RuntimeConfig config_;

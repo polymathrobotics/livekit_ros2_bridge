@@ -29,9 +29,9 @@ namespace livekit_ros2_bridge
 struct TopicSubscriptionQosOverride
 {
   std::string id;
-  // Normalized topic pattern. If multiple overrides match, the longest pattern
-  // wins; equal-length ties preserve config order.
+  // Longest matching pattern wins; equal-length ties preserve config order.
   std::string pattern;
+  // `std::nullopt` means auto for that axis.
   std::optional<rclcpp::ReliabilityPolicy> reliability;
   std::optional<rclcpp::DurabilityPolicy> durability;
 };
@@ -50,39 +50,27 @@ enum class SubscriptionQosResolutionSource
 
 struct ResolvedSubscriptionQos
 {
-  // Starts from the caller's base QoS. Resolution only mutates reliability and
-  // durability; all other QoS axes stay as provided by the caller.
+  // Resolution mutates only reliability and durability from the caller's base QoS.
   rclcpp::QoS qos{rclcpp::KeepLast(2)};
-  // Highest-precedence contributor to the final result. This remains
-  // `Override` when a matching override leaves one axis on auto and
-  // publisher QoS fills that axis.
+  // Stays `Override` when publisher QoS fills auto axes under a matching override.
   SubscriptionQosResolutionSource source = SubscriptionQosResolutionSource::Fallback;
-  // True when at least one resolved axis came from discovered publisher QoS.
   bool used_publisher_qos = false;
-  // Diagnostic flags derived from the discovered publisher set before override
-  // application. They explain why auto resolution chose the weaker policy.
   bool mixed_reliability = false;
   bool mixed_durability = false;
-  // Number of publisher profiles considered during resolution.
   std::size_t publisher_count = 0;
-  // Populated whenever an override matches this topic, even if some axes stay
-  // on auto and are filled from publisher QoS or the caller's base QoS.
   std::string override_id;
   std::string override_pattern;
 };
 
-// Resolve per-topic subscription QoS with per-axis precedence:
-// matching override -> discovered publisher QoS -> base_qos. `config` may be
-// null. `publisher_qos_profiles` should describe one logical snapshot of the
-// topic's publishers so the result is internally consistent.
+// Per-axis precedence: override, discovered publisher QoS, then `base_qos`.
+// `publisher_qos_profiles` must come from one graph snapshot; `config` may be null.
 ResolvedSubscriptionQos resolveSubscriptionQos(
   std::string_view topic,
   const rclcpp::QoS & base_qos,
   const SubscriptionQosConfig * config,
   const std::vector<rclcpp::QoS> & publisher_qos_profiles);
 
-// Convenience overload that snapshots publisher QoS from the ROS graph before
-// applying the same precedence rules as the vector-based overload.
+// Throws if `graph` is null.
 ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::node_interfaces::NodeGraphInterface::SharedPtr & graph,
   std::string_view topic,

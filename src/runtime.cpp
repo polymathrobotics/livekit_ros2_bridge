@@ -26,40 +26,28 @@
 namespace livekit_ros2_bridge
 {
 
-namespace
-{
-
-std::unique_ptr<RoomConnection> requireRoomConnection(std::unique_ptr<RoomConnection> connection)
-{
-  if (!connection) {
-    throw std::invalid_argument("Runtime requires a non-null RoomConnection");
-  }
-  return connection;
-}
-
-}  // namespace
-
 Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
-: base_(interfaces.get_node_base_interface())
-, graph_(interfaces.get_node_graph_interface())
-, timers_(interfaces.get_node_timers_interface())
-, clock_(interfaces.get_node_clock_interface()->get_clock())
+: clock_(interfaces.get_node_clock_interface()->get_clock())
 , logger_(interfaces.get_node_logging_interface()->get_logger())
 , config_(std::move(config))
-, room_connection_(requireRoomConnection(std::move(connection)))
+, room_connection_(std::move(connection))
 , ros_executor_queue_(interfaces, clock_)
-, ros_topic_publisher_(interfaces.get_node_topics_interface(), graph_, clock_, config_.access_policy)
-, ros_service_caller_(base_, graph_, interfaces.get_node_waitables_interface())
+, ros_topic_publisher_(
+    interfaces.get_node_topics_interface(), interfaces.get_node_graph_interface(), clock_, config_.access_policy)
+, ros_service_caller_(
+    interfaces.get_node_base_interface(),
+    interfaces.get_node_graph_interface(),
+    interfaces.get_node_waitables_interface())
 , subscription_lease_manager_(
     interfaces.get_node_parameters_interface(),
     interfaces.get_node_topics_interface(),
-    graph_,
+    interfaces.get_node_graph_interface(),
     clock_,
     *room_connection_,
     config_.access_policy,
     &config_.subscription_qos,
     &config_.video_stream)
-, rpc_router_(graph_, config_.access_policy, ros_executor_queue_, ros_service_caller_)
+, rpc_router_(interfaces.get_node_graph_interface(), config_.access_policy, ros_executor_queue_, ros_service_caller_)
 , watchdog_(config_.health, interfaces, [this]() { return callback_gate_.closeAndWait(); })
 {
   LogEvent(logger_, "runtime_startup_begin")
@@ -68,7 +56,9 @@ Runtime::Runtime(RuntimeNodeInterfaces interfaces, std::unique_ptr<RoomConnectio
     .info();
 
   subscription_lease_manager_.startLeaseGcTimer(
-    base_, timers_, [this](std::function<void()> work) { submitToExecutor(std::move(work)); });
+    interfaces.get_node_base_interface(), interfaces.get_node_timers_interface(), [this](std::function<void()> work) {
+      submitToExecutor(std::move(work));
+    });
 
   const bool rpcs_registered = rpc_router_.registerRpcs(*room_connection_);
   if (!rpcs_registered) {
@@ -109,9 +99,8 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
       .warnThrottle(*clock_, std::chrono::seconds(5));
   };
   callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
-    (void)callback_gate_.runIfOpen([this, &event]() {
-      onRoomRemoteParticipantDisconnected(event.participant == nullptr ? "" : event.participant->identity());
-    });
+    (void)callback_gate_.runIfOpen(
+      [this, &event]() { onRoomRemoteParticipantDisconnected(event.participant->identity()); });
   };
 
   return callbacks;
@@ -152,12 +141,10 @@ void Runtime::onRoomUserPacketReceived(const livekit::UserDataPacketEvent & even
   const std::string topic = event.topic;
   const std::string requester_identity = event.participant == nullptr ? "" : event.participant->identity();
 
-  // LiveKit owns the event lifetime, so executor work must capture only copied fields.
+  // SDK event and participant lifetimes do not extend to queued ROS work.
   if (topic == protocol::kRosPublishTopic) {
-    livekit::UserDataPacketEvent event_snapshot = event;
-    event_snapshot.participant = nullptr;
-    submitToExecutor([this, requester_identity, event_snapshot = std::move(event_snapshot)]() {
-      ros_topic_publisher_.handlePublishPacket(requester_identity, event_snapshot);
+    submitToExecutor([this, requester_identity, payload = event.data]() {
+      ros_topic_publisher_.handlePublishPayload(requester_identity, payload);
     });
     return;
   }

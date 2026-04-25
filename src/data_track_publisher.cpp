@@ -91,9 +91,7 @@ public:
     std::optional<Clock::time_point> last_delivery_at;
   };
 
-  // Shared state touched by the subscription callback. Holding this separately
-  // from Publication lets the callback capture a weak_ptr and self-reject once
-  // Publication has closed the gate during teardown.
+  // Gates callbacks and keeps the LiveKit track alive while ROS callbacks drain.
   class State final
   {
   public:
@@ -142,9 +140,6 @@ public:
     {
       {
         std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-        if (active_callbacks_ == 0U) {
-          return;
-        }
         --active_callbacks_;
       }
 

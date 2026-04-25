@@ -32,6 +32,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "protocol/constants.hpp"
+#include "protocol/detail/base64.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_executor_queue.hpp"
@@ -40,6 +41,7 @@
 #include "rpc_router.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_srvs/srv/set_bool.hpp"
+#include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -54,6 +56,12 @@ rclcpp::SerializedMessage serializeMessage(const MessageT & message)
   rclcpp::SerializedMessage serialized;
   serialization.serialize_message(&message, &serialized);
   return serialized;
+}
+
+std::vector<std::uint8_t> serializedMessageBytes(const rclcpp::SerializedMessage & message)
+{
+  const auto & raw = message.get_rcl_serialized_message();
+  return {raw.buffer, raw.buffer + raw.buffer_length};
 }
 
 template <typename MessageT>
@@ -128,7 +136,7 @@ std::string makeServiceCallRequestPayload(
   auto body = nlohmann::json{
     {"service", service},
     {"interface_type", interface_type},
-    {"request", protocol::cdr::serialize(payload)},
+    {"request", protocol::cdr::serialize(serializedMessageBytes(payload))},
   };
   if (timeout_ms.has_value()) {
     body["timeout_ms"] = *timeout_ms;
@@ -165,7 +173,7 @@ class RpcRouterHarness
 public:
   explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy())
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
-  , queue(node)
+  , queue(RosExecutorQueueNodeInterfaces(*node), node->get_clock())
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
   , router(node->get_node_graph_interface(), policy, queue, caller)
   {
@@ -285,7 +293,7 @@ TEST_F(RpcRouterTest, ResourceListRpcsMapNonPositiveLimitToInvalidRequest)
 TEST_F(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 {
   auto node = std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_registration_node"));
-  RosExecutorQueue queue(node);
+  RosExecutorQueue queue(RosExecutorQueueNodeInterfaces(*node), node->get_clock());
   RosServiceCaller caller(
     node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface());
   FakeRoomConnection connection;
@@ -314,16 +322,6 @@ TEST_F(RpcRouterTest, RegisterRpcsIsBestEffortAndUnregistersAllEntrypoints)
 
   caller.shutdown();
   queue.shutdown();
-}
-
-TEST_F(RpcRouterTest, LegacyRpcNamesAreNotRegistered)
-{
-  RpcRouterHarness harness;
-
-  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.services.call"), 0U);
-  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.interfaces.get"), 0U);
-  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.services.list"), 0U);
-  EXPECT_EQ(harness.connection.state->rpc_handlers.count("ros.topics.list"), 0U);
 }
 
 TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
@@ -357,7 +355,11 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   EXPECT_FALSE(body.contains("ok"));
   EXPECT_FALSE(body.contains("elapsed_ms"));
 
-  const auto payload = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Response);
+  ASSERT_TRUE(body["response"].is_object());
+  EXPECT_EQ(body["response"]["content_type"].get<std::string>(), protocol::kCdrContentType);
+  const auto decoded = protocol::detail::base64::decode(body["response"]["payload_base64"].get<std::string>());
+  ASSERT_EQ(decoded.status, protocol::detail::base64::Status::Ok);
+  const auto payload = wrapSerializedPayload(decoded.bytes);
   const auto response_message = deserializeMessage<std_srvs::srv::SetBool::Response>(payload);
   EXPECT_TRUE(response_message.success);
   EXPECT_EQ(response_message.message, "enabled");

@@ -21,11 +21,6 @@
 namespace livekit_ros2_bridge
 {
 
-TEST(ScopeExitTest, RejectsEmptyCallbackAtConstruction)
-{
-  EXPECT_THROW({ ScopeExit guard(std::function<void()>{}); }, std::invalid_argument);
-}
-
 TEST(ScopeExitTest, InvokesCallbackDuringExceptionUnwinding)
 {
   int call_count = 0;

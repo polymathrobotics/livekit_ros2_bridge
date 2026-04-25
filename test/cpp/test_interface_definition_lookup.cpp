@@ -25,22 +25,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-class ScopedLookupReset
-{
-public:
-  // lookupInterfaceDefinitions keeps process-wide negative-cache and hook state, so each test
-  // helper brackets its assertions with a full reset.
-  ScopedLookupReset()
-  {
-    resetInterfaceLookupForTest();
-  }
-
-  ~ScopedLookupReset()
-  {
-    resetInterfaceLookupForTest();
-  }
-};
-
 template <typename Exception, typename Fn>
 std::string captureException(Fn && fn, const char * type_name)
 {
@@ -51,38 +35,6 @@ std::string captureException(Fn && fn, const char * type_name)
     return exc.what();
   }
   return "";
-}
-
-template <typename Exception, typename ValidateError>
-void expectFailureCachedUntilReset(
-  const std::string & interface_type, const char * type_name, ValidateError validate_error)
-{
-  // The attempt hook lets the test distinguish a cache hit from a fresh lookup without reaching
-  // into the cache implementation itself.
-  SCOPED_TRACE(interface_type);
-
-  ScopedLookupReset reset;
-
-  int attempts = 0;
-  const auto count_attempts = [&attempts](const std::string &) { ++attempts; };
-  setInterfaceLookupAttemptHookForTest(count_attempts);
-
-  const auto run_lookup = [&interface_type]() { (void)lookupInterfaceDefinitions(interface_type); };
-
-  const std::string first_error = captureException<Exception>(run_lookup, type_name);
-  const std::string cached_error = captureException<Exception>(run_lookup, type_name);
-
-  validate_error(first_error);
-  EXPECT_EQ(cached_error, first_error);
-  EXPECT_EQ(attempts, 1);
-
-  resetInterfaceLookupForTest();
-  setInterfaceLookupAttemptHookForTest(count_attempts);
-
-  const std::string retried_error = captureException<Exception>(run_lookup, type_name);
-
-  EXPECT_EQ(retried_error, first_error);
-  EXPECT_EQ(attempts, 2);
 }
 
 TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
@@ -157,26 +109,25 @@ TEST(InterfaceDefinitionLookupTest, RejectsMalformedTypeShapeAndKind)
     []() { static_cast<void>(lookupInterfaceDefinitions("std_msgs/topic/String")); }(), std::invalid_argument);
 }
 
-TEST(InterfaceDefinitionLookupTest, CachesLookupFailuresUntilReset)
+TEST(InterfaceDefinitionLookupTest, ReportsLookupFailures)
 {
-  expectFailureCachedUntilReset<std::runtime_error>(
-    "nonexistent_pkg/msg/Foo", "std::runtime_error", [](const std::string & first_error) {
-      EXPECT_EQ(first_error, "Package 'nonexistent_pkg' not found in ament index");
-    });
+  const auto missing_package = []() { (void)lookupInterfaceDefinitions("nonexistent_pkg/msg/Foo"); };
+  EXPECT_EQ(
+    captureException<std::runtime_error>(missing_package, "std::runtime_error"),
+    "Package 'nonexistent_pkg' not found in ament index");
 
-  expectFailureCachedUntilReset<std::runtime_error>(
-    "std_msgs/msg/NonexistentMessage", "std::runtime_error", [](const std::string & first_error) {
-      EXPECT_EQ(first_error.find("Cannot open interface definition file: "), 0u);
-      EXPECT_NE(first_error.find("/msg/NonexistentMessage.msg"), std::string::npos);
-    });
+  const auto missing_definition = []() { (void)lookupInterfaceDefinitions("std_msgs/msg/NonexistentMessage"); };
+  const std::string error = captureException<std::runtime_error>(missing_definition, "std::runtime_error");
+  EXPECT_EQ(error.find("Cannot open interface definition file: "), 0u);
+  EXPECT_NE(error.find("/msg/NonexistentMessage.msg"), std::string::npos);
 }
 
-TEST(InterfaceDefinitionLookupTest, CachesMalformedTypeFailuresUntilReset)
+TEST(InterfaceDefinitionLookupTest, ReportsMalformedTypeFailures)
 {
-  expectFailureCachedUntilReset<std::invalid_argument>(
-    "BatteryState", "std::invalid_argument", [](const std::string & first_error) {
-      EXPECT_EQ(first_error, "Invalid ROS interface type 'BatteryState': expected package/kind/Name");
-    });
+  const auto malformed_type = []() { (void)lookupInterfaceDefinitions("BatteryState"); };
+  EXPECT_EQ(
+    captureException<std::invalid_argument>(malformed_type, "std::invalid_argument"),
+    "Invalid ROS interface type 'BatteryState': expected package/kind/Name");
 }
 
 }  // namespace

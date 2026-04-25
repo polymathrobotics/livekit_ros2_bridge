@@ -149,7 +149,6 @@ When a heartbeat target fails individually, the corresponding [`lkros.status`](#
 | Reason | Meaning |
 | --- | --- |
 | `forbidden` | subscribe policy denies the topic |
-| `unavailable` | a required runtime dependency (typically a video pipeline) could not start or keep running |
 | `not_found` | lookup or subscription creation failed for another reason |
 
 New reasons MAY be added in later protocol versions; clients SHOULD treat unrecognized reasons as equivalent to `not_found`.
@@ -655,7 +654,7 @@ Most integrations follow this order:
 4. Use `ros2.service.call` for request-response operations.
 5. Send `ros2.topic.pub` packets for small allowed topic writes.
 6. Send `lkros.heartbeat` on a regular cadence to request topic or video subscriptions.
-7. Read `lkros.status` to learn whether each requested subscription is active, forbidden, unavailable, or not found.
+7. Read `lkros.status` to learn whether each requested subscription is active, forbidden, or not found.
 8. Subscribe to the announced LiveKit data track or video publication.
 
 For a first integration, start with one service-call path or one topic-subscription path. Once that works, add more interface types, video, and broader policy rules.

@@ -59,6 +59,7 @@ inline nlohmann::json parseObject(
   return body;
 }
 
+/// Blank strings become absent; null is absent only when `null_absent` is true.
 inline std::optional<std::string> optionalTrimmedString(
   const nlohmann::json & value, const char * invalid, bool null_absent = false)
 {

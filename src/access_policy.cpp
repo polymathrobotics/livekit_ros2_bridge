@@ -52,9 +52,8 @@ std::string normalizePolicyResourceName(std::string_view raw_name, bool is_servi
   return normalizeRosResourceName(raw_name, kPolicyNodeName, kPolicyNamespace, is_service);
 }
 
-std::string normalizePolicyResourcePattern(std::string_view raw_pattern, bool is_service)
+std::string normalizePolicyResourcePattern(std::string_view pattern, bool is_service)
 {
-  const std::string pattern = trim(raw_pattern);
   if (pattern == kRosResourceSubtreeWildcard) {
     return std::string{kRosResourceSubtreeWildcard};
   }
@@ -84,8 +83,6 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 , service_allow_(Rules::parse(config.service.allow, true))
 , service_deny_(Rules::parse(config.service.deny, true))
 {
-  // Log the effective parsed policy, not the raw config text, so startup diagnostics reflect
-  // trimming, ROS expansion/validation, wildcard handling, and duplicate collapse.
   LogEvent(kLogger, "access_policy_loaded")
     .field("publish_allow_all", publish_allow_.matches_all)
     .field("publish_allow_patterns", publish_allow_.patterns.size())
@@ -135,8 +132,6 @@ AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & 
       continue;
     }
     if (rule == kMatchAllRule) {
-      // `"*"` means allow or deny the entire operation. Treating it as `/*` would narrow it
-      // to descendant matching instead of preserving the policy-wide override.
       rules.matches_all = true;
       continue;
     }

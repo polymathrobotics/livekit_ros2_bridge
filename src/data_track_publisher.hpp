@@ -27,10 +27,11 @@ namespace livekit_ros2_bridge
 struct SubscriptionQosConfig;
 class RoomConnection;
 
-// Owns one deterministic LiveKit data-track publication backed by one ROS subscription.
+// Publishes one ROS topic/interface pair to a deterministic LiveKit data track.
 class DataTrackPublisher final
 {
 public:
+  // room_connection is borrowed; qos_config is optional and borrowed.
   static std::shared_ptr<DataTrackPublisher> create(
     std::string topic,
     std::string interface_type,
@@ -47,11 +48,17 @@ public:
   DataTrackPublisher(DataTrackPublisher &&) = delete;
   DataTrackPublisher & operator=(DataTrackPublisher &&) = delete;
 
+  // Publish failures are logged and retried by later calls.
   void publish();
   int intervalMs() const;
   bool isPublished() const;
+
+  // Replaces the active publication without changing the LiveKit track name.
   void republish();
+
+  // Zero disables suppression; nonzero values update active and future publications.
   void setIntervalMs(int interval_ms);
+
   const std::string & name() const;
 
 private:

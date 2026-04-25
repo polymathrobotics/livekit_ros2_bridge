@@ -16,7 +16,6 @@
 
 #include <exception>
 #include <memory>
-#include <stdexcept>
 #include <utility>
 
 #include "gstreamer_video_stream.hpp"
@@ -24,7 +23,6 @@
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
 #include "ros_video_stream.hpp"
-#include "subscription_qos.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -127,6 +125,7 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
 
 void VideoTrackPublisher::close()
 {
+  // Stop streams outside mutex_; their callbacks can re-enter this publisher.
   std::shared_ptr<RosVideoStream> ros_stream;
   std::unique_ptr<GStreamerVideoStream> gstreamer_stream;
   std::shared_ptr<livekit::VideoSource> video_source;

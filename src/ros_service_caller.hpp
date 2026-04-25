@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <functional>
 #include <future>
 #include <memory>
 #include <string>
@@ -27,9 +26,7 @@
 namespace livekit_ros2_bridge
 {
 
-// Owns dynamic ROS service clients and settles each request asynchronously from
-// a waitable so RPC handlers can enqueue work without blocking the executor
-// thread that created the request.
+// Owns runtime-discovered ROS service clients and settles requests from a waitable.
 class RosServiceCaller final
 {
 public:
@@ -45,31 +42,20 @@ public:
   RosServiceCaller(const RosServiceCaller &) = delete;
   RosServiceCaller & operator=(const RosServiceCaller &) = delete;
 
-  // Starts a service call for the requester. That identity owns the
-  // inflight quota slot and is the scope used by cancelForRequester().
-  // If request.interface_type is empty, exactly one type must be discoverable
-  // for request.service from the current ROS graph. The returned future is
-  // ready immediately only for validation, quota, or shutdown failures;
-  // otherwise it resolves later from the service response waitable.
+  // `requester` scopes inflight quota and cancelForRequester().
+  // Empty request.interface_type resolves from the ROS graph and must match one type.
   std::future<Response> call(const std::string & requester, const ServiceCallRequest & request);
 
   void cancelForRequester(const std::string & requester);
-  // Fails all inflight calls and drops cached clients and type support so the
-  // next call rebuilds from current session and graph state.
   void resetSessionState();
 
-  // Prevents new calls, waits for any active waitable callback to finish, then
-  // fails remaining inflight calls. This coordination is reentrant-safe so
-  // shutdown can be triggered from code already running inside the waitable.
+  // Stops new waitable work, waits for the active callback, then fails inflight calls.
   void shutdown();
 
 private:
   class Impl;
 
   std::unique_ptr<Impl> impl_;
-
-  void setWaitableCallbacksForTest(std::function<void()> on_waitable_enter, std::function<void()> on_waitable_exit);
-  void setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load);
 };
 
 }  // namespace livekit_ros2_bridge

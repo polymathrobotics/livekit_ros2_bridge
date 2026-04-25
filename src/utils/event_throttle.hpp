@@ -16,49 +16,38 @@
 
 #include <chrono>
 #include <cstddef>
-#include <functional>
-#include <utility>
 
 namespace livekit_ros2_bridge
 {
 
-constexpr std::size_t kNoSuppressedEvents = 0U;
-const auto kNoNextFireScheduled = std::chrono::steady_clock::time_point{};
-
 class EventThrottle
 {
 public:
-  using TimePoint = std::chrono::steady_clock::time_point;
-  using TimePointSource = std::function<TimePoint()>;
-
   explicit EventThrottle(std::chrono::steady_clock::duration interval)
-  : EventThrottle(interval, []() { return std::chrono::steady_clock::now(); })
-  {}
-
-  explicit EventThrottle(std::chrono::steady_clock::duration interval, TimePointSource now)
   : interval_(interval)
-  , now_(std::move(now))
   {}
 
+  // Returns the pending count on the first call and after each interval; otherwise returns 0.
   std::size_t recordAndTakePendingCount()
   {
     ++count_;
-    const auto now = now_();
-    const bool should_fire_now = next_fire_at_ == kNoNextFireScheduled || now >= next_fire_at_;
+    const auto now = std::chrono::steady_clock::now();
+    const bool should_fire_now = next_fire_at_ == TimePoint{} || now >= next_fire_at_;
     if (should_fire_now) {
       const std::size_t fired_count = count_;
-      count_ = kNoSuppressedEvents;
+      count_ = 0U;
       next_fire_at_ = now + interval_;
       return fired_count;
     }
-    return kNoSuppressedEvents;
+    return 0U;
   }
 
 private:
+  using TimePoint = std::chrono::steady_clock::time_point;
+
   std::chrono::steady_clock::duration interval_;
-  TimePointSource now_;
-  std::size_t count_ = kNoSuppressedEvents;
-  std::chrono::steady_clock::time_point next_fire_at_{kNoNextFireScheduled};
+  std::size_t count_ = 0U;
+  TimePoint next_fire_at_{};
 };
 
 }  // namespace livekit_ros2_bridge

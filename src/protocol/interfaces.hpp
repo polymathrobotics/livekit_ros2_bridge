@@ -19,12 +19,10 @@
 namespace livekit_ros2_bridge
 {
 
-/// One ROS interface definition entry shared between lookup code and protocol serialization.
+/// ROS interface type plus raw `.msg`, `.srv`, or `.action` definition text.
 struct InterfaceDefinition
 {
-  /// Fully-qualified ROS interface type such as `sensor_msgs/msg/BatteryState`.
   std::string type;
-  /// Raw `.msg`, `.srv`, or `.action` file contents as read from the ROS package share directory.
   std::string body;
 };
 

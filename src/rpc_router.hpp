@@ -27,9 +27,6 @@ namespace livekit_ros2_bridge
 class RosExecutorQueue;
 class RosServiceCaller;
 
-// Registers the LiveKit RPC surface exposed by this bridge and maps each RPC to
-// the ROS-side helper that performs authorization, executor handoff, and
-// protocol-level error reporting.
 class RpcRouter
 {
 public:
@@ -45,24 +42,20 @@ public:
   RpcRouter(RpcRouter &&) = delete;
   RpcRouter & operator=(RpcRouter &&) = delete;
 
-  // Registers every supported RPC. Returns false if any registration fails, but
-  // successful handlers remain installed until this router is destroyed.
-  // Registered callbacks borrow this router and its dependencies, so the
-  // router must be destroyed before any borrowed dependency, and while the
-  // room connection is still alive.
+  // Handlers borrow this router until unregistration/destruction; false means any method failed.
   bool registerRpcs(RoomConnection & connection);
 
+  // Idempotently unregisters methods from the most recent connection.
   void unregisterRpcs() noexcept;
 
 private:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;
-  // Copy the policy so registered callbacks do not depend on the caller
-  // retaining the original config object for the life of the room connection.
+  // Registered callbacks must not depend on caller-owned config.
   AccessPolicy access_policy_;
-  // Borrowed ROS helpers captured by registered callbacks; the router must be
-  // destroyed before either helper or graph_ is destroyed.
+  // Borrowed by registered callbacks; must outlive this router.
   RosExecutorQueue & ros_executor_queue_;
   RosServiceCaller & ros_service_caller_;
+  // Borrowed only for unregistration; must outlive unregisterRpcs()/destruction.
   RoomConnection * registered_connection_ = nullptr;
 
   std::optional<std::string> callService(const livekit::RpcInvocationData & invocation);

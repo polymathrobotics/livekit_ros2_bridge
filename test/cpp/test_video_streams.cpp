@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -132,9 +131,7 @@ TEST_F(VideoStreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 TEST_F(VideoStreamTest, OtherVideoLifecycleIsIdempotent)
 {
   VideoStreamSpec spec = makeOtherVideoSpec();
-  auto * input = otherVideoInput(spec);
-  ASSERT_NE(input, nullptr);
-  input->ingress_fragment = "videotestsrc is-live=true pattern=black";
+  spec.input = OtherVideoInput{"test", "videotestsrc is-live=true pattern=black", ""};
 
   FakeRoomConnection connection;
   VideoTrackPublisher publisher(connection, spec);
@@ -143,23 +140,6 @@ TEST_F(VideoStreamTest, OtherVideoLifecycleIsIdempotent)
   stream.start();
   stream.close();
   stream.close();
-}
-
-TEST_F(VideoStreamTest, OtherVideoDestructorCancelsDelayedRecovery)
-{
-  VideoStreamSpec spec = makeOtherVideoSpec();
-  auto * input = otherVideoInput(spec);
-  ASSERT_NE(input, nullptr);
-  input->ingress_fragment = "videotestsrc is-live=true pattern=black";
-
-  FakeRoomConnection connection;
-  auto publisher = std::make_unique<VideoTrackPublisher>(connection, spec);
-  auto stream = std::make_unique<GStreamerVideoStream>(spec, *publisher);
-
-  stream->start();
-  stream->onPipelineFailure("eos");
-  stream.reset();
-  publisher.reset();
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(

@@ -15,8 +15,7 @@
 #include "livekit_ros2_bridge/node.hpp"
 
 #include <exception>
-#include <string>
-#include <utility>
+#include <memory>
 
 #include "rclcpp/logging.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -28,22 +27,12 @@
 namespace livekit_ros2_bridge
 {
 
-class Node::Impl final
-{
-public:
-  explicit Impl(Node & node)
-  : runtime_(node, createRoomConnection(), loadRuntimeConfig(node.get_node_parameters_interface()))
-  {}
-
-private:
-  Runtime runtime_;
-};
-
 Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   try {
-    pimpl_ = std::make_unique<Impl>(*this);
+    runtime_ =
+      std::make_unique<Runtime>(*this, createRoomConnection(), loadRuntimeConfig(get_node_parameters_interface()));
   } catch (...) {
     LogEvent(get_logger(), "node_startup_failed")
       .field("reason", "runtime_initialization_failed")
@@ -53,8 +42,6 @@ Node::Node(const rclcpp::NodeOptions & options)
   }
 }
 
-// Keep the destructor out-of-line so the opaque implementation is torn down while the
-// rclcpp::Node base and its interfaces are still alive.
 Node::~Node() = default;
 
 }  // namespace livekit_ros2_bridge

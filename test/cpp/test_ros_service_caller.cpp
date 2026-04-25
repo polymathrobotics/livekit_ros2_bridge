@@ -15,7 +15,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <functional>
 #include <future>
 #include <memory>
 #include <optional>
@@ -27,15 +26,11 @@
 #include "protocol/services.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
+#include "ros_service_caller.hpp"
 #include "ros_test_support.hpp"
 #include "rosidl_runtime_cpp/traits.hpp"
-#include "utils/serialized_message.hpp"
-
-#define private public
-#include "ros_service_caller.hpp"
-#undef private
-
 #include "std_srvs/srv/set_bool.hpp"
+#include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -51,7 +46,6 @@ constexpr auto kDefaultTimeoutUpperBoundSlack = std::chrono::milliseconds(2000);
 constexpr auto kExplicitTimeoutLowerBound = std::chrono::milliseconds(150);
 constexpr auto kExplicitTimeoutUpperBound = std::chrono::milliseconds(2000);
 constexpr auto kShutdownCoordinationTimeout = std::chrono::seconds(2);
-constexpr auto kShutdownBlockedWindow = std::chrono::milliseconds(50);
 constexpr int kStandardRequestTimeoutMs = 5000;
 constexpr int kResponseSettleTimeoutMs = 2000;
 
@@ -610,183 +604,6 @@ TEST_F(RosServiceCallerTest, RejectsUnresolvableServiceType)
   EXPECT_EQ(expectInvalidArgumentMessage(future), "No ROS types found for service '/no_such_service'.");
 
   caller.shutdown();
-}
-
-TEST_F(RosServiceCallerTest, CachesInvalidRequestedServiceTypeFailures)
-{
-  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_invalid_type_cache_node");
-
-  auto caller = makeServiceCaller(caller_node);
-
-  int type_support_load_attempts = 0;
-  caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
-    ++type_support_load_attempts;
-    EXPECT_EQ(interface_type, "nonexistent_pkg/srv/Foo");
-  });
-
-  ServiceCallRequest request;
-  request.service = "/no_such_service";
-  request.interface_type = "nonexistent_pkg/srv/Foo";
-  std_srvs::srv::SetBool::Request ros_request;
-  ros_request.data = false;
-  request.payload = serializeMessage(ros_request);
-  request.timeout = std::chrono::milliseconds(100);
-
-  auto first_future = caller.call("requester-1", request);
-  const std::string first_error = expectRuntimeErrorMessage(first_future);
-  EXPECT_NE(first_error.find("Failed creating service client:"), std::string::npos);
-
-  auto second_future = caller.call("requester-1", request);
-  const std::string second_error = expectRuntimeErrorMessage(second_future);
-
-  EXPECT_EQ(type_support_load_attempts, 1);
-  EXPECT_EQ(second_error, first_error);
-
-  caller.shutdown();
-}
-
-TEST_F(RosServiceCallerTest, SessionResetClearsResolvedServiceSupportCaches)
-{
-  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_session_reset_cache_node");
-  auto server_node = std::make_shared<rclcpp::Node>("service_server_session_reset_cache_node");
-
-  auto service = server_node->create_service<std_srvs::srv::SetBool>(
-    "/session_reset_cache_test",
-    [](const std_srvs::srv::SetBool::Request::SharedPtr request, std_srvs::srv::SetBool::Response::SharedPtr response) {
-      response->success = request->data;
-      response->message = request->data ? "enabled" : "disabled";
-    });
-  (void)service;
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(caller_node);
-  executor.add_node(server_node);
-
-  ASSERT_TRUE(waitForService(executor, *caller_node, "/session_reset_cache_test"));
-
-  auto caller = makeServiceCaller(caller_node);
-
-  int type_support_load_attempts = 0;
-  caller.setTypeSupportLoadCallbackForTest([&type_support_load_attempts](const std::string & interface_type) {
-    ++type_support_load_attempts;
-    EXPECT_EQ(interface_type, setBoolServiceType());
-  });
-
-  auto first_future =
-    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
-  ASSERT_TRUE(waitForFutureReady(executor, first_future));
-  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(first_future.get().payload).success);
-  EXPECT_EQ(type_support_load_attempts, 1);
-
-  auto second_future =
-    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs, false));
-  ASSERT_TRUE(waitForFutureReady(executor, second_future));
-  EXPECT_FALSE(deserializeMessage<std_srvs::srv::SetBool::Response>(second_future.get().payload).success);
-  EXPECT_EQ(type_support_load_attempts, 1);
-
-  caller.resetSessionState();
-
-  auto third_future =
-    caller.call("requester-1", makeSetBoolRequest("/session_reset_cache_test", kResponseSettleTimeoutMs));
-  ASSERT_TRUE(waitForFutureReady(executor, third_future));
-  EXPECT_TRUE(deserializeMessage<std_srvs::srv::SetBool::Response>(third_future.get().payload).success);
-  EXPECT_EQ(type_support_load_attempts, 2);
-
-  caller.shutdown();
-}
-
-TEST_F(RosServiceCallerTest, ShutdownWaitsForActiveServiceWaitableCallback)
-{
-  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_shutdown_quiesce_node");
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(caller_node);
-
-  auto caller = makeServiceCaller(caller_node);
-
-  auto waitable_entered = std::make_shared<std::promise<void>>();
-  auto waitable_entered_future = waitable_entered->get_future();
-  auto release_waitable = std::make_shared<std::promise<void>>();
-  auto release_waitable_future = release_waitable->get_future().share();
-  auto waitable_exited = std::make_shared<std::promise<void>>();
-  auto waitable_exited_future = waitable_exited->get_future();
-
-  caller.setWaitableCallbacksForTest(
-    [waitable_entered, release_waitable_future]() {
-      waitable_entered->set_value();
-      release_waitable_future.wait();
-    },
-    [waitable_exited]() { waitable_exited->set_value(); });
-
-  bool release_sent = false;
-  const auto release_waitable_callback = [&]() {
-    if (release_sent) {
-      return;
-    }
-    release_sent = true;
-    release_waitable->set_value();
-  };
-
-  auto inflight_future = caller.call("requester-1", makeSetBoolRequest("/shutdown_quiesce", kStandardRequestTimeoutMs));
-
-  std::thread spin_thread([&executor]() { executor.spin(); });
-
-  ASSERT_EQ(waitable_entered_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-
-  auto shutdown_started = std::make_shared<std::promise<void>>();
-  auto shutdown_started_future = shutdown_started->get_future();
-  auto shutdown_future = std::async(std::launch::async, [&caller, shutdown_started]() {
-    shutdown_started->set_value();
-    caller.shutdown();
-  });
-
-  ASSERT_EQ(shutdown_started_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(shutdown_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
-  EXPECT_EQ(inflight_future.wait_for(kShutdownBlockedWindow), std::future_status::timeout);
-
-  release_waitable_callback();
-
-  EXPECT_EQ(waitable_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(shutdown_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
-
-  executor.cancel();
-  spin_thread.join();
-}
-
-TEST_F(RosServiceCallerTest, ShutdownFromActiveServiceWaitableCallbackDoesNotDeadlock)
-{
-  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reentrant_shutdown_node");
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(caller_node);
-
-  auto caller = makeServiceCaller(caller_node);
-
-  auto shutdown_completed = std::make_shared<std::promise<void>>();
-  auto shutdown_completed_future = shutdown_completed->get_future();
-  auto waitable_exited = std::make_shared<std::promise<void>>();
-  auto waitable_exited_future = waitable_exited->get_future();
-
-  caller.setWaitableCallbacksForTest(
-    [&caller, shutdown_completed]() {
-      caller.shutdown();
-      shutdown_completed->set_value();
-    },
-    [waitable_exited]() { waitable_exited->set_value(); });
-
-  auto inflight_future =
-    caller.call("requester-1", makeSetBoolRequest("/reentrant_shutdown", kStandardRequestTimeoutMs));
-
-  std::thread spin_thread([&executor]() { executor.spin(); });
-
-  EXPECT_EQ(shutdown_completed_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(waitable_exited_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(inflight_future.wait_for(kShutdownCoordinationTimeout), std::future_status::ready);
-  EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "Service caller shut down.");
-
-  executor.cancel();
-  spin_thread.join();
 }
 
 TEST_F(RosServiceCallerTest, RejectsCallAfterShutdown)

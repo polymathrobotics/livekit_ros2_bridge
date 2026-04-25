@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <ostream>
@@ -24,7 +23,6 @@
 #include <utility>
 
 #include "rclcpp/clock.hpp"
-#include "rclcpp/duration.hpp"
 #include "rclcpp/logging.hpp"
 
 namespace livekit_ros2_bridge
@@ -33,6 +31,7 @@ namespace livekit_ros2_bridge
 constexpr std::string_view kUnknownLogFieldValue = "<unknown>";
 constexpr std::string_view kUnknownExceptionLogFieldValue = "unknown_exception";
 
+// Builds event=<name> plus ordered key=value fields; keys and values must be log-parser-safe.
 class LogEvent
 {
 public:
@@ -162,17 +161,15 @@ public:
     return std::move(*this);
   }
 
-  LogEvent & fieldException(
-    std::string_view key, std::exception_ptr exception, std::string_view fallback = kUnknownExceptionLogFieldValue) &
+  LogEvent & fieldException(std::string_view key, std::exception_ptr exception) &
   {
-    appendFieldException(key, std::move(exception), fallback);
+    appendFieldException(key, std::move(exception));
     return *this;
   }
 
-  LogEvent && fieldException(
-    std::string_view key, std::exception_ptr exception, std::string_view fallback = kUnknownExceptionLogFieldValue) &&
+  LogEvent && fieldException(std::string_view key, std::exception_ptr exception) &&
   {
-    appendFieldException(key, std::move(exception), fallback);
+    appendFieldException(key, std::move(exception));
     return std::move(*this);
   }
 
@@ -201,17 +198,12 @@ public:
     RCLCPP_ERROR_STREAM(logger_, str());
   }
 
-  void warnThrottle(rclcpp::Clock & clock, const rclcpp::Duration & interval) const
-  {
-    const auto requested_interval_ms = interval.to_chrono<std::chrono::milliseconds>().count();
-    const auto throttle_interval_ms = std::max<rcl_duration_value_t>(0, requested_interval_ms);
-    RCLCPP_WARN_STREAM_THROTTLE(logger_, clock, throttle_interval_ms, str());
-  }
-
   template <typename Rep, typename Period>
   void warnThrottle(rclcpp::Clock & clock, const std::chrono::duration<Rep, Period> & interval) const
   {
-    warnThrottle(clock, rclcpp::Duration(std::chrono::duration_cast<std::chrono::nanoseconds>(interval)));
+    // ROS throttle macros take integer millisecond periods.
+    const auto throttle_interval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(interval).count();
+    RCLCPP_WARN_STREAM_THROTTLE(logger_, clock, throttle_interval_ms, str());
   }
 
 private:
@@ -278,19 +270,14 @@ private:
     }
   }
 
-  void appendFieldException(std::string_view key, std::exception_ptr exception, std::string_view fallback)
+  void appendFieldException(std::string_view key, std::exception_ptr exception)
   {
-    if (exception == nullptr) {
-      appendField(key, fallback);
-      return;
-    }
-
     try {
       std::rethrow_exception(exception);
     } catch (const std::exception & exc) {
       appendField(key, exc.what());
     } catch (...) {
-      appendField(key, fallback);
+      appendField(key, kUnknownExceptionLogFieldValue);
     }
   }
 };

@@ -59,16 +59,13 @@ ServiceCallRequest parse(const std::string & text)
 
   ServiceCallRequest request;
   try {
-    // Expand and validate through rclcpp so service-name grammar stays owned by ROS.
-    // Protocol service calls are global unless the caller supplies an absolute name.
+    // rclcpp owns service-name grammar; the protocol namespace resolves relatives globally.
     request.service = expandServiceName(detail::requiredTrimmedStringField(body, kServiceField, "service is required"));
   } catch (const std::invalid_argument & exc) {
     throw ValidationError(kServiceField, exc.what());
   }
 
   try {
-    // An empty or whitespace-only field means "resolve the type later from the ROS graph" rather
-    // than "use an empty interface type".
     request.interface_type =
       detail::optionalTrimmedStringField(body, kInterfaceTypeField, "interface_type must be a string").value_or("");
   } catch (const std::invalid_argument & exc) {
@@ -76,8 +73,7 @@ ServiceCallRequest parse(const std::string & text)
   }
 
   try {
-    // Service calls always forward a concrete serialized request message; an empty payload is
-    // treated as malformed rather than as a typed default instance.
+    // Empty requests would imply a typed default, but this boundary only forwards serialized ROS data.
     request.payload = cdr::parseSerializedMessage(body, cdr::Field::Request);
     if (request.payload.size() == 0U) {
       throw std::invalid_argument("request.payload_base64 must not be empty");
@@ -92,8 +88,7 @@ ServiceCallRequest parse(const std::string & text)
       throw ValidationError(kTimeoutMsField, "timeout_ms must be an integer");
     }
 
-    // Preserve the protocol value as a duration when present; the caller layer decides whether
-    // non-positive timeouts fall back to its default deadline.
+    // Preserve explicit non-positive values; the runtime owns deadline policy.
     request.timeout = std::chrono::milliseconds(timeout_field->get<std::chrono::milliseconds::rep>());
   }
 

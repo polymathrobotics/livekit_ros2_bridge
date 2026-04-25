@@ -19,6 +19,7 @@
 namespace livekit_ros2_bridge
 {
 
+// Reserved names used to recover bridge-owned endpoints from parsed GStreamer bins.
 inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
 
@@ -29,16 +30,14 @@ inline std::string buildPipelineDescription(const std::string & ingress, const s
     description += " ! ";
     description += transform;
   }
-  // Keep only a tiny downstream queue so backpressure drops stale frames instead
-  // of letting latency grow without bound.
+  // Drop stale frames under backpressure instead of adding latency.
   description += " ! queue max-size-buffers=2 leaky=downstream";
   description += " ! videoconvert";
-  // Emit encoder-native I420 so LiveKit/WebRTC does not have to do an extra
-  // RGBA->I420 conversion on every captured frame.
+  // Keep LiveKit/WebRTC on I420 to avoid per-frame RGBA conversion.
   description += " ! video/x-raw,format=I420";
   description += " ! appsink name=";
   description += kBridgeAppSinkName;
-  description += " sync=false drop=true max-buffers=1 emit-signals=false";
+  description += " sync=false drop=true max-buffers=1";
   return description;
 }
 

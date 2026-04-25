@@ -36,8 +36,6 @@ struct SubscriptionQosConfig;
 class GStreamerVideoStream;
 class RosVideoStream;
 
-// Owns one concrete video ingress runtime and one lazily republished LiveKit
-// video track on egress.
 class VideoTrackPublisher final
 {
 public:
@@ -50,8 +48,7 @@ public:
     VideoStreamSpec spec,
     const SubscriptionQosConfig * qos_config);
 
-  // Test-only: construct a publisher without a frame source so the publish/unpublish
-  // flow can be exercised via direct captureFrame() calls.
+  // Does not start a ROS or GStreamer input stream.
   VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec);
 
   ~VideoTrackPublisher();
@@ -66,14 +63,14 @@ public:
     return spec_;
   }
 
+  // First frame publishes; size changes recreate the LiveKit VideoSource.
   void captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
 private:
   friend class GStreamerVideoStream;
   friend class RosVideoStream;
 
-  // Streams may fire these from ROS, GStreamer, or LiveKit worker threads,
-  // including after close() has started.
+  // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
   void onRestartFailed(const std::string & error);
@@ -84,6 +81,7 @@ private:
   RoomConnection & room_connection_;
   VideoStreamSpec spec_;
 
+  // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
   bool is_closed_ = false;
   bool was_published_ = false;

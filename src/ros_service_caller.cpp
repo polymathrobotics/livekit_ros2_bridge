@@ -127,9 +127,7 @@ void logServiceCallRejected(
 class MessageStorage
 {
 public:
-  // Runtime-discovered services only provide introspection callbacks, so we
-  // manage a raw message buffer and pair the generated init/fini functions
-  // explicitly instead of relying on a concrete generated C++ message type.
+  // Pair introspection init/fini callbacks with the raw message buffer.
   MessageStorage(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
   : members_(members)
   , data_(::operator new(members.size_of_))
@@ -158,8 +156,7 @@ private:
 
 struct MessageTypeSupport
 {
-  // Keep both libraries alive for as long as the cached serialization and
-  // introspection handles may be used by an active client entry.
+  // Keep the libraries alive while cached type-support handles may be used.
   explicit MessageTypeSupport(const std::string & interface_type)
   : serialization_library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
   , introspection_library(rclcpp::get_typesupport_library(interface_type, kIntrospectionTypeSupportIdentifier))
@@ -230,6 +227,7 @@ const rosidl_service_type_support_t * getServiceTypeSupportHandle(
   rclcpp::exceptions::throw_from_rcl_error(ret, "could not create service client");
 }
 
+// Use ClientBase directly because ServiceCallRequest supplies the service type at runtime.
 struct ServiceClient : public rclcpp::ClientBase
 {
   struct TypeSupport
@@ -305,8 +303,7 @@ struct ServiceClient : public rclcpp::ClientBase
 
 struct InflightKey
 {
-  // Sequence numbers come from the underlying rcl client, so the client
-  // instance is part of the key when matching responses back to inflight calls.
+  // rcl sequence numbers are client-local.
   const ServiceClient * client = nullptr;
   std::int64_t sequence_number = 0;
 
@@ -330,8 +327,7 @@ struct RosServiceCaller::Impl
 {
   struct InflightCall
   {
-    // Keeps the rcl client and its type support alive until the call settles,
-    // even if resetSessionState() drops the reusable client cache first.
+    // Keep the rcl client and type support alive until settlement if resetSessionState() drops the cache first.
     std::shared_ptr<ServiceClient> client;
     std::string service;
     std::string interface_type;
@@ -438,8 +434,7 @@ struct RosServiceCaller::Impl
   template <typename SettlePromiseFn>
   InflightIter settle(InflightIter it, SettlePromiseFn && settle_promise)
   {
-    // Keep promise completion and quota release coupled so every terminal path
-    // returns the requester's inflight slot exactly once.
+    // Every terminal path must release the requester's inflight slot exactly once.
     auto & call = it->second;
     std::forward<SettlePromiseFn>(settle_promise)(call);
     releaseInflightSlot(call.requester);
@@ -455,26 +450,18 @@ struct RosServiceCaller::Impl
   std::unordered_map<std::string, TypeSupportPtr> type_supports;
   InflightMap inflight_calls;
   std::unordered_map<std::string, int> inflight_counts;
-  // Remember bad interface types so repeated invalid requests fail without
-  // reloading type-support libraries every time.
   FailureCache type_support_failures{kInvalidServiceTypeCacheCapacity};
   std::mutex state_mutex;
-  std::mutex waitable_callback_mutex;
-  std::mutex type_support_load_callback_mutex;
-  // shutdown() closes waitable entry and waits for any active waitable
-  // callback before clearing clients or type support. Reentrancy matters
-  // because shutdown() may be triggered from within executeWaitable().
+  // shutdown() may run from executeWaitable(); same-thread reentry must not wait on itself.
   std::mutex waitable_lifecycle_mutex;
   std::condition_variable waitable_idle;
   bool waitable_closed = false;
   bool waitable_active = false;
   std::thread::id waitable_owner_thread_id{};
-  std::function<void()> on_waitable_enter;
-  std::function<void()> on_waitable_exit;
-  std::function<void(const std::string &)> on_type_support_load;
   EventThrottle late_response_throttle{kLogThrottle};
 };
 
+// Executor-owned wait sets consume client snapshots published by caller threads.
 class RosServiceCaller::Impl::ServiceWaitable final : public rclcpp::Waitable
 {
 public:
@@ -485,8 +472,7 @@ public:
   , deadline_clock_(std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME))
   , deadline_timer_(rcl_get_zero_initialized_timer())
   {
-    // Jazzy and newer expose rcl_timer_init2() with an explicit autostart
-    // flag; Humble only has the original rcl_timer_init().
+    // Jazzy added rcl_timer_init2() with explicit autostart.
 #if RCLCPP_VERSION_GTE(28, 0, 0)
     const rcl_ret_t init_ret = rcl_timer_init2(
       &deadline_timer_,
@@ -525,8 +511,7 @@ public:
   ServiceWaitable(const ServiceWaitable &) = delete;
   ServiceWaitable & operator=(const ServiceWaitable &) = delete;
 
-// Jazzy and newer changed Waitable overrides from wait-set pointers to
-// references; Humble still uses pointer-based signatures.
+// Jazzy changed Waitable overrides from wait-set pointers to references.
 #if RCLCPP_VERSION_GTE(28, 0, 0)
   void add_to_wait_set(rcl_wait_set_t & wait_set) override
   {
@@ -574,9 +559,8 @@ public:
 
   size_t get_number_of_ready_clients() override
   {
-    // Kilted and newer reuse the wait-set capacity after the waitable is
-    // attached, so this must report the bounded capacity rather than the
-    // current snapshot size. getClient() enforces the same cap.
+    // Kilted reuses wait-set capacity after attach, so report the bounded cap.
+    // getClient() enforces the same limit.
     return kMaxCachedServiceClients;
   }
 
@@ -627,9 +611,6 @@ public:
   void setClients(std::vector<ClientPtr> clients)
   {
     std::lock_guard<std::mutex> lock(clients_mutex_);
-    // Do not mutate clients_ from caller threads. rcl_wait_set_t only stores
-    // raw rcl_client_t pointers, so the executor applies pending snapshots
-    // after the current wait returns.
     pending_clients_.emplace(std::move(clients));
   }
 
@@ -703,8 +684,6 @@ private:
       }
     }
 
-    // GuardCondition follows the same wait-set pointer/reference split as
-    // Waitable across the supported distros.
 #if RCLCPP_VERSION_GTE(28, 0, 0)
     guard_condition_->add_to_wait_set(*wait_set);
 #else
@@ -834,22 +813,6 @@ RosServiceCaller::~RosServiceCaller()
   shutdown();
 }
 
-// ros2.service.call spans both sides of the runtime boundary.
-//
-// Phase 1 happens here on the ROS executor: resolve the service type, create
-// or reuse the rclcpp client, deserialize the request, and call
-// rcl_send_request().
-//
-// Phase 2 happens later from the service waitable: take the response through
-// rclcpp::ClientBase, match by client pointer and sequence number, fulfill the
-// stored promise, and time out or cancel pending calls when needed.
-//
-// That split keeps executor-affine request creation safe without blocking the
-// executor until the remote service replies. Immediate failures such as
-// shutdown, bad requests, quota limits, or client creation errors fail here
-// in phase 1. Later failures such as timeout, requester disconnect,
-// connection reset, or shutdown while the call is inflight settle the stored
-// promise from phase 2.
 std::future<RosServiceCaller::Response> RosServiceCaller::call(
   const std::string & requester, const ServiceCallRequest & request)
 {
@@ -891,8 +854,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       throw exc;
     }
 
-    // Reserve quota before client lookup, request deserialization, or send.
-    // inflight_calls takes ownership only after the entry is inserted.
+    // Hold quota until inflight_calls takes over release ownership.
     Impl::InflightReservation inflight_reservation = [&]() -> Impl::InflightReservation {
       try {
         return Impl::InflightReservation(*impl_, requester);
@@ -968,8 +930,6 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
         std::move(promise),
         std::chrono::steady_clock::now() + timeout,
       });
-    // From here on every settle path goes through inflight_calls, so that entry
-    // owns releasing the requester's inflight quota.
     inflight_reservation.transferToInflightCall();
     impl_->syncWaitableLocked();
   } catch (const std::exception &) {
@@ -1015,20 +975,6 @@ void RosServiceCaller::shutdown()
   impl_->clearCacheLocked();
 }
 
-void RosServiceCaller::setWaitableCallbacksForTest(
-  std::function<void()> on_waitable_enter, std::function<void()> on_waitable_exit)
-{
-  std::lock_guard<std::mutex> lock(impl_->waitable_callback_mutex);
-  impl_->on_waitable_enter = std::move(on_waitable_enter);
-  impl_->on_waitable_exit = std::move(on_waitable_exit);
-}
-
-void RosServiceCaller::setTypeSupportLoadCallbackForTest(std::function<void(const std::string &)> on_type_support_load)
-{
-  std::lock_guard<std::mutex> lock(impl_->type_support_load_callback_mutex);
-  impl_->on_type_support_load = std::move(on_type_support_load);
-}
-
 RosServiceCaller::Impl::TypeSupportPtr RosServiceCaller::Impl::getTypeSupport(const std::string & interface_type)
 {
   auto it = type_supports.find(interface_type);
@@ -1038,15 +984,6 @@ RosServiceCaller::Impl::TypeSupportPtr RosServiceCaller::Impl::getTypeSupport(co
 
   if (const auto failure = type_support_failures.get(interface_type); failure.has_value()) {
     std::rethrow_exception(*failure);
-  }
-
-  std::function<void(const std::string &)> on_type_support_load;
-  {
-    std::lock_guard<std::mutex> lock(type_support_load_callback_mutex);
-    on_type_support_load = this->on_type_support_load;
-  }
-  if (on_type_support_load) {
-    on_type_support_load(interface_type);
   }
 
   try {
@@ -1083,9 +1020,6 @@ RosServiceCaller::Impl::ClientPtr RosServiceCaller::Impl::getClient(
 
 void RosServiceCaller::Impl::reserveInflightSlot(const std::string & requester)
 {
-  if (requester.empty()) {
-    return;
-  }
   const int current = inflight_counts[requester];
   if (current >= kMaxInflightPerRequester) {
     throw std::runtime_error(kInflightLimitReachedError);
@@ -1095,9 +1029,6 @@ void RosServiceCaller::Impl::reserveInflightSlot(const std::string & requester)
 
 void RosServiceCaller::Impl::releaseInflightSlot(const std::string & requester)
 {
-  if (requester.empty()) {
-    return;
-  }
   auto it = inflight_counts.find(requester);
   if (it == inflight_counts.end()) {
     return;
@@ -1115,25 +1046,7 @@ void RosServiceCaller::Impl::executeWaitable()
     return;
   }
 
-  std::function<void()> on_enter;
-  std::function<void()> on_exit;
-  {
-    // Callbacks are copied under the mutex but invoked without it so test callbacks can
-    // reenter RosServiceCaller, including calling shutdown() from the waitable callback.
-    std::lock_guard<std::mutex> lock(waitable_callback_mutex);
-    on_enter = this->on_waitable_enter;
-    on_exit = this->on_waitable_exit;
-  }
-  ScopeExit finish_waitable_callback([this, on_exit = std::move(on_exit)]() mutable {
-    if (on_exit) {
-      on_exit();
-    }
-    finishWaitableCallback();
-  });
-
-  if (on_enter) {
-    on_enter();
-  }
+  ScopeExit finish_waitable_callback([this]() { finishWaitableCallback(); });
 
   std::lock_guard<std::mutex> state_lock(state_mutex);
   if (!isWaitableOpen()) {
@@ -1258,14 +1171,11 @@ void RosServiceCaller::Impl::drainResponses()
         break;
       }
 
-      // rcl sequence numbers are scoped to a client instance, so settle by
-      // both the client pointer and sequence number.
       const InflightKey key{client.get(), header.sequence_number};
       auto it = inflight_calls.find(key);
       if (it == inflight_calls.end()) {
-        // The original call already timed out, was cancelled, or belonged to a
-        // reset session. Never match a late response by service name alone,
-        // because a newer call on the same service may now be inflight.
+        // Never match late responses by service name; a newer call on the same
+        // service may now be inflight.
         if (const std::size_t count = late_response_throttle.recordAndTakePendingCount(); count > 0U) {
           LogEvent(kLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")

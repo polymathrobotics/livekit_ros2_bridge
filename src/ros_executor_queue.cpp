@@ -17,12 +17,10 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "rclcpp/guard_condition.hpp"
-#include "rclcpp/node.hpp"
 #include "rclcpp/version.h"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
@@ -32,20 +30,9 @@ namespace livekit_ros2_bridge
 
 namespace
 {
-rclcpp::Node & requireNode(const std::shared_ptr<rclcpp::Node> & node)
-{
-  if (!node) {
-    throw std::invalid_argument("given node pointer is nullptr");
-  }
-  return *node;
-}
-
 constexpr int kReadyEntityId = 0;
 }  // namespace
 
-// Waitable adapter that turns the queue into a guard-condition "doorbell" for
-// the executor. No per-wake payload flows through take_data(); execute() just
-// hands control back to RosExecutorQueue::drain() to consume shared queue state.
 class RosExecutorQueue::DrainWaitable final : public rclcpp::Waitable
 {
 public:
@@ -79,18 +66,11 @@ public:
 #else
   void add_to_wait_set(rcl_wait_set_t * wait_set) override
   {
-    if (wait_set == nullptr) {
-      throw std::invalid_argument("wait set is null");
-    }
     guard_condition_->add_to_wait_set(wait_set);
   }
 
   bool is_ready(rcl_wait_set_t * wait_set) override
   {
-    if (wait_set == nullptr) {
-      return false;
-    }
-
     const auto * rcl_guard_condition = &guard_condition_->get_rcl_guard_condition();
     for (size_t i = 0; i < wait_set->size_of_guard_conditions; ++i) {
       if (wait_set->guard_conditions[i] == rcl_guard_condition) {
@@ -154,14 +134,6 @@ private:
   rclcpp::GuardCondition::SharedPtr guard_condition_;
 };
 
-RosExecutorQueue::RosExecutorQueue(rclcpp::Node & node)
-: RosExecutorQueue(RosExecutorQueueNodeInterfaces(node), node.get_clock())
-{}
-
-RosExecutorQueue::RosExecutorQueue(const std::shared_ptr<rclcpp::Node> & node)
-: RosExecutorQueue(requireNode(node))
-{}
-
 RosExecutorQueue::RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock)
 : waitables_(interfaces.get_node_waitables_interface())
 , log_clock_(std::move(clock))
@@ -178,8 +150,8 @@ RosExecutorQueue::~RosExecutorQueue()
 
 void RosExecutorQueue::shutdown()
 {
-  // Only the thread that flips shutdown_ tears down the waitable and cancels
-  // queued work. Concurrent shutdown callers just wait for drain() to go idle.
+  // The thread that flips shutdown_ owns waitable teardown and queued task
+  // cancellation. Concurrent shutdown callers only wait for drain() to go idle.
   std::queue<Task> queued_tasks;
   std::shared_ptr<DrainWaitable> waitable;
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables;
@@ -187,8 +159,6 @@ void RosExecutorQueue::shutdown()
   std::unique_lock<std::mutex> lock(mutex_);
   if (shutdown_) {
     lock.unlock();
-    // A concurrent shutdown() already took ownership of teardown; only wait
-    // for any in-progress drain to finish before returning.
     awaitDrainIdle();
     return;
   }
@@ -230,8 +200,7 @@ void RosExecutorQueue::drain()
   }
   ScopeExit finish_drain([this]() { finishDrain(); });
 
-  // Keep draining until the queue is empty so tasks submitted from active
-  // queue work are consumed by the same executor wakeup.
+  // Tasks submitted from active queue work are consumed by the same wakeup.
   while (true) {
     Task task;
 
@@ -245,8 +214,7 @@ void RosExecutorQueue::drain()
     }
 
     try {
-      // drain() always runs on the executor thread that consumed the waitable,
-      // so queued work observes the same callback-group affinity as ROS callbacks.
+      // Queued work keeps the callback-group affinity of the consuming executor thread.
       task.run();
     } catch (...) {
       LogEvent(logger_, "executor_task_failed")
@@ -284,6 +252,8 @@ void RosExecutorQueue::awaitDrainIdle()
 {
   const auto caller_thread_id = std::this_thread::get_id();
   std::unique_lock<std::mutex> lock(mutex_);
+  // shutdown() can be called from queued work; the drain owner must not wait
+  // for itself to leave drain().
   drain_idle_.wait(
     lock, [this, caller_thread_id]() { return !drain_active_ || drain_owner_thread_id_ == caller_thread_id; });
 }

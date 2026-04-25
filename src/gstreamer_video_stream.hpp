@@ -27,6 +27,8 @@ namespace livekit_ros2_bridge
 
 class VideoTrackPublisher;
 
+// Pipeline callbacks can run on GStreamer threads; mutex_ guards shutdown and
+// restart state.
 class GStreamerVideoStream final
 {
 public:
@@ -41,10 +43,9 @@ public:
   void start();
   void close();
 
-  // Internal callback entrypoint used by the GStreamer pipeline helper.
-  void onPipelineFailure(const std::string & reason);
-
 private:
+  // Coalesces repeated EOS/error messages while a restart is pending.
+  void onPipelineFailure(const std::string & reason);
   std::string buildDescription() const;
   bool isShutdown() const;
   void restartLoop();

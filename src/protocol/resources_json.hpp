@@ -21,21 +21,12 @@
 namespace livekit_ros2_bridge::protocol::resources
 {
 
-/// Parse a resource-list request body.
-/// Throws `std::invalid_argument` when the payload is not a JSON object or `query` / `limit`
-/// violate the RPC contract. Missing, null, and blank queries normalize to "no filter".
+/// Unknown JSON fields are ignored for envelope compatibility.
 ResourceListRequest parseRequest(const std::string & payload);
 
-/// Serialize services as `{ "services": [{ "service", "interface_type" }, ...] }` in ROS graph order.
-/// Entries without exactly one interface type are omitted to preserve the single `interface_type`
-/// protocol shape. Callers must pre-filter results and apply any limit before calling this response
-/// serializer.
+/// Callers pass filtered resources with one interface type per name.
 std::string serializeServices(const ResourceNamesAndTypes & resources_by_name);
 
-/// Serialize topics as `{ "topics": [{ "topic", "interface_type" }, ...] }` in ROS graph order.
-/// Entries without exactly one interface type are omitted to preserve the single `interface_type`
-/// protocol shape. Callers must pre-filter results and apply any limit before calling this response
-/// serializer.
 std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name);
 
 }  // namespace livekit_ros2_bridge::protocol::resources

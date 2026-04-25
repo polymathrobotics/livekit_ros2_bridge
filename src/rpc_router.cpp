@@ -16,7 +16,6 @@
 
 #include <array>
 #include <exception>
-#include <future>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -55,8 +54,6 @@ constexpr std::array<const char *, 4> kRpcNames{
 template <typename EventT>
 EventT && addLogFields(EventT && event, const char * method_name, const livekit::RpcInvocationData & invocation)
 {
-  // Keep the request-scoped correlation fields uniform across every router
-  // rejection/failure log so operators can trace one RPC through the bridge.
   event.field("method", method_name)
     .fieldOr("request_id", invocation.request_id)
     .fieldOr("requester_identity", invocation.caller_identity);
@@ -65,12 +62,7 @@ EventT && addLogFields(EventT && event, const char * method_name, const livekit:
 
 std::uint32_t errorCodeFor(const std::exception & exc)
 {
-  // Keep the protocol error taxonomy narrow: explicit SDK RpcError values
-  // win, payload/range validation faults become invalid_request, and every
-  // other exception is collapsed into the bridge's generic internal error.
-  if (const auto * rpc_error = dynamic_cast<const livekit::RpcError *>(&exc)) {
-    return rpc_error->code();
-  }
+  // Payload/range validation maps to invalid_request; arbitrary exceptions become internal.
   if (
     dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
     dynamic_cast<const std::out_of_range *>(&exc) != nullptr)
@@ -80,35 +72,17 @@ std::uint32_t errorCodeFor(const std::exception & exc)
   return protocol::kInternalRpcError;
 }
 
-const char * errorReason(std::uint32_t code)
-{
-  switch (code) {
-    case protocol::kInvalidRequestRpcError:
-      return "invalid_request";
-    case protocol::kUnauthorizedRpcError:
-      return "unauthorized";
-    case protocol::kForbiddenRpcError:
-      return "forbidden";
-    case protocol::kInternalRpcError:
-    default:
-      return "internal";
-  }
-}
-
 [[noreturn]] void throwLoggedError(
   const char * method_name,
   const livekit::RpcInvocationData & invocation,
   const std::exception & exc,
   std::optional<std::string_view> service = std::nullopt)
 {
-  // Log once before translating arbitrary exceptions into the stable RPC error
-  // surface. Pre-built SDK RpcError instances are rethrown after logging so
-  // method-specific codes and messages survive unchanged.
   const auto code = errorCodeFor(exc);
-  const char * reason = errorReason(code);
-  LogEvent event(kLogger, code == protocol::kInternalRpcError ? "rpc_request_failed" : "rpc_request_rejected");
+  const bool internal_error = code == protocol::kInternalRpcError;
+  const char * reason = internal_error ? "internal" : "invalid_request";
+  LogEvent event(kLogger, internal_error ? "rpc_request_failed" : "rpc_request_rejected");
   addLogFields(event, method_name, invocation).field("reason", reason);
-  const auto * rpc_error = dynamic_cast<const livekit::RpcError *>(&exc);
   const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
   if (validation != nullptr) {
     event.field("request_field", validation->field());
@@ -117,17 +91,14 @@ const char * errorReason(std::uint32_t code)
   if (service) {
     event.field("service", *service);
   }
-  event.field("error", rpc_error != nullptr ? rpc_error->message() : exc.what());
+  event.field("error", exc.what());
 
-  if (code == protocol::kInternalRpcError) {
+  if (internal_error) {
     event.error();
   } else {
     event.warn();
   }
 
-  if (rpc_error != nullptr) {
-    throw;
-  }
   throw livekit::RpcError(code, exc.what());
 }
 
@@ -140,8 +111,7 @@ ResourceNamesAndTypes filterResources(
   ResourceNamesAndTypes filtered_resources;
 
   for (const auto & [name, types] : graph_resources) {
-    // The RPC schema exposes a single interface type per resource, so resources
-    // with multiple ROS types are omitted instead of guessed or duplicated.
+    // The RPC schema exposes one interface type per resource; omit ambiguous ROS resources.
     if (types.size() != 1U) {
       continue;
     }
@@ -157,8 +127,7 @@ ResourceNamesAndTypes filterResources(
     }
 
     filtered_resources.emplace(name, ResourceNamesAndTypes::mapped_type{interface_type});
-    // Apply the page limit after policy/query filtering so denied resources do
-    // not consume caller-visible capacity.
+    // Limit after policy/query filtering; denied resources do not consume capacity.
     if (request.limit && filtered_resources.size() >= *request.limit) {
       break;
     }
@@ -171,8 +140,7 @@ template <typename HandleRpcT>
 std::optional<std::string> withCallerIdentity(
   const char * method_name, const livekit::RpcInvocationData & invocation, HandleRpcT handle)
 {
-  // Reject anonymous callers before parsing/dispatch, and centralize shared
-  // exception-to-protocol translation for every RPC handler.
+  // Reject anonymous callers before parsing; validation details must not leak.
   if (invocation.caller_identity.empty()) {
     addLogFields(LogEvent(kLogger, "rpc_request_rejected"), method_name, invocation)
       .field("reason", "unauthorized")
@@ -251,13 +219,7 @@ void RpcRouter::unregisterRpcs() noexcept
 std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kCallServiceRpc, invocation, [this, &invocation]() {
-    auto request = [&]() -> ServiceCallRequest {
-      try {
-        return protocol::services::parse(invocation.payload);
-      } catch (const std::exception & exc) {
-        throwLoggedError(protocol::kCallServiceRpc, invocation, exc);
-      }
-    }();
+    auto request = protocol::services::parse(invocation.payload);
 
     if (!access_policy_.allows(AccessOperation::CallService, request.service)) {
       addLogFields(LogEvent(kLogger, "rpc_request_rejected"), protocol::kCallServiceRpc, invocation)
@@ -268,12 +230,9 @@ std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationDa
       throw livekit::RpcError(protocol::kForbiddenRpcError, "ROS service '" + request.service + "' not permitted.");
     }
 
-    // Once the request moves into the executor task, the router only needs the
-    // normalized service name for any later router-level error log.
+    // Keep the normalized service name available after request ownership moves to the executor.
     const std::string service = request.service;
     try {
-      // First hop onto the ROS executor thread to create the client/request with
-      // node-affine APIs, then wait on the returned service-call future here.
       auto submit_future = ros_executor_queue_.submit(
         [this, requester_identity = invocation.caller_identity, request = std::move(request)]() mutable {
           return ros_service_caller_.call(requester_identity, request);
@@ -290,58 +249,44 @@ std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationDa
 std::optional<std::string> RpcRouter::getInterfaces(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kShowInterfaceRpc, invocation, [&invocation]() {
-    try {
-      auto requested_types = protocol::interfaces::parse(invocation.payload);
+    auto requested_types = protocol::interfaces::parse(invocation.payload);
 
-      // Repeated requested types and shared nested dependencies can both return
-      // the same definition; keep the first-seen protocol order while deduplicating.
-      std::set<std::string> seen;
-      std::vector<InterfaceDefinition> definitions;
+    // Preserve first-seen protocol order while deduplicating shared definitions.
+    std::set<std::string> seen;
+    std::vector<InterfaceDefinition> definitions;
 
-      for (const auto & type : requested_types) {
-        for (auto & definition : lookupInterfaceDefinitions(type)) {
-          if (!seen.insert(definition.type).second) {
-            continue;
-          }
-          definitions.push_back(std::move(definition));
+    for (const auto & type : requested_types) {
+      for (auto & definition : lookupInterfaceDefinitions(type)) {
+        if (!seen.insert(definition.type).second) {
+          continue;
         }
+        definitions.push_back(std::move(definition));
       }
-      return protocol::interfaces::serialize(definitions);
-    } catch (const std::exception & exc) {
-      throwLoggedError(protocol::kShowInterfaceRpc, invocation, exc);
     }
+    return protocol::interfaces::serialize(definitions);
   });
 }
 
 std::optional<std::string> RpcRouter::listServices(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kListServicesRpc, invocation, [this, &invocation]() {
-    try {
-      auto request = protocol::resources::parseRequest(invocation.payload);
-      auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
-        return filterResources(
-          graph_->get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
-      });
-      return protocol::resources::serializeServices(future.get());
-    } catch (const std::exception & exc) {
-      throwLoggedError(protocol::kListServicesRpc, invocation, exc);
-    }
+    auto request = protocol::resources::parseRequest(invocation.payload);
+    auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
+      return filterResources(
+        graph_->get_service_names_and_types(), access_policy_, AccessOperation::CallService, request);
+    });
+    return protocol::resources::serializeServices(future.get());
   });
 }
 
 std::optional<std::string> RpcRouter::listTopics(const livekit::RpcInvocationData & invocation)
 {
   return withCallerIdentity(protocol::kListTopicsRpc, invocation, [this, &invocation]() {
-    try {
-      auto request = protocol::resources::parseRequest(invocation.payload);
-      auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
-        return filterResources(
-          graph_->get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
-      });
-      return protocol::resources::serializeTopics(future.get());
-    } catch (const std::exception & exc) {
-      throwLoggedError(protocol::kListTopicsRpc, invocation, exc);
-    }
+    auto request = protocol::resources::parseRequest(invocation.payload);
+    auto future = ros_executor_queue_.submit([this, request = std::move(request)]() mutable {
+      return filterResources(graph_->get_topic_names_and_types(), access_policy_, AccessOperation::Subscribe, request);
+    });
+    return protocol::resources::serializeTopics(future.get());
   });
 }
 

@@ -16,11 +16,7 @@
 
 #include <openssl/evp.h>
 
-#include <stdexcept>
 #include <string>
-
-#include "rclcpp/logging.hpp"
-#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge::protocol::detail::base64
 {
@@ -28,10 +24,6 @@ namespace livekit_ros2_bridge::protocol::detail::base64
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("protocol_base64");
-
-// `EVP_DecodeBlock` accepts some non-canonical inputs, so we keep a local alphabet map
-// to validate pad placement and trailing pad bits before handing data to OpenSSL.
 int sextetValue(char c) noexcept
 {
   if (c >= 'A' && c <= 'Z') {
@@ -65,10 +57,6 @@ std::string encode(const std::uint8_t * bytes, std::size_t size)
     reinterpret_cast<unsigned char *>(text.data()),
     reinterpret_cast<const unsigned char *>(bytes),
     static_cast<int>(size));
-  if (encoded < 0) {
-    LogEvent(kLogger, "base64_encode_failed").field("byte_count", size).error();
-    throw std::runtime_error("Failed base64 encoding.");
-  }
 
   text.resize(static_cast<std::size_t>(encoded));
   return text;
@@ -82,8 +70,8 @@ Result decode(std::string_view text)
 
   const std::size_t size = text.size();
   std::size_t padding = 0U;
-  // Validate the alphabet and count any '=' suffix before handing the input to OpenSSL
-  // so we can distinguish missing padding from other malformed encodings.
+  // Validate alphabet and terminal padding before length checks so missing padding has
+  // a distinct status.
   for (const char c : text) {
     if (c == '=') {
       ++padding;
@@ -99,18 +87,16 @@ Result decode(std::string_view text)
     return {{}, Status::InvalidEncoding};
   }
 
-  // A structurally valid alphabet/padding sequence that is not quartet-aligned is the
-  // specific "missing padding" case callers surface separately at the JSON boundary.
+  // After alphabet and padding checks, quartet misalignment is missing padding.
   if ((size % 4U) != 0U) {
     return {{}, Status::MissingPadding};
   }
 
-  // RFC 4648 requires unused bits in the final sextet(s) to be zero. `EVP_DecodeBlock`
-  // decodes successfully either way, so reject non-canonical encodings here.
+  // RFC 4648 requires zero unused bits in the final quantum; OpenSSL accepts aliases.
   if (padding != 0U) {
     const int sextet = sextetValue(text[size - (padding + 1U)]);
     const int mask = (padding == 2U) ? 0x0F : 0x03;
-    if (sextet < 0 || (sextet & mask) != 0) {
+    if ((sextet & mask) != 0) {
       return {{}, Status::InvalidEncoding};
     }
   }
@@ -120,13 +106,7 @@ Result decode(std::string_view text)
     reinterpret_cast<unsigned char *>(bytes.data()),
     reinterpret_cast<const unsigned char *>(text.data()),
     static_cast<int>(size));
-  if (decoded < 0) {
-    LogEvent(kLogger, "base64_decode_failed").field("input_chars", size).error();
-    return {{}, Status::InvalidEncoding};
-  }
 
-  // `EVP_DecodeBlock` materializes three bytes per quartet; trim the synthetic tail
-  // bytes that correspond to validated '=' padding.
   bytes.resize(static_cast<std::size_t>(decoded) - padding);
   return {std::move(bytes), Status::Ok};
 }

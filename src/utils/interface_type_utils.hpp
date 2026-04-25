@@ -26,13 +26,12 @@ namespace livekit_ros2_bridge
 using RosGraphNamesAndTypes =
   decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
 
-// Returns the single graph-advertised type for a resource or throws when the
-// graph is missing or ambiguous, so callers never guess a ROS interface type.
+// Reject ambiguous ROS graph state at the bridge boundary instead of guessing.
 inline std::string requireSingleInterfaceType(
   const RosGraphNamesAndTypes & names_and_types, const std::string & name, const char * resource_kind)
 {
   auto it = names_and_types.find(name);
-  if (it == names_and_types.end() || it->second.empty()) {
+  if (it == names_and_types.end()) {
     throw std::invalid_argument(std::string("No ROS types found for ") + resource_kind + " '" + name + "'.");
   }
 

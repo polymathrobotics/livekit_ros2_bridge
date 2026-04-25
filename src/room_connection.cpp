@@ -14,7 +14,6 @@
 
 #include "room_connection.hpp"
 
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <functional>
@@ -67,7 +66,6 @@ std::string_view stateName(livekit::ConnectionState state)
 
 struct LocalParticipantRef
 {
-  // Keeps the SDK room alive while callers use participant after releasing mutex_.
   std::shared_ptr<livekit::Room> room;
   livekit::LocalParticipant * participant = nullptr;
   std::uint64_t generation = 0;
@@ -78,8 +76,6 @@ struct DetachedRoom
   std::shared_ptr<livekit::Room> room;
 };
 
-// Owns one SDK room plus a one-shot connection task. Public API calls, SDK delegate callbacks,
-// and shutdown teardown all synchronize through mutex_.
 class LiveKitRoomConnection final : public RoomConnection, private livekit::RoomDelegate
 {
 public:
@@ -113,7 +109,7 @@ public:
     stop_requested_ = true;
     lock.unlock();
 
-    // Join outside mutex_ because the connection task reacquires it around activation and callbacks.
+    // Join outside mutex_; the connection task may reacquire it before exit.
     connect_task_.join();
 
     detachRoom();
@@ -191,10 +187,6 @@ public:
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
-    if (track == nullptr) {
-      return;
-    }
-
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ == livekit::ConnectionState::Disconnected) {
       return;
@@ -264,8 +256,6 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     LocalParticipantRef ref;
-    // Keep the Room alive after releasing the mutex because participant-facing SDK calls borrow
-    // room-owned state and can block while shutdown clears room_ on another thread.
     ref.room = room_;
     ref.generation = generation_;
     if (state_ != livekit::ConnectionState::Disconnected && ref.room != nullptr) {
@@ -309,8 +299,7 @@ private:
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (generation != generation_) {
-      // Shutdown invalidated this room after publishTrack() returned, so the caller gets a track
-      // that is already stale and safely degrades to a later no-op.
+      // The room changed while publishTrack() was in flight; leave this stale track untracked.
       LogEvent(kLogger, "video_track_publish_stale")
         .field("track_name", name)
         .field("track_sid", track->publication()->sid())
@@ -405,8 +394,6 @@ private:
     }
 
     if (!connected) {
-      // This Room only exists for the current connect attempt, so clear the delegate before
-      // dropping it on every failure path.
       room->setDelegate(nullptr);
       return nullptr;
     }
@@ -427,8 +414,6 @@ private:
   bool activateRoom(std::shared_ptr<livekit::Room> room)
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Publish the newly connected room before replaying RPC registrations so registerRpcLocked()
-    // binds against this connection's local participant under the same mutex.
     ++generation_;
     room_ = std::move(room);
 
@@ -462,8 +447,7 @@ private:
     if (detached.room != nullptr) {
       ++generation_;
     }
-    // Published video handles are scoped to the old room's SDK objects. Drop them eagerly so stale
-    // handles become harmless no-ops after shutdown.
+    // Old-room tracks must not unpublish from the replacement room.
     video_track_generations_.clear();
     state_ = livekit::ConnectionState::Disconnected;
     return detached;
@@ -571,12 +555,11 @@ private:
     try {
       participant->unregisterRpcMethod(method);
     } catch (const std::exception &) {
-      // Ignore missing-method errors; we only need a clean re-register.
+      // Re-registering refreshes any SDK-retained callback; absence is harmless.
     }
 
     try {
-      // Capture the current handler by value because LiveKit retains this callback independently
-      // of rpc_handlers_; unregister/teardown must not leave the SDK with dangling references.
+      // LiveKit retains this callback independently of rpc_handlers_.
       participant->registerRpcMethod(
         method,
         [method, handler = it->second](const livekit::RpcInvocationData & invocation) -> std::optional<std::string> {
@@ -609,14 +592,11 @@ private:
   RoomEventCallbacks callbacks_;
 
   std::unordered_map<std::string, livekit::LocalParticipant::RpcHandler> rpc_handlers_;
-  // Indexed by the SDK local track shared with callers. The room generation keeps late
-  // publish/unpublish completions from crossing a room lifetime boundary.
+  // Guards video unpublish against tracks published by an older room.
   std::unordered_map<const livekit::LocalVideoTrack *, std::uint64_t> video_track_generations_;
 
   bool stop_requested_ = false;
   bool sdk_initialized_ = false;
-  // Bumped whenever the active room changes or is cleared so in-flight video operations cannot
-  // repopulate handle state after shutdown.
   std::uint64_t generation_ = 0;
   livekit::ConnectionState state_ = livekit::ConnectionState::Disconnected;
 };

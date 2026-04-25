@@ -33,10 +33,7 @@ constexpr char kResourceNameExpansionNode[] = "livekit_ros2_bridge_resource_name
 constexpr char kResourceNameExpansionNamespace[] = "/";
 }  // namespace ros_resource_name_utils_detail
 
-/// Expand and validate a ROS topic/resource name for policy and protocol comparisons.
-/// Surrounding whitespace is trimmed before delegating to ROS name expansion. Relative names
-/// resolve from the root namespace to preserve this bridge's existing public canonical form.
-/// Returns an empty string when the trimmed input is empty or ROS rejects the name.
+/// Returns empty for blank input or ROS name validation/expansion failures.
 inline std::string normalizeRosResourceName(
   std::string_view name, std::string_view node_name, std::string_view namespace_, bool is_service = false)
 {
@@ -54,6 +51,7 @@ inline std::string normalizeRosResourceName(
   }
 }
 
+/// Canonicalizes config/protocol names by resolving relatives from `/`.
 inline std::string normalizeRosResourceName(std::string_view name)
 {
   return normalizeRosResourceName(
@@ -62,9 +60,7 @@ inline std::string normalizeRosResourceName(std::string_view name)
     ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
 }
 
-/// Match normalized names against normalized policy patterns.
-/// Exact patterns match only the same resource; patterns ending in `/*` match descendants under
-/// that prefix, with `/*` acting as the root-subtree wildcard.
+/// A terminal `/*` matches names under that prefix; `/*` also matches `/`.
 inline bool rosResourceMatchesPattern(std::string_view name, std::string_view pattern)
 {
   const bool is_subtree_pattern =

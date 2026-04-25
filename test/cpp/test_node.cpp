@@ -33,9 +33,7 @@ protected:
 TEST_F(NodeTest, ConstructsWithRequiredConnectionParameters)
 {
   rclcpp::NodeOptions options;
-  // This test only exercises presence of the required startup parameters. Use a syntactically
-  // valid loopback URL so the asynchronous LiveKit connection path does not fail URL parsing
-  // during teardown on distros where the SDK reports that failure from another thread.
+  // Keep the URL parseable so async LiveKit teardown does not emit cross-thread parser failures.
   options.append_parameter_override("livekit.url", "ws://127.0.0.1:9");
   options.append_parameter_override("livekit.token", "test-token");
 
@@ -47,8 +45,7 @@ TEST_F(NodeTest, FailsWhenUrlMissing)
   rclcpp::NodeOptions options;
   options.append_parameter_override("livekit.token", "test-token");
 
-  // generate_parameter_library owns the required-parameter validation details; this
-  // node-boundary test only verifies that construction surfaces the failure.
+  // Validation details belong to generate_parameter_library; this only checks construction.
   EXPECT_THROW((void)std::make_shared<Node>(options), std::exception);
 }
 

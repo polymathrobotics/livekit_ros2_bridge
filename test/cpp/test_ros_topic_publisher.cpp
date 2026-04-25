@@ -14,29 +14,24 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "livekit/room_event_types.h"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/node_options.hpp"
 #include "rclcpp/serialization.hpp"
-#include "rosidl_runtime_cpp/traits.hpp"
-
-#define private public
 #include "ros_topic_publisher.hpp"
-#undef private
-
+#include "rosidl_runtime_cpp/traits.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_msgs/msg/string.hpp"
 
@@ -98,13 +93,6 @@ template <typename MessageT>
 std::vector<std::uint8_t> makePublishPayload(const std::string & ros_topic, const MessageT & message)
 {
   return makePublishPayload(ros_topic, rosidl_generator_traits::name<MessageT>(), serializeMessage(message));
-}
-
-livekit::UserDataPacketEvent makeUserPacket(std::vector<std::uint8_t> data)
-{
-  livekit::UserDataPacketEvent event;
-  event.data = std::move(data);
-  return event;
 }
 
 AccessPolicy makeAccessPolicy(std::vector<std::string> allow = {}, std::vector<std::string> deny = {})
@@ -225,7 +213,31 @@ public:
   bool waitForPublisherSubscriberMatch(
     const std::string & topic, std::chrono::milliseconds timeout = std::chrono::seconds(5))
   {
-    return spinUntil([&]() { return publisher_node_->count_subscribers(topic) != 0U; }, timeout);
+    return spinUntil(
+      [&]() {
+        return publisher_node_->count_subscribers(topic) != 0U && observer_node_->count_publishers(topic) != 0U;
+      },
+      timeout);
+  }
+
+  bool waitForTopicType(
+    const std::string & topic,
+    const std::string & interface_type,
+    std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  {
+    return spinUntil(
+      [&]() {
+        const auto topics = publisher_node_->get_node_graph_interface()->get_topic_names_and_types();
+        const auto found = topics.find(topic);
+        return found != topics.end() && found->second.size() == 1U && found->second.front() == interface_type;
+      },
+      timeout);
+  }
+
+  template <typename MessageT>
+  bool waitForTopicType(const std::string & topic, std::chrono::milliseconds timeout = std::chrono::seconds(5))
+  {
+    return waitForTopicType(topic, rosidl_generator_traits::name<MessageT>(), timeout);
   }
 
 private:
@@ -262,27 +274,6 @@ void expectTopicNotPublished(
   EXPECT_EQ(harness.countPublishers(topic), 0U);
 }
 
-void waitForSubscriberMatchBeforePublish(
-  RosTopicPublisher & publisher, RosTopicPublisherHarness & harness, const std::string & topic)
-{
-  publisher.before_publish_handler_ = [&harness, topic]() {
-    EXPECT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
-  };
-}
-
-void setTopicGraphType(RosTopicPublisher & publisher, const std::string & topic, const std::string & interface_type)
-{
-  publisher.topic_graph_provider_ = [topic, interface_type]() {
-    return RosGraphNamesAndTypes{{topic, {interface_type}}};
-  };
-}
-
-template <typename MessageT>
-void setTopicGraphType(RosTopicPublisher & publisher, const std::string & topic)
-{
-  setTopicGraphType(publisher, topic, rosidl_generator_traits::name<MessageT>());
-}
-
 TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
 {
   RosTopicPublisherHarness harness;
@@ -295,12 +286,14 @@ TEST(TopicPublisherTest, PublishesMessagesToRequestedTopic)
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
-  waitForSubscriberMatchBeforePublish(publisher, harness, topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(topic));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
+  publisher.publish("alice", makeRequest(topic, message));
+  ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
+  received_message.reset();
   publisher.publish("alice", makeRequest(topic, message));
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
@@ -320,14 +313,16 @@ TEST(TopicPublisherTest, PublishPayloadParsesAndPublishesMessagesToRequestedTopi
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
-  waitForSubscriberMatchBeforePublish(publisher, harness, topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(topic));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   message.percentage = 0.75F;
 
-  const livekit::UserDataPacketEvent event = makeUserPacket(makePublishPayload(topic, message));
-  publisher.handlePublishPacket("alice", event);
+  const std::vector<std::uint8_t> payload = makePublishPayload(topic, message);
+  publisher.handlePublishPayload("alice", payload);
+  ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
+  received_message.reset();
+  publisher.handlePublishPayload("alice", payload);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 48.5F, 1e-6F);
@@ -349,13 +344,15 @@ TEST(TopicPublisherTest, PublishPayloadResolvesTopicWithPublisherNodeContext)
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({resolved_topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, resolved_topic);
-  waitForSubscriberMatchBeforePublish(publisher, harness, resolved_topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(resolved_topic));
   sensor_msgs::msg::BatteryState message;
   message.voltage = 24.5F;
 
-  const livekit::UserDataPacketEvent event = makeUserPacket(makePublishPayload(request_topic, message));
-  publisher.handlePublishPacket("alice", event);
+  const std::vector<std::uint8_t> payload = makePublishPayload(request_topic, message);
+  publisher.handlePublishPayload("alice", payload);
+  ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(resolved_topic));
+  received_message.reset();
+  publisher.handlePublishPayload("alice", payload);
 
   ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
   EXPECT_NEAR(received_message->voltage, 24.5F, 1e-6F);
@@ -374,8 +371,7 @@ TEST(TopicPublisherTest, InvalidPublishPayloadIsDroppedWithoutPublishing)
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
 
-  const livekit::UserDataPacketEvent event = makeUserPacket(payloadBytes("{"));
-  EXPECT_NO_THROW(publisher.handlePublishPacket("alice", event));
+  EXPECT_NO_THROW(publisher.handlePublishPayload("alice", payloadBytes("{")));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -394,8 +390,7 @@ TEST(TopicPublisherTest, PublishPayloadWithoutRequesterIdentityIsDropped)
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
   sensor_msgs::msg::BatteryState message;
 
-  const livekit::UserDataPacketEvent event = makeUserPacket(makePublishPayload(topic, message));
-  publisher.handlePublishPacket("", event);
+  publisher.handlePublishPayload("", makePublishPayload(topic, message));
 
   expectTopicNotPublished(harness, topic, received_message);
 }
@@ -440,14 +435,19 @@ TEST(TopicPublisherTest, CacheSizeOneRejectsNewTopicAndKeepsExistingPublisher)
       });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({"/battery/*"}), 1U);
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, first_topic);
-  waitForSubscriberMatchBeforePublish(publisher, harness, first_topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(first_topic));
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(second_topic));
 
   sensor_msgs::msg::BatteryState message;
   message.voltage = 48.5F;
   publisher.publish("alice", makeRequest(first_topic, message));
+  ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(first_topic));
+  const auto first_topic_deliveries_before_confirmed_publish = first_topic_voltages.size();
+  publisher.publish("alice", makeRequest(first_topic, message));
 
-  ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 1U; }));
+  ASSERT_TRUE(
+    harness.spinUntil([&]() { return first_topic_voltages.size() > first_topic_deliveries_before_confirmed_publish; }));
+  EXPECT_NEAR(first_topic_voltages.back(), 48.5F, 1e-6F);
   EXPECT_EQ(harness.countPublishers(first_topic), 1U);
 
   message.voltage = 47.0F;
@@ -457,16 +457,18 @@ TEST(TopicPublisherTest, CacheSizeOneRejectsNewTopicAndKeepsExistingPublisher)
   EXPECT_EQ(harness.countPublishers(first_topic), 1U);
   EXPECT_EQ(harness.countPublishers(second_topic), 0U);
 
+  const auto first_topic_deliveries_before_final_publish = first_topic_voltages.size();
   message.voltage = 50.0F;
   publisher.publish("alice", makeRequest(first_topic, message));
 
-  ASSERT_TRUE(harness.spinUntil([&]() { return first_topic_voltages.size() == 2U; }));
+  ASSERT_TRUE(
+    harness.spinUntil([&]() { return first_topic_voltages.size() > first_topic_deliveries_before_final_publish; }));
   EXPECT_NEAR(first_topic_voltages.back(), 50.0F, 1e-6F);
   EXPECT_EQ(harness.countPublishers(first_topic), 1U);
   EXPECT_EQ(harness.countPublishers(second_topic), 0U);
 }
 
-TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)
+TEST(TopicPublisherTest, CachedPublisherPinsTypeOnCacheHits)
 {
   RosTopicPublisherHarness harness;
   const std::string topic = "/battery/cached_type";
@@ -478,72 +480,29 @@ TEST(TopicPublisherTest, CachedPublisherPinsTypeAndSkipsGraphLookupOnCacheHits)
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
-  waitForSubscriberMatchBeforePublish(publisher, harness, topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(topic));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
   publisher.publish("alice", makeRequest(topic, first_message));
-
-  ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() == 1U; }));
-
-  std::size_t graph_calls = 0U;
-  publisher.topic_graph_provider_ = [&graph_calls]() {
-    ++graph_calls;
-    return RosGraphNamesAndTypes{};
-  };
+  ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
+  const auto deliveries_before_second_publish = received_voltages.size();
 
   sensor_msgs::msg::BatteryState second_message;
   second_message.voltage = 49.0F;
   publisher.publish("alice", makeRequest(topic, second_message));
 
-  ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() == 2U; }));
+  ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() > deliveries_before_second_publish; }));
   EXPECT_NEAR(received_voltages.back(), 49.0F, 1e-6F);
 
+  const auto deliveries_after_second_publish = received_voltages.size();
   std_msgs::msg::String wrong_message;
   wrong_message.data = "wrong type";
   publisher.publish("alice", makeRequest(topic, wrong_message));
 
-  EXPECT_FALSE(harness.spinUntil([&]() { return received_voltages.size() > 2U; }, std::chrono::milliseconds(200)));
-  EXPECT_EQ(graph_calls, 0U);
+  EXPECT_FALSE(harness.spinUntil(
+    [&]() { return received_voltages.size() > deliveries_after_second_publish; }, std::chrono::milliseconds(200)));
   EXPECT_EQ(harness.countPublishers(topic), 1U);
-}
-
-TEST(TopicPublisherTest, FailedFirstPublishDoesNotLeavePublisherRegisteredAndLaterPublishStillSucceeds)
-{
-  RosTopicPublisherHarness harness;
-  const std::string topic = "/battery/failure_cleanup";
-
-  std::optional<sensor_msgs::msg::BatteryState> received_message;
-  [[maybe_unused]] const auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
-    topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
-      received_message = message;
-    });
-
-  sensor_msgs::msg::BatteryState message;
-  message.voltage = 48.5F;
-  const TopicPublishRequest request = makeRequest(topic, message);
-
-  bool fail_first_publish = true;
-  bool subscriber_ready = false;
-  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
-  publisher.before_publish_handler_ = [&]() {
-    subscriber_ready = harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; });
-    if (fail_first_publish) {
-      fail_first_publish = false;
-      throw std::runtime_error("forced publish failure");
-    }
-  };
-
-  publisher.publish("alice", request);
-
-  EXPECT_TRUE(subscriber_ready);
-  expectTopicNotPublished(harness, topic, received_message);
-
-  publisher.publish("alice", request);
-
-  ASSERT_TRUE(harness.spinUntil([&]() { return received_message.has_value(); }));
 }
 
 TEST(TopicPublisherTest, RejectsRequestsWhoseDeclaredTypeDoesNotMatchTheGraph)
@@ -558,7 +517,7 @@ TEST(TopicPublisherTest, RejectsRequestsWhoseDeclaredTypeDoesNotMatchTheGraph)
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(topic));
 
   std_msgs::msg::String wrong_message;
 
@@ -582,34 +541,6 @@ TEST(TopicPublisherTest, RejectsRequestsForTopicsMissingFromTheGraph)
     [&]() { return harness.observerNode().count_publishers(topic) != 0U; }, std::chrono::milliseconds(200)));
 }
 
-TEST(TopicPublisherTest, RejectsRequestsWhenTopicGraphHasMultipleTypes)
-{
-  RosTopicPublisherHarness harness;
-  const std::string topic = "/battery/ambiguous";
-
-  std::optional<sensor_msgs::msg::BatteryState> received_message;
-  [[maybe_unused]] const auto battery_subscription =
-    harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
-      topic, rclcpp::QoS(10), [&received_message](const sensor_msgs::msg::BatteryState & message) {
-        received_message = message;
-      });
-
-  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  publisher.topic_graph_provider_ = [topic]() {
-    return RosGraphNamesAndTypes{
-      {topic,
-       {rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>(),
-        rosidl_generator_traits::name<std_msgs::msg::String>()}},
-    };
-  };
-
-  sensor_msgs::msg::BatteryState message;
-
-  publisher.publish("alice", makeRequest(topic, message));
-
-  expectTopicNotPublished(harness, topic, received_message);
-}
-
 TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdownIsHarmless)
 {
   RosTopicPublisherHarness harness;
@@ -622,7 +553,7 @@ TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdo
     });
 
   auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
+  ASSERT_TRUE(harness.waitForTopicType<sensor_msgs::msg::BatteryState>(topic));
 
   sensor_msgs::msg::BatteryState first_message;
   first_message.voltage = 48.5F;
@@ -647,40 +578,6 @@ TEST(TopicPublisherTest, ShutdownPreventsRosPublisherRecreationAndRepeatedShutdo
   publisher.publish("alice", makeRequest(topic, late_message));
 
   EXPECT_FALSE(harness.spinUntil([&]() { return received_message.has_value(); }, std::chrono::milliseconds(200)));
-  EXPECT_TRUE(publisher.publishers_.empty());
-}
-
-TEST(TopicPublisherTest, ShutdownDuringInFlightFirstPublishDoesNotLeavePublisherRegisteredOrRecreateIt)
-{
-  RosTopicPublisherHarness harness;
-  const std::string topic = "/battery/shutdown_race";
-
-  std::atomic<std::size_t> delivered_messages{0U};
-  [[maybe_unused]] const auto subscription = harness.observerNode().create_subscription<sensor_msgs::msg::BatteryState>(
-    topic, rclcpp::QoS(10), [&delivered_messages](const sensor_msgs::msg::BatteryState &) {
-      delivered_messages.fetch_add(1U);
-    });
-
-  auto publisher = harness.makePublisher(makeAccessPolicy({topic}));
-  setTopicGraphType<sensor_msgs::msg::BatteryState>(publisher, topic);
-  publisher.before_publish_handler_ = [&]() {
-    EXPECT_TRUE(harness.spinUntil([&]() { return harness.publisherNode().count_subscribers(topic) == 1U; }));
-    publisher.shutdown();
-  };
-
-  sensor_msgs::msg::BatteryState first_message;
-  publisher.publish("alice", makeRequest(topic, first_message));
-
-  ASSERT_TRUE(harness.spinUntil([&]() { return harness.countPublishers(topic) == 0U; }));
-
-  const std::size_t deliveries_after_shutdown = delivered_messages.load();
-
-  sensor_msgs::msg::BatteryState second_message;
-  publisher.publish("alice", makeRequest(topic, second_message));
-
-  EXPECT_FALSE(harness.spinUntil(
-    [&]() { return delivered_messages.load() > deliveries_after_shutdown; }, std::chrono::milliseconds(200)));
-  EXPECT_EQ(harness.countPublishers(topic), 0U);
 }
 
 }  // namespace

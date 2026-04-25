@@ -23,14 +23,12 @@
 namespace livekit_ros2_bridge
 {
 
-// Stable subscription target categories shared by lease management and subscription protocol codecs.
 enum class SubscriptionTargetKind
 {
   Topic,
   OtherVideo,
 };
 
-// A single lease-backed subscription demand plus any non-zero delivery preference overrides.
 struct SubscriptionDemand
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -38,49 +36,39 @@ struct SubscriptionDemand
   std::optional<int> preferred_interval_ms;
 };
 
-// Lease-backed subscription demand set for a requester.
 struct SubscriptionHeartbeat
 {
-  // Optional normalized client-session identifier.
+  // Normalized client-session identifier; absent for missing, null, or blank wire values.
   std::optional<std::string> session_id;
-  // First-seen lease-backed demands after coalescing duplicate canonical targets.
   std::vector<SubscriptionDemand> demands;
 };
 
-// Delivery mode reported for an active subscription. Runtime stream concepts keep `stream` naming
-// when they refer to shared runtime resources.
 enum class SubscriptionDeliveryKind
 {
   Data,
   Video,
 };
 
-// Active subscription status assembled by runtime code before protocol serialization.
 struct SubscriptionStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
   std::string name;
 
-  // Empty when no degradation is being reported.
   std::string degradation_reason;
-  // Empty when no ROS interface type applies or is available.
   std::string interface_type;
 
-  // Applied data delivery interval. Ignored for video delivery.
+  // Applied data interval; ignored for video delivery.
   int interval_ms = 0;
   SubscriptionDeliveryKind delivery = SubscriptionDeliveryKind::Data;
-  // Data or media track carrying this subscription.
   std::string track_name;
 };
 
 enum class SubscriptionStatusErrorReason
 {
   Forbidden,
-  Unavailable,
   NotFound,
 };
 
-// Error subscription status assembled by runtime code before protocol serialization.
 struct SubscriptionErrorStatus
 {
   SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -91,11 +79,11 @@ struct SubscriptionErrorStatus
 
 using SubscriptionReportedStatus = std::variant<SubscriptionStatus, SubscriptionErrorStatus>;
 
-// Complete typed status report before it crosses the subscription-status protocol boundary.
 struct SubscriptionStatusReport
 {
   std::vector<SubscriptionReportedStatus> statuses;
   std::optional<std::string> session_id;
+  // Steady-clock expiry converted to relative `lease_expires_in_ms` during serialization.
   std::optional<std::chrono::steady_clock::time_point> lease_expiry;
 };
 

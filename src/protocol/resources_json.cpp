@@ -33,18 +33,6 @@ namespace
 
 constexpr char kInvalidLimitMessage[] = "limit must be a positive integer";
 
-template <typename AddEntryT>
-void appendSingleInterfaceTypeResources(
-  Json & entries, const ResourceNamesAndTypes & resources_by_name, AddEntryT add_entry)
-{
-  for (const auto & [name, types] : resources_by_name) {
-    if (types.size() != 1U) {
-      continue;
-    }
-    add_entry(entries, name, types.front());
-  }
-}
-
 std::optional<std::size_t> parseLimit(const Json & body)
 {
   const auto field = body.find("limit");
@@ -56,8 +44,7 @@ std::optional<std::size_t> parseLimit(const Json & body)
     throw ValidationError("limit", kInvalidLimitMessage);
   }
 
-  // Parse into a signed type first so negative JSON integers are rejected before converting to
-  // the unsigned storage used by `ResourceListRequest::limit`.
+  // Read signed so negative JSON integers fail before size_t conversion.
   const auto limit = field->get<std::int64_t>();
   if (limit <= 0) {
     throw ValidationError("limit", kInvalidLimitMessage);
@@ -79,7 +66,6 @@ ResourceListRequest parseRequest(const std::string & payload)
 
   std::optional<std::string> query;
   try {
-    // Normalize blank and null queries to "no filter".
     query = detail::optionalTrimmedStringField(body, "query", "query must be a string", true);
   } catch (const std::invalid_argument & exc) {
     throw ValidationError("query", exc.what());
@@ -91,10 +77,9 @@ ResourceListRequest parseRequest(const std::string & payload)
 std::string serializeServices(const ResourceNamesAndTypes & resources_by_name)
 {
   Json entries = Json::array();
-  appendSingleInterfaceTypeResources(
-    entries, resources_by_name, [](Json & output, const std::string & service, const std::string & interface_type) {
-      output.push_back({{"service", service}, {"interface_type", interface_type}});
-    });
+  for (const auto & [service, types] : resources_by_name) {
+    entries.push_back({{"service", service}, {"interface_type", types.front()}});
+  }
 
   return Json{{"services", std::move(entries)}}.dump();
 }
@@ -102,10 +87,9 @@ std::string serializeServices(const ResourceNamesAndTypes & resources_by_name)
 std::string serializeTopics(const ResourceNamesAndTypes & resources_by_name)
 {
   Json entries = Json::array();
-  appendSingleInterfaceTypeResources(
-    entries, resources_by_name, [](Json & output, const std::string & topic, const std::string & interface_type) {
-      output.push_back({{"topic", topic}, {"interface_type", interface_type}});
-    });
+  for (const auto & [topic, types] : resources_by_name) {
+    entries.push_back({{"topic", topic}, {"interface_type", types.front()}});
+  }
 
   return Json{{"topics", std::move(entries)}}.dump();
 }

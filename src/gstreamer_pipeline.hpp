@@ -53,6 +53,7 @@ public:
   GStreamerPipeline & operator=(GStreamerPipeline &&) = delete;
 
   bool isActive() const noexcept;
+  // Borrowed pointer; non-null after start(..., require_appsrc=true) until stop() or next start().
   GstAppSrc * appsrc() const noexcept;
 
   void start(const std::string & description, bool require_appsrc);

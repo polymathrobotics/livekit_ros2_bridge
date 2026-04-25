@@ -42,20 +42,15 @@ enum class AccessOperation
   CallService,
 };
 
-/// Operation-specific allow/deny rules over ROS topic and service names.
-/// The policy is default-deny, a literal `"*"` allow rule means allow all for that operation,
-/// and deny rules always win over allows. ROS expansion and validation are delegated to rclcpp;
-/// exact patterns match one resource and `.../*` patterns match descendants.
-/// Instances are immutable after construction and can be shared across threads without
-/// external synchronization.
+/// Default-deny ROS topic/service policy: `"*"` is operation-wide, `/*` is
+/// subtree matching, and deny rules win. Configured names are normalized at
+/// construction; the result is immutable and thread-safe to share.
 class AccessPolicy
 {
 public:
   AccessPolicy() = default;
   explicit AccessPolicy(const AccessPolicyConfig & config);
 
-  /// Whether `raw_resource` is allowed.
-  /// todo: rename `raw_resource` as resource
   bool allows(AccessOperation operation, std::string_view raw_resource) const;
 
 private:

@@ -89,8 +89,7 @@ std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char
   if (trimmed.empty()) {
     throw std::runtime_error(std::string(context) + " pattern must not be empty");
   }
-  // Store patterns in the canonical absolute form used by downstream matching.
-  // User-facing "*" is still accepted here and normalized to the catch-all "/*".
+  // Keep "*" as catch-all shorthand for the absolute matcher.
   if (trimmed == "*") {
     return "/*";
   }
@@ -109,12 +108,10 @@ std::string normalizeRosResourcePattern(std::string_view raw_pattern, const char
   return normalized;
 }
 
-std::optional<livekit::VideoCodec> parseVideoPublishCodec(const std::string & raw_codec, const std::string & field_name)
+std::optional<livekit::VideoCodec> parseVideoPublishCodec(const std::string & raw_codec)
 {
   const std::string codec = trim(raw_codec);
-  if (codec == "auto") {
-    return std::nullopt;
-  }
+  // This SDK version lacks stable named constants; values match its wire mapping.
   if (codec == "vp8") {
     return static_cast<livekit::VideoCodec>(0);
   }
@@ -130,22 +127,19 @@ std::optional<livekit::VideoCodec> parseVideoPublishCodec(const std::string & ra
   if (codec == "h265") {
     return static_cast<livekit::VideoCodec>(4);
   }
-  throw std::runtime_error("unsupported " + field_name + " '" + codec + "'");
+  return std::nullopt;
 }
 
-std::optional<bool> parseVideoPublishSimulcast(const std::string & raw_simulcast, const std::string & field_name)
+std::optional<bool> parseVideoPublishSimulcast(const std::string & raw_simulcast)
 {
   const std::string simulcast = trim(raw_simulcast);
-  if (simulcast == "auto") {
-    return std::nullopt;
-  }
   if (simulcast == "enabled") {
     return true;
   }
   if (simulcast == "disabled") {
     return false;
   }
-  throw std::runtime_error("unsupported " + field_name + " '" + simulcast + "'");
+  return std::nullopt;
 }
 
 void setVideoEncodingOptions(livekit::TrackPublishOptions & config, std::uint64_t max_bitrate_bps, double max_framerate)
@@ -171,71 +165,52 @@ double videoMaxFramerate(const livekit::TrackPublishOptions & config)
   return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
 }
 
-template <typename RosPolicy, typename RmwPolicy, typename ParseFn>
-std::optional<RosPolicy> parseSubscriptionQosPolicy(
-  const std::string & raw_mode,
-  const std::string & field_name,
-  ParseFn parse,
-  RmwPolicy unknown_policy,
-  RmwPolicy system_default_policy)
+template <typename RosPolicy, typename ParseFn>
+std::optional<RosPolicy> parseSubscriptionQosPolicy(const std::string & raw_mode, ParseFn parse)
 {
   const std::string mode = trim(raw_mode);
   if (mode == "auto") {
     return std::nullopt;
   }
 
-  const RmwPolicy parsed = parse(mode.c_str());
-  if (parsed == unknown_policy || parsed == system_default_policy) {
-    throw std::runtime_error("unsupported " + field_name + " '" + mode + "'");
-  }
+  const auto parsed = parse(mode.c_str());
 
   return static_cast<RosPolicy>(parsed);
 }
 
 std::optional<rclcpp::ReliabilityPolicy> parseSubscriptionQosReliability(const std::string & raw_mode)
 {
-  return parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(
-    raw_mode,
-    "subscription.qos reliability mode",
-    rmw_qos_reliability_policy_from_str,
-    RMW_QOS_POLICY_RELIABILITY_UNKNOWN,
-    RMW_QOS_POLICY_RELIABILITY_SYSTEM_DEFAULT);
+  return parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(raw_mode, rmw_qos_reliability_policy_from_str);
 }
 
 std::optional<rclcpp::DurabilityPolicy> parseSubscriptionQosDurability(const std::string & raw_mode)
 {
-  return parseSubscriptionQosPolicy<rclcpp::DurabilityPolicy>(
-    raw_mode,
-    "subscription.qos durability mode",
-    rmw_qos_durability_policy_from_str,
-    RMW_QOS_POLICY_DURABILITY_UNKNOWN,
-    RMW_QOS_POLICY_DURABILITY_SYSTEM_DEFAULT);
+  return parseSubscriptionQosPolicy<rclcpp::DurabilityPolicy>(raw_mode, rmw_qos_durability_policy_from_str);
 }
 
 livekit::TrackPublishOptions parseTrackPublishOptions(const Params & params)
 {
   livekit::TrackPublishOptions config;
-  config.video_codec = parseVideoPublishCodec(params.video.publish.codec, "video.publish.codec");
+  config.video_codec = parseVideoPublishCodec(params.video.publish.codec);
   setVideoEncodingOptions(
     config, static_cast<std::uint64_t>(params.video.publish.max_bitrate_bps), params.video.publish.max_framerate);
-  config.simulcast = parseVideoPublishSimulcast(trim(params.video.publish.simulcast), "video.publish.simulcast");
+  config.simulcast = parseVideoPublishSimulcast(params.video.publish.simulcast);
   return config;
 }
 
 template <typename EntryT>
 livekit::TrackPublishOptions parseTrackPublishOptions(
-  const EntryT & entry, const std::string & context, const livekit::TrackPublishOptions & default_publish_config)
+  const EntryT & entry, const livekit::TrackPublishOptions & default_publish_config)
 {
   livekit::TrackPublishOptions config = default_publish_config;
 
   const std::string codec = trim(entry.publish.codec);
   if (!codec.empty()) {
-    config.video_codec = parseVideoPublishCodec(codec, context + " publish.codec");
+    config.video_codec = parseVideoPublishCodec(codec);
   }
 
-  // Entry-level numeric overrides use negative values as "inherit the global
-  // default" sentinels because the generated parameter schema cannot express
-  // optional scalars for these fields.
+  // Negative values mean "inherit global default"; the generated parameter
+  // schema cannot express optional scalars for these fields.
   std::uint64_t max_bitrate_bps = videoMaxBitrateBps(config);
   double max_framerate = videoMaxFramerate(config);
   if (entry.publish.max_bitrate_bps >= 0) {
@@ -248,7 +223,7 @@ livekit::TrackPublishOptions parseTrackPublishOptions(
 
   const std::string simulcast = trim(entry.publish.simulcast);
   if (!simulcast.empty()) {
-    config.simulcast = parseVideoPublishSimulcast(simulcast, context + " publish.simulcast");
+    config.simulcast = parseVideoPublishSimulcast(simulcast);
   }
 
   return config;
@@ -262,8 +237,6 @@ struct EndpointCounts
   guint bridge_appsink_count = 0;
 };
 
-// Parse failures can leave bridge-owned endpoints partially instantiated, so
-// validation needs both an exact layout check and a looser user-endpoint check.
 struct EndpointLayout
 {
   guint appsrc_count = 0;
@@ -354,9 +327,7 @@ void validateVideoPipelineDescription(
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
   GErrorPtr error(raw_error);
-  // gst_parse_launch can return both an error and a partially built bin. Check
-  // endpoint ownership first so appsrc/appsink misuse is reported even if
-  // parsing later failed for a second reason in the same fragment.
+  // Prefer the endpoint-ownership error when a partial parse already shows it.
   if (error != nullptr && pipeline != nullptr) {
     const EndpointCounts counts = countPipelineEndpoints(context, pipeline.get());
     if (layout.hasUserEndpoints(counts)) {
@@ -388,9 +359,6 @@ const typename EntryMap::mapped_type & requireUniqueEntry(
   const char * duplicate_context,
   const char * missing_context)
 {
-  // The generated parameter library exposes entry ids and entry payload maps as
-  // separate structures, so validate both declaration order and map presence
-  // before reading a referenced entry.
   if (!seen_ids.emplace(entry_id).second) {
     throw std::runtime_error(std::string("duplicate ") + duplicate_context + " '" + entry_id + "'");
   }
@@ -413,17 +381,14 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     rule.publish_config = config.default_publish_config;
   }
 
-  // Rebuild user rules ahead of the built-in catch-all so longest-match selection
-  // still works and same-length ties stay first-declared.
+  // User rules precede the built-in catch-all; same-length ties stay first-declared.
   auto builtin_rules = std::move(config.ros_topic_rules);
   config.ros_topic_rules.clear();
 
   std::unordered_set<std::string> seen_topic_ids;
   std::unordered_set<std::string> seen_other_ids;
   std::unordered_set<std::string> seen_other_names;
-  // Topic-entry transforms are middle fragments only. Wrap them in a synthetic
-  // bridge-owned ingress so validation exercises the same ownership shape the
-  // runtime will assemble around a ROS subscription.
+  // Validate topic transforms against bridge-owned ingress/egress endpoints.
   const std::string synthetic_ingress = "appsrc name=" + std::string{kBridgeAppSrcName} +
                                         " is-live=true block=false format=time do-timestamp=true"
                                         " caps=video/x-raw,format=RGB,width=2,height=2,framerate=0/1";
@@ -441,7 +406,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     rule.pattern = pattern;
     rule.rule_id = entry_id;
     rule.transform_fragment = transform;
-    rule.publish_config = parseTrackPublishOptions(entry, rule_context, config.default_publish_config);
+    rule.publish_config = parseTrackPublishOptions(entry, config.default_publish_config);
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
@@ -458,8 +423,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     validateVideoPipelineDescription(
       source_context, buildPipelineDescription(ingress, transform), kOtherVideoSourceEndpointLayout);
 
-    // Other video sources are keyed by the trimmed requested name. Only
-    // surrounding whitespace is ignored; slash and colon variants stay distinct.
+    // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string other_video_source_name = trim(entry_id);
     if (other_video_source_name.empty()) {
       throw std::runtime_error(source_context + " must trim to a non-empty name");
@@ -471,7 +435,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
     OtherVideoSource source;
     source.ingress_fragment = ingress;
     source.transform_fragment = transform;
-    source.publish_config = parseTrackPublishOptions(entry, source_context, config.default_publish_config);
+    source.publish_config = parseTrackPublishOptions(entry, config.default_publish_config);
     config.other_video_sources.emplace(other_video_source_name, std::move(source));
   }
 
@@ -514,9 +478,7 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters)
 {
-  // Keep the parameter snapshot outside the guarded load path so startup
-  // failure logs can still identify the configured URL and whether a startup
-  // token was present even if derived config assembly fails partway through.
+  // Keep partial params available for failure logs.
   RuntimeConfig config;
   Params params;
   const char * stage = "parameters_interface_validation";

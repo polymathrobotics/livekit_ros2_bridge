@@ -404,19 +404,6 @@ TEST_F(RuntimeTest, StartupFailsWhenRequiredRpcRegistrationFails)
   EXPECT_TRUE(state->rpc_handlers.empty());
 }
 
-TEST_F(RuntimeTest, StartupRejectsNullRoomConnection)
-{
-  auto node = std::make_shared<rclcpp::Node>(nextNodeName("runtime_test_node"), makeStaticTokenOptions());
-  RuntimeConfig config = loadRuntimeConfig(node->get_node_parameters_interface());
-
-  try {
-    Runtime runtime(*node, nullptr, std::move(config));
-    FAIL() << "Expected std::invalid_argument";
-  } catch (const std::invalid_argument & exc) {
-    EXPECT_STREQ(exc.what(), "Runtime requires a non-null RoomConnection");
-  }
-}
-
 TEST_F(RuntimeTest, DestructionRunsSingleOrderedTeardown)
 {
   auto harness = makeRuntimeHarness(makeStaticTokenOptions());
@@ -728,12 +715,12 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   auto harness = makeRuntimeHarness(
     options, [&publish_started_promise, &release_publish, &publish_started_once](FakeRoomConnection & room_connection) {
       room_connection.state->publish_data_track_handler =
-        [&publish_started_promise, &release_publish, &publish_started_once](const std::string &) {
+        [&publish_started_promise, &release_publish, &publish_started_once, &room_connection](const std::string &) {
           if (!publish_started_once.exchange(true)) {
             publish_started_promise.set_value();
           }
           release_publish.wait();
-          return std::shared_ptr<livekit::LocalDataTrack>{};
+          return room_connection.makeSyntheticDataTrack();
         };
     });
 

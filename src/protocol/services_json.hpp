@@ -21,16 +21,9 @@
 namespace livekit_ros2_bridge::protocol::services
 {
 
-/// Parse a service-call request body into the typed DTO consumed by the ROS runtime.
-/// Unknown top-level fields are ignored so the request envelope can grow without revving this
-/// parser. Throws `std::invalid_argument` with caller-fixable validation text that the RPC layer
-/// surfaces as an invalid-request error.
+/// Unknown top-level fields are ignored so new optional protocol fields remain backward-compatible.
 ServiceCallRequest parse(const std::string & text);
 
-/// Serialize a successful service-call response DTO as the complete RPC response body.
-/// The response DTO carries the service metadata that was actually used to execute the request so
-/// serialization reflects any name normalization or late interface-type resolution performed
-/// downstream.
 std::string serialize(const ServiceCallResponse & response);
 
 }  // namespace livekit_ros2_bridge::protocol::services

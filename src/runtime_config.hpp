@@ -28,15 +28,12 @@
 namespace livekit_ros2_bridge
 {
 
-// Immutable startup configuration derived once from ROS parameters and then shared across the
-// runtime.
 struct RuntimeConfig
 {
   struct HealthConfig
   {
     bool watchdog_enabled = true;
-    // Maximum time the bridge may spend trying to recover connectivity before Runtime requests
-    // process shutdown. The 75-second default keeps recovery bounded while the SDK owns reconnect.
+    // Watchdog closes the room when SDK reconnect exceeds this window.
     std::chrono::milliseconds watchdog_recovery_timeout{std::chrono::seconds(75)};
   };
 
@@ -47,6 +44,7 @@ struct RuntimeConfig
   VideoStreamConfig video_stream;
 };
 
+// Loads one ROS parameter snapshot; falls back to LIVEKIT_TOKEN when livekit.token is unset.
 RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInterface::SharedPtr & parameters);
 
 }  // namespace livekit_ros2_bridge

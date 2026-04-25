@@ -61,6 +61,7 @@ PublisherPolicySummary<Policy> summarizePublisherPolicy(
   for (const auto & publisher_qos : publisher_qos_profiles) {
     const Policy policy = accessor(publisher_qos);
     if (!containsPolicy(candidate_subscription_policies, policy)) {
+      // Unknown and system-default entries are not concrete publisher offers.
       continue;
     }
     if (!summary.resolved_policy.has_value()) {
@@ -76,6 +77,7 @@ PublisherPolicySummary<Policy> summarizePublisherPolicy(
     return summary;
   }
 
+  // Candidates run strongest to weakest; keep the weakest compatible request.
   std::optional<Policy> compatible_policy;
   for (const Policy subscription_policy : candidate_subscription_policies) {
     bool compatible_with_all_publishers = true;
@@ -97,6 +99,8 @@ PublisherPolicySummary<Policy> summarizePublisherPolicy(
   if (compatible_policy.has_value()) {
     summary.resolved_policy = *compatible_policy;
   } else if (summary.mixed) {
+    // If compatibility cannot prove a common request across mixed publishers,
+    // prefer the least restrictive candidate over the first publisher seen.
     summary.resolved_policy = *(candidate_subscription_policies.end() - 1);
   }
 
@@ -117,8 +121,6 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
 
   const TopicSubscriptionQosOverride * match = nullptr;
   if (config != nullptr) {
-    // Prefer the most specific matching pattern. Equal-length matches keep the
-    // first configured override so configuration order remains the tiebreaker.
     for (const auto & candidate : config->topic_overrides) {
       if (!rosResourceMatchesPattern(topic, candidate.pattern)) {
         continue;
@@ -134,8 +136,6 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     resolved.override_pattern = match->pattern;
   }
 
-  // Only explicit publisher policies participate in resolution. Unknown and
-  // system-default entries do not provide a concrete policy to inherit.
   const auto reliability = summarizePublisherPolicy(
     publisher_qos_profiles,
     [](const rclcpp::QoS & publisher_qos) { return publisher_qos.reliability(); },
@@ -150,15 +150,9 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   resolved.mixed_durability = durability.mixed;
 
   if (match == nullptr && !reliability.resolved_policy.has_value() && !durability.resolved_policy.has_value()) {
-    // No override matched and publishers exposed no concrete policy, so the
-    // caller's base QoS is already the final answer.
     return resolved;
   }
 
-  // Each QoS axis resolves independently. A non-auto override wins for that
-  // axis; otherwise we consume publisher QoS only when it exposes a concrete
-  // policy for that same axis. When publishers disagree, prefer the weaker
-  // compatible policy so one subscription can attach to every known publisher.
   if (match != nullptr && match->reliability.has_value()) {
     resolved.qos.reliability(*match->reliability);
   } else if (reliability.resolved_policy.has_value()) {
@@ -192,8 +186,7 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   if (graph == nullptr) {
     throw std::invalid_argument("subscription QoS graph interface is null");
   }
-  // Resolve against a single graph snapshot. The publisher set may change
-  // immediately after this query, but we keep one consistent view per call.
+  // Keep one graph view even if publishers change after this query.
   const auto publisher_infos = graph->get_publishers_info_by_topic(std::string(topic));
   publisher_qos_profiles.reserve(publisher_infos.size());
   for (const auto & info : publisher_infos) {

@@ -22,66 +22,24 @@ namespace livekit_ros2_bridge
 
 constexpr auto kThrottleInterval = std::chrono::milliseconds(20);
 
-namespace
+TEST(EventThrottleTest, FirstEventFiresImmediately)
 {
+  EventThrottle throttle(kThrottleInterval);
 
-class ManualSteadyClock
-{
-public:
-  using TimePoint = std::chrono::steady_clock::time_point;
-
-  TimePoint now() const
-  {
-    return now_;
-  }
-
-  void advance(std::chrono::steady_clock::duration delta)
-  {
-    now_ += delta;
-  }
-
-private:
-  TimePoint now_{};
-};
-
-}  // namespace
-
-TEST(EventThrottleTest, FlushesSuppressedEventsOnlyAfterIntervalBoundary)
-{
-  ManualSteadyClock clock;
-  EventThrottle throttle(kThrottleInterval, [&clock]() { return clock.now(); });
-
-  ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
-  clock.advance(kThrottleInterval - std::chrono::milliseconds(1));
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
-
-  clock.advance(std::chrono::milliseconds(1));
-  ASSERT_EQ(throttle.recordAndTakePendingCount(), 3U);
+  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
 }
 
-TEST(EventThrottleTest, LateFlushRebasesThrottleWindowFromActualFireTime)
+TEST(EventThrottleTest, SuppressesEventsBeforeIntervalBoundary)
 {
-  ManualSteadyClock clock;
-  EventThrottle throttle(kThrottleInterval, [&clock]() { return clock.now(); });
-  const auto late_flush_skew = std::chrono::milliseconds(7);
+  EventThrottle throttle(std::chrono::hours(1));
 
   ASSERT_EQ(throttle.recordAndTakePendingCount(), 1U);
-
-  clock.advance(kThrottleInterval * 5 + late_flush_skew);
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
-
-  clock.advance(kThrottleInterval - std::chrono::milliseconds(1));
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 0U);
-
-  clock.advance(std::chrono::milliseconds(1));
-  EXPECT_EQ(throttle.recordAndTakePendingCount(), 2U);
 }
 
 TEST(EventThrottleTest, ZeroIntervalFiresOnEveryCall)
 {
-  ManualSteadyClock clock;
-  EventThrottle throttle(std::chrono::milliseconds(0), [&clock]() { return clock.now(); });
+  EventThrottle throttle(std::chrono::milliseconds(0));
 
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);
   EXPECT_EQ(throttle.recordAndTakePendingCount(), 1U);

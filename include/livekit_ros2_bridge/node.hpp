@@ -21,10 +21,8 @@
 
 namespace livekit_ros2_bridge
 {
-// Thin ROS component boundary that translates parameterized startup into one Runtime instance.
-// Construction is eager: configuration loading and runtime startup both happen in the
-// constructor, and failures are surfaced by throwing instead of leaving a partially started
-// bridge behind.
+class Runtime;
+
 class Node final : public rclcpp::Node
 {
 public:
@@ -32,8 +30,7 @@ public:
   ~Node() override;
 
 private:
-  class Impl;
-  std::unique_ptr<Impl> pimpl_;
+  std::unique_ptr<Runtime> runtime_;
 };
 
 }  // namespace livekit_ros2_bridge

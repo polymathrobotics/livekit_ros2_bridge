@@ -83,8 +83,7 @@ TEST(Base64Test, StandardDecodeRejectsNonCanonicalPaddingPlacements)
 
 TEST(Base64Test, StandardDecodeRejectsNonZeroTrailingPadBits)
 {
-  // These decode to the same bytes as AQ== and AQI= unless the decoder validates
-  // the unused pad bits in the final quantum.
+  // Lenient decoders may alias these to AQ== and AQI=.
   expectDecodeRejected("AR==", base64::Status::InvalidEncoding);
   expectDecodeRejected("AQJ=", base64::Status::InvalidEncoding);
 }

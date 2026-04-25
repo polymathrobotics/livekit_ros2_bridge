@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -22,28 +21,13 @@
 
 #include "protocol/subscriptions.hpp"
 
-// Subscription control-plane messages carry lease-backed demands and report status. RPC
-// request/response naming stays separate for RPC payloads such as service calls.
 namespace livekit_ros2_bridge::protocol::subscriptions
 {
 
-/// Parse one subscription control-plane heartbeat payload from `lkros.heartbeat`.
-/// `session_id` is optional and trimmed; missing, null, or blank values are treated as absent.
-/// `subscriptions` is required. `topic` names are trimmed, expanded, and validated by rclcpp,
-/// while `other_video` names are only trimmed because they are bridge-defined identifiers.
-/// Duplicate canonical targets are coalesced in first-seen order, keeping the smallest non-zero
-/// preferred interval. Protocol integer intervals are clamped into `int`; later policy code may
-/// further normalize values such as negatives.
+/// ROS topic names use rclcpp expansion and validation; `other_video` names are bridge-local.
+/// Duplicate canonical targets keep first-seen order and the smallest non-zero interval.
 SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload);
 
-/// Serialize the full `lkros.status` payload from a typed status-report DTO.
-/// `lease_expires_in_ms` is serialized whenever `report.lease_expiry` is present, even if
-/// `report.session_id` is absent. The serializer owns the per-entry `active`/`error` mapping and
-/// the top-level envelope shape.
-std::string serializeStatusReport(const SubscriptionStatusReport & report, std::chrono::steady_clock::time_point now);
-
-/// Serialize the full `lkros.status` payload using `steady_clock::now()` for
-/// `lease_expires_in_ms`.
 std::string serializeStatusReport(const SubscriptionStatusReport & report);
 
 }  // namespace livekit_ros2_bridge::protocol::subscriptions

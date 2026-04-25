@@ -37,33 +37,22 @@
 #include "rclcpp/waitable.hpp"
 #include "utils/log_event.hpp"
 
-namespace rclcpp
-{
-class Node;
-}  // namespace rclcpp
-
 namespace livekit_ros2_bridge
 {
 
 using RosExecutorQueueNodeInterfaces = rclcpp::node_interfaces::
   NodeInterfaces<rclcpp::node_interfaces::NodeBaseInterface, rclcpp::node_interfaces::NodeWaitablesInterface>;
 
-// Queues work that must run on the node's ROS executor thread. Work is exposed
-// through a waitable on the node's default callback group, so submitted futures
-// either complete from that executor context or fail with a shutdown error if
-// the task never starts draining. The queue borrows the node's waitables and
-// callback-group interfaces, so the node must outlive this queue.
+// Runs submitted work from the node's ROS executor via a default-group waitable.
+// Pending futures fail on shutdown; the node must outlive the queue.
 class RosExecutorQueue final
 {
 public:
-  explicit RosExecutorQueue(rclcpp::Node & node);
-  explicit RosExecutorQueue(const std::shared_ptr<rclcpp::Node> & node);
   RosExecutorQueue(RosExecutorQueueNodeInterfaces interfaces, rclcpp::Clock::SharedPtr clock);
   ~RosExecutorQueue();
 
-  // Enqueues work in FIFO order for execution on the executor thread. If
-  // shutdown() wins the race before this task begins draining, the returned
-  // future completes with the queue's shutdown error instead.
+  // Enqueues work in FIFO order. If shutdown() wins before drain() claims the
+  // task, the returned future completes with the queue's shutdown error.
   template <typename Fn>
   auto submit(Fn && fn) -> std::future<std::invoke_result_t<Fn>>
   {
@@ -109,8 +98,7 @@ public:
     return future;
   }
 
-  // Cancels queued-but-not-yet-started work and waits for any other thread
-  // already draining the queue to leave that critical section.
+  // Cancels queued work and waits for any active drain from another thread.
   void shutdown();
 
 private:
@@ -125,27 +113,20 @@ private:
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
   inline static const auto logger_ = rclcpp::get_logger("ros_executor_queue");
 
-  // Protects shutdown_ and all state shared between submit(), wake(), drain(),
-  // and shutdown().
   std::mutex mutex_;
   std::queue<Task> tasks_;
 
-  // Cleared during shutdown() before the waitable is detached so concurrent
-  // wake() callers either use the live waitable or cleanly become a no-op.
+  // Cleared during shutdown so concurrent wake() becomes a no-op.
   std::shared_ptr<DrainWaitable> waitable_;
-  // Retained solely so shutdown() can unregister waitable_ from the same node
-  // interfaces; rclcpp chooses the node's default callback group for nullptr.
+  // Retained so shutdown() can unregister waitable_ from the same node.
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
 
   rclcpp::Clock::SharedPtr log_clock_;
 
-  // Once set, new submissions are rejected and only work already running in
-  // drain() is allowed to finish.
   bool shutdown_ = false;
 
-  // Tracks the single active drain section so shutdown() can wait for work
-  // already running on another thread without deadlocking when shutdown is
-  // called by the drain owner itself.
+  // Identifies the active drain so shutdown() can wait without deadlocking when
+  // called by the drain owner.
   std::condition_variable drain_idle_;
   bool drain_active_ = false;
   std::thread::id drain_owner_thread_id_{};

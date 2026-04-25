@@ -19,8 +19,7 @@
 namespace livekit_ros2_bridge::protocol
 {
 
-// Stable data-packet topics and RPC names used on the LiveKit data channel. Keep the protocol values
-// stable even if internal naming changes.
+// These values are wire protocol tokens; change them only with a protocol-version bump.
 inline constexpr char kRosPublishTopic[] = "ros2.topic.pub";
 inline constexpr char kHeartbeatTopic[] = "lkros.heartbeat";
 inline constexpr char kStatusTopic[] = "lkros.status";
@@ -29,17 +28,13 @@ inline constexpr char kShowInterfaceRpc[] = "ros2.interface.show";
 inline constexpr char kListServicesRpc[] = "ros2.service.list";
 inline constexpr char kListTopicsRpc[] = "ros2.topic.list";
 
-// Stable content-type literal for ROS 2 CDR payload objects.
 inline constexpr char kCdrContentType[] = "application/x-ros-cdr";
 
-// Stable delivery.kind values in subscription status payloads.
 inline constexpr char kVideoDeliveryKind[] = "video";
 inline constexpr char kDataDeliveryKind[] = "data";
 
-// Bump only when the bridge intentionally changes the protocol contract.
 inline constexpr int kProtocolVersion = 2;
 
-// Stable RPC error codes surfaced to remote callers.
 inline constexpr std::uint32_t kInvalidRequestRpcError = 2400;
 inline constexpr std::uint32_t kUnauthorizedRpcError = 2401;
 inline constexpr std::uint32_t kForbiddenRpcError = 2403;

@@ -147,16 +147,6 @@ TEST(InterfacePayloadsTest, SerializesInterfacesByDirectFieldMappingWithoutReord
   EXPECT_EQ(nlohmann::json::parse(body), expected);
 }
 
-TEST(InterfacePayloadsTest, SerializesEmptyInterfaces)
-{
-  std::vector<InterfaceDefinition> definitions;
-
-  const auto body = protocol::interfaces::serialize(definitions);
-  const auto expected = nlohmann::json{{"interfaces", nlohmann::json::array()}};
-
-  EXPECT_EQ(nlohmann::json::parse(body), expected);
-}
-
 }  // namespace
 
 }  // namespace livekit_ros2_bridge

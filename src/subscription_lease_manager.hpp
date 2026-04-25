@@ -21,7 +21,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -48,8 +47,7 @@ class RoomConnection;
 struct SubscriptionQosConfig;
 class VideoTrackPublisher;
 
-// Maps heartbeat-driven subscription demands onto shared data/video runtimes, tracks requester
-// leases, and publishes subscription status back to the requester.
+// Maintains per-requester leases for shared publishers and reports subscription status.
 class SubscriptionLeaseManager final
 {
   struct Subscription;
@@ -70,21 +68,16 @@ public:
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
 
+  // Runs lease expiry through the executor path shared with heartbeat handling.
   void startLeaseGcTimer(
     rclcpp::node_interfaces::NodeBaseInterface::SharedPtr base,
     rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
     SubmitToExecutorFunction submit_to_executor);
   void handleHeartbeatPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
-  void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
 
-  // Participant disconnects can leave a rejoined requester unable to see an already published
-  // data track. If the requester still owns any published data subscription, mark it for one
-  // republish on the next heartbeat-confirmed reconnect.
+  // Defer republish until a later heartbeat proves the data subscription is still live.
   void onRemoteParticipantDisconnected(const std::string & requester_identity);
   void pruneExpiredLeases();
-  Subscription * find(SubscriptionTargetKind kind, const std::string & name);
-  const Subscription * find(SubscriptionTargetKind kind, const std::string & name) const;
-  void resetSessionState();
   void shutdown();
 
 private:
@@ -147,11 +140,17 @@ private:
 
   std::atomic<bool> is_shutdown_{false};
   rclcpp::TimerBase::SharedPtr lease_gc_timer_;
+
+  // Browser-tab scoped leases resolve anonymous heartbeats when LiveKit omits identity.
   std::unordered_map<std::string, SessionLease> session_leases_;
+
+  // Canonical target (`kind:name`) to the data or video runtime shared by live requesters.
   SubscriptionMap subscriptions_;
+
   std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
 
+  void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
   std::optional<std::string> resolveIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
   const VideoStreamConfig & videoStreamConfig() const;

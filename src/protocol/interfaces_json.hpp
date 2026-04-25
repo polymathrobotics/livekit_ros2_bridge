@@ -22,18 +22,9 @@
 namespace livekit_ros2_bridge::protocol::interfaces
 {
 
-/// Parse a `ros2.interface.show` request body of the form
-/// `{ "interface_types": ["pkg/msg/Type", ...] }`.
-/// Entries are trimmed, must stay non-empty, and are returned in request order.
-/// Duplicate entries are preserved; de-duplication, if desired, happens at the caller boundary.
-/// Unrelated top-level fields are ignored so the request envelope can grow without changing this parser.
-/// Throws `std::invalid_argument` with caller-fixable validation text that is surfaced through
-/// the RPC invalid-request path.
+/// Parses `ros2.interface.show` interface types; order and duplicates are protocol-significant.
 std::vector<std::string> parse(const std::string & payload);
 
-/// Serialize interface definitions as
-/// `{ "interfaces": [{ "interface_type", "format", "definition" }, ...] }`
-/// while preserving the input order used by the caller to express dependency/result ordering.
 std::string serialize(const std::vector<InterfaceDefinition> & definitions);
 
 }  // namespace livekit_ros2_bridge::protocol::interfaces

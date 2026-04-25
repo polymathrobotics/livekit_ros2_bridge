@@ -45,7 +45,6 @@ public:
 
   ConnectionWatchdog(
     RuntimeConfig::HealthConfig config, ConnectionWatchdogNodeInterfaces interfaces, CloseCallback close);
-  ~ConnectionWatchdog();
 
   ConnectionWatchdog(const ConnectionWatchdog &) = delete;
   ConnectionWatchdog & operator=(const ConnectionWatchdog &) = delete;
@@ -68,6 +67,7 @@ private:
     SteadyClock::time_point deadline;
   };
 
+  // LiveKit state callbacks and the ROS timer can run on different threads.
   std::mutex mutex_;
   std::optional<UnhealthyState> unhealthy_;
   rclcpp::TimerBase::SharedPtr timer_;

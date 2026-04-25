@@ -37,10 +37,7 @@ constexpr char kOtherVideoTrackPrefix[] = "lkros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");
 
-// ROS-topic track names intentionally keep the historical slash/colon-to-dot mapping
-// that existing subscribers already consume, rather than percent-encoding the topic.
-// This compatibility mapping is not fully reversible; stream_key remains the authoritative
-// runtime identity when the bridge needs an exact normalized ROS topic.
+// ROS-topic track names retain the lossy legacy mapping; stream_key carries exact identity.
 std::string makeTopicTrackSuffix(std::string_view topic)
 {
   std::string suffix;
@@ -95,8 +92,6 @@ bool isUnreservedTrackByte(unsigned char byte)
          byte == '.' || byte == '_' || byte == '~';
 }
 
-// Other-video names are free-form identifiers, so percent-encode reserved bytes
-// to keep the client-visible track suffix reversible and avoid dot-mapping collisions.
 std::string encodeOtherVideoTrackSuffix(std::string_view name)
 {
   std::string suffix;
@@ -127,7 +122,6 @@ const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
     if (!rosResourceMatchesPattern(normalized_topic, rule.pattern)) {
       continue;
     }
-    // Prefer the longest matching pattern; same-length matches keep declaration order.
     const auto pattern_size = rule.pattern.size();
     if (match != nullptr && pattern_size <= match->pattern.size()) {
       continue;
@@ -158,57 +152,12 @@ std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view in
   return std::nullopt;
 }
 
-std::string_view rosVideoIngestModeToString(RosVideoIngestMode mode)
-{
-  switch (mode) {
-    case RosVideoIngestMode::RawImage:
-      return kRawImageIngestMode;
-    case RosVideoIngestMode::CompressedImage:
-      return kCompressedImageIngestMode;
-  }
-  return "unknown";
-}
-
-std::string_view videoInputKindToString(VideoInputKind kind)
-{
-  if (kind == VideoInputKind::RosTopic) {
-    return "ros_topic";
-  }
-  return "other_video";
-}
-
-VideoInputKind videoInputKind(const VideoStreamSpec & spec) noexcept
-{
-  if (std::holds_alternative<RosVideoInput>(spec.input)) {
-    return VideoInputKind::RosTopic;
-  }
-  return VideoInputKind::OtherVideoSource;
-}
-
-std::string_view videoIngestModeToString(const VideoStreamSpec & spec)
-{
-  if (const auto * input = rosVideoInput(spec); input != nullptr) {
-    return rosVideoIngestModeToString(input->ingest_mode);
-  }
-  return kOtherVideoIngestMode;
-}
-
 const RosVideoInput * rosVideoInput(const VideoStreamSpec & spec) noexcept
 {
   return std::get_if<RosVideoInput>(&spec.input);
 }
 
-RosVideoInput * rosVideoInput(VideoStreamSpec & spec) noexcept
-{
-  return std::get_if<RosVideoInput>(&spec.input);
-}
-
 const OtherVideoInput * otherVideoInput(const VideoStreamSpec & spec) noexcept
-{
-  return std::get_if<OtherVideoInput>(&spec.input);
-}
-
-OtherVideoInput * otherVideoInput(VideoStreamSpec & spec) noexcept
 {
   return std::get_if<OtherVideoInput>(&spec.input);
 }

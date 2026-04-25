@@ -24,16 +24,15 @@
 namespace livekit_ros2_bridge
 {
 
-/// Parsed form of a resource-list request. Unknown request fields are ignored.
 struct ResourceListRequest
 {
-  /// Optional trimmed query string. Missing, null, or blank values are treated as absent.
+  /// Trimmed substring filter; absent when omitted, null, or blank.
   std::optional<std::string> query;
-  /// Optional positive integer result cap. Missing or null means no explicit limit.
+
+  /// Positive result cap; nullopt means uncapped.
   std::optional<std::size_t> limit;
 };
 
-/// ROS graph resources keyed by resource name with the interface types reported by rclcpp.
 using ResourceNamesAndTypes =
   decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
 

@@ -118,24 +118,17 @@ TEST_F(GstreamerRaiiTest, MapGuardSupportsWriteThenRead)
   const std::vector<guint8> expected_bytes{1U, 2U, 3U, 4U};
 
   {
-    GstMapGuard map(buffer.get(), GST_MAP_WRITE);
+    GstMapGuard map(*buffer, GST_MAP_WRITE);
     ASSERT_TRUE(map.is_valid());
     std::copy(expected_bytes.begin(), expected_bytes.end(), map.get()->data);
   }
 
   {
-    GstMapGuard map(buffer.get(), GST_MAP_READ);
+    GstMapGuard map(*buffer, GST_MAP_READ);
     ASSERT_TRUE(map.is_valid());
     const std::vector<guint8> actual_bytes(map.get()->data, map.get()->data + map.get()->size);
     EXPECT_EQ(actual_bytes, expected_bytes);
   }
-}
-
-TEST_F(GstreamerRaiiTest, MapGuardRejectsNullBuffer)
-{
-  GstMapGuard map(nullptr, GST_MAP_READ);
-
-  EXPECT_FALSE(map.is_valid());
 }
 
 TEST_F(GstreamerRaiiTest, VideoFrameGuardSupportsWriteThenRead)
@@ -151,7 +144,7 @@ TEST_F(GstreamerRaiiTest, VideoFrameGuardSupportsWriteThenRead)
   const guint row_bytes = 2U * 3U;
 
   {
-    GstVideoFrameGuard frame(&info, buffer.get(), GST_MAP_WRITE);
+    GstVideoFrameGuard frame(info, *buffer, GST_MAP_WRITE);
     ASSERT_TRUE(frame.is_valid());
 
     auto * data = static_cast<guint8 *>(GST_VIDEO_FRAME_PLANE_DATA(frame.get(), 0));
@@ -165,7 +158,7 @@ TEST_F(GstreamerRaiiTest, VideoFrameGuardSupportsWriteThenRead)
   }
 
   {
-    GstVideoFrameGuard frame(&info, buffer.get(), GST_MAP_READ);
+    GstVideoFrameGuard frame(info, *buffer, GST_MAP_READ);
     ASSERT_TRUE(frame.is_valid());
 
     const auto * data = static_cast<const guint8 *>(GST_VIDEO_FRAME_PLANE_DATA(frame.get(), 0));
@@ -182,25 +175,16 @@ TEST_F(GstreamerRaiiTest, VideoFrameGuardSupportsWriteThenRead)
   }
 }
 
-TEST_F(GstreamerRaiiTest, VideoFrameGuardRejectsInvalidInputs)
+TEST_F(GstreamerRaiiTest, VideoFrameGuardRejectsUndersizedBuffer)
 {
   GstVideoInfo info;
   gst_video_info_init(&info);
   ASSERT_TRUE(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_RGB, 2U, 2U));
 
-  GstBufferPtr full_size_buffer(gst_buffer_new_allocate(nullptr, info.size, nullptr));
-  ASSERT_NE(full_size_buffer.get(), nullptr);
-
-  GstVideoFrameGuard missing_info(nullptr, full_size_buffer.get(), GST_MAP_READ);
-  EXPECT_FALSE(missing_info.is_valid());
-
-  GstVideoFrameGuard missing_buffer(&info, nullptr, GST_MAP_READ);
-  EXPECT_FALSE(missing_buffer.is_valid());
-
   GstBufferPtr undersized_buffer(gst_buffer_new_allocate(nullptr, info.size - static_cast<gsize>(1U), nullptr));
   ASSERT_NE(undersized_buffer.get(), nullptr);
 
-  GstVideoFrameGuard frame(&info, undersized_buffer.get(), GST_MAP_READ);
+  GstVideoFrameGuard frame(info, *undersized_buffer, GST_MAP_READ);
   EXPECT_FALSE(frame.is_valid());
 }
 

@@ -88,8 +88,6 @@ TEST(ResourceListPayloadsTest, SerializesServices)
   const auto body = nlohmann::json::parse(
     protocol::resources::serializeServices({
       {"/backup_camera_info", {interface_type}},
-      {"/ambiguous", {"example/srv/A", "example/srv/B"}},
-      {"/empty", {}},
       {"/set_camera_info", {interface_type}},
     }));
 
@@ -116,7 +114,6 @@ TEST(ResourceListPayloadsTest, SerializesTopics)
     nlohmann::json::parse(
       protocol::resources::serializeTopics({
         {"/camera/image_raw", {interface_type}},
-        {"/camera/ambiguous", {"example/msg/A", "example/msg/B"}},
       })),
     nlohmann::json({
       {"topics",

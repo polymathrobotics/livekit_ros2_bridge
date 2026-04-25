@@ -123,10 +123,8 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   EXPECT_EQ(raw_spec.track_name, "lkros.video.camera.front.image");
   EXPECT_EQ(raw_input.topic, "/camera/front/image");
   EXPECT_EQ(raw_input.interface_type, imageInterfaceType());
-  EXPECT_EQ(videoInputKind(raw_spec), VideoInputKind::RosTopic);
   EXPECT_EQ(raw_input.rule_id, "default_ros");
   EXPECT_EQ(raw_input.ingest_mode, RosVideoIngestMode::RawImage);
-  EXPECT_EQ(videoIngestModeToString(raw_spec), kRawImageIngestMode);
   expectTrackPublishOptionsEq(raw_spec.publish_config, config.default_publish_config);
 
   const auto compressed_spec =
@@ -136,7 +134,6 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionFor
   EXPECT_EQ(compressed_spec.track_name, "lkros.video.camera.front.image.compressed");
   EXPECT_EQ(compressed_input.rule_id, "default_ros");
   EXPECT_EQ(compressed_input.ingest_mode, RosVideoIngestMode::CompressedImage);
-  EXPECT_EQ(videoIngestModeToString(compressed_spec), kCompressedImageIngestMode);
   expectTrackPublishOptionsEq(compressed_spec.publish_config, config.default_publish_config);
 }
 
@@ -254,8 +251,6 @@ TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
   EXPECT_EQ(spec.stream_key, "other_video:front_camera");
   EXPECT_EQ(spec.track_name, "lkros.video.other.front_camera");
   EXPECT_EQ(input.name, "front_camera");
-  EXPECT_EQ(videoInputKind(spec), VideoInputKind::OtherVideoSource);
-  EXPECT_EQ(videoIngestModeToString(spec), kOtherVideoIngestMode);
   EXPECT_EQ(input.ingress_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
   expectTrackPublishOptionsEq(spec.publish_config, expected_publish_config);

@@ -26,18 +26,12 @@
 namespace livekit_ros2_bridge
 {
 
-// Small thread-safe LRU cache for copyable values. Reads touch recency, and
-// inserts evict the least-recently used entry once the fixed capacity is exceeded.
+// Fixed-capacity, internally synchronized LRU cache. `get` hits and writes
+// refresh recency; overflow evicts the least-recent entry. Zero capacity stays empty.
 template <typename Key, typename Value, typename Hash = std::hash<Key>, typename KeyEqual = std::equal_to<Key>>
 class LruCache
 {
 public:
-  struct EvictedEntry
-  {
-    Key key;
-    Value value;
-  };
-
   explicit LruCache(std::size_t capacity)
   : capacity_(capacity)
   {}
@@ -57,67 +51,20 @@ public:
     return it->second->value;
   }
 
-  std::optional<Value> peek(const Key & key) const
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entry_index_.find(key);
-    if (it == entry_index_.end()) {
-      return std::nullopt;
-    }
-
-    return it->second->value;
-  }
-
-  bool touch(const Key & key)
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = entry_index_.find(key);
-    if (it == entry_index_.end()) {
-      return false;
-    }
-
-    entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
-    return true;
-  }
-
-  std::optional<EvictedEntry> insertOrAssign(Key key, Value value)
+  void insertOrAssign(Key key, Value value)
   {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = entry_index_.find(key);
     if (it != entry_index_.end()) {
       it->second->value = std::move(value);
       entries_by_recency_.splice(entries_by_recency_.end(), entries_by_recency_, it->second);
-      return std::nullopt;
+      return;
     }
 
     entries_by_recency_.push_back(LruEntry{std::move(key), std::move(value)});
     auto lru_entry_it = std::prev(entries_by_recency_.end());
     entry_index_.emplace(lru_entry_it->key, lru_entry_it);
-    return evictIfNeeded();
-  }
-
-  std::size_t capacity() const
-  {
-    return capacity_;
-  }
-
-  void clear()
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    entry_index_.clear();
-    entries_by_recency_.clear();
-  }
-
-  std::size_t size() const
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return entry_index_.size();
-  }
-
-  bool empty() const
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return entry_index_.empty();
+    evictIfNeeded();
   }
 
 private:
@@ -130,21 +77,21 @@ private:
   using LruEntries = std::list<LruEntry>;
   using EntryIndex = std::unordered_map<Key, typename LruEntries::iterator, Hash, KeyEqual>;
 
-  std::size_t capacity_ = 0U;
-  mutable std::mutex mutex_;
+  std::size_t capacity_;
+  std::mutex mutex_;
+  // Front is least-recent, back is most-recent. The index stores list iterators;
+  // same-list splice moves entries without invalidating them.
   LruEntries entries_by_recency_;
   EntryIndex entry_index_;
 
-  std::optional<EvictedEntry> evictIfNeeded()
+  void evictIfNeeded()
   {
     if (entry_index_.size() <= capacity_) {
-      return std::nullopt;
+      return;
     }
 
-    EvictedEntry evicted{std::move(entries_by_recency_.front().key), std::move(entries_by_recency_.front().value)};
-    entry_index_.erase(evicted.key);
+    entry_index_.erase(entries_by_recency_.front().key);
     entries_by_recency_.pop_front();
-    return evicted;
   }
 };
 

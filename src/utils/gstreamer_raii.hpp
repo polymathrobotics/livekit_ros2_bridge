@@ -23,67 +23,44 @@
 namespace livekit_ros2_bridge
 {
 
-// GStreamer and GLib expose mostly C-style ownership: callers receive raw pointers,
-// ref-counted objects, or mapped buffers and must remember the matching cleanup call.
-// These wrappers bind those cleanup rules to C++ scope lifetime so call sites can
-// fail or return early without duplicating teardown code.
-
-// Most long-lived GStreamer runtime objects inherit from GstObject and are released
-// by dropping a reference with gst_object_unref().
 struct GstObjectDeleter
 {
   template <typename T>
   void operator()(T * ptr) const
   {
-    if (ptr != nullptr) {
-      gst_object_unref(ptr);
-    }
+    gst_object_unref(ptr);
   }
 };
 
-// gst_parse_launch() and several message-parsing APIs allocate GError instances
-// that must be released with g_error_free().
 struct GErrorDeleter
 {
   void operator()(GError * ptr) const
   {
-    if (ptr != nullptr) {
-      g_error_free(ptr);
-    }
+    g_error_free(ptr);
   }
 };
 
-// GLib allocates many returned strings with g_malloc(); g_free() is the matching
-// release function for those gchar* results.
 struct GCharDeleter
 {
   void operator()(gchar * ptr) const
   {
-    if (ptr != nullptr) {
-      g_free(ptr);
-    }
+    g_free(ptr);
   }
 };
 
-// Bin traversal returns an iterator handle that must be freed explicitly.
 struct GstIteratorDeleter
 {
   void operator()(GstIterator * ptr) const
   {
-    if (ptr != nullptr) {
-      gst_iterator_free(ptr);
-    }
+    gst_iterator_free(ptr);
   }
 };
 
-// Buffers and samples are ref-counted, but they do not inherit from GstObject.
 struct GstBufferDeleter
 {
   void operator()(GstBuffer * ptr) const
   {
-    if (ptr != nullptr) {
-      gst_buffer_unref(ptr);
-    }
+    gst_buffer_unref(ptr);
   }
 };
 
@@ -91,9 +68,7 @@ struct GstSampleDeleter
 {
   void operator()(GstSample * ptr) const
   {
-    if (ptr != nullptr) {
-      gst_sample_unref(ptr);
-    }
+    gst_sample_unref(ptr);
   }
 };
 
@@ -108,14 +83,16 @@ using GstIteratorPtr = std::unique_ptr<GstIterator, GstIteratorDeleter>;
 using GstBufferPtr = std::unique_ptr<GstBuffer, GstBufferDeleter>;
 using GstSamplePtr = std::unique_ptr<GstSample, GstSampleDeleter>;
 
+// Thread-safe process-wide initialization for call sites that may touch
+// GStreamer before the node runtime has established ordering.
 inline void ensureGstreamerInitialized()
 {
   static std::once_flag init_once;
   std::call_once(init_once, []() { gst_init(nullptr, nullptr); });
 }
 
-// GstIterator writes each result into a GValue. The value has to be reset between
-// iterations and fully unset before leaving scope to release any embedded refs.
+// Owns GstIterator's reusable GValue slot. Call reset() after consuming
+// GST_ITERATOR_OK; destruction unsets any remaining payload.
 class GValueGuard final
 {
 public:
@@ -143,8 +120,6 @@ public:
 
   void reset()
   {
-    // reset() keeps the GValue allocated but releases the contained payload,
-    // which matches GStreamer's iterator usage pattern.
     if (G_IS_VALUE(&value_)) {
       g_value_reset(&value_);
     }
@@ -162,14 +137,12 @@ private:
   GValue value_ = G_VALUE_INIT;
 };
 
-// gst_buffer_map() pins a buffer's memory until gst_buffer_unmap() is called.
-// This guard makes that pairing exception-safe for both read and write paths.
 class GstMapGuard final
 {
 public:
-  GstMapGuard(GstBuffer * buffer, GstMapFlags flags)
-  : buffer_(buffer)
-  , mapped_(buffer_ != nullptr && gst_buffer_map(buffer_, &info_, flags))
+  GstMapGuard(GstBuffer & buffer, GstMapFlags flags)
+  : buffer_(&buffer)
+  , mapped_(gst_buffer_map(buffer_, &info_, flags))
   {}
 
   ~GstMapGuard()
@@ -205,14 +178,11 @@ private:
   bool mapped_ = false;
 };
 
-// gst_video_frame_map() exposes per-plane image data with stride metadata until
-// gst_video_frame_unmap() is called. This guard keeps planar frame access scoped
-// and exception-safe.
 class GstVideoFrameGuard final
 {
 public:
-  GstVideoFrameGuard(const GstVideoInfo * info, GstBuffer * buffer, GstMapFlags flags)
-  : mapped_(info != nullptr && buffer != nullptr && gst_video_frame_map(&frame_, info, buffer, flags))
+  GstVideoFrameGuard(const GstVideoInfo & info, GstBuffer & buffer, GstMapFlags flags)
+  : mapped_(gst_video_frame_map(&frame_, &info, &buffer, flags))
   {}
 
   ~GstVideoFrameGuard()

@@ -21,15 +21,14 @@
 namespace livekit_ros2_bridge
 {
 
-/// Runtime form of a ROS publish request carried on a LiveKit data-packet topic.
 struct TopicPublishRequest
 {
-  /// Trimmed ROS topic name from the request. The ROS publisher resolves and validates it
-  /// against its node context before policy checks or publishing.
+  /// Relative topics are resolved in RosTopicPublisher's node context before access checks.
   std::string ros_topic;
-  /// Trimmed interface type. Package/msg spelling stays exact for later ROS-graph validation.
+
   std::string interface_type;
-  /// Serialized ROS message payload ready for rclcpp::GenericPublisher.
+
+  /// Interface-type validation happens at publish time.
   rclcpp::SerializedMessage message;
 };
 

@@ -61,9 +61,6 @@ void GStreamerVideoStream::start()
   if (is_shutdown_) {
     throw std::runtime_error("Video stream is shut down.");
   }
-  if (pipeline_.isActive()) {
-    return;
-  }
 
   pipeline_.start(buildDescription(), false);
 }
@@ -82,6 +79,7 @@ void GStreamerVideoStream::close()
     restart_thread = std::move(restart_thread_);
   }
 
+  // The restart worker captures this, so join it before members destruct.
   if (restart_thread.joinable()) {
     restart_thread.join();
   }

@@ -41,16 +41,12 @@ const char * fieldKey(Field field)
       return "message";
     case Field::Request:
       return "request";
-    case Field::Response:
-      return "response";
   }
 
   throw std::logic_error("Unhandled CDR envelope field.");
 }
 
-}  // namespace
-
-std::vector<std::uint8_t> parse(const nlohmann::json & body, Field field)
+std::vector<std::uint8_t> parsePayload(const nlohmann::json & body, Field field)
 {
   const char * key = fieldKey(field);
 
@@ -68,8 +64,6 @@ std::vector<std::uint8_t> parse(const nlohmann::json & body, Field field)
     throw std::invalid_argument(std::string(key) + "." + kContentType + " must be application/x-ros-cdr.");
   }
 
-  // The bridge treats padded standard base64 as part of the protocol contract so malformed payloads
-  // fail here instead of reaching downstream ROS deserialization with ambiguous byte contents.
   const auto payload = envelope.find(kPayloadBase64);
   if (payload == envelope.end() || !payload->is_string()) {
     throw std::invalid_argument(std::string(kPayloadBase64) + " must be a string.");
@@ -87,9 +81,11 @@ std::vector<std::uint8_t> parse(const nlohmann::json & body, Field field)
   throw std::logic_error("Unhandled base64 decode status.");
 }
 
+}  // namespace
+
 rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field)
 {
-  return wrapSerializedPayload(parse(body, field));
+  return wrapSerializedPayload(parsePayload(body, field));
 }
 
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)
@@ -97,15 +93,6 @@ nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)
   return {
     {kContentType, protocol::kCdrContentType},
     {kPayloadBase64, detail::base64::encode(bytes.data(), bytes.size())},
-  };
-}
-
-nlohmann::json serialize(const rclcpp::SerializedMessage & message)
-{
-  const auto & raw = message.get_rcl_serialized_message();
-  return {
-    {kContentType, protocol::kCdrContentType},
-    {kPayloadBase64, detail::base64::encode(raw.buffer, raw.buffer_length)},
   };
 }
 

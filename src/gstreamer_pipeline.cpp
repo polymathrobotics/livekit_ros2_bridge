@@ -113,14 +113,12 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
     throw std::runtime_error("I420 sample dimensions are invalid.");
   }
 
-  GstVideoFrameGuard mapped_frame(&video_info, buffer, GST_MAP_READ);
+  GstVideoFrameGuard mapped_frame(video_info, *buffer, GST_MAP_READ);
   if (!mapped_frame.is_valid()) {
     throw std::runtime_error("Failed to map GStreamer video frame.");
   }
 
-  // The LiveKit C++ API accepts owned, tightly-packed frame bytes. Appsink may
-  // hand us planar I420 with padding, so repack planes row-by-row while keeping
-  // the frame in I420 to avoid CPU color conversion.
+  // LiveKit wants tightly packed I420; copy padded GStreamer planes row-by-row.
   const auto * gst_frame = mapped_frame.get();
   auto frame = livekit::VideoFrame::create(width, height, livekit::VideoBufferType::I420);
   const auto planes = frame.planeInfos();
@@ -190,6 +188,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   }
 
   GstAppSinkPtr checked_appsink(GST_APP_SINK(appsink.release()));
+  // stop() clears raw this callbacks before releasing the bin.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = &GStreamerPipeline::onSampleThunk;
   gst_app_sink_set_callbacks(checked_appsink.get(), &callbacks, this, nullptr);
@@ -215,7 +214,6 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
 void GStreamerPipeline::stop()
 {
   if (pipeline_ == nullptr) {
-    appsrc_.reset();
     return;
   }
 
@@ -289,11 +287,8 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   }
 
   GError * raw_error = nullptr;
-  gchar * raw_debug = nullptr;
-  gst_message_parse_error(message, &raw_error, &raw_debug);
+  gst_message_parse_error(message, &raw_error, nullptr);
   GErrorPtr error(raw_error);
-  GCharPtr debug(raw_debug);
-  (void)debug;
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
   callbacks_.on_pipeline_failed(reason);
 }

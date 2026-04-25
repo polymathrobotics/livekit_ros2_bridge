@@ -49,9 +49,6 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
     throw std::invalid_argument("Publish request must be a JSON object.");
   }
 
-  // The ROS topic publisher emits the operator-facing warn logs for invalid publish packets,
-  // including the exact error text. Keep parser-local logs at debug level so local troubleshooting
-  // can distinguish which contract boundary rejected the request without repeating that detail.
   TopicPublishRequest request;
   try {
     const std::string topic = protocol::detail::requiredTrimmedStringField(
@@ -87,8 +84,7 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
     throw;
   }
 
-  // Reject an empty decoded CDR blob instead of treating it as an implicit
-  // default-constructed message instance.
+  // Empty CDR would otherwise reach ROS as a default-constructed message.
   if (message.size() == 0U) {
     LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_message")
@@ -98,9 +94,6 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
   }
   request.message = std::move(message);
 
-  // Keep ROS names and types trimmed-but-exact. The publisher resolves the
-  // topic against its node context, then compares the interface type against
-  // the ROS graph.
   return request;
 }
 

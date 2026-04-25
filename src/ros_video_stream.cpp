@@ -115,7 +115,7 @@ GstBufferPtr makeStampedGstBuffer(
   }
 
   {
-    GstMapGuard map(buffer.get(), GST_MAP_WRITE);
+    GstMapGuard map(*buffer, GST_MAP_WRITE);
     if (!map.is_valid()) {
       throw std::runtime_error("Failed to map GStreamer buffer.");
     }
@@ -242,6 +242,7 @@ void RosVideoStream::close()
     failure_thread.join();
   }
 
+  // Subscription teardown can wait for executor callbacks, which take mutex_.
   raw_subscription.reset();
   compressed_subscription.reset();
   pipeline_.stop();
@@ -307,7 +308,6 @@ void RosVideoStream::stopAfterFailure()
 
   resetPipelineStateLocked();
   pipeline_.stop();
-  failure_pending_ = false;
 }
 
 std::thread RosVideoStream::beginShutdownLocked()
@@ -362,9 +362,6 @@ void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & 
 void RosVideoStream::startRawPipelineLocked(const FrameLayout & layout)
 {
   const char * format_name = gst_video_format_to_string(layout.format);
-  if (format_name == nullptr) {
-    throw std::runtime_error("Unsupported GStreamer video format.");
-  }
 
   std::string ingress = "appsrc name=";
   ingress += kBridgeAppSrcName;
@@ -382,13 +379,6 @@ void RosVideoStream::startRawPipelineLocked(const FrameLayout & layout)
 
 void RosVideoStream::pushRawLocked(const sensor_msgs::msg::Image & image)
 {
-  if (pipeline_.appsrc() == nullptr) {
-    throw std::runtime_error("Raw video appsrc is unavailable.");
-  }
-  if (!raw_layout_) {
-    throw std::runtime_error("Raw video layout is unavailable.");
-  }
-
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
   const FrameLayout & layout = *raw_layout_;
 
@@ -452,23 +442,13 @@ void RosVideoStream::startCompressedPipelineLocked(const std::string & codec)
   std::string ingress = "appsrc name=";
   ingress += kBridgeAppSrcName;
   ingress += " is-live=true block=false format=time do-timestamp=true";
-  if (codec == "jpeg") {
-    ingress += " caps=image/jpeg ! jpegdec";
-  } else if (codec == "png") {
-    ingress += " caps=image/png ! pngdec";
-  } else {
-    throw std::logic_error("Unsupported compressed image format.");
-  }
+  ingress += codec == "jpeg" ? " caps=image/jpeg ! jpegdec" : " caps=image/png ! pngdec";
   pipeline_.start(buildPipelineDescription(ingress, requireRosVideoInput(spec_).transform_fragment), true);
   compressed_codec_ = codec;
 }
 
 void RosVideoStream::pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image)
 {
-  if (pipeline_.appsrc() == nullptr) {
-    throw std::runtime_error("Compressed video appsrc is unavailable.");
-  }
-
   GstBufferPtr buffer = makeStampedGstBuffer(image.data.data(), image.data.size(), image.header.stamp);
   if (gst_app_src_push_buffer(pipeline_.appsrc(), buffer.release()) != GST_FLOW_OK) {
     throw std::runtime_error("Failed to push compressed ROS image into GStreamer.");

@@ -38,35 +38,10 @@ TEST(LruCacheTest, GetReturnsStoredValueRefreshesRecencyAndMissesMissingKeys)
   EXPECT_EQ(cache.get("alpha"), std::optional<int>{1});
   cache.insertOrAssign("gamma", 3);
 
-  EXPECT_EQ(cache.peek("alpha"), std::optional<int>{1});
-  EXPECT_FALSE(cache.peek("beta").has_value());
-  EXPECT_EQ(cache.peek("gamma"), std::optional<int>{3});
+  EXPECT_EQ(cache.get("alpha"), std::optional<int>{1});
+  EXPECT_FALSE(cache.get("beta").has_value());
+  EXPECT_EQ(cache.get("gamma"), std::optional<int>{3});
   EXPECT_FALSE(cache.get("missing").has_value());
-}
-
-TEST(LruCacheTest, PeekDoesNotRefreshRecency)
-{
-  LruCache<std::string, int> cache(2U);
-  cache.insertOrAssign("alpha", 1);
-  cache.insertOrAssign("beta", 2);
-
-  EXPECT_EQ(cache.peek("alpha"), std::optional<int>{1});
-  cache.insertOrAssign("gamma", 3);
-  EXPECT_FALSE(cache.peek("alpha").has_value());
-  EXPECT_EQ(cache.peek("beta"), std::optional<int>{2});
-}
-
-TEST(LruCacheTest, TouchRefreshesRecency)
-{
-  LruCache<std::string, int> cache(2U);
-  cache.insertOrAssign("alpha", 1);
-  cache.insertOrAssign("beta", 2);
-
-  ASSERT_TRUE(cache.touch("alpha"));
-  cache.insertOrAssign("gamma", 3);
-
-  EXPECT_EQ(cache.peek("alpha"), std::optional<int>{1});
-  EXPECT_FALSE(cache.peek("beta").has_value());
 }
 
 TEST(LruCacheTest, InsertOrAssignExistingKeyUpdatesValueAndRefreshesRecency)
@@ -75,53 +50,22 @@ TEST(LruCacheTest, InsertOrAssignExistingKeyUpdatesValueAndRefreshesRecency)
   cache.insertOrAssign("alpha", 1);
   cache.insertOrAssign("beta", 2);
 
-  EXPECT_FALSE(cache.insertOrAssign("alpha", 10).has_value());
+  cache.insertOrAssign("alpha", 10);
 
-  const auto evicted = cache.insertOrAssign("gamma", 3);
-  ASSERT_TRUE(evicted.has_value());
-  EXPECT_EQ(evicted->key, "beta");
-  EXPECT_EQ(evicted->value, 2);
-  EXPECT_EQ(cache.peek("alpha"), std::optional<int>{10});
+  cache.insertOrAssign("gamma", 3);
+  EXPECT_EQ(cache.get("alpha"), std::optional<int>{10});
+  EXPECT_FALSE(cache.get("beta").has_value());
 }
 
-TEST(LruCacheTest, InsertOrAssignEvictsLeastRecentEntryAndKeepsSizeBounded)
+TEST(LruCacheTest, InsertOrAssignEvictsLeastRecentEntry)
 {
   LruCache<std::string, int> cache(1U);
   cache.insertOrAssign("alpha", 1);
 
-  const auto evicted = cache.insertOrAssign("beta", 2);
-  ASSERT_TRUE(evicted.has_value());
-  EXPECT_EQ(evicted->key, "alpha");
-  EXPECT_EQ(evicted->value, 1);
-  EXPECT_EQ(cache.size(), 1U);
-  EXPECT_FALSE(cache.peek("alpha").has_value());
-  EXPECT_EQ(cache.peek("beta"), std::optional<int>{2});
-}
-
-TEST(LruCacheTest, ZeroCapacityImmediatelyEvictsInsertedEntries)
-{
-  LruCache<std::string, int> cache(0U);
-
-  const auto evicted = cache.insertOrAssign("alpha", 1);
-  ASSERT_TRUE(evicted.has_value());
-  EXPECT_EQ(evicted->key, "alpha");
-  EXPECT_EQ(evicted->value, 1);
-  EXPECT_FALSE(cache.peek("alpha").has_value());
-}
-
-TEST(LruCacheTest, ClearRemovesEntriesAndAllowsReuse)
-{
-  LruCache<std::string, int> cache(2U);
-  cache.insertOrAssign("alpha", 1);
   cache.insertOrAssign("beta", 2);
 
-  cache.clear();
-
-  EXPECT_TRUE(cache.empty());
-  EXPECT_FALSE(cache.touch("alpha"));
-
-  EXPECT_FALSE(cache.insertOrAssign("gamma", 3).has_value());
-  EXPECT_EQ(cache.get("gamma"), std::optional<int>{3});
+  EXPECT_FALSE(cache.get("alpha").has_value());
+  EXPECT_EQ(cache.get("beta"), std::optional<int>{2});
 }
 
 TEST(LruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
@@ -139,7 +83,7 @@ TEST(LruCacheTest, SupportsFailureCacheUsageWithExceptionPtrs)
   }
 }
 
-TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsableAndWithinCapacity)
+TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsable)
 {
   constexpr std::size_t kCapacity = 8U;
   constexpr int kThreadCount = 4;
@@ -148,7 +92,6 @@ TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsableAndWithinCapacity)
   LruCache<std::string, int> cache(kCapacity);
   std::atomic<int> ready_count{0};
   std::atomic<bool> start{false};
-  std::atomic<bool> observed_oversize{false};
   std::vector<std::thread> threads;
   threads.reserve(kThreadCount);
 
@@ -163,15 +106,9 @@ TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsableAndWithinCapacity)
         const std::string key = "key_" + std::to_string((thread_index + iteration) % static_cast<int>(kCapacity * 2U));
 
         if (iteration % 3 == 0) {
-          if (cache.size() > kCapacity) {
-            observed_oversize.store(true, std::memory_order_relaxed);
-          }
           cache.insertOrAssign(key, thread_index * 1000 + iteration);
-        } else if (iteration % 3 == 1) {
-          (void)cache.get(key);
         } else {
-          (void)cache.peek(key);
-          (void)cache.touch(key);
+          (void)cache.get(key);
         }
       }
     });
@@ -186,8 +123,6 @@ TEST(LruCacheTest, ConcurrentAccessKeepsCacheUsableAndWithinCapacity)
     thread.join();
   }
 
-  EXPECT_FALSE(observed_oversize.load(std::memory_order_relaxed));
-  EXPECT_LE(cache.size(), kCapacity);
   cache.insertOrAssign("sentinel", 42);
   EXPECT_EQ(cache.get("sentinel"), std::optional<int>{42});
 }

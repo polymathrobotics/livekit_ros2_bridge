@@ -79,13 +79,8 @@ TEST(LogEventTest, FormatsExceptionMessagesAndFallbacks)
     LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", exception).str(),
     "event=sample_event error=boom");
   EXPECT_EQ(
-    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", nullptr).str(),
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", non_std_exception).str(),
     "event=sample_event error=unknown_exception");
-  EXPECT_EQ(
-    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
-      .fieldException("error", non_std_exception, "<non_std>")
-      .str(),
-    "event=sample_event error=<non_std>");
 }
 
 TEST(LogEventTest, SupportsConditionalChainableFields)
@@ -108,11 +103,11 @@ TEST(LogEventTest, SupportsConditionalChainableFields)
     "present_cstr=ok");
 }
 
-TEST(LogEventTest, WarnThrottleUsesRosDurationIntervals)
+TEST(LogEventTest, WarnThrottleUsesChronoIntervals)
 {
   test_support::ScopedRclcppInit init;
   rclcpp::Clock clock(RCL_SYSTEM_TIME);
-  const rclcpp::Duration interval(std::chrono::microseconds(999));
+  const auto interval = std::chrono::microseconds(999);
 
   EXPECT_NO_THROW(LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").warnThrottle(clock, interval));
 }

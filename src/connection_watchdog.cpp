@@ -15,7 +15,6 @@
 #include "connection_watchdog.hpp"
 
 #include <cstdlib>
-#include <stdexcept>
 #include <thread>
 #include <utility>
 
@@ -43,15 +42,9 @@ std::string_view connectionStateName(livekit::ConnectionState state)
     case livekit::ConnectionState::Reconnecting:
       return "reconnecting";
   }
+
   return "unknown";
 }
-
-// Long-outage reconnect probes showed that the C++ SDK can surface Reconnecting and then leave the
-// bridge alive but stale after the Rust reconnect loop logs terminal failure. In that state the
-// bridge did not reliably receive onDisconnected, RoomEos, Reconnected, or a fresh Connected event.
-// The watchdog therefore treats SDK lifecycle events as health hints, not as a complete recovery
-// contract: only an explicit Connected state clears the budget, and timeout exits the process so the
-// supervisor rebuilds a fresh room connection through the bridge's startup-token path.
 
 }  // namespace
 
@@ -61,10 +54,6 @@ ConnectionWatchdog::ConnectionWatchdog(
 , logger_(interfaces.get_node_logging_interface()->get_logger())
 , close_(std::move(close))
 {
-  if (!close_) {
-    throw std::invalid_argument("ConnectionWatchdog requires a close callback.");
-  }
-
   if (!config_.watchdog_enabled) {
     return;
   }
@@ -76,11 +65,6 @@ ConnectionWatchdog::ConnectionWatchdog(
     interfaces.get_node_base_interface().get(),
     interfaces.get_node_timers_interface().get());
   markUnhealthy(kStartupConnectPendingReason);
-}
-
-ConnectionWatchdog::~ConnectionWatchdog()
-{
-  timer_.reset();
 }
 
 void ConnectionWatchdog::observeConnectionState(livekit::ConnectionState state)
@@ -126,7 +110,7 @@ void ConnectionWatchdog::markHealthy(std::string_view reason)
   }
 
   LogEvent(logger_, "runtime_watchdog_healthy")
-    .fieldOr("reason", reason, "unknown")
+    .field("reason", reason)
     .field("unhealthy_duration_seconds", *duration)
     .info();
 }
@@ -141,9 +125,7 @@ void ConnectionWatchdog::markUnhealthy(std::string_view reason)
   const bool started = [&]() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (unhealthy_.has_value()) {
-      // Do not let repeated SDK reconnecting/disconnected noise extend the outage deadline. The
-      // terminal event may never arrive, so the bounded recovery window starts at the first
-      // unhealthy observation and ends only when markHealthy() clears it.
+      // Do not extend outage deadlines; reconnect failure may never emit a terminal event.
       return false;
     }
     unhealthy_ = UnhealthyState{now, now + config_.watchdog_recovery_timeout};
@@ -155,7 +137,7 @@ void ConnectionWatchdog::markUnhealthy(std::string_view reason)
   }
 
   LogEvent event = LogEvent(logger_, "runtime_watchdog_unhealthy")
-                     .fieldOr("reason", reason, "unknown")
+                     .field("reason", reason)
                      .field("recovery_timeout_seconds", config_.watchdog_recovery_timeout.count() / 1000.0);
   if (reason == kStartupConnectPendingReason) {
     event.info();

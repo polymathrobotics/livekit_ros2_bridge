@@ -51,6 +51,7 @@ struct FrameLayout
 class RosVideoStream final : public std::enable_shared_from_this<RosVideoStream>
 {
 public:
+  // The publisher must outlive this stream; `qos_config` is borrowed and may be null.
   RosVideoStream(
     rclcpp::node_interfaces::NodeInterfaces<
       rclcpp::node_interfaces::NodeParametersInterface,
@@ -66,11 +67,14 @@ public:
   RosVideoStream(RosVideoStream &&) = delete;
   RosVideoStream & operator=(RosVideoStream &&) = delete;
 
+  // Requires shared_ptr ownership because subscription callbacks capture weak ownership.
   void start();
   void close();
 
 private:
   bool isShutdown() const;
+  // A failure stops the current pipeline; the next accepted ROS frame rebuilds
+  // appsrc state.
   void onPipelineFailure(const std::string & reason);
   void startFailureThreadLocked();
   void failureLoop();
@@ -97,8 +101,11 @@ private:
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
+  // Current appsrc caps; layout or codec changes restart the pipeline on the
+  // next accepted frame.
   std::optional<FrameLayout> raw_layout_;
   std::optional<std::string> compressed_codec_;
+  // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
   bool failure_pending_ = false;

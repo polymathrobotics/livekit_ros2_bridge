@@ -93,11 +93,7 @@ std::string resolveDemandLookupName(
   }
 
   if (kind == SubscriptionTargetKind::OtherVideo) {
-    const std::string trimmed_name = trim(name);
-    if (trimmed_name.empty()) {
-      throw std::invalid_argument("Invalid other video name.");
-    }
-    return trimmed_name;
+    return trim(name);
   }
 
   return name;
@@ -187,8 +183,7 @@ void SubscriptionLeaseManager::handleHeartbeat(
   report.statuses.reserve(heartbeat.demands.size());
 
   for (const auto & demand : heartbeat.demands) {
-    // `other_video` targets name bridge-owned config entries rather than ROS graph
-    // resources, so subscribe ACLs apply only to true ROS topic subscriptions here.
+    // Bridge-owned `other_video` sources are config entries; subscribe ACLs apply to ROS topics.
     if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name))
     {
       report.statuses.emplace_back(
@@ -214,13 +209,10 @@ void SubscriptionLeaseManager::handleHeartbeat(
     }
   }
 
-  // A page refresh can reuse the requester identity before the old lease expires, but the
-  // rejoined participant still needs a fresh data-track publication because the previous one
-  // belonged to the disconnected participant_session.
+  // Page refreshes can leave the data track attached to the old LiveKit participant session.
   republishTracks(resolved_identity);
 
-  // A heartbeat may exist only to bind or renew the client-session lease. In that case the protocol
-  // contract does not send an empty status envelope back.
+  // Session-only heartbeats skip status envelopes.
   if (report.statuses.empty()) {
     return;
   }
@@ -244,9 +236,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
   const std::string & requester_identity, const std::optional<std::string> & session_id)
 {
   if (requester_identity.empty()) {
-    // LiveKit should normally attach the requester identity to user-data packets. If it does not, a
-    // known protocol session_id is enough to treat the heartbeat as belonging to the same authenticated
-    // browser tab and renew that client-session lease instead of dropping it.
+    // A live client-session lease can authenticate anonymous heartbeats when LiveKit omits identity.
     const auto it = session_id.has_value() ? session_leases_.find(*session_id) : session_leases_.end();
     if (it == session_leases_.end()) {
       LogEvent(kLogger, "heartbeat_dropped")
@@ -354,12 +344,6 @@ SubscriptionStatus SubscriptionLeaseManager::ensure(
   if (is_shutdown_.load()) {
     throw std::runtime_error("Subscription registry is shut down.");
   }
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
-  }
-  if (demand.kind != SubscriptionTargetKind::Topic && demand.name.empty()) {
-    throw std::invalid_argument("heartbeat subscription target name must resolve to a non-empty name");
-  }
 
   const int preferred_interval_ms = std::max(demand.preferred_interval_ms.value_or(0), 0);
   const Lease lease{preferred_interval_ms, expiry};
@@ -388,10 +372,7 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     data_publisher.setIntervalMs(appliedIntervalMs(subscription.leases));
 
     if (!had_requester && was_published) {
-      // A new requester can receive subscription status before LiveKit surfaces the existing
-      // published data track to that participant session, so queue one republish when the
-      // requester first joins. The fresh lease was inserted just above, so only published
-      // state matters here.
+      // Status can reach a new participant before LiveKit surfaces the existing data track.
       republish_requesters_.insert(requester_identity);
     }
 
@@ -483,8 +464,7 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
       continue;
     }
 
-    // The republish queue is keyed only by requester. Once any currently published data track
-    // proves this requester still owns a live lease, republishTracks() will sweep the rest.
+    // One published data track with a live lease is enough for republishTracks() to sweep the rest.
     republish_requesters_.insert(requester_identity);
 
     return;
@@ -495,9 +475,6 @@ void SubscriptionLeaseManager::republishTracks(const std::string & requester_ide
 {
   if (is_shutdown_.load()) {
     return;
-  }
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
   }
   if (republish_requesters_.erase(requester_identity) == 0U) {
     return;
@@ -545,36 +522,6 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
   pruneSubscriptionLeases(now);
 }
 
-SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
-  SubscriptionTargetKind kind, const std::string & name)
-{
-  auto it = subscriptions_.find(makeSubscriptionKey(kind, name));
-  return it == subscriptions_.end() ? nullptr : &it->second;
-}
-
-const SubscriptionLeaseManager::Subscription * SubscriptionLeaseManager::find(
-  SubscriptionTargetKind kind, const std::string & name) const
-{
-  const auto it = subscriptions_.find(makeSubscriptionKey(kind, name));
-  return it == subscriptions_.end() ? nullptr : &it->second;
-}
-
-void SubscriptionLeaseManager::resetSessionState()
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  LogEvent(kLogger, "subscription_registry_reset_begin").field("subscription_count", subscriptions_.size()).info();
-  auto owned_subscriptions = std::move(subscriptions_);
-  subscriptions_.clear();
-  republish_requesters_.clear();
-
-  for (auto & [key, subscription] : owned_subscriptions) {
-    (void)key;
-    destroy(subscription);
-  }
-}
-
 SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscription) const
 {
   SubscriptionStatus status;
@@ -595,7 +542,6 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
   const auto & video_spec = requireVideoPublisher(subscription).spec();
   status.delivery = SubscriptionDeliveryKind::Video;
   status.track_name = video_spec.track_name;
-  status.degradation_reason = video_spec.degraded_reason.value_or("");
   return status;
 }
 
@@ -607,10 +553,6 @@ bool SubscriptionLeaseManager::isVideo(const Subscription & subscription)
 
 int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Lease> & leases)
 {
-  if (leases.empty()) {
-    return 0;
-  }
-
   int interval_ms = leases.begin()->second.preferred_interval_ms;
   for (const auto & [id, lease] : leases) {
     (void)id;
@@ -658,7 +600,7 @@ void SubscriptionLeaseManager::applyExpiredLeaseRemovals(
 
 void SubscriptionLeaseManager::refreshDataInterval(const Subscription & subscription)
 {
-  if (isVideo(subscription) || subscription.leases.empty()) {
+  if (isVideo(subscription)) {
     return;
   }
 
@@ -688,7 +630,7 @@ void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point referen
       .field("kind", targetKindLabel(subscription.kind))
       .field("reason", kLeaseExpiredReason)
       .info();
-    // `subscription_pruned` already captures this lease-driven teardown boundary.
+    // Avoid a second teardown log; `subscription_pruned` is the lease-driven boundary.
     destroy(subscription, false);
     it = subscriptions_.erase(it);
   }

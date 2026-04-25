@@ -15,14 +15,13 @@
 #include "ros_topic_publisher.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <exception>
 #include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-#include "livekit/room_event_types.h"
 #include "protocol/topic_publish_json.hpp"
 #include "rclcpp/create_generic_publisher.hpp"
 #include "rclcpp/logging.hpp"
@@ -70,8 +69,8 @@ RosTopicPublisher::~RosTopicPublisher()
   shutdown();
 }
 
-void RosTopicPublisher::handlePublishPacket(
-  const std::string & requester_identity, const livekit::UserDataPacketEvent & event)
+void RosTopicPublisher::handlePublishPayload(
+  const std::string & requester_identity, const std::vector<std::uint8_t> & payload)
 {
   if (requester_identity.empty()) {
     LogEvent(kLogger, "packet_rejected")
@@ -81,9 +80,8 @@ void RosTopicPublisher::handlePublishPacket(
     return;
   }
 
-  std::optional<TopicPublishRequest> request;
   try {
-    request = protocol::topic_publish::parse(event.data);
+    publish(requester_identity, protocol::topic_publish::parse(payload));
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "packet_rejected")
       .field("reason", "invalid_publish_request")
@@ -92,8 +90,6 @@ void RosTopicPublisher::handlePublishPacket(
       .warnThrottle(*clock_, kLogThrottle);
     return;
   }
-
-  publish(requester_identity, *request);
 }
 
 void RosTopicPublisher::publish(const std::string & requester_identity, const TopicPublishRequest & request)
@@ -131,9 +127,6 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
   std::shared_ptr<rclcpp::GenericPublisher> publisher;
 
   try {
-    // Cache hits deliberately skip the ROS graph. Once a publish succeeds, a
-    // cached publisher pins the interface type for that topic until shutdown
-    // clears the entry.
     {
       std::lock_guard<std::mutex> lock(publishers_mutex_);
       const auto cached = publishers_.find(ros_topic);
@@ -152,8 +145,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
     }
 
     if (!publisher) {
-      const auto topics = topic_graph_provider_ ? topic_graph_provider_() : graph_->get_topic_names_and_types();
-      type = requireSingleInterfaceType(topics, ros_topic, "topic");
+      type = requireSingleInterfaceType(graph_->get_topic_names_and_types(), ros_topic, "topic");
     }
 
     if (type != request.interface_type) {
@@ -179,26 +171,17 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
       publisher = rclcpp::create_generic_publisher(topics_, ros_topic, type, qos);
     }
 
-    if (before_publish_handler_) {
-      before_publish_handler_();
-    }
-
-    // before_publish_handler_ can trigger shutdown after publisher creation, so
-    // recheck before sending bytes.
+    // Honor concurrent shutdown before publishing and before first cache insertion.
     if (is_shutdown_.load()) {
       return;
     }
 
     publisher->publish(request.message);
-    // If shutdown is already visible here, bail out before touching cache state
-    // that teardown is intentionally trying to drop.
     if (is_shutdown_.load()) {
       return;
     }
 
     if (!had_cached_publisher) {
-      // Cache only after a successful publish. Recheck shutdown and size under
-      // the lock so a racing publish cannot push the map over max_topics_.
       std::lock_guard<std::mutex> lock(publishers_mutex_);
       if (is_shutdown_.load()) {
         return;
@@ -221,8 +204,8 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const To
 
 void RosTopicPublisher::shutdown()
 {
-  // Flip the terminal bit before clearing cached handles so racing publish()
-  // calls observe shutdown before they can repopulate bridge-owned cache state.
+  // Set the terminal bit before clearing cached handles so in-flight publish()
+  // calls cannot repopulate bridge-owned cache state.
   if (is_shutdown_.exchange(true)) {
     return;
   }

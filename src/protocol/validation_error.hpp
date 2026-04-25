@@ -30,6 +30,7 @@ public:
   , field_(std::move(field))
   {}
 
+  /// The field view is valid for the exception lifetime.
   std::string_view field() const noexcept
   {
     return std::string_view(field_.data(), field_.size());

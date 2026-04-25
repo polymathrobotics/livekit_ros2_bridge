@@ -22,9 +22,7 @@
 namespace livekit_ros2_bridge::protocol::topic_publish
 {
 
-/// Parse a JSON topic-publish request body. Trims `topic` for later ROS resolution/validation, trims `interface_type`
-/// without rewriting its package/msg spelling, and requires non-empty `topic` and CDR `message` payloads. Throws
-/// `std::invalid_argument` on malformed JSON or protocol-contract violations.
+/// Boundary-trims string fields and ignores unknown top-level fields.
 TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes);
 
 }  // namespace livekit_ros2_bridge::protocol::topic_publish

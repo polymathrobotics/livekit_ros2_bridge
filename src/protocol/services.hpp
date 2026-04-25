@@ -25,17 +25,14 @@
 namespace livekit_ros2_bridge
 {
 
-// Typed service-call request shared by the RPC boundary and ROS runtime.
 struct ServiceCallRequest
 {
-  // Expanded ROS service name.
   std::string service;
-  // Optional `pkg/srv/Type` hint. Empty values let the caller resolve the type from the ROS graph.
+  // Optional `pkg/srv/Type` hint. Empty means resolve the type from the ROS graph.
   std::string interface_type;
-  // Serialized ROS request payload ready for rclcpp deserialization. Empty payloads are invalid.
+  // Empty payloads are invalid.
   rclcpp::SerializedMessage payload;
-  // Caller-supplied timeout when present. The runtime maps omitted or non-positive values to its
-  // default deadline.
+  // Omitted or non-positive values use the runtime default.
   std::optional<std::chrono::milliseconds> timeout;
 };
 
@@ -43,8 +40,7 @@ struct ServiceCallResponse
 {
   std::string service;
   std::string interface_type;
-  // The payload stays serialized so runtime callers can forward arbitrary service types without
-  // templating on generated ROS interfaces.
+  // Serialized so callers can forward arbitrary service types without generated ROS interfaces.
   std::vector<std::uint8_t> payload;
 };
 

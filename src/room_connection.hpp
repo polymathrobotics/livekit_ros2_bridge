@@ -18,7 +18,6 @@
 #include <functional>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "livekit/data_track_frame.h"
@@ -48,41 +47,34 @@ struct LiveKitConfig
 
 struct RoomEventCallbacks
 {
-  // Called when the SDK room connection state changes. The initial successful Connect() result is
-  // also reported as Connected because it is established before normal delegate events are reliable.
+  // Initial successful Connect() is reported as Connected before delegate events are reliable.
   std::function<void(livekit::ConnectionState)> on_connection_state_changed;
 
-  // Delivers one incoming LiveKit user packet on a connection-managed background thread; callbacks must
-  // hand off ROS work instead of assuming executor-thread affinity.
+  // Runs on a connection-managed thread, not necessarily a ROS executor thread.
   std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet_received;
 
-  // Called when a remote participant disconnects while the room is connected. During SDK reconnect,
-  // the connection suppresses transient participant disconnects so leases can survive browser refreshes.
-  // LiveKit owns the event lifetime, so callbacks must copy fields they keep beyond the call.
+  // SDK reconnect suppresses transient disconnects; LiveKit owns the event lifetime.
   std::function<void(const livekit::ParticipantDisconnectedEvent &)> on_participant_disconnected;
 };
 
-// Thread-safe transport facade around one SDK-owned room connection. Implementations may invoke
-// callbacks from connection-managed threads.
+// Thread-safe facade around one SDK-owned room; callbacks may run on connection-managed threads.
 class RoomConnection
 {
 public:
   virtual ~RoomConnection() = default;
 
-  // Starts a one-shot background connection task using the supplied immutable LiveKit startup config.
-  // Repeated calls after a successful start are ignored until stop() returns.
+  // Starts a background connection task. Repeated calls are ignored until stop() returns.
   virtual void start(LiveKitConfig config, RoomEventCallbacks callbacks) = 0;
 
-  // Stops the active room and waits for any in-flight connection task to exit.
+  // Stops the active room and waits for the connection task to exit.
   virtual void stop() = 0;
 
-  // Registers or replaces an RPC handler when a local participant is available.
+  // A false return means active SDK registration failed; the handler remains saved for the next connection.
   virtual bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) = 0;
+
   virtual bool unregisterRpc(const std::string & method) = 0;
 
-  // These publication calls require an active local participant. Implementations may throw if
-  // used while disconnected, except tryPushDataTrack(), which reports expected push failures
-  // in-band.
+  // Publish calls require an active local participant and may throw while disconnected.
   virtual void publishData(
     const std::vector<std::uint8_t> & payload,
     bool reliable = true,
@@ -96,8 +88,7 @@ public:
 
   virtual void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) = 0;
 
-  // Returned video tracks carry the SDK publication identity. Unpublishing a stale track after the
-  // active SDK room is gone is a no-op.
+  // Returned video tracks carry SDK publication identity; stale-track unpublishes are no-ops.
   virtual std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
     const std::string & name,
     const std::shared_ptr<livekit::VideoSource> & source,
