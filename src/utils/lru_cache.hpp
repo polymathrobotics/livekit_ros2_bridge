@@ -64,7 +64,10 @@ public:
     entries_by_recency_.push_back(LruEntry{std::move(key), std::move(value)});
     auto lru_entry_it = std::prev(entries_by_recency_.end());
     entry_index_.emplace(lru_entry_it->key, lru_entry_it);
-    evictIfNeeded();
+    if (entry_index_.size() > capacity_) {
+      entry_index_.erase(entries_by_recency_.front().key);
+      entries_by_recency_.pop_front();
+    }
   }
 
 private:
@@ -83,16 +86,6 @@ private:
   // same-list splice moves entries without invalidating them.
   LruEntries entries_by_recency_;
   EntryIndex entry_index_;
-
-  void evictIfNeeded()
-  {
-    if (entry_index_.size() <= capacity_) {
-      return;
-    }
-
-    entry_index_.erase(entries_by_recency_.front().key);
-    entries_by_recency_.pop_front();
-  }
 };
 
 }  // namespace livekit_ros2_bridge

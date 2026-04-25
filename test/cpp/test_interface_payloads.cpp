@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -31,25 +32,10 @@ namespace
 
 using test_support::expectInvalidArgument;
 
-std::string batteryStateInterfaceType()
-{
-  return rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
-}
-
-std::string headerInterfaceType()
-{
-  return rosidl_generator_traits::name<std_msgs::msg::Header>();
-}
-
-std::string stringInterfaceType()
-{
-  return rosidl_generator_traits::name<std_msgs::msg::String>();
-}
-
 TEST(InterfacePayloadsTest, ParsesTrimmedInterfaceTypesWithoutDroppingOrderOrDuplicates)
 {
-  const auto battery_state_type = batteryStateInterfaceType();
-  const auto string_type = stringInterfaceType();
+  const std::string battery_state_type = rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+  const std::string string_type = rosidl_generator_traits::name<std_msgs::msg::String>();
 
   const auto types = protocol::interfaces::parse(
     nlohmann::json{
@@ -83,10 +69,13 @@ TEST(InterfacePayloadsTest, RejectsInvalidInterfaceTypeCollections)
 
 TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidArray)
 {
+  const std::string battery_state_type = rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+  const std::string string_type = rosidl_generator_traits::name<std_msgs::msg::String>();
+
   expectInvalidArgument(
-    []() {
+    [&]() {
       (void)protocol::interfaces::parse(
-        nlohmann::json{{"interface_types", {batteryStateInterfaceType(), "   ", stringInterfaceType()}}}.dump());
+        nlohmann::json{{"interface_types", {battery_state_type, "   ", string_type}}}.dump());
     },
     "interface_types entries must not be empty",
     "interface_types");
@@ -94,28 +83,30 @@ TEST(InterfacePayloadsTest, RejectsBlankInterfaceTypeEntryWithinOtherwiseValidAr
 
 TEST(InterfacePayloadsTest, RejectsInvalidJsonAndNonObjectRequests)
 {
+  const std::string battery_state_type = rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+
   expectInvalidArgument(
     []() { (void)protocol::interfaces::parse("{"); }, "Invalid JSON in interface show request", "payload");
   expectInvalidArgument(
-    []() { (void)protocol::interfaces::parse(nlohmann::json::array({batteryStateInterfaceType()}).dump()); },
+    [&]() { (void)protocol::interfaces::parse(nlohmann::json::array({battery_state_type}).dump()); },
     "Interface show request must be a JSON object",
     "payload");
 }
 
 TEST(InterfacePayloadsTest, RejectsNonStringInterfaceTypeEntries)
 {
+  const std::string battery_state_type = rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
+
   expectInvalidArgument(
-    []() {
-      (void)protocol::interfaces::parse(nlohmann::json{{"interface_types", {batteryStateInterfaceType(), 42}}}.dump());
-    },
+    [&]() { (void)protocol::interfaces::parse(nlohmann::json{{"interface_types", {battery_state_type, 42}}}.dump()); },
     "interface_types entries must be strings",
     "interface_types");
 }
 
 TEST(InterfacePayloadsTest, SerializesInterfacesByDirectFieldMappingWithoutReorderingOrDeduping)
 {
-  const auto header_type = headerInterfaceType();
-  const auto battery_state_type = batteryStateInterfaceType();
+  const std::string header_type = rosidl_generator_traits::name<std_msgs::msg::Header>();
+  const std::string battery_state_type = rosidl_generator_traits::name<sensor_msgs::msg::BatteryState>();
 
   std::vector<InterfaceDefinition> definitions = {
     {header_type, "definition one\n"},

@@ -23,11 +23,6 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-rclcpp::QoS makeBaseQos()
-{
-  return rclcpp::QoS{10};
-}
-
 rclcpp::QoS makePublisherQos(rclcpp::ReliabilityPolicy reliability, rclcpp::DurabilityPolicy durability)
 {
   rclcpp::QoS qos{10};
@@ -38,7 +33,7 @@ rclcpp::QoS makePublisherQos(rclcpp::ReliabilityPolicy reliability, rclcpp::Dura
 
 TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos("/camera/front", base_qos, nullptr, {});
 
   EXPECT_EQ(qos.source, SubscriptionQosResolutionSource::Fallback);
@@ -49,7 +44,7 @@ TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 
 TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
@@ -68,7 +63,7 @@ TEST(SubscriptionQosTest, UnknownPublisherPoliciesDoNotOverrideBaseQos)
 
 TEST(SubscriptionQosTest, MixedPublisherPoliciesChooseWeakerCompatiblePolicyPerAxis)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
@@ -88,7 +83,7 @@ TEST(SubscriptionQosTest, MixedPublisherPoliciesChooseWeakerCompatiblePolicyPerA
 
 TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
@@ -107,7 +102,7 @@ TEST(SubscriptionQosTest, SinglePublisherQosInfersBothPoliciesWithoutMixedFlags)
 
 TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOtherAxis)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   const ResolvedSubscriptionQos qos = resolveSubscriptionQos(
     "/camera/front",
@@ -125,7 +120,7 @@ TEST(SubscriptionQosTest, PublisherQosOnlyOverridesKnownAxisAndKeepsBaseForOther
 
 TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvailableOtherwiseBaseDurability)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   SubscriptionQosConfig config;
   config.topic_overrides = {
@@ -161,7 +156,7 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
 
 TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUsesPublisherQos)
 {
-  const rclcpp::QoS base_qos = makeBaseQos();
+  const rclcpp::QoS base_qos{10};
 
   SubscriptionQosConfig config;
   config.topic_overrides = {

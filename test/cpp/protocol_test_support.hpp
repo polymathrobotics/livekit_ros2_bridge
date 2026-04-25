@@ -46,18 +46,4 @@ void expectInvalidArgument(
   }
 }
 
-template <typename Fn>
-void expectValidationError(Fn && fn, std::string_view expected_field)
-{
-  try {
-    std::forward<Fn>(fn)();
-    ADD_FAILURE() << "Expected protocol::ValidationError";
-    return;
-  } catch (const std::invalid_argument & error) {
-    const auto * validation = dynamic_cast<const protocol::ValidationError *>(&error);
-    ASSERT_NE(validation, nullptr);
-    EXPECT_EQ(validation->field(), expected_field);
-  }
-}
-
 }  // namespace livekit_ros2_bridge::test_support

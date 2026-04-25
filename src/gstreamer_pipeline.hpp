@@ -60,9 +60,6 @@ public:
   void stop();
 
 private:
-  static GstFlowReturn onSampleThunk(GstAppSink * sink, gpointer user_data);
-  static GstBusSyncReply onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data);
-
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
 

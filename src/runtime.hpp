@@ -62,8 +62,13 @@ public:
   template <typename Fn>
   bool runIfOpen(Fn && fn)
   {
-    if (!tryEnter()) {
-      return false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (closed_) {
+        return false;
+      }
+
+      ++active_count_;
     }
 
     struct ActiveDispatch
@@ -72,7 +77,12 @@ public:
 
       ~ActiveDispatch()
       {
-        gate.leave();
+        {
+          std::lock_guard<std::mutex> lock(gate.mutex_);
+          --gate.active_count_;
+        }
+
+        gate.idle_.notify_all();
       }
     } active_dispatch{*this};
 
@@ -88,9 +98,6 @@ private:
   std::condition_variable idle_;
   bool closed_ = false;
   std::size_t active_count_ = 0U;
-
-  bool tryEnter();
-  void leave();
 };
 
 class Runtime final
@@ -106,7 +113,6 @@ public:
 
 private:
   void onRoomUserPacketReceived(const livekit::UserDataPacketEvent & event);
-  void onRoomRemoteParticipantDisconnected(std::string remote_participant_identity);
   void submitToExecutor(std::function<void()> work);
   RoomEventCallbacks makeRoomEventCallbacks();
 

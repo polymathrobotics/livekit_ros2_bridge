@@ -47,11 +47,6 @@ const char * accessOperationName(AccessOperation operation)
   return "unknown";
 }
 
-std::string normalizePolicyResourceName(std::string_view raw_name, bool is_service)
-{
-  return normalizeRosResourceName(raw_name, kPolicyNodeName, kPolicyNamespace, is_service);
-}
-
 std::string normalizePolicyResourcePattern(std::string_view pattern, bool is_service)
 {
   if (pattern == kRosResourceSubtreeWildcard) {
@@ -63,14 +58,14 @@ std::string normalizePolicyResourcePattern(std::string_view pattern, bool is_ser
     pattern.substr(pattern.size() - kSubtreeWildcardSize) == kRosResourceSubtreeWildcard)
   {
     const auto prefix_pattern = pattern.substr(0, pattern.size() - kSubtreeWildcardSize);
-    const auto prefix = normalizePolicyResourceName(prefix_pattern, is_service);
+    const auto prefix = normalizeRosResourceName(prefix_pattern, kPolicyNodeName, kPolicyNamespace, is_service);
     if (prefix.empty()) {
       return "";
     }
     return prefix + kRosResourceSubtreeWildcard;
   }
 
-  return normalizePolicyResourceName(pattern, is_service);
+  return normalizeRosResourceName(pattern, kPolicyNodeName, kPolicyNamespace, is_service);
 }
 
 }  // namespace
@@ -102,7 +97,7 @@ AccessPolicy::AccessPolicy(const AccessPolicyConfig & config)
 bool AccessPolicy::allows(AccessOperation operation, std::string_view raw_resource) const
 {
   const bool is_service = operation == AccessOperation::CallService;
-  const auto resource = normalizePolicyResourceName(raw_resource, is_service);
+  const auto resource = normalizeRosResourceName(raw_resource, kPolicyNodeName, kPolicyNamespace, is_service);
   if (resource.empty()) {
     LogEvent(kLogger, "access_check_rejected")
       .field("operation", accessOperationName(operation))

@@ -119,12 +119,6 @@ private:
     SubscriptionRuntime runtime;
   };
 
-  struct ExpiredLeaseRemoval
-  {
-    std::string requester_identity;
-    Clock::time_point expiry;
-  };
-
   struct ResolvedDemand
   {
     SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
@@ -138,8 +132,6 @@ private:
 
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
-  static std::vector<ExpiredLeaseRemoval> collectExpiredLeaseRemovals(
-    const Subscription & subscription, Clock::time_point reference_time);
 
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
@@ -178,8 +170,6 @@ private:
     const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
   SubscriptionStatus status(const Subscription & subscription) const;
 
-  void applyExpiredLeaseRemovals(
-    Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time);
   void pruneSubscriptionLeases(Clock::time_point reference_time);
   void republishTracks(const std::string & requester_identity);
 };

@@ -40,7 +40,10 @@ GStreamerVideoStream::GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPubli
 , pipeline_(
     spec_,
     GStreamerPipelineCallbacks{
-      [this]() { return isShutdown(); },
+      [this]() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return is_shutdown_;
+      },
       [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
         publisher_.captureFrame(frame, timestamp_us);
       },
@@ -62,7 +65,8 @@ void GStreamerVideoStream::start()
     throw std::runtime_error("Video stream is shut down.");
   }
 
-  pipeline_.start(buildDescription(), false);
+  const auto & input = requireOtherVideoInput(spec_);
+  pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
 }
 
 void GStreamerVideoStream::close()
@@ -121,18 +125,6 @@ void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
   restart_condition_.notify_one();
 }
 
-std::string GStreamerVideoStream::buildDescription() const
-{
-  const auto & input = requireOtherVideoInput(spec_);
-  return buildPipelineDescription(input.ingress_fragment, input.transform_fragment);
-}
-
-bool GStreamerVideoStream::isShutdown() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  return is_shutdown_;
-}
-
 void GStreamerVideoStream::restartLoop()
 {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -147,25 +139,20 @@ void GStreamerVideoStream::restartLoop()
     }
 
     lock.unlock();
-    restart();
     lock.lock();
-  }
-}
+    if (is_shutdown_) {
+      return;
+    }
 
-void GStreamerVideoStream::restart()
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
-    return;
-  }
+    pipeline_.stop();
+    restart_pending_ = false;
 
-  pipeline_.stop();
-  restart_pending_ = false;
-
-  try {
-    pipeline_.start(buildDescription(), false);
-  } catch (const std::exception & exc) {
-    publisher_.onRestartFailed(exc.what());
+    try {
+      const auto & input = requireOtherVideoInput(spec_);
+      pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
+    } catch (const std::exception & exc) {
+      publisher_.onRestartFailed(exc.what());
+    }
   }
 }
 

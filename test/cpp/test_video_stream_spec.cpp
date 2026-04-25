@@ -88,10 +88,7 @@ const char * compressedImageInterfaceType()
 
 std::string expandRosTopicName(std::string_view name)
 {
-  return rclcpp::expand_topic_or_service_name(
-    std::string{name},
-    ros_resource_name_utils_detail::kResourceNameExpansionNode,
-    ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
+  return rclcpp::expand_topic_or_service_name(std::string{name}, "livekit_ros2_bridge_resource_name", "/");
 }
 
 template <typename Exception, typename Callable>

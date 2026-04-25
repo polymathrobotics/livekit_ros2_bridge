@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -34,21 +33,22 @@ namespace
 constexpr char kContentType[] = "content_type";
 constexpr char kPayloadBase64[] = "payload_base64";
 
-const char * fieldKey(Field field)
+}  // namespace
+
+rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field)
 {
+  const char * key = nullptr;
   switch (field) {
     case Field::Message:
-      return "message";
+      key = "message";
+      break;
     case Field::Request:
-      return "request";
+      key = "request";
+      break;
   }
-
-  throw std::logic_error("Unhandled CDR envelope field.");
-}
-
-std::vector<std::uint8_t> parsePayload(const nlohmann::json & body, Field field)
-{
-  const char * key = fieldKey(field);
+  if (key == nullptr) {
+    throw std::logic_error("Unhandled CDR envelope field.");
+  }
 
   const auto it = body.find(key);
   if (it == body.end() || !it->is_object()) {
@@ -71,7 +71,7 @@ std::vector<std::uint8_t> parsePayload(const nlohmann::json & body, Field field)
   const auto & encoded = payload->get_ref<const std::string &>();
   switch (auto result = detail::base64::decode(encoded); result.status) {
     case detail::base64::Status::Ok:
-      return std::move(result.bytes);
+      return wrapSerializedPayload(result.bytes);
     case detail::base64::Status::MissingPadding:
       throw std::invalid_argument("payload_base64 must be padded standard base64.");
     case detail::base64::Status::InvalidEncoding:
@@ -79,13 +79,6 @@ std::vector<std::uint8_t> parsePayload(const nlohmann::json & body, Field field)
   }
 
   throw std::logic_error("Unhandled base64 decode status.");
-}
-
-}  // namespace
-
-rclcpp::SerializedMessage parseSerializedMessage(const nlohmann::json & body, Field field)
-{
-  return wrapSerializedPayload(parsePayload(body, field));
 }
 
 nlohmann::json serialize(const std::vector<std::uint8_t> & bytes)

@@ -17,6 +17,7 @@
 #include <exception>
 #include <memory>
 #include <utility>
+#include <variant>
 
 #include "gstreamer_video_stream.hpp"
 #include "livekit/video_frame.h"
@@ -57,7 +58,7 @@ std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
   const SubscriptionQosConfig * qos_config)
 {
   auto publisher = std::make_shared<VideoTrackPublisher>(room_connection, std::move(spec));
-  if (otherVideoInput(publisher->spec_) != nullptr) {
+  if (std::holds_alternative<OtherVideoInput>(publisher->spec_.input)) {
     auto stream = std::make_unique<GStreamerVideoStream>(publisher->spec_, *publisher);
     stream->start();
     publisher->gstreamer_stream_ = std::move(stream);

@@ -46,10 +46,7 @@ public:
 private:
   // Coalesces repeated EOS/error messages while a restart is pending.
   void onPipelineFailure(const std::string & reason);
-  std::string buildDescription() const;
-  bool isShutdown() const;
   void restartLoop();
-  void restart();
 
   VideoStreamSpec spec_;
   VideoTrackPublisher & publisher_;

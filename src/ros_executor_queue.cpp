@@ -195,10 +195,24 @@ void RosExecutorQueue::shutdown()
 
 void RosExecutorQueue::drain()
 {
-  if (!tryBeginDrain()) {
-    return;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutdown_ || drain_active_) {
+      return;
+    }
+
+    drain_active_ = true;
+    drain_owner_thread_id_ = std::this_thread::get_id();
   }
-  ScopeExit finish_drain([this]() { finishDrain(); });
+  ScopeExit finish_drain([this]() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      drain_active_ = false;
+      drain_owner_thread_id_ = std::thread::id{};
+    }
+
+    drain_idle_.notify_all();
+  });
 
   // Tasks submitted from active queue work are consumed by the same wakeup.
   while (true) {
@@ -223,29 +237,6 @@ void RosExecutorQueue::drain()
         .error();
     }
   }
-}
-
-bool RosExecutorQueue::tryBeginDrain()
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (shutdown_ || drain_active_) {
-    return false;
-  }
-
-  drain_active_ = true;
-  drain_owner_thread_id_ = std::this_thread::get_id();
-  return true;
-}
-
-void RosExecutorQueue::finishDrain()
-{
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    drain_active_ = false;
-    drain_owner_thread_id_ = std::thread::id{};
-  }
-
-  drain_idle_.notify_all();
 }
 
 void RosExecutorQueue::awaitDrainIdle()

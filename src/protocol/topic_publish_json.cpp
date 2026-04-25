@@ -15,8 +15,6 @@
 #include "protocol/topic_publish_json.hpp"
 
 #include <stdexcept>
-#include <string>
-#include <utility>
 
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
@@ -26,16 +24,6 @@
 namespace livekit_ros2_bridge::protocol::topic_publish
 {
 
-namespace
-{
-
-constexpr char kPayloadField[] = "payload";
-constexpr char kTopicField[] = "topic";
-constexpr char kInterfaceTypeField[] = "interface_type";
-constexpr char kMessageField[] = "message";
-
-}  // namespace
-
 TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
 {
   nlohmann::json body;
@@ -43,40 +31,37 @@ TopicPublishRequest parse(const std::vector<std::uint8_t> & bytes)
     body =
       protocol::detail::parseObject(bytes, "Invalid JSON in publish request", "Publish request must be a JSON object");
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kPayloadField, exc.what());
+    throw ValidationError("payload", exc.what());
   }
 
   TopicPublishRequest request;
   try {
-    const std::string topic = protocol::detail::requiredTrimmedStringField(
+    request.ros_topic = protocol::detail::requiredTrimmedStringField(
       body,
       "topic",
       "Publish request requires a string 'topic' field.",
       "Publish request requires a non-empty 'topic' field.");
-    request.ros_topic = topic;
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kTopicField, exc.what());
+    throw ValidationError("topic", exc.what());
   }
 
   try {
     request.interface_type = protocol::detail::requiredTrimmedStringField(
       body, "interface_type", "Publish request requires a non-empty 'interface_type' field.");
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kInterfaceTypeField, exc.what());
+    throw ValidationError("interface_type", exc.what());
   }
 
-  rclcpp::SerializedMessage message;
   try {
-    message = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Message);
+    request.message = protocol::cdr::parseSerializedMessage(body, protocol::cdr::Field::Message);
   } catch (const std::invalid_argument & exc) {
-    throw ValidationError(kMessageField, exc.what());
+    throw ValidationError("message", exc.what());
   }
 
   // Empty CDR would otherwise reach ROS as a default-constructed message.
-  if (message.size() == 0U) {
-    throw ValidationError(kMessageField, "Publish request requires a non-empty message.payload_base64 field.");
+  if (request.message.size() == 0U) {
+    throw ValidationError("message", "Publish request requires a non-empty message.payload_base64 field.");
   }
-  request.message = std::move(message);
 
   return request;
 }

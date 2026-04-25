@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -85,16 +86,6 @@ const char * intervalClampBoundaryLabel(SubscriptionIntervalClampBoundary bounda
   }
 
   throw std::invalid_argument("subscription interval clamp boundary is invalid");
-}
-
-template <typename EventT>
-EventT && addValidationField(EventT && event, const std::exception & exc)
-{
-  const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
-  if (validation != nullptr) {
-    event.field("request_field", validation->field());
-  }
-  return std::forward<EventT>(event);
 }
 
 std::string makeSubscriptionKey(SubscriptionTargetKind kind, const std::string & name)
@@ -173,7 +164,9 @@ void SubscriptionLeaseManager::handleHeartbeatPayload(
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "packet_rejected");
     event.field("reason", "invalid_heartbeat").fieldOr("requester_identity", requester_identity);
-    addValidationField(event, exc);
+    if (const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc); validation != nullptr) {
+      event.field("request_field", validation->field());
+    }
     event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
     return;
   }
@@ -432,7 +425,7 @@ SubscriptionStatus SubscriptionLeaseManager::create(
           VideoTrackPublisher::create(node_interfaces_, room_connection_, *demand.video_spec, qos_config_)};
       }
 
-      auto data_publisher = DataTrackPublisher::create(
+      auto data_publisher = std::make_shared<DataTrackPublisher>(
         demand.name,
         demand.interface_type,
         node_interfaces_.get_node_topics_interface(),
@@ -600,54 +593,40 @@ int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Leas
   return interval_ms;
 }
 
-std::vector<SubscriptionLeaseManager::ExpiredLeaseRemoval> SubscriptionLeaseManager::collectExpiredLeaseRemovals(
-  const Subscription & subscription, Clock::time_point reference_time)
-{
-  std::vector<ExpiredLeaseRemoval> removals;
-  for (const auto & [requester_identity, lease] : subscription.leases) {
-    if (reference_time < lease.expiry) {
-      continue;
-    }
-
-    removals.push_back(ExpiredLeaseRemoval{requester_identity, lease.expiry});
-  }
-  return removals;
-}
-
-void SubscriptionLeaseManager::applyExpiredLeaseRemovals(
-  Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time)
-{
-  for (const auto & removal : removals) {
-    const auto remaining_requesters = subscription.leases.size() - 1U;
-    const auto delta_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(removal.expiry - reference_time).count();
-    if (remaining_requesters > 0U) {
-      LogEvent(kLogger, "requester_lease_removed")
-        .field("resource", subscription.name)
-        .field("kind", targetKindLabel(subscription.kind))
-        .field("requester_identity", removal.requester_identity)
-        .field("reason", kLeaseExpiredReason)
-        .field("remaining_requesters", remaining_requesters)
-        .field("expired_by_ms", static_cast<long>(-delta_ms))
-        .info();
-    }
-
-    republish_requesters_.erase(removal.requester_identity);
-    subscription.leases.erase(removal.requester_identity);
-  }
-}
-
 void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point reference_time)
 {
   for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
     auto & subscription = it->second;
-    const auto removals = collectExpiredLeaseRemovals(subscription, reference_time);
-    if (removals.empty()) {
+    bool removed_any_lease = false;
+    for (auto lease_it = subscription.leases.begin(); lease_it != subscription.leases.end();) {
+      if (reference_time < lease_it->second.expiry) {
+        ++lease_it;
+        continue;
+      }
+
+      removed_any_lease = true;
+      const auto remaining_requesters = subscription.leases.size() - 1U;
+      const auto delta_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(lease_it->second.expiry - reference_time).count();
+      if (remaining_requesters > 0U) {
+        LogEvent(kLogger, "requester_lease_removed")
+          .field("resource", subscription.name)
+          .field("kind", targetKindLabel(subscription.kind))
+          .field("requester_identity", lease_it->first)
+          .field("reason", kLeaseExpiredReason)
+          .field("remaining_requesters", remaining_requesters)
+          .field("expired_by_ms", static_cast<long>(-delta_ms))
+          .info();
+      }
+
+      republish_requesters_.erase(lease_it->first);
+      lease_it = subscription.leases.erase(lease_it);
+    }
+
+    if (!removed_any_lease) {
       ++it;
       continue;
     }
-
-    applyExpiredLeaseRemovals(subscription, removals, reference_time);
 
     if (!subscription.leases.empty()) {
       if (const auto * runtime = std::get_if<DataRuntime>(&subscription.runtime); runtime != nullptr) {

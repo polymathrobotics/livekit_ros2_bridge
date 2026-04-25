@@ -37,13 +37,6 @@ constexpr char kRequestField[] = "request";
 constexpr char kResponseField[] = "response";
 constexpr char kTimeoutMsField[] = "timeout_ms";
 constexpr char kPayloadField[] = "payload";
-constexpr char kProtocolNodeName[] = "livekit_ros2_bridge";
-constexpr char kProtocolNamespace[] = "/";
-
-std::string expandServiceName(const std::string & service)
-{
-  return rclcpp::expand_topic_or_service_name(service, kProtocolNodeName, kProtocolNamespace, true);
-}
 
 }  // namespace
 
@@ -60,7 +53,8 @@ ServiceCallRequest parse(const std::string & text)
   ServiceCallRequest request;
   try {
     // rclcpp owns service-name grammar; the protocol namespace resolves relatives globally.
-    request.service = expandServiceName(detail::requiredTrimmedStringField(body, kServiceField, "service is required"));
+    request.service = rclcpp::expand_topic_or_service_name(
+      detail::requiredTrimmedStringField(body, kServiceField, "service is required"), "livekit_ros2_bridge", "/", true);
   } catch (const std::invalid_argument & exc) {
     throw ValidationError(kServiceField, exc.what());
   }

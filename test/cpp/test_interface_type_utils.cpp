@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <map>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "utils/interface_type_utils.hpp"
@@ -25,7 +27,7 @@ namespace
 {
 
 std::string requireSingleInterfaceTypeError(
-  const RosGraphNamesAndTypes & names, const std::string & name, const char * resource_kind)
+  const std::map<std::string, std::vector<std::string>> & names, const std::string & name, const char * resource_kind)
 {
   try {
     static_cast<void>(requireSingleInterfaceType(names, name, resource_kind));
@@ -40,7 +42,7 @@ std::string requireSingleInterfaceTypeError(
 
 TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
 {
-  RosGraphNamesAndTypes names{
+  const std::map<std::string, std::vector<std::string>> names{
     {"/foo", {"bar/msg/Baz"}},
   };
   EXPECT_EQ(requireSingleInterfaceType(names, "/foo", "topic"), "bar/msg/Baz");
@@ -48,14 +50,13 @@ TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
 
 TEST(RequireSingleInterfaceTypeTest, RejectsMissingTypeSetsAsNoTypesFound)
 {
-  EXPECT_EQ(
-    requireSingleInterfaceTypeError(RosGraphNamesAndTypes{}, "/foo", "topic"), "No ROS types found for topic '/foo'.");
+  EXPECT_EQ(requireSingleInterfaceTypeError({}, "/foo", "topic"), "No ROS types found for topic '/foo'.");
 }
 
 TEST(RequireSingleInterfaceTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)
 {
   EXPECT_EQ(
-    requireSingleInterfaceTypeError(RosGraphNamesAndTypes{{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
+    requireSingleInterfaceTypeError({{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
     "Multiple ROS types found for topic '/foo'.");
 }
 

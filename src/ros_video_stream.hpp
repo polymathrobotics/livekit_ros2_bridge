@@ -76,10 +76,7 @@ private:
   // A failure stops the current pipeline; the next accepted ROS frame rebuilds
   // appsrc state.
   void onPipelineFailure(const std::string & reason);
-  void startFailureThreadLocked();
   void failureLoop();
-  void stopAfterFailure();
-  std::thread beginShutdownLocked();
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
@@ -87,7 +84,6 @@ private:
   void startRawPipelineLocked(const FrameLayout & layout);
   void startCompressedPipelineLocked(const std::string & codec);
   void pushRawLocked(const sensor_msgs::msg::Image & image);
-  void pushCompressedLocked(const sensor_msgs::msg::CompressedImage & image);
   void resetPipelineStateLocked();
 
   VideoStreamSpec spec_;

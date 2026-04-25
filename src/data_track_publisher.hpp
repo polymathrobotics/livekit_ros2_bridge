@@ -32,7 +32,7 @@ class DataTrackPublisher final
 {
 public:
   // room_connection is borrowed; qos_config is optional and borrowed.
-  static std::shared_ptr<DataTrackPublisher> create(
+  DataTrackPublisher(
     std::string topic,
     std::string interface_type,
     rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
@@ -63,15 +63,6 @@ public:
 
 private:
   class Publication;
-
-  DataTrackPublisher(
-    std::string topic,
-    std::string interface_type,
-    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
-    rclcpp::Clock::SharedPtr clock,
-    RoomConnection & room_connection,
-    const SubscriptionQosConfig * qos_config);
 
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics_;
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph_;

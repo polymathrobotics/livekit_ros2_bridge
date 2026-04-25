@@ -61,31 +61,6 @@ std::string makeTopicTrackSuffix(std::string_view topic)
   return suffix;
 }
 
-std::string makeStreamKey(std::string_view prefix, std::string_view canonical_name)
-{
-  std::string stream_key;
-  stream_key.reserve(prefix.size() + 1U + canonical_name.size());
-  stream_key.append(prefix);
-  stream_key.push_back(':');
-  stream_key.append(canonical_name);
-  return stream_key;
-}
-
-std::string makeTrackName(std::string_view prefix, std::string_view suffix)
-{
-  std::string track_name;
-  track_name.reserve(prefix.size() + suffix.size());
-  track_name.append(prefix);
-  track_name.append(suffix);
-  return track_name;
-}
-
-std::string makeTopicTrackName(std::string_view normalized_topic)
-{
-  const std::string suffix = makeTopicTrackSuffix(normalized_topic);
-  return makeTrackName(kTopicTrackPrefix, suffix);
-}
-
 bool isUnreservedTrackByte(unsigned char byte)
 {
   return (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') || (byte >= '0' && byte <= '9') || byte == '-' ||
@@ -107,11 +82,6 @@ std::string encodeOtherVideoTrackSuffix(std::string_view name)
     suffix.push_back(kHexDigits[byte & 0x0FU]);
   }
   return suffix;
-}
-
-std::string makeOtherVideoTrackName(std::string_view name)
-{
-  return makeTrackName(kOtherVideoTrackPrefix, encodeOtherVideoTrackSuffix(name));
 }
 
 const RosVideoTopicRule & selectBestMatchingRosVideoTopicRule(
@@ -152,19 +122,9 @@ std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view in
   return std::nullopt;
 }
 
-const RosVideoInput * rosVideoInput(const VideoStreamSpec & spec) noexcept
-{
-  return std::get_if<RosVideoInput>(&spec.input);
-}
-
-const OtherVideoInput * otherVideoInput(const VideoStreamSpec & spec) noexcept
-{
-  return std::get_if<OtherVideoInput>(&spec.input);
-}
-
 const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec)
 {
-  if (const auto * input = rosVideoInput(spec); input != nullptr) {
+  if (const auto * input = std::get_if<RosVideoInput>(&spec.input); input != nullptr) {
     return *input;
   }
   throw std::logic_error("Video stream spec does not contain a ROS video input.");
@@ -172,7 +132,7 @@ const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec)
 
 const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec)
 {
-  if (const auto * input = otherVideoInput(spec); input != nullptr) {
+  if (const auto * input = std::get_if<OtherVideoInput>(&spec.input); input != nullptr) {
     return *input;
   }
   throw std::logic_error("Video stream spec does not contain an other-video input.");
@@ -198,8 +158,8 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   const auto & rule = selectBestMatchingRosVideoTopicRule(config.ros_topic_rules, normalized_topic);
 
   VideoStreamSpec spec;
-  spec.stream_key = makeStreamKey(kTopicKeyPrefix, normalized_topic);
-  spec.track_name = makeTopicTrackName(normalized_topic);
+  spec.stream_key = std::string{kTopicKeyPrefix} + ":" + normalized_topic;
+  spec.track_name = std::string{kTopicTrackPrefix} + makeTopicTrackSuffix(normalized_topic);
   spec.input = RosVideoInput{
     normalized_topic,
     interface_type,
@@ -226,8 +186,8 @@ VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, co
   const auto & source_config = it->second;
 
   VideoStreamSpec spec;
-  spec.stream_key = makeStreamKey(kOtherVideoKeyPrefix, name);
-  spec.track_name = makeOtherVideoTrackName(name);
+  spec.stream_key = std::string{kOtherVideoKeyPrefix} + ":" + name;
+  spec.track_name = std::string{kOtherVideoTrackPrefix} + encodeOtherVideoTrackSuffix(name);
   spec.input = OtherVideoInput{
     name,
     source_config.ingress_fragment,

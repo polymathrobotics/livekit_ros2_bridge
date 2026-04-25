@@ -37,14 +37,6 @@ constexpr char kRosidlInterfacesResourceType[] = "rosidl_interfaces";
 constexpr std::size_t kInvalidTypeCacheCapacity = 256U;
 const auto kLogger = rclcpp::get_logger("interface_definition_lookup");
 
-using LookupFailureCache = LruCache<std::string, std::exception_ptr>;
-
-LookupFailureCache & lookupFailureCache()
-{
-  static LookupFailureCache cache(kInvalidTypeCacheCapacity);
-  return cache;
-}
-
 [[noreturn]] void throwInvalidInterfaceType(const std::string & interface_type, const char * reason)
 {
   throw std::invalid_argument("Invalid ROS interface type '" + interface_type + "': " + reason);
@@ -108,7 +100,9 @@ std::filesystem::path resolveInterfaceDefinitionPath(const TypeParts & parts)
 
 std::string loadInterfaceDefinition(const std::string & interface_type)
 {
-  if (const auto failure = lookupFailureCache().get(interface_type)) {
+  static LruCache<std::string, std::exception_ptr> failure_cache(kInvalidTypeCacheCapacity);
+
+  if (const auto failure = failure_cache.get(interface_type)) {
     std::rethrow_exception(*failure);
   }
 
@@ -127,14 +121,14 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
     body << file.rdbuf();
     return body.str();
   } catch (const std::invalid_argument & exc) {
-    lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    failure_cache.insertOrAssign(interface_type, std::current_exception());
     LogEvent(kLogger, "interface_definition_lookup_rejected")
       .field("interface_type", interface_type)
       .field("error", exc.what())
       .warn();
     throw;
   } catch (const std::runtime_error & exc) {
-    lookupFailureCache().insertOrAssign(interface_type, std::current_exception());
+    failure_cache.insertOrAssign(interface_type, std::current_exception());
     LogEvent(kLogger, "interface_definition_lookup_failed")
       .field("interface_type", interface_type)
       .field("reason", reason)
@@ -142,12 +136,6 @@ std::string loadInterfaceDefinition(const std::string & interface_type)
       .error();
     throw;
   }
-}
-
-bool isPackageLocalMessageType(const std::string & type)
-{
-  // rosidl_adapter treats only ROS message-shaped unqualified types as package-local messages.
-  return !type.empty() && type.front() >= 'A' && type.front() <= 'Z';
 }
 
 // Field dependencies are messages; normalize shorthand references to `pkg/msg/Type`.
@@ -184,7 +172,8 @@ std::vector<std::string> extractDependencies(const std::string & definition, con
     std::string dependency;
     const auto first_slash = base.find('/');
     if (first_slash == std::string::npos) {
-      if (!isPackageLocalMessageType(base)) {
+      // rosidl_adapter treats only ROS message-shaped unqualified types as package-local messages.
+      if (base.empty() || base.front() < 'A' || base.front() > 'Z') {
         continue;
       }
       dependency = package + "/msg/" + base;

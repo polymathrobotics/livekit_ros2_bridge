@@ -93,8 +93,6 @@ struct VideoStreamSpec
 
 std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type);
 
-const RosVideoInput * rosVideoInput(const VideoStreamSpec & spec) noexcept;
-const OtherVideoInput * otherVideoInput(const VideoStreamSpec & spec) noexcept;
 const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec);
 const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec);
 

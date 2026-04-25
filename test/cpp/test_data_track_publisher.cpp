@@ -63,7 +63,7 @@ const char * batteryStateInterfaceType()
 std::shared_ptr<DataTrackPublisher> createDataTrackPublisher(
   rclcpp::Node & node, FakeRoomConnection & room_connection, const std::string & topic)
 {
-  return DataTrackPublisher::create(
+  return std::make_shared<DataTrackPublisher>(
     topic,
     batteryStateInterfaceType(),
     node.get_node_topics_interface(),

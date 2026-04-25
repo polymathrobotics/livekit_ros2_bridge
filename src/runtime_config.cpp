@@ -155,16 +155,6 @@ void setVideoEncodingOptions(livekit::TrackPublishOptions & config, std::uint64_
   config.video_encoding.reset();
 }
 
-std::uint64_t videoMaxBitrateBps(const livekit::TrackPublishOptions & config)
-{
-  return config.video_encoding.has_value() ? config.video_encoding->max_bitrate : 0;
-}
-
-double videoMaxFramerate(const livekit::TrackPublishOptions & config)
-{
-  return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
-}
-
 template <typename RosPolicy, typename ParseFn>
 std::optional<RosPolicy> parseSubscriptionQosPolicy(const std::string & raw_mode, ParseFn parse)
 {
@@ -176,16 +166,6 @@ std::optional<RosPolicy> parseSubscriptionQosPolicy(const std::string & raw_mode
   const auto parsed = parse(mode.c_str());
 
   return static_cast<RosPolicy>(parsed);
-}
-
-std::optional<rclcpp::ReliabilityPolicy> parseSubscriptionQosReliability(const std::string & raw_mode)
-{
-  return parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(raw_mode, rmw_qos_reliability_policy_from_str);
-}
-
-std::optional<rclcpp::DurabilityPolicy> parseSubscriptionQosDurability(const std::string & raw_mode)
-{
-  return parseSubscriptionQosPolicy<rclcpp::DurabilityPolicy>(raw_mode, rmw_qos_durability_policy_from_str);
 }
 
 livekit::TrackPublishOptions parseTrackPublishOptions(const Params & params)
@@ -211,8 +191,12 @@ livekit::TrackPublishOptions parseTrackPublishOptions(
 
   // Negative values mean "inherit global default"; the generated parameter
   // schema cannot express optional scalars for these fields.
-  std::uint64_t max_bitrate_bps = videoMaxBitrateBps(config);
-  double max_framerate = videoMaxFramerate(config);
+  std::uint64_t max_bitrate_bps = 0;
+  double max_framerate = 0.0;
+  if (config.video_encoding.has_value()) {
+    max_bitrate_bps = config.video_encoding->max_bitrate;
+    max_framerate = config.video_encoding->max_framerate;
+  }
   if (entry.publish.max_bitrate_bps >= 0) {
     max_bitrate_bps = static_cast<std::uint64_t>(entry.publish.max_bitrate_bps);
   }
@@ -466,8 +450,10 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
     TopicSubscriptionQosOverride topic_override;
     topic_override.id = override_id;
     topic_override.pattern = normalizeRosResourcePattern(entry.pattern, "subscription.qos");
-    topic_override.reliability = parseSubscriptionQosReliability(entry.reliability);
-    topic_override.durability = parseSubscriptionQosDurability(entry.durability);
+    topic_override.reliability =
+      parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(entry.reliability, rmw_qos_reliability_policy_from_str);
+    topic_override.durability =
+      parseSubscriptionQosPolicy<rclcpp::DurabilityPolicy>(entry.durability, rmw_qos_durability_policy_from_str);
     config.topic_overrides.push_back(std::move(topic_override));
   }
 

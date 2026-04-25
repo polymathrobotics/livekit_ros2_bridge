@@ -14,21 +14,19 @@
 
 #pragma once
 
+#include <map>
 #include <stdexcept>
 #include <string>
-#include <utility>
-
-#include "rclcpp/node_interfaces/node_graph_interface.hpp"
+#include <vector>
 
 namespace livekit_ros2_bridge
 {
 
-using RosGraphNamesAndTypes =
-  decltype(std::declval<const rclcpp::node_interfaces::NodeGraphInterface &>().get_topic_names_and_types());
-
 // Reject ambiguous ROS graph state at the bridge boundary instead of guessing.
 inline std::string requireSingleInterfaceType(
-  const RosGraphNamesAndTypes & names_and_types, const std::string & name, const char * resource_kind)
+  const std::map<std::string, std::vector<std::string>> & names_and_types,
+  const std::string & name,
+  const char * resource_kind)
 {
   auto it = names_and_types.find(name);
   if (it == names_and_types.end()) {

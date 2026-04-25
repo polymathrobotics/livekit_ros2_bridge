@@ -78,16 +78,6 @@ inline std::optional<std::string> optionalTrimmedString(
   return trimmed;
 }
 
-inline std::string requiredTrimmedString(
-  const nlohmann::json & value, const char * invalid, const char * empty = nullptr)
-{
-  if (const auto trimmed = optionalTrimmedString(value, invalid)) {
-    return *trimmed;
-  }
-
-  throw std::invalid_argument(empty == nullptr ? invalid : empty);
-}
-
 inline std::string requiredTrimmedStringField(
   const nlohmann::json & body, const char * name, const char * invalid, const char * empty = nullptr)
 {
@@ -96,7 +86,11 @@ inline std::string requiredTrimmedStringField(
     throw std::invalid_argument(invalid);
   }
 
-  return requiredTrimmedString(*it, invalid, empty);
+  if (const auto trimmed = optionalTrimmedString(*it, invalid)) {
+    return *trimmed;
+  }
+
+  throw std::invalid_argument(empty == nullptr ? invalid : empty);
 }
 
 inline std::optional<std::string> optionalTrimmedStringField(

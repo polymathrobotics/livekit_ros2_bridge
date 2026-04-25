@@ -133,8 +133,6 @@ private:
 
   void drain();
   void wake();
-  bool tryBeginDrain();
-  void finishDrain();
   void awaitDrainIdle();
 };
 

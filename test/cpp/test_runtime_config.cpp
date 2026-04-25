@@ -87,16 +87,6 @@ void appendVideoPublishOverrides(
   options.append_parameter_override("video.publish.simulcast", simulcast);
 }
 
-std::uint64_t maxBitrateBps(const livekit::TrackPublishOptions & config)
-{
-  return config.video_encoding.has_value() ? config.video_encoding->max_bitrate : 0;
-}
-
-double maxFramerate(const livekit::TrackPublishOptions & config)
-{
-  return config.video_encoding.has_value() ? config.video_encoding->max_framerate : 0.0;
-}
-
 livekit::TrackPublishOptions makeExpectedPublishOptions(
   std::optional<livekit::VideoCodec> codec,
   std::uint64_t max_bitrate_bps,
@@ -118,8 +108,12 @@ livekit::TrackPublishOptions makeExpectedPublishOptions(
 void expectPublishConfigEq(const livekit::TrackPublishOptions & actual, const livekit::TrackPublishOptions & expected)
 {
   EXPECT_EQ(actual.video_codec, expected.video_codec);
-  EXPECT_EQ(maxBitrateBps(actual), maxBitrateBps(expected));
-  EXPECT_DOUBLE_EQ(maxFramerate(actual), maxFramerate(expected));
+  EXPECT_EQ(
+    actual.video_encoding.has_value() ? actual.video_encoding->max_bitrate : 0,
+    expected.video_encoding.has_value() ? expected.video_encoding->max_bitrate : 0);
+  EXPECT_DOUBLE_EQ(
+    actual.video_encoding.has_value() ? actual.video_encoding->max_framerate : 0.0,
+    expected.video_encoding.has_value() ? expected.video_encoding->max_framerate : 0.0);
   EXPECT_EQ(actual.simulcast, expected.simulcast);
 }
 

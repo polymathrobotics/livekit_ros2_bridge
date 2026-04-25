@@ -214,19 +214,6 @@ const rosidl_service_type_support_t * getServiceTypeSupportHandle(
 
 #endif
 
-[[noreturn]] void throwClientInitError(rcl_ret_t ret, const std::string & service_name, rcl_node_t * node_handle)
-{
-  if (ret == RCL_RET_SERVICE_NAME_INVALID) {
-    // Match rclcpp::Client's constructor path so service-name validation stays
-    // owned by rclcpp even for runtime-discovered service types.
-    rcl_reset_error();
-    rclcpp::expand_topic_or_service_name(
-      service_name, rcl_node_get_name(node_handle), rcl_node_get_namespace(node_handle), true);
-  }
-
-  rclcpp::exceptions::throw_from_rcl_error(ret, "could not create service client");
-}
-
 // Use ClientBase directly because ServiceCallRequest supplies the service type at runtime.
 struct ServiceClient : public rclcpp::ClientBase
 {
@@ -259,7 +246,15 @@ struct ServiceClient : public rclcpp::ClientBase
     rcl_ret_t ret = rcl_client_init(
       get_client_handle().get(), get_rcl_node_handle(), this->support->service, service_name.c_str(), &options);
     if (ret != RCL_RET_OK) {
-      throwClientInitError(ret, service_name, get_rcl_node_handle());
+      if (ret == RCL_RET_SERVICE_NAME_INVALID) {
+        // Match rclcpp::Client's constructor path so service-name validation stays
+        // owned by rclcpp even for runtime-discovered service types.
+        rcl_reset_error();
+        rclcpp::expand_topic_or_service_name(
+          service_name, rcl_node_get_name(get_rcl_node_handle()), rcl_node_get_namespace(get_rcl_node_handle()), true);
+      }
+
+      rclcpp::exceptions::throw_from_rcl_error(ret, "could not create service client");
     }
   }
 
@@ -388,7 +383,6 @@ struct RosServiceCaller::Impl
   void clearCacheLocked();
   void syncWaitableLocked(bool wake = true);
   void detachWaitable();
-  std::optional<std::chrono::steady_clock::time_point> earliestDeadlineLocked() const;
   bool isWaitableOpen();
   void closeWaitable();
   bool tryBeginWaitableCallback();
@@ -1124,7 +1118,16 @@ void RosServiceCaller::Impl::syncWaitableLocked(bool wake)
   }
 
   current_waitable->setClients(std::move(clients));
-  current_waitable->setDeadline(earliestDeadlineLocked());
+
+  std::optional<std::chrono::steady_clock::time_point> earliest_deadline;
+  for (const auto & [key, call] : inflight_calls) {
+    (void)key;
+    if (!earliest_deadline.has_value() || call.deadline < *earliest_deadline) {
+      earliest_deadline = call.deadline;
+    }
+  }
+
+  current_waitable->setDeadline(earliest_deadline);
   if (wake) {
     current_waitable->wake();
   }
@@ -1146,18 +1149,6 @@ void RosServiceCaller::Impl::detachWaitable()
   if (removed_waitable != nullptr) {
     node_waitables->remove_waitable(removed_waitable, group);
   }
-}
-
-std::optional<std::chrono::steady_clock::time_point> RosServiceCaller::Impl::earliestDeadlineLocked() const
-{
-  std::optional<std::chrono::steady_clock::time_point> earliest;
-  for (const auto & [key, call] : inflight_calls) {
-    (void)key;
-    if (!earliest.has_value() || call.deadline < *earliest) {
-      earliest = call.deadline;
-    }
-  }
-  return earliest;
 }
 
 void RosServiceCaller::Impl::drainResponses()

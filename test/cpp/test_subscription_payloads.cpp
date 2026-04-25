@@ -25,6 +25,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/subscriptions_json.hpp"
+#include "protocol/validation_error.hpp"
 #include "protocol_test_support.hpp"
 #include "rclcpp/expand_topic_or_service_name.hpp"
 
@@ -36,7 +37,6 @@ namespace
 constexpr char kTestTopicExpansionNodeName[] = "test_subscription_payloads";
 constexpr char kTestTopicExpansionNamespace[] = "/";
 using test_support::expectInvalidArgument;
-using test_support::expectValidationError;
 
 std::vector<std::uint8_t> payloadBytes(const std::string & payload)
 {
@@ -73,11 +73,6 @@ void expectParseError(const nlohmann::json & body, const char * expected_message
   expectInvalidArgument([&body]() { (void)parseHeartbeatPayload(body.dump()); }, expected_message, expected_field);
 }
 
-void expectParseErrorField(const nlohmann::json & body, const char * expected_field)
-{
-  expectValidationError([&body]() { (void)parseHeartbeatPayload(body.dump()); }, expected_field);
-}
-
 SubscriptionStatus makeStatus(
   SubscriptionTargetKind kind, std::string name, SubscriptionDeliveryKind delivery, std::string track_name)
 {
@@ -93,16 +88,6 @@ SubscriptionErrorStatus makeErrorStatus(
   SubscriptionTargetKind kind, std::string name, SubscriptionStatusErrorReason reason, std::string message)
 {
   return {kind, std::move(name), reason, std::move(message)};
-}
-
-SubscriptionReportedStatus reportedStatus(SubscriptionStatus status)
-{
-  return status;
-}
-
-SubscriptionReportedStatus reportedError(SubscriptionErrorStatus status)
-{
-  return status;
 }
 
 nlohmann::json parseSerializedStatusPayload(
@@ -211,8 +196,16 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFiel
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
 {
-  expectParseErrorField(
-    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})"), "subscriptions.name");
+  const auto blank_topic_body = nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})");
+  try {
+    (void)parseHeartbeatPayload(blank_topic_body.dump());
+    ADD_FAILURE() << "Expected protocol::ValidationError";
+  } catch (const std::invalid_argument & error) {
+    const auto * validation = dynamic_cast<const protocol::ValidationError *>(&error);
+    ASSERT_NE(validation, nullptr);
+    EXPECT_EQ(validation->field(), "subscriptions.name");
+  }
+
   expectParseError(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"other_video","name":"   "}]})"),
     "heartbeat subscription other video name must trim to a non-empty name",
@@ -393,7 +386,8 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
 
   EXPECT_EQ(
     parseSerializedStatusPayload(
-      std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data), reportedStatus(other_video)},
+      std::vector<SubscriptionReportedStatus>{
+        SubscriptionReportedStatus{topic_data}, SubscriptionReportedStatus{other_video}},
       std::nullopt,
       std::nullopt),
     expected);
@@ -422,16 +416,16 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
   EXPECT_EQ(
     parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
-        reportedError(makeErrorStatus(
+        SubscriptionReportedStatus{makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/battery_state",
           SubscriptionStatusErrorReason::Forbidden,
-          "ROS topic '/battery_state' not permitted.")),
-        reportedError(makeErrorStatus(
+          "ROS topic '/battery_state' not permitted.")},
+        SubscriptionReportedStatus{makeErrorStatus(
           SubscriptionTargetKind::OtherVideo,
           "/sources/missing",
           SubscriptionStatusErrorReason::NotFound,
-          "Unknown other video source '/sources/missing'.")),
+          "Unknown other video source '/sources/missing'.")},
       },
       std::nullopt,
       std::nullopt),
@@ -468,7 +462,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSessionAnd
   });
 
   auto serialized = parseSerializedStatusPayload(
-    std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, session_id, expiry);
+    std::vector<SubscriptionReportedStatus>{SubscriptionReportedStatus{topic_data}}, session_id, expiry);
   ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
   EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
@@ -504,7 +498,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
   });
 
   auto serialized = parseSerializedStatusPayload(
-    std::vector<SubscriptionReportedStatus>{reportedStatus(topic_data)}, std::nullopt, expiry);
+    std::vector<SubscriptionReportedStatus>{SubscriptionReportedStatus{topic_data}}, std::nullopt, expiry);
   ASSERT_TRUE(serialized["lease_expires_in_ms"].is_number_integer());
   EXPECT_GT(serialized["lease_expires_in_ms"].get<std::int64_t>(), 0);
   EXPECT_LE(serialized["lease_expires_in_ms"].get<std::int64_t>(), 45000);
@@ -541,12 +535,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   EXPECT_EQ(
     parseSerializedStatusPayload(
       std::vector<SubscriptionReportedStatus>{
-        reportedStatus(other_video),
-        reportedError(makeErrorStatus(
+        SubscriptionReportedStatus{other_video},
+        SubscriptionReportedStatus{makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",
           SubscriptionStatusErrorReason::NotFound,
-          "No ROS types found for topic '/nonexistent_topic'.")),
+          "No ROS types found for topic '/nonexistent_topic'.")},
       },
       std::nullopt,
       std::nullopt),

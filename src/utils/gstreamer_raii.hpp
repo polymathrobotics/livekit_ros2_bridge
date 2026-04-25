@@ -100,7 +100,10 @@ public:
 
   ~GValueGuard()
   {
-    unset();
+    if (G_IS_VALUE(&value_)) {
+      g_value_unset(&value_);
+      value_ = GValue{};
+    }
   }
 
   GValueGuard(const GValueGuard &) = delete;
@@ -113,23 +116,10 @@ public:
     return &value_;
   }
 
-  const GValue * get() const
-  {
-    return &value_;
-  }
-
   void reset()
   {
     if (G_IS_VALUE(&value_)) {
       g_value_reset(&value_);
-    }
-  }
-
-  void unset()
-  {
-    if (G_IS_VALUE(&value_)) {
-      g_value_unset(&value_);
-      value_ = GValue{};
     }
   }
 
@@ -167,11 +157,6 @@ public:
     return &info_;
   }
 
-  const GstMapInfo * get() const
-  {
-    return &info_;
-  }
-
 private:
   GstBuffer * buffer_ = nullptr;
   GstMapInfo info_{};
@@ -203,11 +188,6 @@ public:
   }
 
   GstVideoFrame * get()
-  {
-    return &frame_;
-  }
-
-  const GstVideoFrame * get() const
   {
     return &frame_;
   }

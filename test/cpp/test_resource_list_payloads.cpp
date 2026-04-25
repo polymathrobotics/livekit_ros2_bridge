@@ -30,16 +30,6 @@ namespace
 
 using test_support::expectInvalidArgument;
 
-std::string imageInterfaceType()
-{
-  return rosidl_generator_traits::name<sensor_msgs::msg::Image>();
-}
-
-std::string setCameraInfoInterfaceType()
-{
-  return rosidl_generator_traits::name<sensor_msgs::srv::SetCameraInfo>();
-}
-
 TEST(ResourceListPayloadsTest, IgnoresUnknownFieldsAndTreatsBlankOptionalsAsAbsent)
 {
   const auto request = protocol::resources::parseRequest(R"({
@@ -83,7 +73,7 @@ TEST(ResourceListPayloadsTest, RejectsInvalidRequestsWithFieldContext)
 
 TEST(ResourceListPayloadsTest, SerializesServices)
 {
-  const auto interface_type = setCameraInfoInterfaceType();
+  const auto interface_type = rosidl_generator_traits::name<sensor_msgs::srv::SetCameraInfo>();
 
   const auto body = nlohmann::json::parse(
     protocol::resources::serializeServices({
@@ -108,7 +98,7 @@ TEST(ResourceListPayloadsTest, SerializesServices)
 
 TEST(ResourceListPayloadsTest, SerializesTopics)
 {
-  const auto interface_type = imageInterfaceType();
+  const auto interface_type = rosidl_generator_traits::name<sensor_msgs::msg::Image>();
 
   EXPECT_EQ(
     nlohmann::json::parse(

@@ -27,12 +27,6 @@ namespace livekit_ros2_bridge
 
 constexpr char kRosResourceSubtreeWildcard[] = "/*";
 
-namespace ros_resource_name_utils_detail
-{
-constexpr char kResourceNameExpansionNode[] = "livekit_ros2_bridge_resource_name";
-constexpr char kResourceNameExpansionNamespace[] = "/";
-}  // namespace ros_resource_name_utils_detail
-
 /// Returns empty for blank input or ROS name validation/expansion failures.
 inline std::string normalizeRosResourceName(
   std::string_view name, std::string_view node_name, std::string_view namespace_, bool is_service = false)
@@ -54,10 +48,7 @@ inline std::string normalizeRosResourceName(
 /// Canonicalizes config/protocol names by resolving relatives from `/`.
 inline std::string normalizeRosResourceName(std::string_view name)
 {
-  return normalizeRosResourceName(
-    name,
-    ros_resource_name_utils_detail::kResourceNameExpansionNode,
-    ros_resource_name_utils_detail::kResourceNameExpansionNamespace);
+  return normalizeRosResourceName(name, "livekit_ros2_bridge_resource_name", "/");
 }
 
 /// A terminal `/*` matches names under that prefix; `/*` also matches `/`.

@@ -20,6 +20,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/detail/json_fields.hpp"
 #include "protocol/validation_error.hpp"
+#include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge::protocol::interfaces
 {
@@ -35,7 +36,6 @@ constexpr char kInterfacesField[] = "interfaces";
 constexpr char kTypeField[] = "interface_type";
 constexpr char kFormatField[] = "format";
 constexpr char kDefinitionField[] = "definition";
-constexpr char kDefinitionFormatRos2Msg[] = "ros2msg";
 
 }  // namespace
 
@@ -58,9 +58,16 @@ std::vector<std::string> parse(const std::string & payload)
     std::vector<std::string> types;
     types.reserve(values->size());
     for (const auto & value : *values) {
-      types.push_back(
-        detail::requiredTrimmedString(
-          value, "interface_types entries must be strings", "interface_types entries must not be empty"));
+      if (!value.is_string()) {
+        throw std::invalid_argument("interface_types entries must be strings");
+      }
+
+      const auto type = trim(value.get_ref<const std::string &>());
+      if (type.empty()) {
+        throw std::invalid_argument("interface_types entries must not be empty");
+      }
+
+      types.push_back(type);
     }
 
     if (types.empty()) {
@@ -81,7 +88,7 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
     interfaces.push_back(
       Json{
         {kTypeField, definition.type},
-        {kFormatField, kDefinitionFormatRos2Msg},
+        {kFormatField, "ros2msg"},
         {kDefinitionField, definition.body},
       });
   }

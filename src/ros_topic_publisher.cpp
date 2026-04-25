@@ -42,16 +42,6 @@ constexpr std::size_t kDefaultMaxTopics = 50U;
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("topic_publisher");
 
-template <typename EventT>
-EventT && addValidationField(EventT && event, const std::exception & exc)
-{
-  const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
-  if (validation != nullptr) {
-    event.field("request_field", validation->field());
-  }
-  return std::forward<EventT>(event);
-}
-
 }  // namespace
 
 RosTopicPublisher::RosTopicPublisher(
@@ -96,7 +86,10 @@ void RosTopicPublisher::handlePublishPayload(
   } catch (const std::exception & exc) {
     LogEvent event(kLogger, "packet_rejected");
     event.field("reason", "invalid_publish_request").fieldOr("requester_identity", requester_identity);
-    addValidationField(event, exc);
+    const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
+    if (validation != nullptr) {
+      event.field("request_field", validation->field());
+    }
     event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
     return;
   }

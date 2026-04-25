@@ -32,8 +32,7 @@ public:
   {
     ++count_;
     const auto now = std::chrono::steady_clock::now();
-    const bool should_fire_now = next_fire_at_ == TimePoint{} || now >= next_fire_at_;
-    if (should_fire_now) {
+    if (next_fire_at_ == TimePoint{} || now >= next_fire_at_) {
       const std::size_t fired_count = count_;
       count_ = 0U;
       next_fire_at_ = now + interval_;

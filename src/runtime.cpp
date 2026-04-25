@@ -99,32 +99,16 @@ RoomEventCallbacks Runtime::makeRoomEventCallbacks()
       .warnThrottle(*clock_, std::chrono::seconds(5));
   };
   callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
-    (void)callback_gate_.runIfOpen(
-      [this, &event]() { onRoomRemoteParticipantDisconnected(event.participant->identity()); });
+    (void)callback_gate_.runIfOpen([this, &event]() {
+      std::string remote_participant_identity = event.participant->identity();
+      submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity)]() {
+        subscription_lease_manager_.onRemoteParticipantDisconnected(remote_participant_identity);
+        ros_service_caller_.cancelForRequester(remote_participant_identity);
+      });
+    });
   };
 
   return callbacks;
-}
-
-bool RuntimeCallbackGate::tryEnter()
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_) {
-    return false;
-  }
-
-  ++active_count_;
-  return true;
-}
-
-void RuntimeCallbackGate::leave()
-{
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    --active_count_;
-  }
-
-  idle_.notify_all();
 }
 
 bool RuntimeCallbackGate::closeAndWait()
@@ -161,14 +145,6 @@ void Runtime::onRoomUserPacketReceived(const livekit::UserDataPacketEvent & even
     .field("topic", topic)
     .fieldOr("requester_identity", requester_identity)
     .warnThrottle(*clock_, std::chrono::seconds(5));
-}
-
-void Runtime::onRoomRemoteParticipantDisconnected(std::string remote_participant_identity)
-{
-  submitToExecutor([this, remote_participant_identity = std::move(remote_participant_identity)]() {
-    subscription_lease_manager_.onRemoteParticipantDisconnected(remote_participant_identity);
-    ros_service_caller_.cancelForRequester(remote_participant_identity);
-  });
 }
 
 void Runtime::submitToExecutor(std::function<void()> work)

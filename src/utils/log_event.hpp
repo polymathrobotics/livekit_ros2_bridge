@@ -49,127 +49,146 @@ public:
   template <typename T>
   LogEvent & field(std::string_view key, const T & value) &
   {
-    appendField(key, value);
+    stream_ << " " << key << "=" << value;
     return *this;
   }
 
   template <typename T>
   LogEvent && field(std::string_view key, const T & value) &&
   {
-    appendField(key, value);
+    static_cast<LogEvent &>(*this).field(key, value);
     return std::move(*this);
   }
 
   LogEvent & field(std::string_view key, const char * value) &
   {
-    appendField(key, value);
+    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
     return *this;
   }
 
   LogEvent && field(std::string_view key, const char * value) &&
   {
-    appendField(key, value);
+    static_cast<LogEvent &>(*this).field(key, value);
     return std::move(*this);
   }
 
   template <typename T>
   LogEvent & fieldIf(bool condition, std::string_view key, const T & value) &
   {
-    appendFieldIf(condition, key, value);
+    if (condition) {
+      field(key, value);
+    }
     return *this;
   }
 
   template <typename T>
   LogEvent && fieldIf(bool condition, std::string_view key, const T & value) &&
   {
-    appendFieldIf(condition, key, value);
+    static_cast<LogEvent &>(*this).fieldIf(condition, key, value);
     return std::move(*this);
   }
 
   LogEvent & fieldIfNotEmpty(std::string_view key, const std::string & value) &
   {
-    appendFieldIfNotEmpty(key, value);
+    if (!value.empty()) {
+      field(key, value);
+    }
     return *this;
   }
 
   LogEvent && fieldIfNotEmpty(std::string_view key, const std::string & value) &&
   {
-    appendFieldIfNotEmpty(key, value);
+    static_cast<LogEvent &>(*this).fieldIfNotEmpty(key, value);
     return std::move(*this);
   }
 
   LogEvent & fieldIfNotEmpty(std::string_view key, std::string_view value) &
   {
-    appendFieldIfNotEmpty(key, value);
+    if (!value.empty()) {
+      field(key, value);
+    }
     return *this;
   }
 
   LogEvent && fieldIfNotEmpty(std::string_view key, std::string_view value) &&
   {
-    appendFieldIfNotEmpty(key, value);
+    static_cast<LogEvent &>(*this).fieldIfNotEmpty(key, value);
     return std::move(*this);
   }
 
   LogEvent & fieldIfNotEmpty(std::string_view key, const char * value) &
   {
-    appendFieldIfNotEmpty(key, value);
+    if (value != nullptr && value[0] != '\0') {
+      field(key, value);
+    }
     return *this;
   }
 
   LogEvent && fieldIfNotEmpty(std::string_view key, const char * value) &&
   {
-    appendFieldIfNotEmpty(key, value);
+    static_cast<LogEvent &>(*this).fieldIfNotEmpty(key, value);
     return std::move(*this);
   }
 
   LogEvent & fieldOr(
     std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &
   {
-    appendFieldOr(key, value, fallback);
+    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
     return *this;
   }
 
   LogEvent && fieldOr(
     std::string_view key, const std::string & value, std::string_view fallback = kUnknownLogFieldValue) &&
   {
-    appendFieldOr(key, value, fallback);
+    static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
   LogEvent & fieldOr(std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &
   {
-    appendFieldOr(key, value, fallback);
+    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
     return *this;
   }
 
   LogEvent && fieldOr(
     std::string_view key, std::string_view value, std::string_view fallback = kUnknownLogFieldValue) &&
   {
-    appendFieldOr(key, value, fallback);
+    static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
   LogEvent & fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &
   {
-    appendFieldOr(key, value, fallback);
+    stream_ << " " << key << "=";
+    if (value == nullptr || value[0] == '\0') {
+      stream_ << fallback;
+    } else {
+      stream_ << value;
+    }
     return *this;
   }
 
   LogEvent && fieldOr(std::string_view key, const char * value, std::string_view fallback = kUnknownLogFieldValue) &&
   {
-    appendFieldOr(key, value, fallback);
+    static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
     return std::move(*this);
   }
 
   LogEvent & fieldException(std::string_view key, std::exception_ptr exception) &
   {
-    appendFieldException(key, std::move(exception));
+    try {
+      std::rethrow_exception(exception);
+    } catch (const std::exception & exc) {
+      field(key, exc.what());
+    } catch (...) {
+      field(key, kUnknownExceptionLogFieldValue);
+    }
     return *this;
   }
 
   LogEvent && fieldException(std::string_view key, std::exception_ptr exception) &&
   {
-    appendFieldException(key, std::move(exception));
+    static_cast<LogEvent &>(*this).fieldException(key, std::move(exception));
     return std::move(*this);
   }
 
@@ -209,77 +228,6 @@ public:
 private:
   rclcpp::Logger logger_;
   std::ostringstream stream_;
-
-  template <typename T>
-  void appendField(std::string_view key, const T & value)
-  {
-    stream_ << " " << key << "=" << value;
-  }
-
-  void appendField(std::string_view key, const char * value)
-  {
-    stream_ << " " << key << "=" << (value == nullptr ? "<null>" : value);
-  }
-
-  template <typename T>
-  void appendFieldIf(bool condition, std::string_view key, const T & value)
-  {
-    if (condition) {
-      appendField(key, value);
-    }
-  }
-
-  void appendFieldIfNotEmpty(std::string_view key, const std::string & value)
-  {
-    if (!value.empty()) {
-      appendField(key, value);
-    }
-  }
-
-  void appendFieldIfNotEmpty(std::string_view key, std::string_view value)
-  {
-    if (!value.empty()) {
-      appendField(key, value);
-    }
-  }
-
-  void appendFieldIfNotEmpty(std::string_view key, const char * value)
-  {
-    if (value != nullptr && value[0] != '\0') {
-      appendField(key, value);
-    }
-  }
-
-  void appendFieldOr(std::string_view key, const std::string & value, std::string_view fallback)
-  {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : std::string_view(value));
-  }
-
-  void appendFieldOr(std::string_view key, std::string_view value, std::string_view fallback)
-  {
-    stream_ << " " << key << "=" << (value.empty() ? fallback : value);
-  }
-
-  void appendFieldOr(std::string_view key, const char * value, std::string_view fallback)
-  {
-    stream_ << " " << key << "=";
-    if (value == nullptr || value[0] == '\0') {
-      stream_ << fallback;
-    } else {
-      stream_ << value;
-    }
-  }
-
-  void appendFieldException(std::string_view key, std::exception_ptr exception)
-  {
-    try {
-      std::rethrow_exception(exception);
-    } catch (const std::exception & exc) {
-      appendField(key, exc.what());
-    } catch (...) {
-      appendField(key, kUnknownExceptionLogFieldValue);
-    }
-  }
 };
 
 }  // namespace livekit_ros2_bridge

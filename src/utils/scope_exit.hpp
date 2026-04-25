@@ -15,17 +15,17 @@
 #ifndef LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_
 #define LIVEKIT_ROS2_BRIDGE__SCOPE_EXIT_HPP_
 
-#include <functional>
 #include <utility>
 
 namespace livekit_ros2_bridge
 {
 
+template <typename Callback>
 class ScopeExit final
 {
 public:
   // Callbacks must not throw; destructor exceptions terminate.
-  explicit ScopeExit(std::function<void()> callback)
+  explicit ScopeExit(Callback callback)
   : callback_(std::move(callback))
   {}
 
@@ -40,8 +40,11 @@ public:
   ScopeExit & operator=(ScopeExit &&) = delete;
 
 private:
-  std::function<void()> callback_;
+  Callback callback_;
 };
+
+template <typename Callback>
+ScopeExit(Callback) -> ScopeExit<Callback>;
 
 }  // namespace livekit_ros2_bridge
 

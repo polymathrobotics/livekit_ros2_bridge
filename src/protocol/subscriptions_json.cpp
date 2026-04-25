@@ -50,18 +50,6 @@ const char * toWire(SubscriptionTargetKind kind)
   throw std::invalid_argument("subscription target kind is invalid");
 }
 
-const char * toWire(SubscriptionDeliveryKind kind)
-{
-  switch (kind) {
-    case SubscriptionDeliveryKind::Data:
-      return protocol::kDataDeliveryKind;
-    case SubscriptionDeliveryKind::Video:
-      return protocol::kVideoDeliveryKind;
-  }
-
-  throw std::invalid_argument("subscription delivery kind is invalid");
-}
-
 constexpr char kPayloadField[] = "payload";
 constexpr char kSessionIdField[] = "session_id";
 constexpr char kSubscriptionsField[] = "subscriptions";
@@ -72,30 +60,11 @@ constexpr char kDeliveryPreferencesIntervalMsField[] = "subscriptions.delivery_p
 constexpr char kHeartbeatTopicExpansionNodeName[] = "livekit_ros2_bridge";
 constexpr char kHeartbeatTopicExpansionNamespace[] = "/";
 
-enum class ClampBoundary
-{
-  None,
-  IntMin,
-  IntMax,
-};
-
 struct ClampedInt
 {
   int value;
-  ClampBoundary boundary = ClampBoundary::None;
+  std::optional<SubscriptionIntervalClampBoundary> boundary;
 };
-
-const char * toWire(SubscriptionStatusErrorReason reason)
-{
-  switch (reason) {
-    case SubscriptionStatusErrorReason::Forbidden:
-      return "forbidden";
-    case SubscriptionStatusErrorReason::NotFound:
-      return "not_found";
-  }
-
-  throw std::invalid_argument("subscription status error reason is invalid");
-}
 
 ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
 {
@@ -107,22 +76,22 @@ ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
     const auto raw = value.get<std::uint64_t>();
     const auto max = static_cast<std::uint64_t>(std::numeric_limits<int>::max());
     if (raw > max) {
-      return {std::numeric_limits<int>::max(), ClampBoundary::IntMax};
+      return {std::numeric_limits<int>::max(), SubscriptionIntervalClampBoundary::IntMax};
     }
-    return {static_cast<int>(raw), ClampBoundary::None};
+    return {static_cast<int>(raw), std::nullopt};
   }
 
   const auto raw = value.get<std::int64_t>();
   const auto min = static_cast<std::int64_t>(std::numeric_limits<int>::min());
   const auto max = static_cast<std::int64_t>(std::numeric_limits<int>::max());
   if (raw < min) {
-    return {std::numeric_limits<int>::min(), ClampBoundary::IntMin};
+    return {std::numeric_limits<int>::min(), SubscriptionIntervalClampBoundary::IntMin};
   }
   if (raw > max) {
-    return {std::numeric_limits<int>::max(), ClampBoundary::IntMax};
+    return {std::numeric_limits<int>::max(), SubscriptionIntervalClampBoundary::IntMax};
   }
 
-  return {static_cast<int>(raw), ClampBoundary::None};
+  return {static_cast<int>(raw), std::nullopt};
 }
 
 std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
@@ -189,20 +158,6 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
   }
 }
 
-SubscriptionIntervalClampBoundary toPublicBoundary(ClampBoundary boundary)
-{
-  switch (boundary) {
-    case ClampBoundary::IntMin:
-      return SubscriptionIntervalClampBoundary::IntMin;
-    case ClampBoundary::IntMax:
-      return SubscriptionIntervalClampBoundary::IntMax;
-    case ClampBoundary::None:
-      break;
-  }
-
-  throw std::invalid_argument("subscription interval clamp boundary is invalid");
-}
-
 nlohmann::json serialize(const SubscriptionStatus & status)
 {
   nlohmann::json body = {
@@ -218,8 +173,21 @@ nlohmann::json serialize(const SubscriptionStatus & status)
     body["interface_type"] = status.interface_type;
   }
 
+  const char * delivery_kind = nullptr;
+  switch (status.delivery) {
+    case SubscriptionDeliveryKind::Data:
+      delivery_kind = protocol::kDataDeliveryKind;
+      break;
+    case SubscriptionDeliveryKind::Video:
+      delivery_kind = protocol::kVideoDeliveryKind;
+      break;
+  }
+  if (delivery_kind == nullptr) {
+    throw std::invalid_argument("subscription delivery kind is invalid");
+  }
+
   nlohmann::json delivery = {
-    {"kind", toWire(status.delivery)},
+    {"kind", delivery_kind},
     {"track_name", status.track_name},
   };
   if (status.delivery == SubscriptionDeliveryKind::Data) {
@@ -234,11 +202,24 @@ nlohmann::json serialize(const SubscriptionStatus & status)
 
 nlohmann::json serialize(const SubscriptionErrorStatus & status)
 {
+  const char * reason = nullptr;
+  switch (status.reason) {
+    case SubscriptionStatusErrorReason::Forbidden:
+      reason = "forbidden";
+      break;
+    case SubscriptionStatusErrorReason::NotFound:
+      reason = "not_found";
+      break;
+  }
+  if (reason == nullptr) {
+    throw std::invalid_argument("subscription status error reason is invalid");
+  }
+
   return {
     {"kind", toWire(status.kind)},
     {"name", status.name},
     {"status", "error"},
-    {"error", {{"reason", toWire(status.reason)}, {"message", status.message}}},
+    {"error", {{"reason", reason}, {"message", status.message}}},
   };
 }
 
@@ -246,14 +227,12 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_key;
-  heartbeat.session_id = [&body]() -> std::optional<std::string> {
-    try {
-      return protocol::detail::optionalTrimmedStringField(
-        body, "session_id", "heartbeat session_id must be a string", true);
-    } catch (const std::invalid_argument & exc) {
-      throw ValidationError(kSessionIdField, exc.what());
-    }
-  }();
+  try {
+    heartbeat.session_id =
+      protocol::detail::optionalTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
+  } catch (const std::invalid_argument & exc) {
+    throw ValidationError(kSessionIdField, exc.what());
+  }
 
   const auto entries = body.find("subscriptions");
   if (entries == body.end()) {
@@ -273,9 +252,8 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
     parseTarget(entry, demand);
     if (const auto interval = parseIntervalMs(entry)) {
       demand.preferred_interval_ms = interval->value;
-      if (interval->boundary != ClampBoundary::None) {
-        heartbeat.interval_clamps.push_back(
-          SubscriptionIntervalClamp{demand.kind, demand.name, toPublicBoundary(interval->boundary)});
+      if (interval->boundary.has_value()) {
+        heartbeat.interval_clamps.push_back(SubscriptionIntervalClamp{demand.kind, demand.name, *interval->boundary});
       }
     }
 

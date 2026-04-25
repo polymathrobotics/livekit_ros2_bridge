@@ -28,33 +28,6 @@ namespace livekit_ros2_bridge::protocol::resources
 
 using Json = nlohmann::json;
 
-namespace
-{
-
-constexpr char kInvalidLimitMessage[] = "limit must be a positive integer";
-
-std::optional<std::size_t> parseLimit(const Json & body)
-{
-  const auto field = body.find("limit");
-  if (field == body.end() || field->is_null()) {
-    return std::nullopt;
-  }
-
-  if (!field->is_number_integer()) {
-    throw ValidationError("limit", kInvalidLimitMessage);
-  }
-
-  // Read signed so negative JSON integers fail before size_t conversion.
-  const auto limit = field->get<std::int64_t>();
-  if (limit <= 0) {
-    throw ValidationError("limit", kInvalidLimitMessage);
-  }
-
-  return static_cast<std::size_t>(limit);
-}
-
-}  // namespace
-
 ResourceListRequest parseRequest(const std::string & payload)
 {
   Json body;
@@ -71,7 +44,24 @@ ResourceListRequest parseRequest(const std::string & payload)
     throw ValidationError("query", exc.what());
   }
 
-  return {std::move(query), parseLimit(body)};
+  std::optional<std::size_t> limit;
+  const auto limit_field = body.find("limit");
+  if (limit_field != body.end() && !limit_field->is_null()) {
+    constexpr char invalid_limit_message[] = "limit must be a positive integer";
+    if (!limit_field->is_number_integer()) {
+      throw ValidationError("limit", invalid_limit_message);
+    }
+
+    // Read signed so negative JSON integers fail before size_t conversion.
+    const auto parsed_limit = limit_field->get<std::int64_t>();
+    if (parsed_limit <= 0) {
+      throw ValidationError("limit", invalid_limit_message);
+    }
+
+    limit = static_cast<std::size_t>(parsed_limit);
+  }
+
+  return {std::move(query), limit};
 }
 
 std::string serializeServices(const ResourceNamesAndTypes & resources_by_name)

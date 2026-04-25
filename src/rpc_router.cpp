@@ -60,25 +60,16 @@ EventT && addLogFields(EventT && event, const char * method_name, const livekit:
   return std::forward<EventT>(event);
 }
 
-std::uint32_t errorCodeFor(const std::exception & exc)
-{
-  // Payload/range validation maps to invalid_request; arbitrary exceptions become internal.
-  if (
-    dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
-    dynamic_cast<const std::out_of_range *>(&exc) != nullptr)
-  {
-    return protocol::kInvalidRequestRpcError;
-  }
-  return protocol::kInternalRpcError;
-}
-
 [[noreturn]] void throwLoggedError(
   const char * method_name,
   const livekit::RpcInvocationData & invocation,
   const std::exception & exc,
   std::optional<std::string_view> service = std::nullopt)
 {
-  const auto code = errorCodeFor(exc);
+  // Payload/range validation maps to invalid_request; arbitrary exceptions become internal.
+  const bool validation_exception = dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
+                                    dynamic_cast<const std::out_of_range *>(&exc) != nullptr;
+  const auto code = validation_exception ? protocol::kInvalidRequestRpcError : protocol::kInternalRpcError;
   const bool internal_error = code == protocol::kInternalRpcError;
   const char * reason = internal_error ? "internal" : "invalid_request";
   LogEvent event(kLogger, internal_error ? "rpc_request_failed" : "rpc_request_rejected");
@@ -181,23 +172,24 @@ bool RpcRouter::registerRpcs(RoomConnection & connection)
   registered_connection_ = &connection;
   bool all_registered = true;
 
-  const auto register_method = [&](const char * method_name, livekit::LocalParticipant::RpcHandler handler) {
-    // Registration is best-effort rather than transactional so one failure
-    // does not hide other methods that can still be served on this connection.
-    all_registered = connection.registerRpc(method_name, std::move(handler)) && all_registered;
-  };
-
-  register_method(protocol::kCallServiceRpc, [this](const livekit::RpcInvocationData & invocation) {
-    return callService(invocation);
-  });
-  register_method(protocol::kShowInterfaceRpc, [this](const livekit::RpcInvocationData & invocation) {
-    return getInterfaces(invocation);
-  });
-  register_method(protocol::kListServicesRpc, [this](const livekit::RpcInvocationData & invocation) {
-    return listServices(invocation);
-  });
-  register_method(
-    protocol::kListTopicsRpc, [this](const livekit::RpcInvocationData & invocation) { return listTopics(invocation); });
+  // Registration is best-effort rather than transactional so one failure does
+  // not hide other methods that can still be served on this connection.
+  all_registered = connection.registerRpc(
+                     protocol::kCallServiceRpc,
+                     [this](const livekit::RpcInvocationData & invocation) { return callService(invocation); }) &&
+                   all_registered;
+  all_registered = connection.registerRpc(
+                     protocol::kShowInterfaceRpc,
+                     [this](const livekit::RpcInvocationData & invocation) { return getInterfaces(invocation); }) &&
+                   all_registered;
+  all_registered = connection.registerRpc(
+                     protocol::kListServicesRpc,
+                     [this](const livekit::RpcInvocationData & invocation) { return listServices(invocation); }) &&
+                   all_registered;
+  all_registered = connection.registerRpc(
+                     protocol::kListTopicsRpc,
+                     [this](const livekit::RpcInvocationData & invocation) { return listTopics(invocation); }) &&
+                   all_registered;
 
   return all_registered;
 }

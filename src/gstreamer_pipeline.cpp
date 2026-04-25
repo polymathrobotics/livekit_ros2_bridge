@@ -20,7 +20,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
@@ -47,17 +46,6 @@ void validateI420Plane(const GstVideoFrame * frame, guint component, const livek
   {
     throw std::runtime_error("Unexpected I420 plane dimensions from GStreamer.");
   }
-}
-
-void validateI420Planes(const GstVideoFrame * frame, const std::vector<livekit::VideoPlaneInfo> & planes)
-{
-  if (planes.size() != 3U) {
-    throw std::runtime_error("LiveKit I420 plane layout is invalid.");
-  }
-
-  validateI420Plane(frame, 0, planes[0]);
-  validateI420Plane(frame, 1, planes[1]);
-  validateI420Plane(frame, 2, planes[2]);
 }
 
 void copyI420Plane(const GstVideoFrame * frame, guint component, const livekit::VideoPlaneInfo & dst_plane)
@@ -122,7 +110,12 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
   const auto * gst_frame = mapped_frame.get();
   auto frame = livekit::VideoFrame::create(width, height, livekit::VideoBufferType::I420);
   const auto planes = frame.planeInfos();
-  validateI420Planes(gst_frame, planes);
+  if (planes.size() != 3U) {
+    throw std::runtime_error("LiveKit I420 plane layout is invalid.");
+  }
+  validateI420Plane(gst_frame, 0, planes[0]);
+  validateI420Plane(gst_frame, 1, planes[1]);
+  validateI420Plane(gst_frame, 2, planes[2]);
   copyI420Plane(gst_frame, 0, planes[0]);
   copyI420Plane(gst_frame, 1, planes[1]);
   copyI420Plane(gst_frame, 2, planes[2]);
@@ -190,11 +183,20 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   GstAppSinkPtr checked_appsink(GST_APP_SINK(appsink.release()));
   // stop() clears raw this callbacks before releasing the bin.
   GstAppSinkCallbacks callbacks{};
-  callbacks.new_sample = &GStreamerPipeline::onSampleThunk;
+  callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
+    return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+  };
   gst_app_sink_set_callbacks(checked_appsink.get(), &callbacks, this, nullptr);
 
   GstBusPtr bus(gst_element_get_bus(pipeline.get()));
-  gst_bus_set_sync_handler(bus.get(), &GStreamerPipeline::onBusMessageThunk, this, nullptr);
+  gst_bus_set_sync_handler(
+    bus.get(),
+    [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
+      static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
+      return GST_BUS_PASS;
+    },
+    this,
+    nullptr);
 
   pipeline_ = std::move(pipeline);
   appsrc_ = std::move(appsrc);
@@ -231,11 +233,6 @@ void GStreamerPipeline::stop()
   pipeline_.reset();
 }
 
-GstFlowReturn GStreamerPipeline::onSampleThunk(GstAppSink * sink, gpointer user_data)
-{
-  return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
-}
-
 GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
 {
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
@@ -267,12 +264,6 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     callbacks_.on_capture_failed(exc.what());
     return GST_FLOW_ERROR;
   }
-}
-
-GstBusSyncReply GStreamerPipeline::onBusMessageThunk(GstBus *, GstMessage * message, gpointer user_data)
-{
-  static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
-  return GST_BUS_PASS;
 }
 
 void GStreamerPipeline::onBusMessage(GstMessage * message)

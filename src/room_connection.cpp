@@ -71,11 +71,6 @@ struct LocalParticipantRef
   std::uint64_t generation = 0;
 };
 
-struct DetachedRoom
-{
-  std::shared_ptr<livekit::Room> room;
-};
-
 class LiveKitRoomConnection final : public RoomConnection, private livekit::RoomDelegate
 {
 public:
@@ -428,29 +423,22 @@ private:
 
   void detachRoom()
   {
-    DetachedRoom detached;
+    std::shared_ptr<livekit::Room> detached_room;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      detached = detachRoomLocked();
+      detached_room = std::move(room_);
+      if (detached_room != nullptr) {
+        ++generation_;
+      }
+      // Old-room tracks must not unpublish from the replacement room.
+      video_track_generations_.clear();
+      state_ = livekit::ConnectionState::Disconnected;
     }
 
-    if (detached.room != nullptr) {
-      detached.room->setDelegate(nullptr);
-      detached.room.reset();
+    if (detached_room != nullptr) {
+      detached_room->setDelegate(nullptr);
+      detached_room.reset();
     }
-  }
-
-  DetachedRoom detachRoomLocked()
-  {
-    DetachedRoom detached;
-    detached.room = std::move(room_);
-    if (detached.room != nullptr) {
-      ++generation_;
-    }
-    // Old-room tracks must not unpublish from the replacement room.
-    video_track_generations_.clear();
-    state_ = livekit::ConnectionState::Disconnected;
-    return detached;
   }
 
   void transitionState(livekit::ConnectionState state)

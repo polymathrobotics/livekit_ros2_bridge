@@ -64,33 +64,6 @@ std::string makeTrackName(const std::string & topic)
 class DataTrackPublisher::Publication final
 {
 public:
-  using Clock = std::chrono::steady_clock;
-
-  struct Throttle
-  {
-    bool allows(Clock::time_point now)
-    {
-      if (interval_ms == 0) {
-        return true;
-      }
-
-      if (!last_delivery_at) {
-        last_delivery_at = now;
-        return true;
-      }
-
-      if (now - *last_delivery_at < std::chrono::milliseconds(interval_ms)) {
-        return false;
-      }
-
-      last_delivery_at = now;
-      return true;
-    }
-
-    int interval_ms = 0;
-    std::optional<Clock::time_point> last_delivery_at;
-  };
-
   // Gates callbacks and keeps the LiveKit track alive while ROS callbacks drain.
   class State final
   {
@@ -110,7 +83,7 @@ public:
       if (track_ == nullptr) {
         throw std::runtime_error("LiveKit returned a null data track.");
       }
-      throttle_.interval_ms = interval_ms;
+      interval_ms_ = interval_ms;
     }
 
     State(const State &) = delete;
@@ -149,15 +122,22 @@ public:
     void setIntervalMs(int interval_ms)
     {
       std::lock_guard<std::mutex> lock(throttle_mutex_);
-      throttle_.interval_ms = interval_ms;
+      interval_ms_ = interval_ms;
     }
 
     void pushMessage(const rclcpp::SerializedMessage & message)
     {
       {
         std::lock_guard<std::mutex> lock(throttle_mutex_);
-        if (!throttle_.allows(Clock::now())) {
-          return;
+        if (interval_ms_ != 0) {
+          const auto now = std::chrono::steady_clock::now();
+          if (!last_delivery_at_) {
+            last_delivery_at_ = now;
+          } else if (now - *last_delivery_at_ < std::chrono::milliseconds(interval_ms_)) {
+            return;
+          } else {
+            last_delivery_at_ = now;
+          }
         }
       }
 
@@ -216,7 +196,8 @@ public:
     std::size_t active_callbacks_ = 0U;
 
     std::mutex throttle_mutex_;
-    Throttle throttle_;
+    int interval_ms_ = 0;
+    std::optional<std::chrono::steady_clock::time_point> last_delivery_at_;
   };
 
   Publication(
@@ -307,25 +288,6 @@ private:
   std::shared_ptr<State> state_;
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
 };
-
-std::shared_ptr<DataTrackPublisher> DataTrackPublisher::create(
-  std::string topic,
-  std::string interface_type,
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
-  rclcpp::Clock::SharedPtr clock,
-  RoomConnection & room_connection,
-  const SubscriptionQosConfig * qos_config)
-{
-  return std::shared_ptr<DataTrackPublisher>(new DataTrackPublisher(
-    std::move(topic),
-    std::move(interface_type),
-    std::move(topics),
-    std::move(graph),
-    std::move(clock),
-    room_connection,
-    qos_config));
-}
 
 DataTrackPublisher::DataTrackPublisher(
   std::string topic,
