@@ -82,17 +82,21 @@ TEST(TopicPublishRequestTest, PreservesRelativeTopicNamesAndBinaryPayload)
 
 TEST(TopicPublishRequestTest, RejectsInvalidJsonAndNonObjectRoot)
 {
-  EXPECT_THROW(protocol::topic_publish::parse(std::vector<std::uint8_t>{'{'}), std::invalid_argument);
-  EXPECT_THROW(
-    protocol::topic_publish::parse(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}),
-    std::invalid_argument);
+  expectInvalidArgument(
+    []() { (void)protocol::topic_publish::parse(std::vector<std::uint8_t>{'{'}); },
+    "Invalid JSON in publish request",
+    "payload");
+  expectInvalidArgument(
+    []() { (void)protocol::topic_publish::parse(std::vector<std::uint8_t>{'[', '1', ',', '2', ',', '3', ']'}); },
+    "Publish request must be a JSON object",
+    "payload");
 }
 
 TEST(TopicPublishRequestTest, RejectsMissingTopicField)
 {
   auto body = makeBody();
   body.erase("topic");
-  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a string 'topic' field.");
+  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a string 'topic' field.", "topic");
 }
 
 TEST(TopicPublishRequestTest, RejectsBlankTopicField)
@@ -100,7 +104,8 @@ TEST(TopicPublishRequestTest, RejectsBlankTopicField)
   auto body = makeBody();
   body["topic"] = "   ";
 
-  expectInvalidArgument([&body]() { (void)parse(body); }, "Publish request requires a non-empty 'topic' field.");
+  expectInvalidArgument(
+    [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'topic' field.", "topic");
 }
 
 TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
@@ -108,7 +113,7 @@ TEST(TopicPublishRequestTest, RejectsMissingInterfaceTypeField)
   auto body = makeBody();
   body.erase("interface_type");
   expectInvalidArgument(
-    [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'interface_type' field.");
+    [&body]() { (void)parse(body); }, "Publish request requires a non-empty 'interface_type' field.", "interface_type");
 }
 
 TEST(TopicPublishRequestTest, RejectsEmptyMessagePayload)
@@ -116,7 +121,7 @@ TEST(TopicPublishRequestTest, RejectsEmptyMessagePayload)
   auto body = makeBody();
   body["message"] = protocol::cdr::serialize(std::vector<std::uint8_t>{});
   expectInvalidArgument(
-    [&body]() { (void)parse(body); }, "Publish request requires a non-empty message.payload_base64 field.");
+    [&body]() { (void)parse(body); }, "Publish request requires a non-empty message.payload_base64 field.", "message");
 }
 
 }  // namespace

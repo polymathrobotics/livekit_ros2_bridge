@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "protocol/topic_publish_json.hpp"
+#include "protocol/validation_error.hpp"
 #include "rclcpp/create_generic_publisher.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
@@ -40,6 +41,16 @@ constexpr std::size_t kPublisherDepth = 10U;
 constexpr std::size_t kDefaultMaxTopics = 50U;
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 const auto kLogger = rclcpp::get_logger("topic_publisher");
+
+template <typename EventT>
+EventT && addValidationField(EventT && event, const std::exception & exc)
+{
+  const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
+  if (validation != nullptr) {
+    event.field("request_field", validation->field());
+  }
+  return std::forward<EventT>(event);
+}
 
 }  // namespace
 
@@ -83,11 +94,10 @@ void RosTopicPublisher::handlePublishPayload(
   try {
     publish(requester_identity, protocol::topic_publish::parse(payload));
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "packet_rejected")
-      .field("reason", "invalid_publish_request")
-      .fieldOr("requester_identity", requester_identity)
-      .field("error", exc.what())
-      .warnThrottle(*clock_, kLogThrottle);
+    LogEvent event(kLogger, "packet_rejected");
+    event.field("reason", "invalid_publish_request").fieldOr("requester_identity", requester_identity);
+    addValidationField(event, exc);
+    event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
     return;
   }
 }

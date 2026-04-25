@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -27,9 +28,8 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/detail/json_fields.hpp"
+#include "protocol/validation_error.hpp"
 #include "rclcpp/expand_topic_or_service_name.hpp"
-#include "rclcpp/logging.hpp"
-#include "utils/log_event.hpp"
 #include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge::protocol::subscriptions
@@ -62,8 +62,13 @@ const char * toWire(SubscriptionDeliveryKind kind)
   throw std::invalid_argument("subscription delivery kind is invalid");
 }
 
-constexpr auto kLogThrottle = std::chrono::seconds(5);
-const auto kLogger = rclcpp::get_logger("protocol_subscriptions");
+constexpr char kPayloadField[] = "payload";
+constexpr char kSessionIdField[] = "session_id";
+constexpr char kSubscriptionsField[] = "subscriptions";
+constexpr char kSubscriptionKindField[] = "subscriptions.kind";
+constexpr char kSubscriptionNameField[] = "subscriptions.name";
+constexpr char kDeliveryPreferencesField[] = "subscriptions.delivery_preferences";
+constexpr char kDeliveryPreferencesIntervalMsField[] = "subscriptions.delivery_preferences.interval_ms";
 constexpr char kHeartbeatTopicExpansionNodeName[] = "livekit_ros2_bridge";
 constexpr char kHeartbeatTopicExpansionNamespace[] = "/";
 
@@ -80,26 +85,6 @@ struct ClampedInt
   ClampBoundary boundary = ClampBoundary::None;
 };
 
-rclcpp::Clock & logClock()
-{
-  static rclcpp::Clock clock(RCL_STEADY_TIME);
-  return clock;
-}
-
-const char * boundaryName(ClampBoundary boundary)
-{
-  switch (boundary) {
-    case ClampBoundary::None:
-      return "none";
-    case ClampBoundary::IntMin:
-      return "int_min";
-    case ClampBoundary::IntMax:
-      return "int_max";
-  }
-
-  return "unknown";
-}
-
 const char * toWire(SubscriptionStatusErrorReason reason)
 {
   switch (reason) {
@@ -115,7 +100,7 @@ const char * toWire(SubscriptionStatusErrorReason reason)
 ClampedInt parseClampedInt(const nlohmann::json & value, const char * message)
 {
   if (!value.is_number_integer()) {
-    throw std::invalid_argument(message);
+    throw ValidationError(kDeliveryPreferencesIntervalMsField, message);
   }
 
   if (value.is_number_unsigned()) {
@@ -148,7 +133,7 @@ std::optional<ClampedInt> parseIntervalMs(const nlohmann::json & entry)
   }
 
   if (!preferences->is_object()) {
-    throw std::invalid_argument("delivery_preferences must be an object");
+    throw ValidationError(kDeliveryPreferencesField, "delivery_preferences must be an object");
   }
 
   const auto interval_it = preferences->find("interval_ms");
@@ -168,7 +153,7 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
 {
   const auto kind_it = entry.find("kind");
   if (kind_it == entry.end() || !kind_it->is_string()) {
-    throw std::invalid_argument("heartbeat subscription 'kind' must be a string");
+    throw ValidationError(kSubscriptionKindField, "heartbeat subscription 'kind' must be a string");
   }
 
   const std::string kind = trim(kind_it->get_ref<const std::string &>());
@@ -177,26 +162,45 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
   } else if (kind == "other_video") {
     demand.kind = SubscriptionTargetKind::OtherVideo;
   } else {
-    throw std::invalid_argument("heartbeat subscription 'kind' must be 'topic' or 'other_video'");
+    throw ValidationError(kSubscriptionKindField, "heartbeat subscription 'kind' must be 'topic' or 'other_video'");
   }
 
   const auto name_it = entry.find("name");
   if (name_it == entry.end() || !name_it->is_string()) {
-    throw std::invalid_argument("heartbeat subscription 'name' must be a string");
+    throw ValidationError(kSubscriptionNameField, "heartbeat subscription 'name' must be a string");
   }
 
   const auto & raw_name = name_it->get_ref<const std::string &>();
   if (demand.kind == SubscriptionTargetKind::Topic) {
     const std::string trimmed_name = trim(raw_name);
-    demand.name = rclcpp::expand_topic_or_service_name(
-      trimmed_name, kHeartbeatTopicExpansionNodeName, kHeartbeatTopicExpansionNamespace);
+    try {
+      demand.name = rclcpp::expand_topic_or_service_name(
+        trimmed_name, kHeartbeatTopicExpansionNodeName, kHeartbeatTopicExpansionNamespace);
+    } catch (const std::exception & exc) {
+      throw ValidationError(kSubscriptionNameField, exc.what());
+    }
     return;
   }
 
   demand.name = trim(raw_name);
   if (demand.name.empty()) {
-    throw std::invalid_argument("heartbeat subscription other video name must trim to a non-empty name");
+    throw ValidationError(
+      kSubscriptionNameField, "heartbeat subscription other video name must trim to a non-empty name");
   }
+}
+
+SubscriptionIntervalClampBoundary toPublicBoundary(ClampBoundary boundary)
+{
+  switch (boundary) {
+    case ClampBoundary::IntMin:
+      return SubscriptionIntervalClampBoundary::IntMin;
+    case ClampBoundary::IntMax:
+      return SubscriptionIntervalClampBoundary::IntMax;
+    case ClampBoundary::None:
+      break;
+  }
+
+  throw std::invalid_argument("subscription interval clamp boundary is invalid");
 }
 
 nlohmann::json serialize(const SubscriptionStatus & status)
@@ -242,21 +246,27 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
 {
   SubscriptionHeartbeat heartbeat;
   std::unordered_map<std::string, std::size_t> index_by_key;
-  heartbeat.session_id =
-    protocol::detail::optionalTrimmedStringField(body, "session_id", "heartbeat session_id must be a string", true);
+  heartbeat.session_id = [&body]() -> std::optional<std::string> {
+    try {
+      return protocol::detail::optionalTrimmedStringField(
+        body, "session_id", "heartbeat session_id must be a string", true);
+    } catch (const std::invalid_argument & exc) {
+      throw ValidationError(kSessionIdField, exc.what());
+    }
+  }();
 
   const auto entries = body.find("subscriptions");
   if (entries == body.end()) {
-    throw std::invalid_argument("heartbeat subscriptions are required");
+    throw ValidationError(kSubscriptionsField, "heartbeat subscriptions are required");
   }
 
   if (!entries->is_array()) {
-    throw std::invalid_argument("heartbeat subscriptions must be an array");
+    throw ValidationError(kSubscriptionsField, "heartbeat subscriptions must be an array");
   }
 
   for (const auto & entry : *entries) {
     if (!entry.is_object()) {
-      throw std::invalid_argument("heartbeat subscriptions must be objects");
+      throw ValidationError(kSubscriptionsField, "heartbeat subscriptions must be objects");
     }
 
     SubscriptionDemand demand;
@@ -264,11 +274,8 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
     if (const auto interval = parseIntervalMs(entry)) {
       demand.preferred_interval_ms = interval->value;
       if (interval->boundary != ClampBoundary::None) {
-        LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
-          .field("kind", toWire(demand.kind))
-          .field("name", demand.name)
-          .field("boundary", boundaryName(interval->boundary))
-          .warnThrottle(logClock(), kLogThrottle);
+        heartbeat.interval_clamps.push_back(
+          SubscriptionIntervalClamp{demand.kind, demand.name, toPublicBoundary(interval->boundary)});
       }
     }
 
@@ -299,9 +306,15 @@ SubscriptionHeartbeat parse(const nlohmann::json & body)
 
 SubscriptionHeartbeat parseHeartbeat(const std::vector<std::uint8_t> & payload)
 {
-  return parse(
-    protocol::detail::parseObject(
-      payload, "Invalid JSON in subscription heartbeat", "Subscription heartbeat must be a JSON object"));
+  try {
+    return parse(
+      protocol::detail::parseObject(
+        payload, "Invalid JSON in subscription heartbeat", "Subscription heartbeat must be a JSON object"));
+  } catch (const ValidationError &) {
+    throw;
+  } catch (const std::invalid_argument & exc) {
+    throw ValidationError(kPayloadField, exc.what());
+  }
 }
 
 std::string serializeStatusReport(const SubscriptionStatusReport & report)

@@ -25,6 +25,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/subscriptions_json.hpp"
+#include "protocol_test_support.hpp"
 #include "rclcpp/expand_topic_or_service_name.hpp"
 
 namespace livekit_ros2_bridge
@@ -34,6 +35,8 @@ namespace
 
 constexpr char kTestTopicExpansionNodeName[] = "test_subscription_payloads";
 constexpr char kTestTopicExpansionNamespace[] = "/";
+using test_support::expectInvalidArgument;
+using test_support::expectValidationError;
 
 std::vector<std::uint8_t> payloadBytes(const std::string & payload)
 {
@@ -65,9 +68,14 @@ void expectDemand(
   EXPECT_EQ(demand.preferred_interval_ms, expected_interval_ms);
 }
 
-void expectParseError(const nlohmann::json & body)
+void expectParseError(const nlohmann::json & body, const char * expected_message, const char * expected_field)
 {
-  EXPECT_THROW((void)parseHeartbeatPayload(body.dump()), std::invalid_argument);
+  expectInvalidArgument([&body]() { (void)parseHeartbeatPayload(body.dump()); }, expected_message, expected_field);
+}
+
+void expectParseErrorField(const nlohmann::json & body, const char * expected_field)
+{
+  expectValidationError([&body]() { (void)parseHeartbeatPayload(body.dump()); }, expected_field);
 }
 
 SubscriptionStatus makeStatus(
@@ -153,45 +161,79 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMi
     })");
   EXPECT_EQ(null_id.session_id, std::nullopt);
 
-  expectParseError(nlohmann::json::parse(R"({
+  expectParseError(
+    nlohmann::json::parse(R"({
     "session_id":125,
     "subscriptions":[{"kind":"topic","name":"/battery"}]
-  })"));
+  })"),
+    "heartbeat session_id must be a string",
+    "session_id");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrMalformedSubscriptions)
 {
-  expectParseError(nlohmann::json::parse(R"({})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":{"topic":"/battery"}})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":["/battery"]})"));
+  expectParseError(nlohmann::json::parse(R"({})"), "heartbeat subscriptions are required", "subscriptions");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":{"topic":"/battery"}})"),
+    "heartbeat subscriptions must be an array",
+    "subscriptions");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":["/battery"]})"),
+    "heartbeat subscriptions must be objects",
+    "subscriptions");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMalformedPayloads)
 {
-  EXPECT_THROW((void)parseHeartbeatPayload("{"), std::invalid_argument);
-  EXPECT_THROW((void)parseHeartbeatPayload(R"(["/battery"])"), std::invalid_argument);
+  expectInvalidArgument(
+    []() { (void)parseHeartbeatPayload("{"); }, "Invalid JSON in subscription heartbeat", "payload");
+  expectInvalidArgument(
+    []() { (void)parseHeartbeatPayload(R"(["/battery"])"); },
+    "Subscription heartbeat must be a JSON object",
+    "payload");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsMissingOrNonStringTargetFields)
 {
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic"}]})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":123}]})"));
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":[{"name":"/battery"}]})"),
+    "heartbeat subscription 'kind' must be a string",
+    "subscriptions.kind");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic"}]})"),
+    "heartbeat subscription 'name' must be a string",
+    "subscriptions.name");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":123}]})"),
+    "heartbeat subscription 'name' must be a string",
+    "subscriptions.name");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
 {
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"other_video","name":"   "}]})"));
-  expectParseError(nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"));
+  expectParseErrorField(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"   "}]})"), "subscriptions.name");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"other_video","name":"   "}]})"),
+    "heartbeat subscription other video name must trim to a non-empty name",
+    "subscriptions.name");
+  expectParseError(
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"),
+    "heartbeat subscription 'kind' must be 'topic' or 'other_video'",
+    "subscriptions.kind");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsInvalidIntervalTypes)
 {
   expectParseError(
-    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":125}]})"));
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":125}]})"),
+    "delivery_preferences must be an object",
+    "subscriptions.delivery_preferences");
   expectParseError(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":"125"}}]})"));
+      R"({"subscriptions":[{"kind":"topic","name":"/lidar","delivery_preferences":{"interval_ms":"125"}}]})"),
+    "delivery_preferences.interval_ms must be an integer",
+    "subscriptions.delivery_preferences.interval_ms");
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
@@ -214,6 +256,23 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatClampsOutOfRangeIntervals)
        {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::uint64_t>::max()}}}}}}};
   expectDemand(
     unsigned_body, SubscriptionTargetKind::Topic, expandHeartbeatTopicName("/lidar"), std::numeric_limits<int>::max());
+}
+
+TEST(SubscriptionPayloadsTest, ParseHeartbeatRecordsIntervalClampMetadata)
+{
+  const nlohmann::json body = {
+    {"session_id", "session-1"},
+    {"subscriptions",
+     {{{"kind", "topic"},
+       {"name", "/lidar"},
+       {"delivery_preferences", {{"interval_ms", std::numeric_limits<std::int64_t>::max()}}}}}}};
+
+  const auto heartbeat = parseHeartbeatPayload(body.dump());
+
+  ASSERT_EQ(heartbeat.interval_clamps.size(), 1U);
+  EXPECT_EQ(heartbeat.interval_clamps.front().kind, SubscriptionTargetKind::Topic);
+  EXPECT_EQ(heartbeat.interval_clamps.front().name, expandHeartbeatTopicName("/lidar"));
+  EXPECT_EQ(heartbeat.interval_clamps.front().boundary, SubscriptionIntervalClampBoundary::IntMax);
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimumInterval)

@@ -25,6 +25,7 @@
 #include "data_track_publisher.hpp"
 #include "protocol/constants.hpp"
 #include "protocol/subscriptions_json.hpp"
+#include "protocol/validation_error.hpp"
 #include "rclcpp/create_timer.hpp"
 #include "rclcpp/logging.hpp"
 #include "room_connection.hpp"
@@ -72,6 +73,28 @@ const char * deliveryKindLabel(SubscriptionDeliveryKind delivery)
   }
 
   throw std::invalid_argument("subscription delivery kind is invalid");
+}
+
+const char * intervalClampBoundaryLabel(SubscriptionIntervalClampBoundary boundary)
+{
+  switch (boundary) {
+    case SubscriptionIntervalClampBoundary::IntMin:
+      return "int_min";
+    case SubscriptionIntervalClampBoundary::IntMax:
+      return "int_max";
+  }
+
+  throw std::invalid_argument("subscription interval clamp boundary is invalid");
+}
+
+template <typename EventT>
+EventT && addValidationField(EventT && event, const std::exception & exc)
+{
+  const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
+  if (validation != nullptr) {
+    event.field("request_field", validation->field());
+  }
+  return std::forward<EventT>(event);
 }
 
 std::string makeSubscriptionKey(SubscriptionTargetKind kind, const std::string & name)
@@ -148,12 +171,21 @@ void SubscriptionLeaseManager::handleHeartbeatPayload(
   try {
     heartbeat = protocol::subscriptions::parseHeartbeat(payload);
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "packet_rejected")
-      .field("reason", "invalid_heartbeat")
-      .fieldOr("requester_identity", requester_identity)
-      .field("error", exc.what())
-      .warnThrottle(*clock_, kLogThrottle);
+    LogEvent event(kLogger, "packet_rejected");
+    event.field("reason", "invalid_heartbeat").fieldOr("requester_identity", requester_identity);
+    addValidationField(event, exc);
+    event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
     return;
+  }
+
+  for (const auto & clamp : heartbeat->interval_clamps) {
+    LogEvent(kLogger, "heartbeat_subscription_interval_clamped")
+      .field("kind", targetKindLabel(clamp.kind))
+      .field("name", clamp.name)
+      .field("boundary", intervalClampBoundaryLabel(clamp.boundary))
+      .fieldOr("requester_identity", requester_identity)
+      .fieldOr("session_id", heartbeat->session_id.value_or(""), "<absent>")
+      .warnThrottle(*clock_, kLogThrottle);
   }
 
   handleHeartbeat(requester_identity, *heartbeat);
