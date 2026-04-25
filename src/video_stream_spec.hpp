@@ -22,13 +22,14 @@
 #include <vector>
 
 #include "livekit/room_event_types.h"
+#include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
 
 struct RosVideoTopicRule
 {
-  std::string pattern;
+  RosResourcePattern pattern;
   std::string rule_id;
   std::string transform_fragment;
   livekit::TrackPublishOptions publish_options;
@@ -52,7 +53,8 @@ struct VideoStreamConfig
 inline VideoStreamConfig makeDefaultVideoStreamConfig()
 {
   VideoStreamConfig config;
-  config.ros_topic_rules.push_back({"/*", "default_ros", "", config.default_publish_options});
+  config.ros_topic_rules.push_back(
+    {RosResourcePattern::rootSubtree(), "default_ros", "", config.default_publish_options});
   return config;
 }
 

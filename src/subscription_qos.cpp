@@ -119,17 +119,10 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   resolved.qos = base;
   resolved.publisher_count = publisher_qos.size();
 
-  const TopicSubscriptionQosOverride * match = nullptr;
-  if (config != nullptr) {
-    for (const auto & candidate : config->topic_overrides) {
-      if (!rosResourceMatchesPattern(topic, candidate.pattern)) {
-        continue;
-      }
-      if (match == nullptr || candidate.pattern.size() > match->pattern.size()) {
-        match = &candidate;
-      }
-    }
-  }
+  const TopicSubscriptionQosOverride * match =
+    config == nullptr
+      ? nullptr
+      : findBestRosResourcePatternMatch(config->topic_overrides, topic, &TopicSubscriptionQosOverride::pattern);
 
   if (match != nullptr) {
     resolved.override_id = match->id;

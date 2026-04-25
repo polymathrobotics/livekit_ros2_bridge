@@ -17,7 +17,6 @@
 #include <algorithm>
 
 #include "utils/ros_resource_name_utils.hpp"
-#include "utils/trim.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -25,31 +24,8 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr char kMatchAllRule[] = "*";
 constexpr char kNodeName[] = "livekit_ros2_bridge_access_policy";
 constexpr char kRosNamespace[] = "/";
-constexpr auto kSubtreeWildcardSize = sizeof(kRosResourceSubtreeWildcard) - 1U;
-
-std::string normalizePattern(std::string_view pattern, bool is_service)
-{
-  if (pattern == kRosResourceSubtreeWildcard) {
-    return std::string{kRosResourceSubtreeWildcard};
-  }
-
-  if (
-    pattern.size() >= kSubtreeWildcardSize &&
-    pattern.substr(pattern.size() - kSubtreeWildcardSize) == kRosResourceSubtreeWildcard)
-  {
-    const auto prefix = normalizeRosResourceName(
-      pattern.substr(0, pattern.size() - kSubtreeWildcardSize), kNodeName, kRosNamespace, is_service);
-    if (prefix.empty()) {
-      return "";
-    }
-    return prefix + kRosResourceSubtreeWildcard;
-  }
-
-  return normalizeRosResourceName(pattern, kNodeName, kRosNamespace, is_service);
-}
 
 }  // namespace
 
@@ -86,21 +62,12 @@ AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & 
 {
   Rules rules;
   for (const auto & entry : rule_entries) {
-    const std::string rule = trim(entry);
-    if (rule.empty()) {
-      continue;
-    }
-    if (rule == kMatchAllRule) {
-      rules.matches_all = true;
+    const auto pattern = RosResourcePattern::parse(entry, kNodeName, kRosNamespace, is_service);
+    if (!pattern.has_value()) {
       continue;
     }
 
-    const auto pattern = normalizePattern(rule, is_service);
-    if (pattern.empty()) {
-      continue;
-    }
-
-    rules.patterns.insert(pattern);
+    rules.patterns.push_back(*pattern);
   }
 
   return rules;
@@ -108,8 +75,8 @@ AccessPolicy::Rules AccessPolicy::Rules::parse(const std::vector<std::string> & 
 
 bool AccessPolicy::Rules::matches(std::string_view resource) const
 {
-  return matches_all || std::any_of(patterns.begin(), patterns.end(), [resource](const std::string & pattern) {
-           return rosResourceMatchesPattern(resource, pattern);
-         });
+  return std::any_of(patterns.begin(), patterns.end(), [resource](const RosResourcePattern & pattern) {
+    return pattern.matches(resource);
+  });
 }
 }  // namespace livekit_ros2_bridge

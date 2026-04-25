@@ -22,6 +22,7 @@
 
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/qos.hpp"
+#include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -30,7 +31,7 @@ struct TopicSubscriptionQosOverride
 {
   std::string id;
   // Longest matching pattern wins; equal-length ties preserve config order.
-  std::string pattern;
+  RosResourcePattern pattern;
   // `std::nullopt` means auto for that axis.
   std::optional<rclcpp::ReliabilityPolicy> reliability;
   std::optional<rclcpp::DurabilityPolicy> durability;

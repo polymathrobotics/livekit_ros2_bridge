@@ -71,7 +71,7 @@ RosVideoTopicRule makeRule(const char * id, const char * pattern, const char * t
 {
   RosVideoTopicRule rule;
   rule.rule_id = id;
-  rule.pattern = pattern;
+  rule.pattern = RosResourcePattern::fromCanonical(pattern);
   rule.transform_fragment = transform;
   return rule;
 }

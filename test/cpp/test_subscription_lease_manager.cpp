@@ -760,8 +760,10 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishOptionsAreAppliedToEachPublis
   second_publish_options.simulcast = false;
 
   VideoStreamConfig config = makeDefaultVideoStreamConfig();
-  config.ros_topic_rules.push_back({first_topic, "first_publish_config", "", first_publish_options});
-  config.ros_topic_rules.push_back({second_topic, "second_publish_config", "", second_publish_options});
+  config.ros_topic_rules.push_back(
+    {RosResourcePattern::fromCanonical(first_topic), "first_publish_config", "", first_publish_options});
+  config.ros_topic_rules.push_back(
+    {RosResourcePattern::fromCanonical(second_topic), "second_publish_config", "", second_publish_options});
 
   auto first_publisher = node->create_publisher<sensor_msgs::msg::Image>(first_topic, rclcpp::QoS(10));
   auto second_publisher = node->create_publisher<sensor_msgs::msg::Image>(second_topic, rclcpp::QoS(10));

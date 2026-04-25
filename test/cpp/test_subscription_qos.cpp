@@ -31,6 +31,20 @@ rclcpp::QoS makePublisherQos(rclcpp::ReliabilityPolicy reliability, rclcpp::Dura
   return qos;
 }
 
+TopicSubscriptionQosOverride makeOverride(
+  const char * id,
+  const char * pattern,
+  std::optional<rclcpp::ReliabilityPolicy> reliability,
+  std::optional<rclcpp::DurabilityPolicy> durability)
+{
+  TopicSubscriptionQosOverride qos_override;
+  qos_override.id = id;
+  qos_override.pattern = RosResourcePattern::fromCanonical(pattern);
+  qos_override.reliability = reliability;
+  qos_override.durability = durability;
+  return qos_override;
+}
+
 TEST(SubscriptionQosTest, FallsBackToBaseQosWithoutPublisherQos)
 {
   const rclcpp::QoS base{10};
@@ -124,7 +138,7 @@ TEST(SubscriptionQosTest, OverrideAutoDurabilityUsesPublisherDurabilityWhenAvail
 
   SubscriptionQosConfig config;
   config.topic_overrides = {
-    {"camera", "/camera/front", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt},
+    makeOverride("camera", "/camera/front", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt),
   };
 
   const ResolvedSubscriptionQos without_publisher_durability = resolveSubscriptionQos(
@@ -158,8 +172,8 @@ TEST(SubscriptionQosTest, LongestMatchingOverrideWinsAndAutoReliabilityStillUses
 
   SubscriptionQosConfig config;
   config.topic_overrides = {
-    {"root", "/*", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt},
-    {"camera", "/camera/*", std::nullopt, rclcpp::DurabilityPolicy::TransientLocal},
+    makeOverride("root", "/*", rclcpp::ReliabilityPolicy::BestEffort, std::nullopt),
+    makeOverride("camera", "/camera/*", std::nullopt, rclcpp::DurabilityPolicy::TransientLocal),
   };
 
   const std::vector<rclcpp::QoS> publishers{

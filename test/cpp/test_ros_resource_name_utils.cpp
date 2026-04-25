@@ -14,6 +14,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "rclcpp/exceptions/exceptions.hpp"
@@ -77,6 +78,65 @@ TEST(RosResourceMatchesPatternTest, OnlyTerminalSlashStarActsAsSubtreeWildcard)
 {
   EXPECT_TRUE(rosResourceMatchesPattern("/camera/*/image", "/camera/*/image"));
   EXPECT_FALSE(rosResourceMatchesPattern("/camera/front/image", "/camera/*/image"));
+}
+
+TEST(RosResourcePatternTest, ParsesExactAndSubtreePatternsWithRosNameNormalization)
+{
+  const auto exact = RosResourcePattern::parse(" camera/front ");
+  ASSERT_TRUE(exact.has_value());
+  EXPECT_EQ(exact->canonical(), "/camera/front");
+  EXPECT_EQ(exact->kind(), RosResourcePattern::Kind::Exact);
+  EXPECT_TRUE(exact->matches("/camera/front"));
+  EXPECT_FALSE(exact->matches("/camera/front/image"));
+
+  const auto subtree = RosResourcePattern::parse(" camera/front/* ");
+  ASSERT_TRUE(subtree.has_value());
+  EXPECT_EQ(subtree->canonical(), "/camera/front/*");
+  EXPECT_EQ(subtree->kind(), RosResourcePattern::Kind::Subtree);
+  EXPECT_FALSE(subtree->matches("/camera/front"));
+  EXPECT_TRUE(subtree->matches("/camera/front/image"));
+}
+
+TEST(RosResourcePatternTest, ParsesCatchAllShorthandsAsRootSubtreeWildcard)
+{
+  const auto star = RosResourcePattern::parse(" * ");
+  ASSERT_TRUE(star.has_value());
+  EXPECT_EQ(star->canonical(), "/*");
+  EXPECT_TRUE(star->matches("/"));
+  EXPECT_TRUE(star->matches("/camera/front/image"));
+
+  const auto root_subtree = RosResourcePattern::parse(" /* ");
+  ASSERT_TRUE(root_subtree.has_value());
+  EXPECT_EQ(root_subtree->canonical(), "/*");
+  EXPECT_TRUE(root_subtree->matches("/"));
+  EXPECT_TRUE(root_subtree->matches("/camera/front/image"));
+}
+
+TEST(RosResourcePatternTest, RejectsBlankInvalidAndRootExactPatterns)
+{
+  EXPECT_FALSE(RosResourcePattern::parse(" \t\n ").has_value());
+  EXPECT_FALSE(RosResourcePattern::parse("/camera///front/image/").has_value());
+  EXPECT_FALSE(RosResourcePattern::parse("/").has_value());
+}
+
+TEST(RosResourcePatternTest, BestMatchUsesLongestMatchAndKeepsFirstDeclaredTie)
+{
+  struct Rule
+  {
+    RosResourcePattern pattern;
+    std::string id;
+  };
+
+  const std::vector<Rule> rules{
+    {RosResourcePattern::fromCanonical("/*"), "root"},
+    {RosResourcePattern::fromCanonical("/camera/*"), "camera"},
+    {RosResourcePattern::fromCanonical("/camera/front/*"), "front_first"},
+    {RosResourcePattern::fromCanonical("/camera/front/*"), "front_second"},
+  };
+
+  const auto * match = findBestRosResourcePatternMatch(rules, "/camera/front/image", &Rule::pattern);
+  ASSERT_NE(match, nullptr);
+  EXPECT_EQ(match->id, "front_first");
 }
 
 }  // namespace livekit_ros2_bridge

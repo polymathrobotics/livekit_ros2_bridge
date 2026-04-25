@@ -60,29 +60,16 @@ std::string resolveAccessToken(const Params & params)
   throw std::runtime_error("LiveKit startup token is required; set livekit.token or LIVEKIT_TOKEN");
 }
 
-std::string normalizeRosResourcePattern(std::string_view raw, const char * context)
+RosResourcePattern requireRosResourcePattern(std::string_view raw, const char * context)
 {
-  const std::string pattern = trim(raw);
-  if (pattern.empty()) {
+  if (trim(raw).empty()) {
     throw std::runtime_error(std::string(context) + " pattern must not be empty");
   }
-  // Keep "*" as catch-all shorthand for the absolute matcher.
-  if (pattern == "*") {
-    return "/*";
-  }
-  if (pattern.size() >= 2 && pattern.substr(pattern.size() - 2) == "/*") {
-    const std::string resource = normalizeRosResourceName(pattern.substr(0, pattern.size() - 2));
-    if (resource.empty()) {
-      throw std::runtime_error(std::string(context) + " pattern must normalize to a valid ROS resource");
-    }
-    return resource + "/*";
-  }
-
-  const std::string resource = normalizeRosResourceName(pattern);
-  if (resource.empty()) {
+  auto pattern = RosResourcePattern::parse(raw);
+  if (!pattern.has_value()) {
     throw std::runtime_error(std::string(context) + " pattern must normalize to a valid ROS resource");
   }
-  return resource;
+  return *pattern;
 }
 
 std::optional<livekit::VideoCodec> parseVideoCodec(const std::string & value)
@@ -356,7 +343,7 @@ VideoStreamConfig loadVideoStreamConfig(const Params & params)
       requireUniqueEntry(seen_topics, id, params.video.topics.video_topic_ids_map, "video topic id", "video topic");
 
     const std::string rule_context = "video topic '" + id + "'";
-    const std::string pattern = normalizeRosResourcePattern(entry.pattern, "video topic");
+    const RosResourcePattern pattern = requireRosResourcePattern(entry.pattern, "video topic");
     const std::string transform = trim(entry.transform);
     validatePipeline(
       rule_context + " transform", buildPipelineDescription(synthetic_source, transform), kRosTopicRuleLayout);
@@ -423,7 +410,7 @@ SubscriptionQosConfig loadSubscriptionQosConfig(const Params & params)
 
     TopicSubscriptionQosOverride qos_override;
     qos_override.id = id;
-    qos_override.pattern = normalizeRosResourcePattern(entry.pattern, "subscription.qos");
+    qos_override.pattern = requireRosResourcePattern(entry.pattern, "subscription.qos");
     qos_override.reliability =
       parseSubscriptionQosPolicy<rclcpp::ReliabilityPolicy>(entry.reliability, rmw_qos_reliability_policy_from_str);
     qos_override.durability =

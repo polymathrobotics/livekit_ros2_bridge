@@ -14,10 +14,11 @@
 
 #pragma once
 
-#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -58,8 +59,7 @@ private:
   {
     static Rules parse(const std::vector<std::string> & rule_entries, bool is_service);
 
-    bool matches_all = false;
-    std::set<std::string> patterns;
+    std::vector<RosResourcePattern> patterns;
 
     bool matches(std::string_view resource) const;
   };

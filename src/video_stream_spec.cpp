@@ -86,17 +86,7 @@ std::string encodeOtherVideoTrackSuffix(std::string_view name)
 
 const RosVideoTopicRule & selectRosTopicRule(const std::vector<RosVideoTopicRule> & rules, std::string_view topic)
 {
-  const RosVideoTopicRule * match = nullptr;
-  for (const auto & rule : rules) {
-    if (!rosResourceMatchesPattern(topic, rule.pattern)) {
-      continue;
-    }
-    const auto size = rule.pattern.size();
-    if (match != nullptr && size <= match->pattern.size()) {
-      continue;
-    }
-    match = &rule;
-  }
+  const RosVideoTopicRule * match = findBestRosResourcePatternMatch(rules, topic, &RosVideoTopicRule::pattern);
   if (match == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", topic)
