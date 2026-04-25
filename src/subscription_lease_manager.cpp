@@ -101,6 +101,22 @@ std::string resolveDemandLookupName(
 
 }  // namespace
 
+SubscriptionLeaseManager::DataRuntime::DataRuntime(std::shared_ptr<DataTrackPublisher> publisher_arg)
+: publisher(std::move(publisher_arg))
+{
+  if (publisher == nullptr) {
+    throw std::logic_error("data subscription runtime requires a publisher");
+  }
+}
+
+SubscriptionLeaseManager::VideoRuntime::VideoRuntime(std::shared_ptr<VideoTrackPublisher> publisher_arg)
+: publisher(std::move(publisher_arg))
+{
+  if (publisher == nullptr) {
+    throw std::logic_error("video subscription runtime requires a publisher");
+  }
+}
+
 SubscriptionLeaseManager::SubscriptionLeaseManager(
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr parameters,
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr topics,
@@ -294,29 +310,6 @@ VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
   throw std::invalid_argument("video stream request kind is invalid");
 }
 
-std::shared_ptr<VideoTrackPublisher> SubscriptionLeaseManager::createVideoPublisher(const VideoStreamSpec & spec)
-{
-  return VideoTrackPublisher::create(node_interfaces_, room_connection_, spec, qos_config_);
-}
-
-DataTrackPublisher & SubscriptionLeaseManager::requireDataPublisher(const Subscription & subscription) const
-{
-  if (subscription.data_publisher == nullptr) {
-    throw std::logic_error("data subscription invariant violated: data publisher is required");
-  }
-
-  return *subscription.data_publisher;
-}
-
-VideoTrackPublisher & SubscriptionLeaseManager::requireVideoPublisher(const Subscription & subscription) const
-{
-  if (subscription.video_publisher == nullptr) {
-    throw std::logic_error("video subscription invariant violated: video publisher is required");
-  }
-
-  return *subscription.video_publisher;
-}
-
 SubscriptionLeaseManager::ResolvedDemand SubscriptionLeaseManager::resolveDemand(
   const SubscriptionDemand & demand) const
 {
@@ -363,11 +356,12 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
     subscription.leases[requester_identity] = lease;
 
-    if (isVideo(subscription)) {
+    auto * data_runtime = std::get_if<DataRuntime>(&subscription.runtime);
+    if (data_runtime == nullptr) {
       return status(subscription);
     }
 
-    auto & data_publisher = requireDataPublisher(subscription);
+    auto & data_publisher = *data_runtime->publisher;
     const bool was_published = data_publisher.isPublished();
     data_publisher.setIntervalMs(appliedIntervalMs(subscription.leases));
 
@@ -396,28 +390,47 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
 SubscriptionStatus SubscriptionLeaseManager::create(
   const ResolvedDemand & demand, const std::string & requester_identity, const Lease & lease)
 {
-  Subscription subscription;
-  subscription.kind = demand.kind;
-  subscription.name = demand.name;
-  subscription.interface_type = demand.interface_type;
+  std::map<std::string, Lease> leases;
+  leases.emplace(requester_identity, lease);
 
   try {
-    subscription.leases.emplace(requester_identity, lease);
+    SubscriptionRuntime runtime = [&]() -> SubscriptionRuntime {
+      if (demand.video_spec.has_value()) {
+        return VideoRuntime{
+          VideoTrackPublisher::create(node_interfaces_, room_connection_, *demand.video_spec, qos_config_)};
+      }
 
-    if (demand.video_spec.has_value()) {
-      subscription.video_publisher = createVideoPublisher(*demand.video_spec);
-    } else {
-      subscription.data_publisher = DataTrackPublisher::create(
+      auto data_publisher = DataTrackPublisher::create(
         demand.name,
-        subscription.interface_type,
+        demand.interface_type,
         node_interfaces_.get_node_topics_interface(),
         node_interfaces_.get_node_graph_interface(),
         clock_,
         room_connection_,
         qos_config_);
-      subscription.data_publisher->setIntervalMs(appliedIntervalMs(subscription.leases));
-      subscription.data_publisher->publish();
-    }
+      data_publisher->setIntervalMs(appliedIntervalMs(leases));
+      data_publisher->publish();
+      return DataRuntime{std::move(data_publisher)};
+    }();
+
+    Subscription subscription{
+      demand.kind,
+      demand.name,
+      demand.interface_type,
+      std::move(leases),
+      std::move(runtime),
+    };
+    auto subscription_it = subscriptions_.emplace(demand.key, std::move(subscription)).first;
+
+    SubscriptionStatus result = status(subscription_it->second);
+    LogEvent(kLogger, "subscription_created")
+      .field("resource", subscription_it->second.name)
+      .field("kind", targetKindLabel(demand.kind))
+      .field("delivery", deliveryKindLabel(result.delivery))
+      .field("requester_identity", requester_identity)
+      .info();
+
+    return result;
   } catch (...) {
     LogEvent(kLogger, "subscription_create_failed")
       .field("resource", demand.name)
@@ -427,18 +440,6 @@ SubscriptionStatus SubscriptionLeaseManager::create(
       .warn();
     throw;
   }
-
-  auto subscription_it = subscriptions_.emplace(demand.key, std::move(subscription)).first;
-
-  SubscriptionStatus result = status(subscription_it->second);
-  LogEvent(kLogger, "subscription_created")
-    .field("resource", subscription_it->second.name)
-    .field("kind", targetKindLabel(demand.kind))
-    .field("delivery", deliveryKindLabel(result.delivery))
-    .field("requester_identity", requester_identity)
-    .info();
-
-  return result;
 }
 
 void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string & requester_identity)
@@ -452,11 +453,12 @@ void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string
 
   for (const auto & [key, subscription] : subscriptions_) {
     (void)key;
-    if (isVideo(subscription)) {
+    const auto * runtime = std::get_if<DataRuntime>(&subscription.runtime);
+    if (runtime == nullptr) {
       continue;
     }
 
-    const auto & data_publisher = requireDataPublisher(subscription);
+    const auto & data_publisher = *runtime->publisher;
     if (!data_publisher.isPublished()) {
       continue;
     }
@@ -482,11 +484,12 @@ void SubscriptionLeaseManager::republishTracks(const std::string & requester_ide
 
   for (auto & [key, subscription] : subscriptions_) {
     (void)key;
-    if (isVideo(subscription)) {
+    auto * runtime = std::get_if<DataRuntime>(&subscription.runtime);
+    if (runtime == nullptr) {
       continue;
     }
 
-    auto & data_publisher = requireDataPublisher(subscription);
+    auto & data_publisher = *runtime->publisher;
     if (!data_publisher.isPublished()) {
       continue;
     }
@@ -529,26 +532,30 @@ SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscri
   status.name = subscription.name;
   status.interface_type = subscription.interface_type;
 
-  if (!isVideo(subscription)) {
-    const auto & data_publisher = requireDataPublisher(subscription);
-    status.delivery = SubscriptionDeliveryKind::Data;
-    if (data_publisher.isPublished()) {
-      status.track_name = data_publisher.name();
+  struct StatusVisitor
+  {
+    SubscriptionStatus & status;
+
+    void operator()(const DataRuntime & runtime) const
+    {
+      const auto & data_publisher = *runtime.publisher;
+      status.delivery = SubscriptionDeliveryKind::Data;
+      if (data_publisher.isPublished()) {
+        status.track_name = data_publisher.name();
+      }
+      status.interval_ms = data_publisher.intervalMs();
     }
-    status.interval_ms = data_publisher.intervalMs();
-    return status;
-  }
 
-  const auto & video_spec = requireVideoPublisher(subscription).spec();
-  status.delivery = SubscriptionDeliveryKind::Video;
-  status.track_name = video_spec.track_name;
+    void operator()(const VideoRuntime & runtime) const
+    {
+      const auto & video_spec = runtime.publisher->spec();
+      status.delivery = SubscriptionDeliveryKind::Video;
+      status.track_name = video_spec.track_name;
+    }
+  };
+
+  std::visit(StatusVisitor{status}, subscription.runtime);
   return status;
-}
-
-bool SubscriptionLeaseManager::isVideo(const Subscription & subscription)
-{
-  return subscription.kind == SubscriptionTargetKind::OtherVideo ||
-         classifyRosVideoIngestMode(subscription.interface_type).has_value();
 }
 
 int SubscriptionLeaseManager::appliedIntervalMs(const std::map<std::string, Lease> & leases)
@@ -598,15 +605,6 @@ void SubscriptionLeaseManager::applyExpiredLeaseRemovals(
   }
 }
 
-void SubscriptionLeaseManager::refreshDataInterval(const Subscription & subscription)
-{
-  if (isVideo(subscription)) {
-    return;
-  }
-
-  requireDataPublisher(subscription).setIntervalMs(appliedIntervalMs(subscription.leases));
-}
-
 void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point reference_time)
 {
   for (auto it = subscriptions_.begin(); it != subscriptions_.end();) {
@@ -620,7 +618,9 @@ void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point referen
     applyExpiredLeaseRemovals(subscription, removals, reference_time);
 
     if (!subscription.leases.empty()) {
-      refreshDataInterval(subscription);
+      if (const auto * runtime = std::get_if<DataRuntime>(&subscription.runtime); runtime != nullptr) {
+        runtime->publisher->setIntervalMs(appliedIntervalMs(subscription.leases));
+      }
       ++it;
       continue;
     }
@@ -630,37 +630,8 @@ void SubscriptionLeaseManager::pruneSubscriptionLeases(Clock::time_point referen
       .field("kind", targetKindLabel(subscription.kind))
       .field("reason", kLeaseExpiredReason)
       .info();
-    // Avoid a second teardown log; `subscription_pruned` is the lease-driven boundary.
-    destroy(subscription, false);
     it = subscriptions_.erase(it);
   }
-}
-
-void SubscriptionLeaseManager::destroy(Subscription & subscription, bool log_destroy)
-{
-  if (!isVideo(subscription)) {
-    auto & data_publisher = requireDataPublisher(subscription);
-    if (log_destroy) {
-      LogEvent(kLogger, "subscription_destroyed")
-        .field("resource", subscription.name)
-        .field("kind", targetKindLabel(subscription.kind))
-        .field("track_name", data_publisher.name())
-        .info();
-    }
-    subscription.data_publisher.reset();
-    return;
-  }
-
-  const auto & video_spec = requireVideoPublisher(subscription).spec();
-  if (log_destroy) {
-    LogEvent(kLogger, "subscription_destroyed")
-      .field("resource", subscription.name)
-      .field("kind", targetKindLabel(subscription.kind))
-      .field("stream_key", video_spec.stream_key)
-      .field("track_name", video_spec.track_name)
-      .info();
-  }
-  subscription.video_publisher.reset();
 }
 
 void SubscriptionLeaseManager::shutdown()
@@ -676,10 +647,7 @@ void SubscriptionLeaseManager::shutdown()
   subscriptions_.clear();
   republish_requesters_.clear();
 
-  for (auto & [key, subscription] : owned_subscriptions) {
-    (void)key;
-    destroy(subscription);
-  }
+  owned_subscriptions.clear();
 }
 
 }  // namespace livekit_ros2_bridge

@@ -24,6 +24,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 #include "access_policy.hpp"
@@ -93,14 +94,29 @@ private:
     Clock::time_point expiry;
   };
 
+  struct DataRuntime
+  {
+    explicit DataRuntime(std::shared_ptr<DataTrackPublisher> publisher);
+
+    std::shared_ptr<DataTrackPublisher> publisher;
+  };
+
+  struct VideoRuntime
+  {
+    explicit VideoRuntime(std::shared_ptr<VideoTrackPublisher> publisher);
+
+    std::shared_ptr<VideoTrackPublisher> publisher;
+  };
+
+  using SubscriptionRuntime = std::variant<DataRuntime, VideoRuntime>;
+
   struct Subscription
   {
     SubscriptionTargetKind kind = SubscriptionTargetKind::Topic;
     std::string name;
     std::string interface_type;
     std::map<std::string, Lease> leases;
-    std::shared_ptr<DataTrackPublisher> data_publisher;
-    std::shared_ptr<VideoTrackPublisher> video_publisher;
+    SubscriptionRuntime runtime;
   };
 
   struct ExpiredLeaseRemoval
@@ -124,7 +140,6 @@ private:
   static int appliedIntervalMs(const std::map<std::string, Lease> & leases);
   static std::vector<ExpiredLeaseRemoval> collectExpiredLeaseRemovals(
     const Subscription & subscription, Clock::time_point reference_time);
-  static bool isVideo(const Subscription & subscription);
 
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
@@ -156,9 +171,6 @@ private:
   const VideoStreamConfig & videoStreamConfig() const;
   VideoStreamSpec resolveVideoSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
-  std::shared_ptr<VideoTrackPublisher> createVideoPublisher(const VideoStreamSpec & spec);
-  DataTrackPublisher & requireDataPublisher(const Subscription & subscription) const;
-  VideoTrackPublisher & requireVideoPublisher(const Subscription & subscription) const;
   ResolvedDemand resolveDemand(const SubscriptionDemand & demand) const;
   SubscriptionStatus create(const ResolvedDemand & demand, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus renew(Subscription & subscription, const std::string & requester_identity, const Lease & lease);
@@ -168,9 +180,7 @@ private:
 
   void applyExpiredLeaseRemovals(
     Subscription & subscription, const std::vector<ExpiredLeaseRemoval> & removals, Clock::time_point reference_time);
-  void destroy(Subscription & subscription, bool log_destroy = true);
   void pruneSubscriptionLeases(Clock::time_point reference_time);
-  void refreshDataInterval(const Subscription & subscription);
   void republishTracks(const std::string & requester_identity);
 };
 
