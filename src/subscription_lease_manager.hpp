@@ -94,21 +94,9 @@ private:
     Clock::time_point expiry;
   };
 
-  struct DataRuntime
-  {
-    explicit DataRuntime(std::shared_ptr<DataTrackPublisher> publisher);
-
-    std::shared_ptr<DataTrackPublisher> publisher;
-  };
-
-  struct VideoRuntime
-  {
-    explicit VideoRuntime(std::shared_ptr<VideoTrackPublisher> publisher);
-
-    std::shared_ptr<VideoTrackPublisher> publisher;
-  };
-
-  using Runtime = std::variant<DataRuntime, VideoRuntime>;
+  using DataPublisher = std::shared_ptr<DataTrackPublisher>;
+  using VideoPublisher = std::shared_ptr<VideoTrackPublisher>;
+  using Runtime = std::variant<DataPublisher, VideoPublisher>;
 
   struct Subscription
   {
@@ -125,6 +113,7 @@ private:
     std::string name;
     std::string key;
     std::string interface_type;
+    int preferred_interval_ms = 0;
     std::optional<VideoStreamSpec> video_spec;
   };
 
@@ -160,15 +149,30 @@ private:
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
   std::optional<std::string> resolveIdentity(
     const std::string & requester_identity, const std::optional<std::string> & session_id);
+  void renewSessionLease(
+    const std::string & requester_identity, const std::optional<std::string> & session_id, Clock::time_point expiry);
+  void pruneSessionLeases(Clock::time_point now);
   const VideoStreamConfig & videoStreamConfig() const;
   VideoStreamSpec resolveVideoSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
   ResolvedDemand resolveDemand(const SubscriptionDemand & demand) const;
+  void resolveDemandDelivery(ResolvedDemand & demand) const;
   SubscriptionStatus create(const ResolvedDemand & demand, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus renew(Subscription & subscription, const std::string & requester_identity, const Lease & lease);
   SubscriptionStatus ensure(
-    const std::string & requester_identity, const SubscriptionDemand & demand, Clock::time_point expiry);
+    const std::string & requester_identity, const ResolvedDemand & demand, Clock::time_point expiry);
   SubscriptionStatus status(const Subscription & subscription) const;
+  SubscriptionStatusReport createStatusReport(
+    const SubscriptionHeartbeat & heartbeat, const std::string & requester_identity, Clock::time_point expiry);
+  void appendDemandStatus(
+    SubscriptionStatusReport & report,
+    const std::string & requester_identity,
+    const SubscriptionDemand & demand,
+    Clock::time_point expiry);
+  void publishStatusReport(
+    const std::string & requester_identity,
+    const std::optional<std::string> & session_id,
+    const SubscriptionStatusReport & report);
 
   void pruneLeases(Clock::time_point now);
   void republishTracks(const std::string & requester_identity);
