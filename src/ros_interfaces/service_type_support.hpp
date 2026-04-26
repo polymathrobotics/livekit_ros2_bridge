@@ -44,7 +44,6 @@ public:
   explicit ServiceTypeSupportCache(std::size_t failure_capacity = 256U);
 
   std::shared_ptr<ServiceTypeSupport> get(const std::string & type);
-  void clear();
 
 private:
   std::unordered_map<std::string, std::shared_ptr<ServiceTypeSupport>> entries_;

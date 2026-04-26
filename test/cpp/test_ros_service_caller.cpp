@@ -520,31 +520,6 @@ TEST_F(RosServiceCallerTest, CancelForRequesterOnlySettlesMatchingCalls)
   caller.shutdown();
 }
 
-TEST_F(RosServiceCallerTest, SessionResetCompletesInflightCallsAndReleasesRequesterIdentityInflightQuota)
-{
-  auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_reset_release_node");
-
-  auto caller = makeServiceCaller(caller_node);
-
-  const auto request = makeSetBoolRequest("/session_reset_release", kStandardRequestTimeoutMs);
-  std::vector<std::future<RosServiceCaller::Response>> inflight_futures;
-  for (int i = 0; i < kMaxInflightPerRequester; ++i) {
-    inflight_futures.push_back(caller.call("requester-1", request));
-  }
-
-  caller.resetSessionState();
-
-  for (auto & inflight_future : inflight_futures) {
-    EXPECT_EQ(expectRuntimeErrorMessage(inflight_future), "LiveKit session reset.");
-  }
-
-  saturateInflightQuota(caller, "requester-1", request);
-  auto overflow_future = caller.call("requester-1", request);
-  EXPECT_EQ(expectRuntimeErrorMessage(overflow_future), "Requester identity service call limit reached.");
-
-  caller.shutdown();
-}
-
 TEST_F(RosServiceCallerTest, RejectsEmptyRequesterIdentity)
 {
   auto caller_node = std::make_shared<rclcpp::Node>("ros_service_caller_empty_requester_node");

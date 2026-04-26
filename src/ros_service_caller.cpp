@@ -188,7 +188,7 @@ struct RosServiceCaller::Impl
 {
   struct InflightCall
   {
-    // Keep the rcl client and type support alive until settlement if resetSessionState() drops the cache first.
+    // Keep the rcl client and type support alive until settlement.
     std::shared_ptr<ServiceClient> client;
     std::string service;
     std::string interface_type;
@@ -244,7 +244,6 @@ struct RosServiceCaller::Impl
   void releaseInflightSlot(const std::string & requester);
   void executeWaitable();
   void drainResponses();
-  void clearCacheLocked();
   void syncWaitableLocked(bool wake = true);
   void detachWaitable();
   bool isWaitableOpen();
@@ -898,14 +897,6 @@ void RosServiceCaller::cancelForRequester(const std::string & requester)
   impl_->syncWaitableLocked();
 }
 
-void RosServiceCaller::resetSessionState()
-{
-  std::lock_guard<std::mutex> lock(impl_->state_mutex);
-  impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "LiveKit session reset.", "session_reset");
-
-  impl_->clearCacheLocked();
-}
-
 void RosServiceCaller::shutdown()
 {
   impl_->closeWaitable();
@@ -915,7 +906,7 @@ void RosServiceCaller::shutdown()
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
   impl_->failMatchingCalls([](const Impl::InflightCall &) { return true; }, "Service caller shut down.", "shutdown");
 
-  impl_->clearCacheLocked();
+  impl_->cached_clients.clear();
 }
 
 RosServiceCaller::Impl::ClientPtr RosServiceCaller::Impl::getClient(
@@ -1121,13 +1112,6 @@ void RosServiceCaller::Impl::drainResponses()
       });
     }
   }
-}
-
-void RosServiceCaller::Impl::clearCacheLocked()
-{
-  cached_clients.clear();
-  type_supports.clear();
-  syncWaitableLocked();
 }
 
 }  // namespace livekit_ros2_bridge

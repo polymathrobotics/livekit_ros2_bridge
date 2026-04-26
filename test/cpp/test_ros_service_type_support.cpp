@@ -58,17 +58,6 @@ TEST(ServiceTypeSupportCacheTest, ReturnsCachedSupportForRepeatedType)
   EXPECT_EQ(first, second);
 }
 
-TEST(ServiceTypeSupportCacheTest, ClearsCachedSupport)
-{
-  ServiceTypeSupportCache cache;
-
-  const auto first = cache.get(setBoolServiceType());
-  cache.clear();
-  const auto second = cache.get(setBoolServiceType());
-
-  EXPECT_NE(first, second);
-}
-
 TEST(ServiceTypeSupportCacheTest, CachesInvalidTypeFailures)
 {
   ServiceTypeSupportCache cache;

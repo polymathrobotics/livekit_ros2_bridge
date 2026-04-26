@@ -47,7 +47,6 @@ public:
   std::future<Response> call(const std::string & requester, const ServiceCallRequest & request);
 
   void cancelForRequester(const std::string & requester);
-  void resetSessionState();
 
   // Stops new waitable work, waits for the active callback, then fails inflight calls.
   void shutdown();

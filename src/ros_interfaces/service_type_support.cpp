@@ -103,9 +103,4 @@ std::shared_ptr<ServiceTypeSupport> ServiceTypeSupportCache::get(const std::stri
   }
 }
 
-void ServiceTypeSupportCache::clear()
-{
-  entries_.clear();
-}
-
 }  // namespace livekit_ros2_bridge::ros_interfaces
