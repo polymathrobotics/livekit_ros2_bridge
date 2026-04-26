@@ -18,18 +18,14 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-set(LIVEKIT_SDK_VERSION "0.3.2" CACHE STRING "Pinned LiveKit C++ SDK version.")
+set(LIVEKIT_SDK_VERSION "0.3.4")
 set(
   LIVEKIT_SDK_JAMMY_BASE_URL
   "https://github.com/jon-mcmillan/livekit-client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
-  CACHE STRING
-  "Base URL for the pinned Jammy LiveKit C++ SDK artifact source. The fork publishes the jammy-specific Linux tarball."
 )
 set(
-  LIVEKIT_SDK_NOBLE_URL
-  "https://github.com/livekit/client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}/livekit-sdk-linux-x64-${LIVEKIT_SDK_VERSION}.tar.gz"
-  CACHE STRING
-  "Default Noble LiveKit C++ SDK artifact URL. Upstream publishes a generic linux-x64 tarball that works for Noble builds."
+  LIVEKIT_SDK_NOBLE_BASE_URL
+  "https://github.com/livekit/client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
 )
 set(
   LIVEKIT_SDK_URL_OVERRIDE
@@ -50,16 +46,26 @@ set(
   "Artifact distro to fetch for the LiveKit C++ SDK. Empty selects jammy for humble and noble otherwise."
 )
 set(
-  LIVEKIT_SDK_SHA256_JAMMY
-  "ecf05fbd1d828ed5964139fa26731cb50de4fd78208525d491dc54227395a046"
+  LIVEKIT_SDK_ARCH
+  ""
   CACHE STRING
-  "SHA256 for the jammy LiveKit C++ SDK artifact."
+  "Artifact architecture to fetch for the LiveKit C++ SDK. Empty selects from CMAKE_SYSTEM_PROCESSOR."
 )
 set(
-  LIVEKIT_SDK_SHA256_NOBLE
-  "3849bd875266e97c1244d751c44c111eea19eea38291f750dbc1773b8cb39df0"
-  CACHE STRING
-  "SHA256 for the default Noble LiveKit C++ SDK artifact."
+  LIVEKIT_SDK_SHA256_JAMMY_X64
+  "00c9f1b0290b56f43ca691a877ee2c882e2a55988eae1c62475e7347f56707b9"
+)
+set(
+  LIVEKIT_SDK_SHA256_JAMMY_ARM64
+  "72d995bae25770f5994db17d974c95502b51ea1d839b0400fc347e636b0148b7"
+)
+set(
+  LIVEKIT_SDK_SHA256_NOBLE_X64
+  "9eae2d490092059ef96f7e5b6909808be8538897eb6779d4a7fa91e8bdf2ef03"
+)
+set(
+  LIVEKIT_SDK_SHA256_NOBLE_ARM64
+  "fc054e567ae04facd749b430fd6d1126b2ebe0bd3eb5042df01fe8317d275a5b"
 )
 
 macro(livekit_ros2_bridge_configure_livekit_sdk)
@@ -75,26 +81,49 @@ macro(livekit_ros2_bridge_configure_livekit_sdk)
     message(FATAL_ERROR "LIVEKIT_SDK_DISTRO must be 'jammy' or 'noble', got '${_sdk_distro}'.")
   endif()
 
-  if(_sdk_distro STREQUAL "jammy")
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY}")
+  if(LIVEKIT_SDK_ARCH)
+    set(_sdk_arch "${LIVEKIT_SDK_ARCH}")
   else()
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE}")
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _sdk_processor)
+    if(_sdk_processor STREQUAL "x86_64" OR _sdk_processor STREQUAL "amd64")
+      set(_sdk_arch "x64")
+    elseif(_sdk_processor STREQUAL "aarch64" OR _sdk_processor STREQUAL "arm64")
+      set(_sdk_arch "arm64")
+    else()
+      message(FATAL_ERROR "Unsupported LiveKit SDK architecture '${CMAKE_SYSTEM_PROCESSOR}'. Set LIVEKIT_SDK_ARCH.")
+    endif()
   endif()
 
-  # Upstream livekit/client-sdk-cpp publishes a generic linux-x64 tarball. Jammy
-  # stays on the fork because we need a jammy-specific artifact there. Noble uses
-  # the official upstream tarball by default. Both can still be overridden.
+  if(NOT _sdk_arch STREQUAL "x64" AND NOT _sdk_arch STREQUAL "arm64")
+    message(FATAL_ERROR "LIVEKIT_SDK_ARCH must be 'x64' or 'arm64', got '${_sdk_arch}'.")
+  endif()
+
+  if(_sdk_distro STREQUAL "jammy" AND _sdk_arch STREQUAL "x64")
+    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY_X64}")
+  elseif(_sdk_distro STREQUAL "jammy" AND _sdk_arch STREQUAL "arm64")
+    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY_ARM64}")
+  elseif(_sdk_distro STREQUAL "noble" AND _sdk_arch STREQUAL "x64")
+    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE_X64}")
+  else()
+    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE_ARM64}")
+  endif()
+
+  # Jammy stays on the fork because we need Jammy-specific artifacts there.
+  # Noble uses the official upstream tarballs by default. Both can still be
+  # overridden.
   if(LIVEKIT_SDK_URL_OVERRIDE)
     set(_sdk_url "${LIVEKIT_SDK_URL_OVERRIDE}")
   elseif(_sdk_distro STREQUAL "jammy")
-    set(_sdk_url "${LIVEKIT_SDK_JAMMY_BASE_URL}/livekit-sdk-linux-x64-${_sdk_distro}-${LIVEKIT_SDK_VERSION}.tar.gz")
+    set(_sdk_url "${LIVEKIT_SDK_JAMMY_BASE_URL}/livekit-sdk-linux-${_sdk_arch}-${_sdk_distro}-${LIVEKIT_SDK_VERSION}.tar.gz")
   else()
-    set(_sdk_url "${LIVEKIT_SDK_NOBLE_URL}")
+    set(_sdk_url "${LIVEKIT_SDK_NOBLE_BASE_URL}/livekit-sdk-linux-${_sdk_arch}-${LIVEKIT_SDK_VERSION}.tar.gz")
   endif()
 
   if(LIVEKIT_SDK_SHA256_OVERRIDE)
     set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_OVERRIDE}")
   endif()
+
+  message(STATUS "Using LiveKit C++ SDK ${LIVEKIT_SDK_VERSION} for ${_sdk_distro}/${_sdk_arch}: ${_sdk_url}")
 
   fetchcontent_declare(livekit_sdk
     URL "${_sdk_url}"

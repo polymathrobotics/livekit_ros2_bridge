@@ -30,6 +30,7 @@ ament_auto_find_build_dependencies()
 find_package(nlohmann_json REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_library(SPDLOG_LIBRARY NAMES spdlog REQUIRED)
 
 include(cmake/livekit_sdk.cmake)
 livekit_ros2_bridge_configure_livekit_sdk()
@@ -116,6 +117,12 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp_components::component
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
+  # LiveKit 0.3.4 keeps spdlog private in CMake but still exports spdlog
+  # symbols from liblivekit.so. Ensure ROS binds its logging plugin to the
+  # system spdlog before liblivekit enters the process.
+  -Wl,--no-as-needed
+  "${SPDLOG_LIBRARY}"
+  -Wl,--as-needed
   livekit_ros2_bridge_parameters
   livekit_ros2_bridge_ros_interfaces
   livekit_ros2_bridge_video
@@ -146,6 +153,9 @@ if(BUILD_TESTING)
     )
     target_link_libraries(${test_name}
       ${PROJECT_NAME}
+      -Wl,--no-as-needed
+      "${SPDLOG_LIBRARY}"
+      -Wl,--as-needed
       LiveKit::livekit
       rclcpp::rclcpp
       livekit_ros2_bridge_parameters

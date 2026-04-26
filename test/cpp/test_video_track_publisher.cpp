@@ -73,6 +73,19 @@ TEST(TrackPublisherTest, RepublishesOnSizeChangeAndUnpublishesOnDestruction)
     }));
 }
 
+TEST(TrackPublisherTest, EnablesUserTimestampPacketTrailerForPublishedVideo)
+{
+  FakeRoomConnection connection;
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makeSpec("stream:metadata", "lkros.video.camera.metadata"));
+
+  publisher->capture(makeFrame(2, 2), 1000);
+
+  ASSERT_EQ(connection.state->published_video_options.size(), 1U);
+  EXPECT_TRUE(connection.state->published_video_options.front().packet_trailer_features.user_timestamp);
+  EXPECT_FALSE(connection.state->published_video_options.front().packet_trailer_features.frame_id);
+}
+
 TEST(TrackPublisherTest, DestructionUsesBestEffortPublishedTrackCleanup)
 {
   FakeRoomConnection connection;

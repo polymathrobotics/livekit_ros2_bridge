@@ -14,6 +14,7 @@
 
 #include "video/track_publisher.hpp"
 
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <utility>
@@ -44,6 +45,24 @@ void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::Lo
   try {
     connection.unpublishVideoTrack(track);
   } catch (...) {}
+}
+
+livekit::TrackPublishOptions publishOptionsWithFrameMetadata(livekit::TrackPublishOptions options)
+{
+  options.packet_trailer_features.user_timestamp = true;
+  return options;
+}
+
+livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
+{
+  livekit::VideoCaptureOptions options;
+  options.timestamp_us = timestamp_us;
+  if (timestamp_us >= 0) {
+    livekit::VideoFrameMetadata metadata;
+    metadata.user_timestamp_us = static_cast<std::uint64_t>(timestamp_us);
+    options.metadata = metadata;
+  }
+  return options;
 }
 
 }  // namespace
@@ -110,7 +129,8 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
       track_.reset();
       source_.reset();
       auto source = std::make_shared<livekit::VideoSource>(width, height);
-      auto track = connection_.publishVideoTrack(spec_.track_name, source, spec_.publish_options);
+      auto track =
+        connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
       source_ = std::move(source);
       track_ = std::move(track);
     } catch (...) {
@@ -133,7 +153,7 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
     }
   }
 
-  source_->captureFrame(frame, timestamp_us);
+  source_->captureFrame(frame, captureOptions(timestamp_us));
 }
 
 void TrackPublisher::close()
