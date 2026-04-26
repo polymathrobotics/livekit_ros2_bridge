@@ -12,27 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_pipeline_failure_handler.hpp"
+#include "video/pipeline_failure_handler.hpp"
 
 #include <utility>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
-VideoPipelineFailureHandler::VideoPipelineFailureHandler(std::chrono::milliseconds delay, Action action)
+PipelineFailureHandler::PipelineFailureHandler(std::chrono::milliseconds delay, Callback callback)
 : delay_(delay)
-, action_(std::move(action))
+, callback_(std::move(callback))
 {}
 
-VideoPipelineFailureHandler::~VideoPipelineFailureHandler()
+PipelineFailureHandler::~PipelineFailureHandler()
 {
   close();
 }
 
-bool VideoPipelineFailureHandler::schedule()
+bool PipelineFailureHandler::schedule()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_ || pending_ || running_) {
+  if (closed_ || pending_ || callback_running_) {
     return false;
   }
 
@@ -44,14 +44,14 @@ bool VideoPipelineFailureHandler::schedule()
   return true;
 }
 
-void VideoPipelineFailureHandler::clearPending()
+void PipelineFailureHandler::cancelPending()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   pending_ = false;
   condition_.notify_all();
 }
 
-void VideoPipelineFailureHandler::close()
+void PipelineFailureHandler::close()
 {
   std::thread worker;
   {
@@ -70,7 +70,7 @@ void VideoPipelineFailureHandler::close()
   }
 }
 
-void VideoPipelineFailureHandler::run()
+void PipelineFailureHandler::run()
 {
   std::unique_lock<std::mutex> lock(mutex_);
   while (true) {
@@ -92,13 +92,13 @@ void VideoPipelineFailureHandler::run()
       continue;
     }
 
-    running_ = true;
+    callback_running_ = true;
     lock.unlock();
-    action_();
+    callback_();
     lock.lock();
-    running_ = false;
+    callback_running_ = false;
     pending_ = false;
   }
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

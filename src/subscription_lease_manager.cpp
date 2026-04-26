@@ -33,8 +33,8 @@
 #include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
 #include "utils/trim.hpp"
-#include "video_stream_spec.hpp"
-#include "video_track_publisher.hpp"
+#include "video/stream_spec.hpp"
+#include "video/track_publisher.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -46,9 +46,9 @@ const auto kLogger = rclcpp::get_logger("subscription_lease_manager");
 constexpr auto kPruneInterval = std::chrono::seconds(1);
 constexpr const char * kLeaseExpiredReason = "lease_expired";
 
-const VideoStreamConfig & defaultVideoStreamConfig()
+const video::StreamConfig & defaultStreamConfig()
 {
-  static const VideoStreamConfig kDefaultConfig = makeDefaultVideoStreamConfig();
+  static const video::StreamConfig kDefaultConfig = video::makeDefaultConfig();
   return kDefaultConfig;
 }
 
@@ -111,7 +111,7 @@ SubscriptionLeaseManager::SubscriptionLeaseManager(
   RoomConnection & room_connection,
   AccessPolicy access_policy,
   const SubscriptionQosConfig * qos_config,
-  const VideoStreamConfig * video_stream_config,
+  const video::StreamConfig * video_stream_config,
   Clock::duration heartbeat_lease_duration)
 : node_interfaces_(std::move(parameters), std::move(topics), std::move(graph))
 , clock_(std::move(clock))
@@ -247,19 +247,19 @@ void SubscriptionLeaseManager::pruneSessionLeases(Clock::time_point now)
   }
 }
 
-const VideoStreamConfig & SubscriptionLeaseManager::videoStreamConfig() const
+const video::StreamConfig & SubscriptionLeaseManager::videoStreamConfig() const
 {
-  return video_stream_config_ == nullptr ? defaultVideoStreamConfig() : *video_stream_config_;
+  return video_stream_config_ == nullptr ? defaultStreamConfig() : *video_stream_config_;
 }
 
-VideoStreamSpec SubscriptionLeaseManager::resolveVideoSpec(
+video::StreamSpec SubscriptionLeaseManager::resolveVideoSpec(
   SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const
 {
   switch (kind) {
     case SubscriptionTargetKind::Topic:
-      return resolveRosVideoTopicSpec(videoStreamConfig(), name, interface_type);
+      return video::resolveRosTopicSpec(videoStreamConfig(), name, interface_type);
     case SubscriptionTargetKind::OtherVideo:
-      return resolveOtherVideoSourceSpec(videoStreamConfig(), name);
+      return video::resolveOtherSourceSpec(videoStreamConfig(), name);
   }
 
   throw std::invalid_argument("video stream request kind is invalid");
@@ -282,7 +282,7 @@ void SubscriptionLeaseManager::resolveDemandDelivery(ResolvedDemand & demand) co
   if (demand.kind == SubscriptionTargetKind::Topic) {
     const auto graph = node_interfaces_.get_node_graph_interface();
     demand.interface_type = requireSingleInterfaceType(graph->get_topic_names_and_types(), demand.name, "topic");
-    if (!classifyRosVideoIngestMode(demand.interface_type).has_value()) {
+    if (!video::classifyRosIngestMode(demand.interface_type).has_value()) {
       return;
     }
   }
@@ -430,7 +430,7 @@ SubscriptionStatus SubscriptionLeaseManager::create(
     Runtime runtime = [&]() -> Runtime {
       if (demand.video_spec.has_value()) {
         return Runtime{
-          VideoTrackPublisher::create(node_interfaces_, room_connection_, *demand.video_spec, qos_config_)};
+          video::TrackPublisher::create(node_interfaces_, room_connection_, *demand.video_spec, qos_config_)};
       }
 
       auto publisher = std::make_shared<DataTrackPublisher>(

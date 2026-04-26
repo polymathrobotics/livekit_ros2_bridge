@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_stream_spec.hpp"
+#include "video/stream_spec.hpp"
 
 #include <stdexcept>
 #include <variant>
@@ -24,21 +24,21 @@
 #include "utils/ros_resource_name_utils.hpp"
 #include "utils/trim.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
 {
 
-constexpr char kTopicKeyPrefix[] = "topic";
+constexpr char kRosTopicKeyPrefix[] = "topic";
 constexpr char kOtherVideoKeyPrefix[] = "other_video";
-constexpr char kTopicTrackPrefix[] = "lkros.video.";
-constexpr char kOtherVideoTrackPrefix[] = "lkros.video.other.";
+constexpr char kRosTopicTrackPrefix[] = "lkros.video.";
+constexpr char kOtherTrackPrefix[] = "lkros.video.other.";
 constexpr char kHexDigits[] = "0123456789ABCDEF";
 const auto kLogger = rclcpp::get_logger("video_stream_spec");
 
 // ROS-topic track names retain the lossy legacy mapping; stream_key carries exact identity.
-std::string makeTopicTrackSuffix(std::string_view topic)
+std::string makeRosTopicTrackSuffix(std::string_view topic)
 {
   std::string suffix;
   suffix.reserve(topic.size());
@@ -67,7 +67,7 @@ bool isUnreservedTrackByte(unsigned char byte)
          byte == '.' || byte == '_' || byte == '~';
 }
 
-std::string encodeOtherVideoTrackSuffix(std::string_view name)
+std::string encodeOtherTrackSuffix(std::string_view name)
 {
   std::string suffix;
   suffix.reserve(name.size() * 3U);
@@ -84,9 +84,9 @@ std::string encodeOtherVideoTrackSuffix(std::string_view name)
   return suffix;
 }
 
-const RosVideoTopicRule & selectRosTopicRule(const std::vector<RosVideoTopicRule> & rules, std::string_view topic)
+const RosTopicRule & selectRosTopicRule(const std::vector<RosTopicRule> & rules, std::string_view topic)
 {
-  const RosVideoTopicRule * match = findBestRosResourcePatternMatch(rules, topic, &RosVideoTopicRule::pattern);
+  const RosTopicRule * match = findBestRosResourcePatternMatch(rules, topic, &RosTopicRule::pattern);
   if (match == nullptr) {
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", topic)
@@ -99,41 +99,41 @@ const RosVideoTopicRule & selectRosTopicRule(const std::vector<RosVideoTopicRule
 
 }  // namespace
 
-std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type)
+std::optional<RosIngestMode> classifyRosIngestMode(std::string_view interface_type)
 {
   if (interface_type == rosidl_generator_traits::name<sensor_msgs::msg::Image>()) {
-    return RosVideoIngestMode::RawImage;
+    return RosIngestMode::RawImage;
   }
   if (interface_type == rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>()) {
-    return RosVideoIngestMode::CompressedImage;
+    return RosIngestMode::CompressedImage;
   }
   return std::nullopt;
 }
 
-const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec)
+const RosInput & requireRosInput(const StreamSpec & spec)
 {
-  if (const auto * input = std::get_if<RosVideoInput>(&spec.input); input != nullptr) {
+  if (const auto * input = std::get_if<RosInput>(&spec.input); input != nullptr) {
     return *input;
   }
   throw std::logic_error("Video stream spec does not contain a ROS video input.");
 }
 
-const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec)
+const OtherInput & requireOtherInput(const StreamSpec & spec)
 {
-  if (const auto * input = std::get_if<OtherVideoInput>(&spec.input); input != nullptr) {
+  if (const auto * input = std::get_if<OtherInput>(&spec.input); input != nullptr) {
     return *input;
   }
   throw std::logic_error("Video stream spec does not contain an other-video input.");
 }
 
-VideoStreamSpec resolveRosVideoTopicSpec(
-  const VideoStreamConfig & config, const std::string & requested_topic, const std::string & interface_type)
+StreamSpec resolveRosTopicSpec(
+  const StreamConfig & config, const std::string & requested_topic, const std::string & interface_type)
 {
   const std::string topic = normalizeRosResourceName(requested_topic);
   if (topic.empty()) {
     throw std::invalid_argument("Invalid ROS topic.");
   }
-  const auto ingest_mode = classifyRosVideoIngestMode(interface_type);
+  const auto ingest_mode = classifyRosIngestMode(interface_type);
   if (!ingest_mode.has_value()) {
     LogEvent(kLogger, "video_stream_spec_rejected")
       .field("resource", topic)
@@ -145,10 +145,10 @@ VideoStreamSpec resolveRosVideoTopicSpec(
 
   const auto & rule = selectRosTopicRule(config.ros_topic_rules, topic);
 
-  VideoStreamSpec spec;
-  spec.stream_key = std::string{kTopicKeyPrefix} + ":" + topic;
-  spec.track_name = std::string{kTopicTrackPrefix} + makeTopicTrackSuffix(topic);
-  spec.input = RosVideoInput{
+  StreamSpec spec;
+  spec.stream_key = std::string{kRosTopicKeyPrefix} + ":" + topic;
+  spec.track_name = std::string{kRosTopicTrackPrefix} + makeRosTopicTrackSuffix(topic);
+  spec.input = RosInput{
     topic,
     interface_type,
     *ingest_mode,
@@ -159,26 +159,26 @@ VideoStreamSpec resolveRosVideoTopicSpec(
   return spec;
 }
 
-VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name)
+StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string & source_name)
 {
   const std::string name = trim(source_name);
   if (name.empty()) {
     throw std::invalid_argument("Invalid other video name.");
   }
 
-  const auto it = config.other_video_sources.find(name);
-  if (it == config.other_video_sources.end()) {
+  const auto it = config.other_sources.find(name);
+  if (it == config.other_sources.end()) {
     throw std::invalid_argument("Unknown other video source '" + name + "'.");
   }
 
   const auto & source = it->second;
 
-  VideoStreamSpec spec;
+  StreamSpec spec;
   spec.stream_key = std::string{kOtherVideoKeyPrefix} + ":" + name;
-  spec.track_name = std::string{kOtherVideoTrackPrefix} + encodeOtherVideoTrackSuffix(name);
-  spec.input = OtherVideoInput{
+  spec.track_name = std::string{kOtherTrackPrefix} + encodeOtherTrackSuffix(name);
+  spec.input = OtherInput{
     name,
-    source.ingress_fragment,
+    source.source_fragment,
     source.transform_fragment,
   };
   spec.publish_options = source.publish_options;
@@ -186,4 +186,4 @@ VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, co
   return spec;
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

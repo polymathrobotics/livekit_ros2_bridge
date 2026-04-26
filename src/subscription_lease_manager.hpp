@@ -38,7 +38,7 @@
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "rclcpp/timer.hpp"
 #include "utils/event_throttle.hpp"
-#include "video_stream_spec.hpp"
+#include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -46,7 +46,11 @@ namespace livekit_ros2_bridge
 class DataTrackPublisher;
 class RoomConnection;
 struct SubscriptionQosConfig;
-class VideoTrackPublisher;
+
+namespace video
+{
+class TrackPublisher;
+}  // namespace video
 
 // Maintains per-requester leases for shared publishers and reports subscription status.
 class SubscriptionLeaseManager final
@@ -65,7 +69,7 @@ public:
     RoomConnection & room_connection,
     AccessPolicy access_policy,
     const SubscriptionQosConfig * qos_config = nullptr,
-    const VideoStreamConfig * video_stream_config = nullptr,
+    const video::StreamConfig * video_stream_config = nullptr,
     Clock::duration heartbeat_lease_duration = std::chrono::seconds(45));
   ~SubscriptionLeaseManager();
 
@@ -95,7 +99,7 @@ private:
   };
 
   using DataPublisher = std::shared_ptr<DataTrackPublisher>;
-  using VideoPublisher = std::shared_ptr<VideoTrackPublisher>;
+  using VideoPublisher = std::shared_ptr<video::TrackPublisher>;
   using Runtime = std::variant<DataPublisher, VideoPublisher>;
 
   struct Subscription
@@ -114,7 +118,7 @@ private:
     std::string key;
     std::string interface_type;
     int preferred_interval_ms = 0;
-    std::optional<VideoStreamSpec> video_spec;
+    std::optional<video::StreamSpec> video_spec;
   };
 
   using Subscriptions = std::unordered_map<std::string, Subscription>;
@@ -131,7 +135,7 @@ private:
   RoomConnection & room_connection_;
   AccessPolicy access_policy_;
   const SubscriptionQosConfig * qos_config_;
-  const VideoStreamConfig * video_stream_config_;
+  const video::StreamConfig * video_stream_config_;
   Clock::duration heartbeat_lease_duration_;
 
   std::atomic<bool> is_shutdown_{false};
@@ -152,8 +156,8 @@ private:
   void renewSessionLease(
     const std::string & requester_identity, const std::optional<std::string> & session_id, Clock::time_point expiry);
   void pruneSessionLeases(Clock::time_point now);
-  const VideoStreamConfig & videoStreamConfig() const;
-  VideoStreamSpec resolveVideoSpec(
+  const video::StreamConfig & videoStreamConfig() const;
+  video::StreamSpec resolveVideoSpec(
     SubscriptionTargetKind kind, const std::string & name, const std::string & interface_type) const;
   ResolvedDemand resolveDemand(const SubscriptionDemand & demand) const;
   void resolveDemandDelivery(ResolvedDemand & demand) const;

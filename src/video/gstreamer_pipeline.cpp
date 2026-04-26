@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gstreamer_pipeline.hpp"
+#include "video/gstreamer_pipeline.hpp"
 
 #include <gst/video/video.h>
 
@@ -24,9 +24,9 @@
 
 #include "livekit/video_source.h"
 #include "utils/scope_exit.hpp"
-#include "video_pipeline_description.hpp"
+#include "video/pipeline_description.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
@@ -122,9 +122,9 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
 
 }  // namespace
 
-GStreamerPipeline::GStreamerPipeline(GStreamerPipelineCallbacks callbacks)
+GStreamerPipeline::GStreamerPipeline(PipelineCallbacks callbacks)
 {
-  callbacks_ = std::make_unique<GStreamerPipelineCallbacks>(std::move(callbacks));
+  callbacks_ = std::make_unique<PipelineCallbacks>(std::move(callbacks));
   callbacks_ptr_.store(callbacks_.get(), std::memory_order_release);
 }
 
@@ -143,10 +143,10 @@ GstAppSrc * GStreamerPipeline::appsrc() const noexcept
   return appsrc_.get();
 }
 
-GStreamerPipelineCallbacks GStreamerPipeline::callbacks() const
+PipelineCallbacks GStreamerPipeline::callbacks() const
 {
   const auto * callbacks = callbacks_ptr_.load(std::memory_order_acquire);
-  return callbacks == nullptr ? GStreamerPipelineCallbacks{} : *callbacks;
+  return callbacks == nullptr ? PipelineCallbacks{} : *callbacks;
 }
 
 bool GStreamerPipeline::beginCallback()
@@ -330,4 +330,4 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   callbacks.on_failed(reason);
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

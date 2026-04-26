@@ -12,22 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video_track_publisher.hpp"
+#include "video/track_publisher.hpp"
 
 #include <exception>
 #include <memory>
 #include <utility>
 #include <variant>
 
-#include "gstreamer_pipeline.hpp"
-#include "gstreamer_video_stream.hpp"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
-#include "ros_video_stream.hpp"
 #include "utils/log_event.hpp"
+#include "video/gstreamer_pipeline.hpp"
+#include "video/gstreamer_stream.hpp"
+#include "video/ros_stream.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
@@ -35,7 +35,7 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
 
-void unpublishBestEffort(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
+void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
   if (track == nullptr) {
     return;
@@ -48,52 +48,52 @@ void unpublishBestEffort(RoomConnection & connection, const std::shared_ptr<live
 
 }  // namespace
 
-std::shared_ptr<VideoTrackPublisher> VideoTrackPublisher::create(
+std::shared_ptr<TrackPublisher> TrackPublisher::create(
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
     rclcpp::node_interfaces::NodeTopicsInterface,
     rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
-  RoomConnection & room_connection,
-  VideoStreamSpec spec,
+  RoomConnection & connection,
+  StreamSpec spec,
   const SubscriptionQosConfig * qos_config)
 {
-  auto publisher = std::make_shared<VideoTrackPublisher>(room_connection, std::move(spec));
-  if (std::holds_alternative<OtherVideoInput>(publisher->spec_.input)) {
-    auto stream = std::make_unique<GStreamerVideoStream>(publisher->spec_, *publisher);
+  auto publisher = std::make_shared<TrackPublisher>(connection, std::move(spec));
+  if (std::holds_alternative<OtherInput>(publisher->spec_.input)) {
+    auto stream = std::make_unique<GStreamerStream>(publisher->spec_, *publisher);
     stream->start();
     publisher->gstreamer_stream_ = std::move(stream);
     return publisher;
   }
 
-  auto stream = std::make_shared<RosVideoStream>(std::move(node_interfaces), publisher->spec_, qos_config, *publisher);
+  auto stream = std::make_shared<RosStream>(std::move(node_interfaces), publisher->spec_, qos_config, *publisher);
   stream->start();
   publisher->ros_stream_ = std::move(stream);
   return publisher;
 }
 
-VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, VideoStreamSpec spec)
-: connection_(room_connection)
+TrackPublisher::TrackPublisher(RoomConnection & connection, StreamSpec spec)
+: connection_(connection)
 , spec_(std::move(spec))
 {}
 
-VideoTrackPublisher::~VideoTrackPublisher()
+TrackPublisher::~TrackPublisher()
 {
   close();
 }
 
-GStreamerPipelineCallbacks VideoTrackPublisher::makePipelineCallbacks(
+PipelineCallbacks TrackPublisher::makePipelineCallbacks(
   std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed)
 {
-  return GStreamerPipelineCallbacks{
+  return PipelineCallbacks{
     std::move(is_shutdown),
-    [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) { captureFrame(frame, timestamp_us); },
+    [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) { capture(frame, timestamp_us); },
     [this](const std::string & error) { onSampleUnpackFailed(error); },
     [this](const std::string & error) { onCaptureFailed(error); },
     std::move(on_failed),
   };
 }
 
-void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
+void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_) {
@@ -106,7 +106,7 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
     const bool republish = published_once_;
 
     try {
-      unpublishBestEffort(connection_, track_);
+      tryUnpublish(connection_, track_);
       track_.reset();
       source_.reset();
       auto source = std::make_shared<livekit::VideoSource>(width, height);
@@ -136,11 +136,11 @@ void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::i
   source_->captureFrame(frame, timestamp_us);
 }
 
-void VideoTrackPublisher::close()
+void TrackPublisher::close()
 {
   // Stop streams outside mutex_; their callbacks can re-enter this publisher.
-  std::shared_ptr<RosVideoStream> ros_stream;
-  std::unique_ptr<GStreamerVideoStream> gstreamer_stream;
+  std::shared_ptr<RosStream> ros_stream;
+  std::unique_ptr<GStreamerStream> gstreamer_stream;
   std::shared_ptr<livekit::VideoSource> source;
   std::shared_ptr<livekit::LocalVideoTrack> track;
   {
@@ -163,12 +163,12 @@ void VideoTrackPublisher::close()
   if (gstreamer_stream != nullptr) {
     gstreamer_stream->close();
   }
-  unpublishBestEffort(connection_, track);
+  tryUnpublish(connection_, track);
   track.reset();
   source.reset();
 }
 
-void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
+void TrackPublisher::onSampleUnpackFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_) {
@@ -181,7 +181,7 @@ void VideoTrackPublisher::onSampleUnpackFailed(const std::string & error)
     .warn();
 }
 
-void VideoTrackPublisher::onCaptureFailed(const std::string & error)
+void TrackPublisher::onCaptureFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_) {
@@ -191,7 +191,7 @@ void VideoTrackPublisher::onCaptureFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_capture_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
-void VideoTrackPublisher::onRestartFailed(const std::string & error)
+void TrackPublisher::onRestartFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_) {
@@ -201,7 +201,7 @@ void VideoTrackPublisher::onRestartFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_restart_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
-void VideoTrackPublisher::onPushFailed(const std::string & error)
+void TrackPublisher::onAppsrcPushFailed(const std::string & error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_) {
@@ -211,4 +211,4 @@ void VideoTrackPublisher::onPushFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_push_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

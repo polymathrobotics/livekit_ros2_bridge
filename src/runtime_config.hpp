@@ -23,7 +23,7 @@
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
-#include "video_stream_spec.hpp"
+#include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -41,7 +41,7 @@ struct RuntimeConfig
   Watchdog watchdog;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos;
-  VideoStreamConfig video_stream;
+  video::StreamConfig video_stream;
 };
 
 // Loads one ROS parameter snapshot; falls back to LIVEKIT_TOKEN when livekit.token is unset.

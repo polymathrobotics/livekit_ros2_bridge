@@ -16,7 +16,7 @@
 
 #include <string>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 // Reserved names used to recover bridge-owned endpoints from parsed GStreamer bins.
@@ -41,4 +41,4 @@ inline std::string buildPipelineDescription(const std::string & source, const st
   return description;
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

@@ -20,38 +20,38 @@
 #include <mutex>
 #include <thread>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
-// Coalesces repeated GStreamer EOS/error callbacks into one stream-owned action.
-class VideoPipelineFailureHandler final
+// Coalesces repeated GStreamer EOS/error callbacks into one stream-owned callback.
+class PipelineFailureHandler final
 {
 public:
-  using Action = std::function<void()>;
+  using Callback = std::function<void()>;
 
-  VideoPipelineFailureHandler(std::chrono::milliseconds delay, Action action);
-  ~VideoPipelineFailureHandler();
+  PipelineFailureHandler(std::chrono::milliseconds delay, Callback callback);
+  ~PipelineFailureHandler();
 
-  VideoPipelineFailureHandler(const VideoPipelineFailureHandler &) = delete;
-  VideoPipelineFailureHandler & operator=(const VideoPipelineFailureHandler &) = delete;
-  VideoPipelineFailureHandler(VideoPipelineFailureHandler &&) = delete;
-  VideoPipelineFailureHandler & operator=(VideoPipelineFailureHandler &&) = delete;
+  PipelineFailureHandler(const PipelineFailureHandler &) = delete;
+  PipelineFailureHandler & operator=(const PipelineFailureHandler &) = delete;
+  PipelineFailureHandler(PipelineFailureHandler &&) = delete;
+  PipelineFailureHandler & operator=(PipelineFailureHandler &&) = delete;
 
   bool schedule();
-  void clearPending();
+  void cancelPending();
   void close();
 
 private:
   void run();
 
   std::chrono::milliseconds delay_;
-  Action action_;
+  Callback callback_;
   std::mutex mutex_;
   std::condition_variable condition_;
   bool closed_ = false;
   bool pending_ = false;
-  bool running_ = false;
+  bool callback_running_ = false;
   std::thread worker_;
 };
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

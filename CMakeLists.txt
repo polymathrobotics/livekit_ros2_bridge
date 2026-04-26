@@ -45,12 +45,35 @@ pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0)
 pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
 pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
 
+add_library(livekit_ros2_bridge_video STATIC
+  src/video/gstreamer_pipeline.cpp
+  src/video/gstreamer_stream.cpp
+  src/video/ros_stream.cpp
+  src/video/pipeline_failure_handler.cpp
+  src/video/stream_config.cpp
+  src/video/stream_spec.cpp
+  src/video/track_publisher.cpp
+)
+set_target_properties(livekit_ros2_bridge_video PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(livekit_ros2_bridge_video PUBLIC
+  "${livekit_ros2_bridge_private_include_dir}"
+)
+target_link_libraries(livekit_ros2_bridge_video PUBLIC
+  rclcpp::rclcpp
+  LiveKit::livekit
+  livekit_ros2_bridge_parameters
+  ${sensor_msgs_TARGETS}
+)
+target_link_libraries(livekit_ros2_bridge_video PRIVATE
+  PkgConfig::gstreamer
+  PkgConfig::gstreamer-app
+  PkgConfig::gstreamer-video
+)
+
 add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
   src/connection_watchdog.cpp
   src/data_track_publisher.cpp
-  src/gstreamer_pipeline.cpp
-  src/gstreamer_video_stream.cpp
   src/interface_definition_lookup.cpp
   src/node.cpp
   src/protocol/cdr.cpp
@@ -64,15 +87,11 @@ add_library(${PROJECT_NAME} SHARED
   src/ros_executor_queue.cpp
   src/ros_service_caller.cpp
   src/ros_topic_publisher.cpp
-  src/ros_video_stream.cpp
   src/rpc_router.cpp
   src/runtime_config.cpp
   src/runtime.cpp
   src/subscription_lease_manager.cpp
   src/subscription_qos.cpp
-  src/video_pipeline_failure_handler.cpp
-  src/video_stream_spec.cpp
-  src/video_track_publisher.cpp
 )
 target_include_directories(${PROJECT_NAME} PRIVATE
   "${livekit_ros2_bridge_private_include_dir}"
@@ -82,15 +101,12 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp_components::component
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
-  ${sensor_msgs_TARGETS}
   ament_index_cpp::ament_index_cpp
   livekit_ros2_bridge_parameters
+  livekit_ros2_bridge_video
   LiveKit::livekit
   nlohmann_json::nlohmann_json
   OpenSSL::Crypto
-  PkgConfig::gstreamer
-  PkgConfig::gstreamer-app
-  PkgConfig::gstreamer-video
   rmw::rmw
 )
 rclcpp_components_register_node(${PROJECT_NAME}
@@ -140,8 +156,8 @@ if(BUILD_TESTING)
   )
   livekit_ros2_bridge_add_test(test_event_throttle test/cpp/test_event_throttle.cpp)
   livekit_ros2_bridge_add_test(
-    test_gstreamer_raii
-    test/cpp/test_gstreamer_raii.cpp
+    test_gstreamer_resources
+    test/cpp/test_gstreamer_resources.cpp
     PkgConfig::gstreamer
     PkgConfig::gstreamer-video
   )

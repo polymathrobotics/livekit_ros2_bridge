@@ -17,27 +17,27 @@
 #include <mutex>
 #include <string>
 
-#include "gstreamer_pipeline.hpp"
-#include "video_pipeline_failure_handler.hpp"
-#include "video_stream_spec.hpp"
+#include "video/gstreamer_pipeline.hpp"
+#include "video/pipeline_failure_handler.hpp"
+#include "video/stream_spec.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
-class VideoTrackPublisher;
+class TrackPublisher;
 
 // Pipeline callbacks can run on GStreamer threads; mutex_ guards shutdown and
 // restart state.
-class GStreamerVideoStream final
+class GStreamerStream final
 {
 public:
-  GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPublisher & publisher);
-  ~GStreamerVideoStream();
+  GStreamerStream(StreamSpec spec, TrackPublisher & publisher);
+  ~GStreamerStream();
 
-  GStreamerVideoStream(const GStreamerVideoStream &) = delete;
-  GStreamerVideoStream & operator=(const GStreamerVideoStream &) = delete;
-  GStreamerVideoStream(GStreamerVideoStream &&) = delete;
-  GStreamerVideoStream & operator=(GStreamerVideoStream &&) = delete;
+  GStreamerStream(const GStreamerStream &) = delete;
+  GStreamerStream & operator=(const GStreamerStream &) = delete;
+  GStreamerStream(GStreamerStream &&) = delete;
+  GStreamerStream & operator=(GStreamerStream &&) = delete;
 
   void start();
   void close();
@@ -48,12 +48,12 @@ private:
   void restartPipelineAfterFailure();
   void startPipelineLocked();
 
-  VideoStreamSpec spec_;
-  VideoTrackPublisher & publisher_;
+  StreamSpec spec_;
+  TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
-  VideoPipelineFailureHandler failure_handler_;
+  PipelineFailureHandler failure_handler_;
 };
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

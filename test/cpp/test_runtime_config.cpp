@@ -264,11 +264,10 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.transform_fragment, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
   const auto & fallback_rule = config.video_stream.ros_topic_rules.back();
   EXPECT_EQ(fallback_rule.rule_id, "default_ros");
-  ASSERT_EQ(config.video_stream.other_video_sources.size(), 1U);
+  ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
   EXPECT_EQ(
-    config.video_stream.other_video_sources.at("front_rtsp").ingress_fragment,
-    "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(config.video_stream.other_video_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
+    config.video_stream.other_sources.at("front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(config.video_stream.other_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, TrackPublishOptionsLoadFromUnifiedParams)
@@ -422,7 +421,7 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
     const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_publish_override", options);
 
     expectPublishOptionsEq(
-      config.video_stream.other_video_sources.at("front").publish_options,
+      config.video_stream.other_sources.at("front").publish_options,
       makeExpectedPublishOptions(kLivekitVideoCodecH265, 500000U, 30.0, false));
   }
 }
@@ -467,14 +466,14 @@ TEST_F(RuntimeConfigTest, MissingGeneratedVideoParametersAreRejectedByParameterL
   }
 }
 
-TEST_F(RuntimeConfigTest, OtherVideoRejectsWhitespaceOnlyIngressFragment)
+TEST_F(RuntimeConfigTest, OtherVideoRejectsWhitespaceOnlySourceFragment)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
   options.append_parameter_override("video.other.front.source", " \t\n ");
 
   expectConfigError(
-    "startup_config_empty_other_video_ingress", options, "other video source 'front' requires a non-empty source");
+    "startup_config_empty_other_video_source", options, "other video source 'front' requires a non-empty source");
 }
 
 TEST_F(RuntimeConfigTest, BridgeManagedEndpointsAreRejectedInVideoFragments)
@@ -535,7 +534,7 @@ TEST_F(RuntimeConfigTest, DuplicateVideoIdsReportSectionSpecificErrors)
   }
 }
 
-TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherVideoSources)
+TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
 {
   const std::string node_name = "startup_config_distinct_slash_other_video_sources";
   const auto params_path =
@@ -557,13 +556,11 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherVideoSources)
   options.arguments({"--ros-args", "--params-file", params_path.string()});
   const RuntimeConfig config = loadRuntimeConfigForNode(node_name, options);
 
-  ASSERT_EQ(config.video_stream.other_video_sources.size(), 2U);
+  ASSERT_EQ(config.video_stream.other_sources.size(), 2U);
   EXPECT_EQ(
-    config.video_stream.other_video_sources.at("/front_rtsp").ingress_fragment,
-    "videotestsrc is-live=true pattern=ball");
+    config.video_stream.other_sources.at("/front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    config.video_stream.other_video_sources.at("/front_rtsp/").ingress_fragment,
-    "videotestsrc is-live=true pattern=smpte");
+    config.video_stream.other_sources.at("/front_rtsp/").source_fragment, "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);
 }

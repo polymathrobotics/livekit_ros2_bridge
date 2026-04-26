@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "gstreamer_video_stream.hpp"
+#include "video/gstreamer_stream.hpp"
 
 #include <chrono>
 #include <stdexcept>
@@ -20,10 +20,10 @@
 
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "video_pipeline_description.hpp"
-#include "video_track_publisher.hpp"
+#include "video/pipeline_description.hpp"
+#include "video/track_publisher.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
@@ -34,7 +34,7 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 
 }  // namespace
 
-GStreamerVideoStream::GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPublisher & publisher)
+GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
 , pipeline_(publisher.makePipelineCallbacks(
@@ -46,12 +46,12 @@ GStreamerVideoStream::GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPubli
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
-GStreamerVideoStream::~GStreamerVideoStream()
+GStreamerStream::~GStreamerStream()
 {
   close();
 }
 
-void GStreamerVideoStream::start()
+void GStreamerStream::start()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -61,7 +61,7 @@ void GStreamerVideoStream::start()
   startPipelineLocked();
 }
 
-void GStreamerVideoStream::close()
+void GStreamerStream::close()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -76,7 +76,7 @@ void GStreamerVideoStream::close()
   pipeline_.stop();
 }
 
-void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
+void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_ || !pipeline_.isActive()) {
@@ -93,7 +93,7 @@ void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
     .warn();
 }
 
-void GStreamerVideoStream::restartPipelineAfterFailure()
+void GStreamerStream::restartPipelineAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_) {
@@ -108,10 +108,10 @@ void GStreamerVideoStream::restartPipelineAfterFailure()
   }
 }
 
-void GStreamerVideoStream::startPipelineLocked()
+void GStreamerStream::startPipelineLocked()
 {
-  const auto & input = requireOtherVideoInput(spec_);
-  pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
+  const auto & input = requireOtherInput(spec_);
+  pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

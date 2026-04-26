@@ -24,10 +24,10 @@
 #include "livekit/room_event_types.h"
 #include "utils/ros_resource_name_utils.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
-struct RosVideoTopicRule
+struct RosTopicRule
 {
   RosResourcePattern pattern;
   std::string rule_id;
@@ -35,72 +35,72 @@ struct RosVideoTopicRule
   livekit::TrackPublishOptions publish_options;
 };
 
-struct OtherVideoSource
+struct OtherSource
 {
-  std::string ingress_fragment;
+  std::string source_fragment;
   std::string transform_fragment;
   livekit::TrackPublishOptions publish_options;
 };
 
-struct VideoStreamConfig
+struct StreamConfig
 {
-  std::vector<RosVideoTopicRule> ros_topic_rules;
-  // Keyed by the trimmed other-video-source name.
-  std::unordered_map<std::string, OtherVideoSource> other_video_sources;
+  std::vector<RosTopicRule> ros_topic_rules;
+  // Keyed by the trimmed configured source name.
+  std::unordered_map<std::string, OtherSource> other_sources;
   livekit::TrackPublishOptions default_publish_options;
 };
 
-inline VideoStreamConfig makeDefaultVideoStreamConfig()
+inline StreamConfig makeDefaultConfig()
 {
-  VideoStreamConfig config;
+  StreamConfig config;
   config.ros_topic_rules.push_back(
     {RosResourcePattern::rootSubtree(), "default_ros", "", config.default_publish_options});
   return config;
 }
 
-enum class RosVideoIngestMode
+enum class RosIngestMode
 {
   RawImage,
   CompressedImage,
 };
 
-struct RosVideoInput
+struct RosInput
 {
   std::string topic;
   std::string interface_type;
-  RosVideoIngestMode ingest_mode = RosVideoIngestMode::RawImage;
+  RosIngestMode ingest_mode = RosIngestMode::RawImage;
   std::string rule_id;
   std::string transform_fragment;
 };
 
-struct OtherVideoInput
+struct OtherInput
 {
   std::string name;
-  std::string ingress_fragment;
+  std::string source_fragment;
   std::string transform_fragment;
 };
 
-using VideoStreamInput = std::variant<RosVideoInput, OtherVideoInput>;
+using StreamInput = std::variant<RosInput, OtherInput>;
 
-struct VideoStreamSpec
+struct StreamSpec
 {
   // Stable runtime key: "topic:<normalized topic>" or "other_video:<trimmed source name>".
   std::string stream_key;
   // LiveKit track name: legacy lossy ROS suffixes, reversible other-video suffixes.
   std::string track_name;
 
-  VideoStreamInput input;
+  StreamInput input;
   livekit::TrackPublishOptions publish_options;
 };
 
-std::optional<RosVideoIngestMode> classifyRosVideoIngestMode(std::string_view interface_type);
+std::optional<RosIngestMode> classifyRosIngestMode(std::string_view interface_type);
 
-const RosVideoInput & requireRosVideoInput(const VideoStreamSpec & spec);
-const OtherVideoInput & requireOtherVideoInput(const VideoStreamSpec & spec);
+const RosInput & requireRosInput(const StreamSpec & spec);
+const OtherInput & requireOtherInput(const StreamSpec & spec);
 
 // ROS topics are normalized before matching and identifier generation. Longest match wins; ties keep declaration order.
-VideoStreamSpec resolveRosVideoTopicSpec(
-  const VideoStreamConfig & config, const std::string & requested_topic, const std::string & interface_type);
-VideoStreamSpec resolveOtherVideoSourceSpec(const VideoStreamConfig & config, const std::string & source_name);
+StreamSpec resolveRosTopicSpec(
+  const StreamConfig & config, const std::string & requested_topic, const std::string & interface_type);
+StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string & source_name);
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

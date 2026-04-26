@@ -134,12 +134,12 @@ bool publishUntil(
   return predicate();
 }
 
-VideoStreamConfig makeOtherVideoSourceConfig()
+video::StreamConfig makeOtherSourceConfig()
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
-  OtherVideoSource other_video_source;
-  other_video_source.ingress_fragment = "videotestsrc is-live=true pattern=black";
-  config.other_video_sources.emplace("/sources/front", std::move(other_video_source));
+  video::StreamConfig config = video::makeDefaultConfig();
+  video::OtherSource source;
+  source.source_fragment = "videotestsrc is-live=true pattern=black";
+  config.other_sources.emplace("/sources/front", std::move(source));
   return config;
 }
 
@@ -147,7 +147,7 @@ SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
   AccessPolicy access_policy,
-  const VideoStreamConfig * video_config = nullptr,
+  const video::StreamConfig * video_config = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   return SubscriptionLeaseManager(
@@ -165,7 +165,7 @@ SubscriptionLeaseManager makeLeaseManager(
 SubscriptionLeaseManager makeLeaseManager(
   rclcpp::Node & node,
   FakeRoomConnection & session,
-  const VideoStreamConfig * video_config = nullptr,
+  const video::StreamConfig * video_config = nullptr,
   SubscriptionLeaseManager::Clock::duration heartbeat_lease_duration = std::chrono::seconds(45))
 {
   AccessPolicyConfig access_policy_config;
@@ -356,7 +356,7 @@ protected:
     access_policy_ = makeSubscribePolicy({"*"});
   }
 
-  SubscriptionLeaseManager makeManager(AccessPolicy access_policy, const VideoStreamConfig * video_config = nullptr)
+  SubscriptionLeaseManager makeManager(AccessPolicy access_policy, const video::StreamConfig * video_config = nullptr)
   {
     return makeLeaseManager(*node_, *fake_room_connection_, std::move(access_policy), video_config);
   }
@@ -623,12 +623,12 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   EXPECT_EQ(renewed_a["delivery"]["track_name"], "lkros.data.battery.omitted_stays_alive");
 }
 
-TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOtherVideoSources)
+TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOtherSources)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomConnection session;
-  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
+  const video::StreamConfig video_config = makeOtherSourceConfig();
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
   (void)publisher;
@@ -687,7 +687,7 @@ TEST(SubscriptionLeaseManagerTest, EquivalentOtherVideoRequestsShareCanonicalSub
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_canonical_other_test");
   FakeRoomConnection session;
-  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
+  const video::StreamConfig video_config = makeOtherSourceConfig();
   const std::string canonical_source = "/sources/front";
   const std::string variant_source = "  /sources/front  ";
 
@@ -760,7 +760,7 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishOptionsAreAppliedToEachPublis
   second_publish_options.video_encoding = livekit::VideoEncodingOptions{250000, 12.0};
   second_publish_options.simulcast = false;
 
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  video::StreamConfig config = video::makeDefaultConfig();
   config.ros_topic_rules.push_back(
     {RosResourcePattern::fromCanonical(first_topic), "first_publish_config", "", first_publish_options});
   config.ros_topic_rules.push_back(
@@ -1079,7 +1079,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
+  const video::StreamConfig video_config = makeOtherSourceConfig();
 
   auto manager = makeManager(deny_all, &video_config);
 
@@ -1094,7 +1094,7 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyA
 
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingOtherVideoReturnsErrorOnSourceIdField)
 {
-  const VideoStreamConfig video_config = makeOtherVideoSourceConfig();
+  const video::StreamConfig video_config = makeOtherSourceConfig();
 
   auto manager = makeManager(access_policy_, &video_config);
 

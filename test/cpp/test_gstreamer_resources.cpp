@@ -18,15 +18,15 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "utils/gstreamer_raii.hpp"
+#include "video/gstreamer_resources.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
 {
 
-class GStreamerRaiiTest : public ::testing::Test
+class GStreamerResourcesTest : public ::testing::Test
 {
 protected:
   static void SetUpTestSuite()
@@ -76,7 +76,7 @@ TEST(GStreamerInitializationTest, EnsureGStreamerInitializedIsSafeAcrossConcurre
   EXPECT_TRUE(all_threads_observed_initialized.load(std::memory_order_relaxed));
 }
 
-TEST_F(GStreamerRaiiTest, IteratorAndValueSlotTraverseParsedPipeline)
+TEST_F(GStreamerResourcesTest, IteratorAndValueSlotTraverseParsedPipeline)
 {
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch("fakesrc num-buffers=1 ! queue ! fakesink", &raw_error));
@@ -110,7 +110,7 @@ TEST_F(GStreamerRaiiTest, IteratorAndValueSlotTraverseParsedPipeline)
   EXPECT_GT(element_count, 0U);
 }
 
-TEST_F(GStreamerRaiiTest, BufferMapSupportsWriteThenRead)
+TEST_F(GStreamerResourcesTest, BufferMapSupportsWriteThenRead)
 {
   GstBufferPtr buffer(gst_buffer_new_allocate(nullptr, 4U, nullptr));
   ASSERT_NE(buffer.get(), nullptr);
@@ -131,7 +131,7 @@ TEST_F(GStreamerRaiiTest, BufferMapSupportsWriteThenRead)
   }
 }
 
-TEST_F(GStreamerRaiiTest, VideoFrameMapSupportsWriteThenRead)
+TEST_F(GStreamerResourcesTest, VideoFrameMapSupportsWriteThenRead)
 {
   GstVideoInfo info;
   gst_video_info_init(&info);
@@ -175,7 +175,7 @@ TEST_F(GStreamerRaiiTest, VideoFrameMapSupportsWriteThenRead)
   }
 }
 
-TEST_F(GStreamerRaiiTest, VideoFrameMapRejectsUndersizedBuffer)
+TEST_F(GStreamerResourcesTest, VideoFrameMapRejectsUndersizedBuffer)
 {
   GstVideoInfo info;
   gst_video_info_init(&info);
@@ -188,7 +188,7 @@ TEST_F(GStreamerRaiiTest, VideoFrameMapRejectsUndersizedBuffer)
   EXPECT_FALSE(frame.is_valid());
 }
 
-TEST_F(GStreamerRaiiTest, ErrorAndStringWrappersAdoptAllocatedValues)
+TEST_F(GStreamerResourcesTest, ErrorAndStringWrappersAdoptAllocatedValues)
 {
   GstElementPtr source(gst_pipeline_new("test_source"));
   ASSERT_NE(source.get(), nullptr);
@@ -211,4 +211,4 @@ TEST_F(GStreamerRaiiTest, ErrorAndStringWrappersAdoptAllocatedValues)
   EXPECT_STREQ(debug.get(), "debug details");
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

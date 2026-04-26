@@ -20,7 +20,6 @@
 #include <optional>
 #include <string>
 
-#include "gstreamer_pipeline.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
@@ -29,17 +28,18 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
-#include "video_pipeline_failure_handler.hpp"
-#include "video_stream_spec.hpp"
+#include "video/gstreamer_pipeline.hpp"
+#include "video/pipeline_failure_handler.hpp"
+#include "video/stream_spec.hpp"
 
 #include <gst/video/video-format.h>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
-class VideoTrackPublisher;
+class TrackPublisher;
 
-struct FrameLayout
+struct RawLayout
 {
   int width = 0;
   int height = 0;
@@ -47,24 +47,24 @@ struct FrameLayout
   std::uint32_t stride = 0;
 };
 
-class RosVideoStream final : public std::enable_shared_from_this<RosVideoStream>
+class RosStream final : public std::enable_shared_from_this<RosStream>
 {
 public:
   // The publisher must outlive this stream; `qos_config` is borrowed and may be null.
-  RosVideoStream(
+  RosStream(
     rclcpp::node_interfaces::NodeInterfaces<
       rclcpp::node_interfaces::NodeParametersInterface,
       rclcpp::node_interfaces::NodeTopicsInterface,
       rclcpp::node_interfaces::NodeGraphInterface> node_interfaces,
-    VideoStreamSpec spec,
+    StreamSpec spec,
     const SubscriptionQosConfig * qos_config,
-    VideoTrackPublisher & publisher);
-  ~RosVideoStream();
+    TrackPublisher & publisher);
+  ~RosStream();
 
-  RosVideoStream(const RosVideoStream &) = delete;
-  RosVideoStream & operator=(const RosVideoStream &) = delete;
-  RosVideoStream(RosVideoStream &&) = delete;
-  RosVideoStream & operator=(RosVideoStream &&) = delete;
+  RosStream(const RosStream &) = delete;
+  RosStream & operator=(const RosStream &) = delete;
+  RosStream(RosStream &&) = delete;
+  RosStream & operator=(RosStream &&) = delete;
 
   // Requires shared_ptr ownership because subscription callbacks capture weak ownership.
   void start();
@@ -80,13 +80,13 @@ private:
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
 
-  void startRawPipelineLocked(const FrameLayout & layout);
+  void startRawPipelineLocked(const RawLayout & layout);
   void startCompressedPipelineLocked(const std::string & codec);
   void pushRawLocked(const sensor_msgs::msg::Image & image);
   void resetPipelineStateLocked();
 
-  VideoStreamSpec spec_;
-  VideoTrackPublisher & publisher_;
+  StreamSpec spec_;
+  TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
@@ -96,14 +96,14 @@ private:
   const SubscriptionQosConfig * qos_config_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription_;
-  // Current appsrc caps; layout or codec changes restart the pipeline on the
+  // Current appsrc caps; raw layout or codec changes restart the pipeline on the
   // next accepted frame.
-  std::optional<FrameLayout> layout_;
+  std::optional<RawLayout> raw_layout_;
   std::optional<std::string> codec_;
   // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
-  VideoPipelineFailureHandler failure_handler_;
+  PipelineFailureHandler failure_handler_;
 };
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

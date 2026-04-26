@@ -23,9 +23,9 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "utils/ros_resource_name_utils.hpp"
-#include "video_stream_spec.hpp"
+#include "video/stream_spec.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 namespace
 {
@@ -67,9 +67,9 @@ void expectTrackPublishOptionsEq(
   EXPECT_EQ(actual.simulcast, expected.simulcast);
 }
 
-RosVideoTopicRule makeRule(const char * id, const char * pattern, const char * transform)
+RosTopicRule makeRule(const char * id, const char * pattern, const char * transform)
 {
-  RosVideoTopicRule rule;
+  RosTopicRule rule;
   rule.rule_id = id;
   rule.pattern = RosResourcePattern::fromCanonical(pattern);
   rule.transform_fragment = transform;
@@ -102,48 +102,48 @@ void expectThrowsWithMessage(Callable && callable, const char * expected_message
   }
 }
 
-TEST(VideoStreamSpecTest, ClassifyRosVideoIngestModeOnlyAcceptsSupportedExactStrings)
+TEST(StreamSpecTest, ClassifyRosIngestModeOnlyAcceptsSupportedExactStrings)
 {
-  EXPECT_EQ(classifyRosVideoIngestMode(imageInterfaceType()), RosVideoIngestMode::RawImage);
+  EXPECT_EQ(classifyRosIngestMode(imageInterfaceType()), RosIngestMode::RawImage);
 
-  EXPECT_EQ(classifyRosVideoIngestMode(compressedImageInterfaceType()), RosVideoIngestMode::CompressedImage);
-  EXPECT_FALSE(classifyRosVideoIngestMode(std::string{" "} + imageInterfaceType()).has_value());
+  EXPECT_EQ(classifyRosIngestMode(compressedImageInterfaceType()), RosIngestMode::CompressedImage);
+  EXPECT_FALSE(classifyRosIngestMode(std::string{" "} + imageInterfaceType()).has_value());
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesBuiltInDefaultSelectionForSupportedTypes)
+TEST(StreamSpecTest, ResolveRosTopicSpecUsesBuiltInDefaultSelectionForSupportedTypes)
 {
-  const auto config = makeDefaultVideoStreamConfig();
+  const auto config = makeDefaultConfig();
 
-  const auto raw_spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
-  const auto & raw_input = requireRosVideoInput(raw_spec);
+  const auto raw_spec = resolveRosTopicSpec(config, "/camera/front/image", imageInterfaceType());
+  const auto & raw_input = requireRosInput(raw_spec);
   EXPECT_EQ(raw_spec.stream_key, "topic:/camera/front/image");
   EXPECT_EQ(raw_spec.track_name, "lkros.video.camera.front.image");
   EXPECT_EQ(raw_input.topic, "/camera/front/image");
   EXPECT_EQ(raw_input.interface_type, imageInterfaceType());
   EXPECT_EQ(raw_input.rule_id, "default_ros");
-  EXPECT_EQ(raw_input.ingest_mode, RosVideoIngestMode::RawImage);
+  EXPECT_EQ(raw_input.ingest_mode, RosIngestMode::RawImage);
   expectTrackPublishOptionsEq(raw_spec.publish_options, config.default_publish_options);
 
   const auto compressed_spec =
-    resolveRosVideoTopicSpec(config, "/camera/front/image/compressed", compressedImageInterfaceType());
-  const auto & compressed_input = requireRosVideoInput(compressed_spec);
+    resolveRosTopicSpec(config, "/camera/front/image/compressed", compressedImageInterfaceType());
+  const auto & compressed_input = requireRosInput(compressed_spec);
   EXPECT_EQ(compressed_spec.stream_key, "topic:/camera/front/image/compressed");
   EXPECT_EQ(compressed_spec.track_name, "lkros.video.camera.front.image.compressed");
   EXPECT_EQ(compressed_input.rule_id, "default_ros");
-  EXPECT_EQ(compressed_input.ingest_mode, RosVideoIngestMode::CompressedImage);
+  EXPECT_EQ(compressed_input.ingest_mode, RosIngestMode::CompressedImage);
   expectTrackPublishOptionsEq(compressed_spec.publish_options, config.default_publish_options);
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecExpandsRelativeTopicForMatchingAndIdentifiers)
+TEST(StreamSpecTest, ResolveRosTopicSpecExpandsRelativeTopicForMatchingAndIdentifiers)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
 
-  RosVideoTopicRule rule = makeRule("normalized", "/camera/front/*", "videoconvert ! normalized-filter");
+  RosTopicRule rule = makeRule("normalized", "/camera/front/*", "videoconvert ! normalized-filter");
   rule.publish_options = makeTrackPublishOptions(videoCodec(1), livekit::VideoEncodingOptions{900000U, 12.0}, false);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), rule);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "  camera/front/image  ", imageInterfaceType());
-  const auto & input = requireRosVideoInput(spec);
+  const auto spec = resolveRosTopicSpec(config, "  camera/front/image  ", imageInterfaceType());
+  const auto & input = requireRosInput(spec);
   const std::string expected_topic = expandRosTopicName("camera/front/image");
 
   EXPECT_EQ(spec.stream_key, "topic:" + expected_topic);
@@ -154,126 +154,126 @@ TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecExpandsRelativeTopicForMatchin
   expectTrackPublishOptionsEq(spec.publish_options, rule.publish_options);
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsRootTopic)
+TEST(StreamSpecTest, ResolveRosTopicSpecRejectsRootTopic)
 {
-  const auto config = makeDefaultVideoStreamConfig();
+  const auto config = makeDefaultConfig();
 
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, "/", imageInterfaceType()); }, "Invalid ROS topic.");
+    [&]() { (void)resolveRosTopicSpec(config, "/", imageInterfaceType()); }, "Invalid ROS topic.");
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsInvalidInput)
+TEST(StreamSpecTest, ResolveRosTopicSpecRejectsInvalidInput)
 {
-  const auto config = makeDefaultVideoStreamConfig();
+  const auto config = makeDefaultConfig();
 
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, "/camera/front/image", ""); },
+    [&]() { (void)resolveRosTopicSpec(config, "/camera/front/image", ""); },
     "ROS topic is not a supported video type.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, " \t\n ", imageInterfaceType()); }, "Invalid ROS topic.");
+    [&]() { (void)resolveRosTopicSpec(config, " \t\n ", imageInterfaceType()); }, "Invalid ROS topic.");
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecRejectsWhenNoRuleMatches)
+TEST(StreamSpecTest, ResolveRosTopicSpecRejectsWhenNoRuleMatches)
 {
-  const VideoStreamConfig config;
+  const StreamConfig config;
 
   expectThrowsWithMessage<std::runtime_error>(
-    [&]() { (void)resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType()); },
+    [&]() { (void)resolveRosTopicSpec(config, "/camera/front/image", imageInterfaceType()); },
     "no matching video rule for topic '/camera/front/image'");
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecUsesLongestMatch)
+TEST(StreamSpecTest, ResolveRosTopicSpecUsesLongestMatch)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
 
-  RosVideoTopicRule broad = makeRule("broad", "/camera/*", "videoconvert ! broad-filter");
+  RosTopicRule broad = makeRule("broad", "/camera/*", "videoconvert ! broad-filter");
   broad.publish_options = makeTrackPublishOptions(videoCodec(0), livekit::VideoEncodingOptions{500000U, 30.0}, false);
-  RosVideoTopicRule specific = makeRule("specific", "/camera/front/*", "videoconvert ! specific-filter");
+  RosTopicRule specific = makeRule("specific", "/camera/front/*", "videoconvert ! specific-filter");
   specific.publish_options = makeTrackPublishOptions(videoCodec(1), livekit::VideoEncodingOptions{800000U, 15.0}, true);
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), broad);
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), specific);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
+  const auto spec = resolveRosTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
-  EXPECT_EQ(requireRosVideoInput(spec).rule_id, "specific");
+  EXPECT_EQ(requireRosInput(spec).rule_id, "specific");
   expectTrackPublishOptionsEq(spec.publish_options, specific.publish_options);
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecSameLengthUsesFirstDeclared)
+TEST(StreamSpecTest, ResolveRosTopicSpecSameLengthUsesFirstDeclared)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
 
-  const RosVideoTopicRule first = makeRule("first", "/camera/front/*", "videoconvert ! first-filter");
-  const RosVideoTopicRule second = makeRule("second", "/camera/front/*", "videoconvert ! second-filter");
+  const RosTopicRule first = makeRule("first", "/camera/front/*", "videoconvert ! first-filter");
+  const RosTopicRule second = makeRule("second", "/camera/front/*", "videoconvert ! second-filter");
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), first);
   config.ros_topic_rules.insert(config.ros_topic_rules.end() - 1, second);
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
+  const auto spec = resolveRosTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
-  EXPECT_EQ(requireRosVideoInput(spec).rule_id, "first");
+  EXPECT_EQ(requireRosInput(spec).rule_id, "first");
 }
 
-TEST(VideoStreamSpecTest, ResolveRosVideoTopicSpecDoesNotInterpolateTopicPlaceholders)
+TEST(StreamSpecTest, ResolveRosTopicSpecDoesNotInterpolateTopicPlaceholders)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
 
   config.ros_topic_rules.insert(config.ros_topic_rules.begin(), makeRule("front", "/camera/front/*", "{topic}"));
 
-  const auto spec = resolveRosVideoTopicSpec(config, "/camera/front/image", imageInterfaceType());
+  const auto spec = resolveRosTopicSpec(config, "/camera/front/image", imageInterfaceType());
 
-  EXPECT_EQ(requireRosVideoInput(spec).transform_fragment, "{topic}");
+  EXPECT_EQ(requireRosInput(spec).transform_fragment, "{topic}");
 }
 
-TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecTrimsOtherVideoSourceName)
+TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
   const auto expected_publish_options =
     makeTrackPublishOptions(videoCodec(4), livekit::VideoEncodingOptions{1200000U, 10.0}, false);
 
-  OtherVideoSource source;
-  source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  OtherSource source;
+  source.source_fragment = "videotestsrc is-live=true pattern=black";
   source.transform_fragment = "videobalance saturation=0.0";
   source.publish_options = expected_publish_options;
 
-  config.other_video_sources.emplace("front_camera", std::move(source));
+  config.other_sources.emplace("front_camera", std::move(source));
 
-  const auto spec = resolveOtherVideoSourceSpec(config, "  front_camera  ");
-  const auto & input = requireOtherVideoInput(spec);
+  const auto spec = resolveOtherSourceSpec(config, "  front_camera  ");
+  const auto & input = requireOtherInput(spec);
 
   EXPECT_EQ(spec.stream_key, "other_video:front_camera");
   EXPECT_EQ(spec.track_name, "lkros.video.other.front_camera");
   EXPECT_EQ(input.name, "front_camera");
-  EXPECT_EQ(input.ingress_fragment, "videotestsrc is-live=true pattern=black");
+  EXPECT_EQ(input.source_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
   expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
 }
 
-TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecPercentEncodesTrackNameSuffix)
+TEST(StreamSpecTest, ResolveOtherSourceSpecPercentEncodesTrackNameSuffix)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
 
-  OtherVideoSource source;
-  source.ingress_fragment = "videotestsrc is-live=true pattern=black";
+  OtherSource source;
+  source.source_fragment = "videotestsrc is-live=true pattern=black";
 
-  config.other_video_sources.emplace("/sources/front:rgb%", std::move(source));
+  config.other_sources.emplace("/sources/front:rgb%", std::move(source));
 
-  const auto spec = resolveOtherVideoSourceSpec(config, "/sources/front:rgb%");
+  const auto spec = resolveOtherSourceSpec(config, "/sources/front:rgb%");
 
   EXPECT_EQ(spec.track_name, "lkros.video.other.%2Fsources%2Ffront%3Argb%25");
 }
 
-TEST(VideoStreamSpecTest, ResolveOtherVideoSourceSpecRejectsInvalidNames)
+TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
 {
-  const VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  const StreamConfig config = makeDefaultConfig();
 
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveOtherVideoSourceSpec(config, "sources/missing"); },
+    [&]() { (void)resolveOtherSourceSpec(config, "sources/missing"); },
     "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveOtherVideoSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+    [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
 }  // namespace
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

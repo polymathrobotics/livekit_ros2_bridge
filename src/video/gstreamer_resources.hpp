@@ -20,7 +20,7 @@
 #include <memory>
 #include <mutex>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 struct GstObjectDeleter
@@ -197,4 +197,4 @@ private:
   bool mapped_ = false;
 };
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

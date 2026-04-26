@@ -22,38 +22,38 @@
 #include <string>
 
 #include "fake_room_connection.hpp"
-#include "gstreamer_pipeline.hpp"
-#include "gstreamer_video_stream.hpp"
 #include "gtest/gtest.h"
 #include "livekit/video_frame.h"
 #include "ros_test_support.hpp"
-#include "ros_video_stream.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "utils/gstreamer_raii.hpp"
-#include "video_pipeline_failure_handler.hpp"
-#include "video_track_publisher.hpp"
+#include "video/gstreamer_pipeline.hpp"
+#include "video/gstreamer_resources.hpp"
+#include "video/gstreamer_stream.hpp"
+#include "video/pipeline_failure_handler.hpp"
+#include "video/ros_stream.hpp"
+#include "video/track_publisher.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 namespace
 {
 
-VideoStreamSpec makeOtherVideoSpec()
+StreamSpec makeOtherSpec()
 {
-  VideoStreamSpec spec;
+  StreamSpec spec;
   spec.stream_key = "other_video:test";
   spec.track_name = "lkros.video.other.test";
-  spec.input = OtherVideoInput{"test", "", ""};
+  spec.input = OtherInput{"test", "", ""};
   return spec;
 }
 
-VideoStreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type)
+StreamSpec makeRosTopicSpec(const std::string & topic, const char * interface_type)
 {
-  VideoStreamConfig config = makeDefaultVideoStreamConfig();
+  StreamConfig config = makeDefaultConfig();
   config.ros_topic_rules.front().rule_id = "test";
-  VideoStreamSpec spec = resolveRosVideoTopicSpec(config, topic, interface_type);
+  StreamSpec spec = resolveRosTopicSpec(config, topic, interface_type);
   spec.track_name = "lkros.video.test";
   return spec;
 }
@@ -68,9 +68,9 @@ const char * compressedImageInterfaceType()
   return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
 }
 
-GStreamerPipelineCallbacks makeNoOpPipelineCallbacks()
+PipelineCallbacks makeNoOpPipelineCallbacks()
 {
-  return GStreamerPipelineCallbacks{
+  return PipelineCallbacks{
     []() { return false; },
     [](const livekit::VideoFrame &, std::int64_t) {},
     [](const std::string &) {},
@@ -90,7 +90,7 @@ void expectStartErrorContains(
   }
 }
 
-class VideoStreamTest : public ::testing::Test
+class StreamTest : public ::testing::Test
 {
 protected:
   static void SetUpTestSuite()
@@ -100,7 +100,7 @@ protected:
   }
 };
 
-TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSink)
+TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSink)
 {
   GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
@@ -108,7 +108,7 @@ TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSink)
     pipeline, "videotestsrc is-live=true ! fakesink name=bridge_video_sink", false, "must be a GstAppSink");
 }
 
-TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
+TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 {
   GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
@@ -119,7 +119,7 @@ TEST_F(VideoStreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
     "must be a GstAppSrc");
 }
 
-TEST_F(VideoStreamTest, PipelineStartCapturesRequiredAppSrcHandle)
+TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 {
   GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
@@ -129,52 +129,52 @@ TEST_F(VideoStreamTest, PipelineStartCapturesRequiredAppSrcHandle)
   pipeline.stop();
 }
 
-TEST_F(VideoStreamTest, FailureHandlerCoalescesPendingFailures)
+TEST_F(StreamTest, PipelineFailureHandlerCoalescesPendingFailures)
 {
-  std::atomic<int> action_count{0};
-  VideoPipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++action_count; });
+  std::atomic<int> callback_count{0};
+  PipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++callback_count; });
 
   EXPECT_TRUE(handler.schedule());
   EXPECT_FALSE(handler.schedule());
-  handler.clearPending();
+  handler.cancelPending();
   EXPECT_TRUE(handler.schedule());
   handler.close();
 
-  EXPECT_EQ(action_count.load(), 0);
+  EXPECT_EQ(callback_count.load(), 0);
 }
 
-TEST_F(VideoStreamTest, FailureHandlerRunsScheduledFailure)
+TEST_F(StreamTest, PipelineFailureHandlerRunsScheduledFailure)
 {
   std::mutex mutex;
   std::condition_variable condition;
-  int action_count = 0;
-  VideoPipelineFailureHandler handler(std::chrono::milliseconds::zero(), [&]() {
+  int callback_count = 0;
+  PipelineFailureHandler handler(std::chrono::milliseconds::zero(), [&]() {
     std::lock_guard<std::mutex> lock(mutex);
-    ++action_count;
+    ++callback_count;
     condition.notify_all();
   });
 
   EXPECT_TRUE(handler.schedule());
   std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return action_count == 1; }));
+  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return callback_count == 1; }));
   lock.unlock();
   handler.close();
 
-  EXPECT_EQ(action_count, 1);
+  EXPECT_EQ(callback_count, 1);
 }
 
-TEST_F(VideoStreamTest, FailureHandlerCoalescesWhileActionRuns)
+TEST_F(StreamTest, PipelineFailureHandlerCoalescesWhileCallbackRuns)
 {
   std::mutex mutex;
   std::condition_variable condition;
-  std::unique_ptr<VideoPipelineFailureHandler> handler;
-  int action_count = 0;
+  std::unique_ptr<PipelineFailureHandler> handler;
+  int callback_count = 0;
   bool reschedule_checked = false;
   bool reschedule_accepted = true;
-  handler = std::make_unique<VideoPipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
+  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
     {
       std::lock_guard<std::mutex> lock(mutex);
-      ++action_count;
+      ++callback_count;
     }
     const bool accepted = handler->schedule();
     {
@@ -191,30 +191,30 @@ TEST_F(VideoStreamTest, FailureHandlerCoalescesWhileActionRuns)
   lock.unlock();
   handler->close();
 
-  EXPECT_EQ(action_count, 1);
+  EXPECT_EQ(callback_count, 1);
   EXPECT_FALSE(reschedule_accepted);
 }
 
-TEST_F(VideoStreamTest, FailureHandlerCloseCancelsDelayedFailure)
+TEST_F(StreamTest, PipelineFailureHandlerCloseCancelsDelayedFailure)
 {
-  std::atomic<int> action_count{0};
-  VideoPipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++action_count; });
+  std::atomic<int> callback_count{0};
+  PipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++callback_count; });
 
   EXPECT_TRUE(handler.schedule());
   handler.close();
 
-  EXPECT_EQ(action_count.load(), 0);
+  EXPECT_EQ(callback_count.load(), 0);
   EXPECT_FALSE(handler.schedule());
 }
 
-TEST_F(VideoStreamTest, OtherVideoLifecycleIsIdempotent)
+TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
 {
-  VideoStreamSpec spec = makeOtherVideoSpec();
-  spec.input = OtherVideoInput{"test", "videotestsrc is-live=true pattern=black", ""};
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", "videotestsrc is-live=true pattern=black", ""};
 
   FakeRoomConnection connection;
-  VideoTrackPublisher publisher(connection, spec);
-  GStreamerVideoStream stream(spec, publisher);
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
 
   stream.start();
   stream.close();
@@ -228,10 +228,10 @@ void expectRosTopicStreamLifecycleIsIdempotent(
   rclcpp::executors::SingleThreadedExecutor executor;
   executor.add_node(node);
 
-  VideoStreamSpec spec = makeRosTopicSpec(topic, interface_type);
+  StreamSpec spec = makeRosTopicSpec(topic, interface_type);
   FakeRoomConnection connection;
-  VideoTrackPublisher publisher(connection, spec);
-  auto stream = std::make_shared<RosVideoStream>(*node, spec, nullptr, publisher);
+  TrackPublisher publisher(connection, spec);
+  auto stream = std::make_shared<RosStream>(*node, spec, nullptr, publisher);
 
   stream->start();
   stream->start();
@@ -242,13 +242,13 @@ void expectRosTopicStreamLifecycleIsIdempotent(
   ASSERT_TRUE(test_support::spinUntil(executor, [&]() { return node->count_subscribers(topic) == 0U; }));
 }
 
-TEST_F(VideoStreamTest, RawRosTopicStreamLifecycleIsIdempotent)
+TEST_F(StreamTest, RawRosTopicStreamLifecycleIsIdempotent)
 {
   expectRosTopicStreamLifecycleIsIdempotent(
     "video_pipeline_ros_topic_raw_source_test", "/video_pipeline/raw_image", imageInterfaceType());
 }
 
-TEST_F(VideoStreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
+TEST_F(StreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
 {
   expectRosTopicStreamLifecycleIsIdempotent(
     "video_pipeline_ros_topic_compressed_source_test",
@@ -258,4 +258,4 @@ TEST_F(VideoStreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
 
 }  // namespace
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video

@@ -25,15 +25,15 @@
 #include <string>
 
 #include "livekit/video_frame.h"
-#include "utils/gstreamer_raii.hpp"
+#include "video/gstreamer_resources.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
-struct GStreamerPipelineCallbacks
+struct PipelineCallbacks
 {
   std::function<bool()> is_shutdown;
   std::function<void(const livekit::VideoFrame & frame, std::int64_t timestamp_us)> on_frame;
@@ -45,7 +45,7 @@ struct GStreamerPipelineCallbacks
 class GStreamerPipeline final
 {
 public:
-  explicit GStreamerPipeline(GStreamerPipelineCallbacks callbacks);
+  explicit GStreamerPipeline(PipelineCallbacks callbacks);
   ~GStreamerPipeline();
 
   GStreamerPipeline(const GStreamerPipeline &) = delete;
@@ -66,7 +66,7 @@ private:
   void resumeCallbacks();
   void stopCallbacksAndWait();
 
-  GStreamerPipelineCallbacks callbacks() const;
+  PipelineCallbacks callbacks() const;
 
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
@@ -74,11 +74,11 @@ private:
   static constexpr std::size_t kCallbacksStopped = ~(~std::size_t{0} >> 1U);
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
 
-  std::unique_ptr<GStreamerPipelineCallbacks> callbacks_;
-  std::atomic<const GStreamerPipelineCallbacks *> callbacks_ptr_{nullptr};
+  std::unique_ptr<PipelineCallbacks> callbacks_;
+  std::atomic<const PipelineCallbacks *> callbacks_ptr_{nullptr};
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
 };
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video
