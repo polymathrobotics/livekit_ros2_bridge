@@ -73,7 +73,7 @@ RosTopicPublisher::~RosTopicPublisher()
 void RosTopicPublisher::handlePayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload)
 {
   if (requester_identity.empty()) {
-    LogEvent(kLogger, "packet_rejected")
+    LogEvent(kLogger, "livekit_packet_rejected")
       .field("reason", "missing_requester_identity")
       .warnThrottle(*clock_, kLogThrottle);
     return;
@@ -82,7 +82,7 @@ void RosTopicPublisher::handlePayload(const std::string & requester_identity, co
   try {
     publish(requester_identity, protocol::topic_publish::parse(payload));
   } catch (const std::exception & exc) {
-    LogEvent event(kLogger, "packet_rejected");
+    LogEvent event(kLogger, "livekit_packet_rejected");
     event.field("reason", "invalid_publish_request").fieldOr("requester_identity", requester_identity);
     const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
     if (validation != nullptr) {
@@ -103,7 +103,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
   try {
     topic = topics_->resolve_topic_name(request.ros_topic);
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "publish_request_rejected")
+    LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_request")
       .fieldOr("topic", request.ros_topic)
       .fieldOr("requester_identity", requester_identity)
@@ -114,7 +114,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
   }
 
   if (!policy_.allows(AccessOperation::Publish, topic)) {
-    LogEvent(kLogger, "publish_request_rejected")
+    LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "forbidden")
       .fieldOr("topic", topic)
       .fieldOr("requester_identity", requester_identity)
@@ -134,7 +134,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
         type = entry->second.type;
         publisher = entry->second.publisher;
       } else if (publishers_.size() >= max_topics_) {
-        LogEvent(kLogger, "publish_request_rejected")
+        LogEvent(kLogger, "topic_publish_request_rejected")
           .field("reason", "publisher_cache_full")
           .fieldOr("topic", topic)
           .fieldOr("requester_identity", requester_identity)
@@ -152,7 +152,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
       throw std::invalid_argument("type mismatch expected=" + type + " got=" + request.interface_type);
     }
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "publish_request_rejected")
+    LogEvent(kLogger, "topic_publish_request_rejected")
       .field("reason", "invalid_request")
       .fieldOr("topic", topic)
       .fieldOr("requester_identity", requester_identity)
@@ -192,7 +192,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
       }
     }
   } catch (const std::exception & exc) {
-    LogEvent(kLogger, "publish_request_failed")
+    LogEvent(kLogger, "topic_publish_request_failed")
       .fieldOr("topic", topic)
       .fieldOr("requester_identity", requester_identity)
       .field("interface_type", type)

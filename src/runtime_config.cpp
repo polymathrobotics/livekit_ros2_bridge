@@ -168,7 +168,7 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     return config;
   } catch (...) {
-    LogEvent(kLogger, "runtime_config_load_failed")
+    LogEvent(kLogger, "node_config_load_failed")
       .field("stage", stage)
       .fieldException("error", std::current_exception())
       .error();

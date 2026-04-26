@@ -134,7 +134,7 @@ void SubscriptionLeaseManager::handleHeartbeatPayload(
   try {
     heartbeat = protocol::subscriptions::parse(payload);
   } catch (const std::exception & exc) {
-    LogEvent event(kLogger, "packet_rejected");
+    LogEvent event(kLogger, "livekit_packet_rejected");
     event.field("reason", "invalid_heartbeat").fieldOr("requester_identity", requester_identity);
     if (const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc); validation != nullptr) {
       event.field("request_field", validation->field());

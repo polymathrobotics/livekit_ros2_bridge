@@ -285,7 +285,7 @@ void DataTrackPublisher::publish()
     publication_ = std::make_unique<Publication>(
       ros_topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
   } catch (...) {
-    LogEvent(kLogger, "data_track_publish_error")
+    LogEvent(kLogger, "data_track_publish_failed")
       .field("resource", ros_topic_)
       .field("track_name", track_name_)
       .fieldException("error", std::current_exception())

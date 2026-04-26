@@ -97,7 +97,7 @@ void ConnectionWatchdog::clearOutage()
     return;
   }
 
-  LogEvent(logger_, "runtime_watchdog_healthy").field("unhealthy_duration_seconds", *duration).info();
+  LogEvent(logger_, "connection_watchdog_recovered").field("unhealthy_duration_seconds", *duration).info();
 }
 
 void ConnectionWatchdog::startOutage(std::string_view reason)
@@ -121,7 +121,7 @@ void ConnectionWatchdog::startOutage(std::string_view reason)
     return;
   }
 
-  LogEvent event = LogEvent(logger_, "runtime_watchdog_unhealthy")
+  LogEvent event = LogEvent(logger_, "connection_watchdog_unhealthy")
                      .field("reason", reason)
                      .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0);
   if (reason == kStartupPendingReason) {
@@ -148,8 +148,8 @@ void ConnectionWatchdog::check()
     return;
   }
 
-  LogEvent(logger_, "runtime_watchdog_triggered")
-    .field("disconnect_reason", "recovery_timeout")
+  LogEvent(logger_, "connection_watchdog_shutdown")
+    .field("shutdown_reason", "recovery_timeout")
     .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
     .error();
 

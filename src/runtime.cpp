@@ -66,7 +66,7 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
 Runtime::~Runtime()
 {
   if (callback_gate_.closeAndWait()) {
-    LogEvent(logger_, "runtime_shutdown_start").info();
+    LogEvent(logger_, "node_shutdown_start").info();
   }
 
   ros_executor_queue_.shutdown();
@@ -116,7 +116,7 @@ void Runtime::onUserPacketReceived(const livekit::UserDataPacketEvent & event)
     return;
   }
 
-  LogEvent(logger_, "packet_dropped")
+  LogEvent(logger_, "livekit_packet_dropped")
     .field("reason", "unsupported_topic")
     .fieldOr("topic", topic)
     .fieldOr("requester_identity", requester)
