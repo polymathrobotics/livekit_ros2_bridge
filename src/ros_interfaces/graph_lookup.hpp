@@ -19,17 +19,15 @@
 #include <string>
 #include <vector>
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::ros_interfaces
 {
 
 // Reject ambiguous ROS graph state at the bridge boundary instead of guessing.
-inline std::string requireSingleInterfaceType(
-  const std::map<std::string, std::vector<std::string>> & types_by_name,
-  const std::string & resource,
-  const char * kind)
+inline std::string requireSingleType(
+  const std::map<std::string, std::vector<std::string>> & graph, const std::string & resource, const char * kind)
 {
-  const auto found = types_by_name.find(resource);
-  if (found == types_by_name.end()) {
+  const auto found = graph.find(resource);
+  if (found == graph.end()) {
     throw std::invalid_argument(std::string("No ROS types found for ") + kind + " '" + resource + "'.");
   }
 
@@ -39,4 +37,4 @@ inline std::string requireSingleInterfaceType(
   return found->second.front();
 }
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::ros_interfaces

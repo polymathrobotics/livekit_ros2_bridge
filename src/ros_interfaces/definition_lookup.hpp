@@ -19,10 +19,10 @@
 
 #include "protocol/interfaces.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::ros_interfaces
 {
 
 /// Returns the requested ROS interface definition first, then transitive dependencies in discovery order.
 std::vector<InterfaceDefinition> lookupDefinitions(const std::string & type);
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::ros_interfaces

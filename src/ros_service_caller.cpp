@@ -24,7 +24,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -46,30 +45,16 @@
 #include "rclcpp/logging.hpp"
 #include "rclcpp/serialization.hpp"
 #include "rclcpp/timer.hpp"
-#include "rclcpp/typesupport_helpers.hpp"
 #include "rclcpp/version.h"
 #include "rclcpp/waitable.hpp"
-#include "rcpputils/shared_library.hpp"
 #include "rmw/types.h"
+#include "ros_interfaces/graph_lookup.hpp"
+#include "ros_interfaces/message_type_support.hpp"
+#include "ros_interfaces/service_type_support.hpp"
 #include "rosidl_runtime_cpp/message_initialization.hpp"
-#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
 #include "utils/event_throttle.hpp"
-#include "utils/interface_type_utils.hpp"
 #include "utils/log_event.hpp"
-#include "utils/lru_cache.hpp"
 #include "utils/scope_exit.hpp"
-
-// rclcpp 28+ (Jazzy) renamed get_typesupport_handle -> get_message_typesupport_handle.
-#if !RCLCPP_VERSION_GTE(28, 0, 0)
-namespace rclcpp
-{
-inline const rosidl_message_type_support_t * get_message_typesupport_handle(
-  const std::string & type, const std::string & typesupport_identifier, rcpputils::SharedLibrary & library)
-{
-  return get_typesupport_handle(type, typesupport_identifier, library);
-}
-}  // namespace rclcpp
-#endif
 
 namespace livekit_ros2_bridge
 {
@@ -77,34 +62,20 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-using MessageMembers = rosidl_typesupport_introspection_cpp::MessageMembers;
+using ros_interfaces::MessageBuffer;
+using ros_interfaces::ServiceTypeSupport;
 
-constexpr char kSerializationTypeSupportIdentifier[] = "rosidl_typesupport_cpp";
-constexpr char kIntrospectionTypeSupportIdentifier[] = "rosidl_typesupport_introspection_cpp";
-constexpr char kServiceTypeSupportSymbolPrefix[] = "__get_service_type_support_handle__";
-constexpr char kRequestMessageTypeSuffix[] = "_Request";
-constexpr char kResponseMessageTypeSuffix[] = "_Response";
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kDefaultTimeout = std::chrono::milliseconds(2000);
 constexpr int kMaxInflightPerRequester = 4;
-constexpr std::size_t kInvalidServiceTypeCacheCapacity = 256U;
 constexpr std::size_t kMaxCachedServiceClients = 256U;
 constexpr char kAnyServiceLogValue[] = "*";
 constexpr char kInflightLimitReachedError[] = "Requester identity service call limit reached.";
 constexpr int kReadyEntityId = 0;
 const auto kLogger = rclcpp::get_logger("ros_service_caller");
-using FailureCache = LruCache<std::string, std::exception_ptr>;
 
 void deadlineTimerCallback(rcl_timer_t *, int64_t)
 {}
-
-const MessageMembers & getMessageMembers(const rosidl_message_type_support_t * introspection_type_support)
-{
-  if (introspection_type_support == nullptr || introspection_type_support->data == nullptr) {
-    throw std::runtime_error("Introspection type support handle is null");
-  }
-  return *static_cast<const MessageMembers *>(introspection_type_support->data);
-}
 
 void logRejectedCall(
   const ServiceCallRequest & request,
@@ -124,118 +95,13 @@ void logRejectedCall(
     .warn();
 }
 
-class MessageBuffer
-{
-public:
-  // Pair introspection init/fini callbacks with the raw message buffer.
-  MessageBuffer(const MessageMembers & members, rosidl_runtime_cpp::MessageInitialization init)
-  : members_(members)
-  , buffer_(::operator new(members.size_of_))
-  {
-    members_.init_function(buffer_, init);
-  }
-
-  ~MessageBuffer()
-  {
-    members_.fini_function(buffer_);
-    ::operator delete(buffer_);
-  }
-
-  MessageBuffer(const MessageBuffer &) = delete;
-  MessageBuffer & operator=(const MessageBuffer &) = delete;
-
-  void * data()
-  {
-    return buffer_;
-  }
-
-private:
-  const MessageMembers & members_;
-  void * buffer_;
-};
-
-struct MessageSupport
-{
-  // Keep the libraries alive while cached type-support handles may be used.
-  explicit MessageSupport(const std::string & interface_type)
-  : serialization_library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
-  , introspection_library(rclcpp::get_typesupport_library(interface_type, kIntrospectionTypeSupportIdentifier))
-  , serialization(
-      rclcpp::get_message_typesupport_handle(
-        interface_type, kSerializationTypeSupportIdentifier, *serialization_library))
-  , introspection(
-      rclcpp::get_message_typesupport_handle(
-        interface_type, kIntrospectionTypeSupportIdentifier, *introspection_library))
-  , members(getMessageMembers(introspection))
-  , serializer(serialization)
-  {}
-
-  std::shared_ptr<rcpputils::SharedLibrary> serialization_library;
-  std::shared_ptr<rcpputils::SharedLibrary> introspection_library;
-  const rosidl_message_type_support_t * serialization;
-  const rosidl_message_type_support_t * introspection;
-  const MessageMembers & members;
-  rclcpp::SerializationBase serializer;
-};
-
-// rclcpp 28+ (Jazzy) provides get_service_typesupport_handle natively.
-// On Humble we load the symbol manually.
-#if RCLCPP_VERSION_GTE(28, 0, 0)
-
-const rosidl_service_type_support_t * getServiceTypeSupportHandle(
-  const std::string & service_type, const std::string & typesupport_identifier, rcpputils::SharedLibrary & library)
-{
-  return rclcpp::get_service_typesupport_handle(service_type, typesupport_identifier, library);
-}
-
-#else
-
-const rosidl_service_type_support_t * getServiceTypeSupportHandle(
-  const std::string & service_type, const std::string & typesupport_identifier, rcpputils::SharedLibrary & library)
-{
-  std::string symbol = typesupport_identifier + kServiceTypeSupportSymbolPrefix;
-  for (const char ch : service_type) {
-    if (ch == '/') {
-      symbol += "__";
-      continue;
-    }
-    symbol += ch;
-  }
-
-  if (!library.has_symbol(symbol)) {
-    throw std::runtime_error("Service typesupport symbol not found: " + symbol);
-  }
-
-  using GetServiceTypeSupportHandleFn = const rosidl_service_type_support_t * (*)();
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-  auto get_service_type_support_handle = reinterpret_cast<GetServiceTypeSupportHandleFn>(library.get_symbol(symbol));
-  return get_service_type_support_handle();
-}
-
-#endif
-
 // Use ClientBase directly because ServiceCallRequest supplies the service type at runtime.
 struct ServiceClient : public rclcpp::ClientBase
 {
-  struct TypeSupport
-  {
-    explicit TypeSupport(const std::string & interface_type)
-    : library(rclcpp::get_typesupport_library(interface_type, kSerializationTypeSupportIdentifier))
-    , service(getServiceTypeSupportHandle(interface_type, kSerializationTypeSupportIdentifier, *library))
-    , request(interface_type + kRequestMessageTypeSuffix)
-    , response(interface_type + kResponseMessageTypeSuffix)
-    {}
-
-    std::shared_ptr<rcpputils::SharedLibrary> library;
-    const rosidl_service_type_support_t * service;
-    MessageSupport request;
-    MessageSupport response;
-  };
-
   ServiceClient(
     const std::string & service_name,
     const std::string & interface_type,
-    std::shared_ptr<TypeSupport> support,
+    std::shared_ptr<ServiceTypeSupport> support,
     rclcpp::node_interfaces::NodeBaseInterface * node_base,
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph)
   : rclcpp::ClientBase(node_base, std::move(node_graph))
@@ -244,7 +110,7 @@ struct ServiceClient : public rclcpp::ClientBase
   {
     rcl_client_options_t options = rcl_client_get_default_options();
     rcl_ret_t ret = rcl_client_init(
-      get_client_handle().get(), get_rcl_node_handle(), this->support->service, service_name.c_str(), &options);
+      get_client_handle().get(), get_rcl_node_handle(), this->support->handle, service_name.c_str(), &options);
     if (ret != RCL_RET_OK) {
       if (ret == RCL_RET_SERVICE_NAME_INVALID) {
         // Match rclcpp::Client's constructor path so service-name validation stays
@@ -264,12 +130,12 @@ struct ServiceClient : public rclcpp::ClientBase
   {
     struct ResponseBuffer
     {
-      explicit ResponseBuffer(std::shared_ptr<TypeSupport> support)
+      explicit ResponseBuffer(std::shared_ptr<ServiceTypeSupport> support)
       : support(std::move(support))
       , message(this->support->response.members, rosidl_runtime_cpp::MessageInitialization::ZERO)
       {}
 
-      std::shared_ptr<TypeSupport> support;
+      std::shared_ptr<ServiceTypeSupport> support;
       MessageBuffer message;
     };
 
@@ -293,7 +159,7 @@ struct ServiceClient : public rclcpp::ClientBase
   ServiceClient & operator=(const ServiceClient &) = delete;
 
   std::string interface_type;
-  std::shared_ptr<TypeSupport> support;
+  std::shared_ptr<ServiceTypeSupport> support;
 };
 
 struct InflightKey
@@ -365,7 +231,6 @@ struct RosServiceCaller::Impl
   class ServiceWaitable;
 
   using ClientPtr = std::shared_ptr<ServiceClient>;
-  using TypeSupportPtr = std::shared_ptr<ServiceClient::TypeSupport>;
   using InflightMap = std::unordered_map<InflightKey, InflightCall, InflightKeyHash>;
   using InflightIter = InflightMap::iterator;
 
@@ -374,7 +239,6 @@ struct RosServiceCaller::Impl
     rclcpp::node_interfaces::NodeGraphInterface::SharedPtr graph,
     rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables);
 
-  TypeSupportPtr getTypeSupport(const std::string & interface_type);
   ClientPtr getClient(const std::string & service, const std::string & interface_type);
   void reserveInflightSlot(const std::string & requester);
   void releaseInflightSlot(const std::string & requester);
@@ -441,10 +305,9 @@ struct RosServiceCaller::Impl
   rclcpp::CallbackGroup::SharedPtr callback_group;
   std::shared_ptr<ServiceWaitable> waitable;
   std::unordered_map<std::string, ClientPtr> cached_clients;
-  std::unordered_map<std::string, TypeSupportPtr> type_supports;
+  ros_interfaces::ServiceTypeSupportCache type_supports;
   InflightMap inflight_calls;
   std::unordered_map<std::string, int> inflight_counts;
-  FailureCache type_support_failures{kInvalidServiceTypeCacheCapacity};
   std::mutex state_mutex;
   // shutdown() may run from executeWaitable(); same-thread reentry must not wait on itself.
   std::mutex waitable_lifecycle_mutex;
@@ -932,7 +795,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       interface_type = request.interface_type;
       if (interface_type.empty()) {
         interface_type =
-          requireSingleInterfaceType(impl_->graph->get_service_names_and_types(), request.name, "service");
+          ros_interfaces::requireSingleType(impl_->graph->get_service_names_and_types(), request.name, "service");
       }
     } catch (const std::exception & exc) {
       logRejectedCall(request, requester, interface_type, "interface_type_resolution_failed", exc);
@@ -1055,31 +918,6 @@ void RosServiceCaller::shutdown()
   impl_->clearCacheLocked();
 }
 
-RosServiceCaller::Impl::TypeSupportPtr RosServiceCaller::Impl::getTypeSupport(const std::string & interface_type)
-{
-  auto it = type_supports.find(interface_type);
-  if (it != type_supports.end()) {
-    return it->second;
-  }
-
-  if (const auto failure = type_support_failures.get(interface_type); failure.has_value()) {
-    std::rethrow_exception(*failure);
-  }
-
-  try {
-    return type_supports.emplace(interface_type, std::make_shared<ServiceClient::TypeSupport>(interface_type))
-      .first->second;
-  } catch (const std::exception & exc) {
-    if (
-      dynamic_cast<const std::invalid_argument *>(&exc) != nullptr ||
-      dynamic_cast<const std::runtime_error *>(&exc) != nullptr)
-    {
-      type_support_failures.set(interface_type, std::current_exception());
-    }
-    throw;
-  }
-}
-
 RosServiceCaller::Impl::ClientPtr RosServiceCaller::Impl::getClient(
   const std::string & service, const std::string & interface_type)
 {
@@ -1093,7 +931,7 @@ RosServiceCaller::Impl::ClientPtr RosServiceCaller::Impl::getClient(
     throw std::runtime_error("Service client cache limit reached.");
   }
 
-  auto support = getTypeSupport(interface_type);
+  auto support = type_supports.get(interface_type);
   auto entry = std::make_shared<ServiceClient>(service, interface_type, support, base.get(), graph);
   return cached_clients.emplace(key, std::move(entry)).first->second;
 }

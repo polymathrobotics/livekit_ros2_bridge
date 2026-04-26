@@ -30,7 +30,7 @@
 #include "rclcpp/create_timer.hpp"
 #include "rclcpp/logging.hpp"
 #include "room_connection.hpp"
-#include "utils/interface_type_utils.hpp"
+#include "ros_interfaces/graph_lookup.hpp"
 #include "utils/log_event.hpp"
 #include "utils/trim.hpp"
 #include "video/stream_spec.hpp"
@@ -281,7 +281,7 @@ void SubscriptionLeaseManager::resolveDemandDelivery(ResolvedDemand & demand) co
 {
   if (demand.kind == SubscriptionTargetKind::Topic) {
     const auto graph = node_interfaces_.get_node_graph_interface();
-    demand.interface_type = requireSingleInterfaceType(graph->get_topic_names_and_types(), demand.name, "topic");
+    demand.interface_type = ros_interfaces::requireSingleType(graph->get_topic_names_and_types(), demand.name, "topic");
     if (!video::classifyRosIngestMode(demand.interface_type).has_value()) {
       return;
     }

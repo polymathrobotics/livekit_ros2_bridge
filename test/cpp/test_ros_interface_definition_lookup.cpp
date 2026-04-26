@@ -17,9 +17,9 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "interface_definition_lookup.hpp"
+#include "ros_interfaces/definition_lookup.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::ros_interfaces
 {
 
 namespace
@@ -37,7 +37,7 @@ std::string captureException(Fn && fn, const char * type_name)
   return "";
 }
 
-TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
+TEST(DefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
 {
   const auto definitions = lookupDefinitions("std_msgs/msg/String");
 
@@ -46,7 +46,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpSimpleMessageWithoutDependencies)
   EXPECT_NE(definitions.front().body.find("string data"), std::string::npos);
 }
 
-TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
+TEST(DefinitionLookupTest, LooksUpMessageWithDirectDependencies)
 {
   const auto definitions = lookupDefinitions("std_msgs/msg/Header");
 
@@ -59,7 +59,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpMessageWithDirectDependencies)
   EXPECT_NE(time.body.find("int32 sec"), std::string::npos);
 }
 
-TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicates)
+TEST(DefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicates)
 {
   const auto definitions = lookupDefinitions("sensor_msgs/msg/BatteryState");
 
@@ -76,7 +76,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpTransitiveDependenciesWithoutDuplicat
   EXPECT_EQ(types, expected);
 }
 
-TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependencies)
+TEST(DefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependencies)
 {
   const auto definitions = lookupDefinitions("std_srvs/srv/SetBool");
 
@@ -85,7 +85,7 @@ TEST(InterfaceDefinitionLookupTest, LooksUpPrimitiveOnlyServiceWithoutDependenci
   EXPECT_NE(definitions.front().body.find("---"), std::string::npos);
 }
 
-TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesInTraversalOrder)
+TEST(DefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesInTraversalOrder)
 {
   const auto definitions = lookupDefinitions("sensor_msgs/srv/SetCameraInfo");
 
@@ -100,14 +100,14 @@ TEST(InterfaceDefinitionLookupTest, LooksUpServiceWithNestedMessageDependenciesI
   EXPECT_EQ(definitions[4].type, "sensor_msgs/msg/RegionOfInterest");
 }
 
-TEST(InterfaceDefinitionLookupTest, RejectsMalformedTypeShapeAndKind)
+TEST(DefinitionLookupTest, RejectsMalformedTypeShapeAndKind)
 {
   EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("sensor_msgs/msg/")); }(), std::invalid_argument);
   EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("std_msgs/msg/String/Extra")); }(), std::invalid_argument);
   EXPECT_THROW([]() { static_cast<void>(lookupDefinitions("std_msgs/topic/String")); }(), std::invalid_argument);
 }
 
-TEST(InterfaceDefinitionLookupTest, ReportsLookupFailures)
+TEST(DefinitionLookupTest, ReportsLookupFailures)
 {
   const auto missing_package = []() { (void)lookupDefinitions("nonexistent_pkg/msg/Foo"); };
   EXPECT_EQ(
@@ -120,7 +120,7 @@ TEST(InterfaceDefinitionLookupTest, ReportsLookupFailures)
   EXPECT_NE(error.find("/msg/NonexistentMessage.msg"), std::string::npos);
 }
 
-TEST(InterfaceDefinitionLookupTest, ReportsMalformedTypeFailures)
+TEST(DefinitionLookupTest, ReportsMalformedTypeFailures)
 {
   const auto malformed_type = []() { (void)lookupDefinitions("BatteryState"); };
   EXPECT_EQ(
@@ -130,4 +130,4 @@ TEST(InterfaceDefinitionLookupTest, ReportsMalformedTypeFailures)
 
 }  // namespace
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::ros_interfaces

@@ -23,7 +23,6 @@
 #include <utility>
 #include <vector>
 
-#include "interface_definition_lookup.hpp"
 #include "livekit/rpc_error.h"
 #include "protocol/constants.hpp"
 #include "protocol/interfaces_json.hpp"
@@ -33,6 +32,7 @@
 #include "protocol/validation_error.hpp"
 #include "rclcpp/logging.hpp"
 #include "ros_executor_queue.hpp"
+#include "ros_interfaces/definition_lookup.hpp"
 #include "ros_service_caller.hpp"
 #include "utils/log_event.hpp"
 
@@ -250,7 +250,7 @@ std::optional<std::string> RpcRouter::showInterfaces(const livekit::RpcInvocatio
     std::vector<InterfaceDefinition> definitions;
 
     for (const auto & type : types) {
-      for (auto & definition : lookupDefinitions(type)) {
+      for (auto & definition : ros_interfaces::lookupDefinitions(type)) {
         if (!seen.insert(definition.type).second) {
           continue;
         }

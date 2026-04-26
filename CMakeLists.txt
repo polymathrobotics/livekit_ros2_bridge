@@ -45,6 +45,22 @@ pkg_search_module(gstreamer REQUIRED IMPORTED_TARGET gstreamer-1.0)
 pkg_search_module(gstreamer-app REQUIRED IMPORTED_TARGET gstreamer-app-1.0)
 pkg_search_module(gstreamer-video REQUIRED IMPORTED_TARGET gstreamer-video-1.0)
 
+add_library(livekit_ros2_bridge_ros_interfaces STATIC
+  src/ros_interfaces/definition_lookup.cpp
+  src/ros_interfaces/message_type_support.cpp
+  src/ros_interfaces/service_type_support.cpp
+)
+set_target_properties(livekit_ros2_bridge_ros_interfaces PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(livekit_ros2_bridge_ros_interfaces PUBLIC
+  "${livekit_ros2_bridge_private_include_dir}"
+)
+target_link_libraries(livekit_ros2_bridge_ros_interfaces PUBLIC
+  rclcpp::rclcpp
+)
+target_link_libraries(livekit_ros2_bridge_ros_interfaces PRIVATE
+  ament_index_cpp::ament_index_cpp
+)
+
 add_library(livekit_ros2_bridge_video STATIC
   src/video/gstreamer_pipeline.cpp
   src/video/gstreamer_stream.cpp
@@ -74,7 +90,6 @@ add_library(${PROJECT_NAME} SHARED
   src/access_policy.cpp
   src/connection_watchdog.cpp
   src/data_track_publisher.cpp
-  src/interface_definition_lookup.cpp
   src/node.cpp
   src/protocol/cdr.cpp
   src/protocol/detail/base64.cpp
@@ -101,8 +116,8 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   rclcpp_components::component
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
-  ament_index_cpp::ament_index_cpp
   livekit_ros2_bridge_parameters
+  livekit_ros2_bridge_ros_interfaces
   livekit_ros2_bridge_video
   LiveKit::livekit
   nlohmann_json::nlohmann_json
@@ -141,14 +156,13 @@ if(BUILD_TESTING)
 
   livekit_ros2_bridge_add_test(test_access_policy test/cpp/test_access_policy.cpp)
   livekit_ros2_bridge_add_test(test_base64 test/cpp/test_base64.cpp)
-  livekit_ros2_bridge_add_test(test_lru_cache test/cpp/test_lru_cache.cpp)
   livekit_ros2_bridge_add_test(test_data_track_publisher test/cpp/test_data_track_publisher.cpp)
   livekit_ros2_bridge_add_test(
     test_subscription_lease_manager
     test/cpp/test_subscription_lease_manager.cpp
     ${test_msgs_TARGETS}
   )
-  livekit_ros2_bridge_add_test(test_interface_definition_lookup test/cpp/test_interface_definition_lookup.cpp)
+  livekit_ros2_bridge_add_test(test_ros_interface_definition_lookup test/cpp/test_ros_interface_definition_lookup.cpp)
   livekit_ros2_bridge_add_test(
     test_payload_helpers
     test/cpp/test_payload_helpers.cpp
@@ -167,7 +181,12 @@ if(BUILD_TESTING)
     nlohmann_json::nlohmann_json
     ${std_msgs_TARGETS}
   )
-  livekit_ros2_bridge_add_test(test_interface_type_utils test/cpp/test_interface_type_utils.cpp)
+  livekit_ros2_bridge_add_test(test_ros_graph_lookup test/cpp/test_ros_graph_lookup.cpp)
+  livekit_ros2_bridge_add_test(
+    test_ros_service_type_support
+    test/cpp/test_ros_service_type_support.cpp
+    ${std_srvs_TARGETS}
+  )
   livekit_ros2_bridge_add_test(test_log_event test/cpp/test_log_event.cpp)
   livekit_ros2_bridge_add_test(test_node test/cpp/test_node.cpp ${std_srvs_TARGETS})
   livekit_ros2_bridge_add_test(

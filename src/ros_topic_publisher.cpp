@@ -28,7 +28,7 @@
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
-#include "utils/interface_type_utils.hpp"
+#include "ros_interfaces/graph_lookup.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -145,7 +145,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
     }
 
     if (!publisher) {
-      type = requireSingleInterfaceType(graph_->get_topic_names_and_types(), topic, "topic");
+      type = ros_interfaces::requireSingleType(graph_->get_topic_names_and_types(), topic, "topic");
     }
 
     if (type != request.interface_type) {

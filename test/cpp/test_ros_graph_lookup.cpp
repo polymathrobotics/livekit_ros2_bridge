@@ -18,21 +18,19 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "utils/interface_type_utils.hpp"
+#include "ros_interfaces/graph_lookup.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::ros_interfaces
 {
 
 namespace
 {
 
-std::string requireSingleInterfaceTypeError(
-  const std::map<std::string, std::vector<std::string>> & types_by_name,
-  const std::string & resource,
-  const char * kind)
+std::string requireSingleTypeError(
+  const std::map<std::string, std::vector<std::string>> & graph, const std::string & resource, const char * kind)
 {
   try {
-    static_cast<void>(requireSingleInterfaceType(types_by_name, resource, kind));
+    static_cast<void>(requireSingleType(graph, resource, kind));
     ADD_FAILURE() << "Expected std::invalid_argument";
   } catch (const std::invalid_argument & error) {
     return error.what();
@@ -42,26 +40,26 @@ std::string requireSingleInterfaceTypeError(
   return {};
 }
 
-TEST(RequireSingleInterfaceTypeTest, ReturnsTheOnlyAdvertisedType)
+TEST(RequireSingleTypeTest, ReturnsTheOnlyAdvertisedType)
 {
-  const std::map<std::string, std::vector<std::string>> types_by_name{
+  const std::map<std::string, std::vector<std::string>> graph{
     {"/foo", {"bar/msg/Baz"}},
   };
-  EXPECT_EQ(requireSingleInterfaceType(types_by_name, "/foo", "topic"), "bar/msg/Baz");
+  EXPECT_EQ(requireSingleType(graph, "/foo", "topic"), "bar/msg/Baz");
 }
 
-TEST(RequireSingleInterfaceTypeTest, RejectsMissingTypeSetsAsNoTypesFound)
+TEST(RequireSingleTypeTest, RejectsMissingTypeSetsAsNoTypesFound)
 {
-  EXPECT_EQ(requireSingleInterfaceTypeError({}, "/foo", "topic"), "No ROS types found for topic '/foo'.");
+  EXPECT_EQ(requireSingleTypeError({}, "/foo", "topic"), "No ROS types found for topic '/foo'.");
 }
 
-TEST(RequireSingleInterfaceTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)
+TEST(RequireSingleTypeTest, RejectsAmbiguousTypeSetsAsMultipleTypesFound)
 {
   EXPECT_EQ(
-    requireSingleInterfaceTypeError({{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
+    requireSingleTypeError({{"/foo", {"a/msg/A", "b/msg/B"}}}, "/foo", "topic"),
     "Multiple ROS types found for topic '/foo'.");
 }
 
 }  // namespace
 
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::ros_interfaces
