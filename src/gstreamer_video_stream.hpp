@@ -14,12 +14,11 @@
 
 #pragma once
 
-#include <condition_variable>
 #include <mutex>
 #include <string>
-#include <thread>
 
 #include "gstreamer_pipeline.hpp"
+#include "video_pipeline_failure_handler.hpp"
 #include "video_stream_spec.hpp"
 
 namespace livekit_ros2_bridge
@@ -46,16 +45,15 @@ public:
 private:
   // Coalesces repeated EOS/error messages while a restart is pending.
   void onPipelineFailure(const std::string & reason);
-  void runRestartLoop();
+  void restartPipelineAfterFailure();
+  void startPipelineLocked();
 
   VideoStreamSpec spec_;
   VideoTrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
-  bool restart_pending_ = false;
-  std::condition_variable restart_condition_;
-  std::thread restart_worker_;
+  VideoPipelineFailureHandler failure_handler_;
 };
 
 }  // namespace livekit_ros2_bridge

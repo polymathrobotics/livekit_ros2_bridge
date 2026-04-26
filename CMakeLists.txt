@@ -70,6 +70,7 @@ add_library(${PROJECT_NAME} SHARED
   src/runtime.cpp
   src/subscription_lease_manager.cpp
   src/subscription_qos.cpp
+  src/video_pipeline_failure_handler.cpp
   src/video_stream_spec.cpp
   src/video_track_publisher.cpp
 )

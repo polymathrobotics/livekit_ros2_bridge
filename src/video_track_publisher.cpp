@@ -19,6 +19,7 @@
 #include <utility>
 #include <variant>
 
+#include "gstreamer_pipeline.hpp"
 #include "gstreamer_video_stream.hpp"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
@@ -78,6 +79,18 @@ VideoTrackPublisher::VideoTrackPublisher(RoomConnection & room_connection, Video
 VideoTrackPublisher::~VideoTrackPublisher()
 {
   close();
+}
+
+GStreamerPipelineCallbacks VideoTrackPublisher::makePipelineCallbacks(
+  std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed)
+{
+  return GStreamerPipelineCallbacks{
+    std::move(is_shutdown),
+    [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) { captureFrame(frame, timestamp_us); },
+    [this](const std::string & error) { onSampleUnpackFailed(error); },
+    [this](const std::string & error) { onCaptureFailed(error); },
+    std::move(on_failed),
+  };
 }
 
 void VideoTrackPublisher::captureFrame(const livekit::VideoFrame & frame, std::int64_t timestamp_us)

@@ -14,13 +14,11 @@
 
 #pragma once
 
-#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 
 #include "gstreamer_pipeline.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -31,6 +29,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "subscription_qos.hpp"
+#include "video_pipeline_failure_handler.hpp"
 #include "video_stream_spec.hpp"
 
 #include <gst/video/video-format.h>
@@ -76,7 +75,7 @@ private:
   // A failure stops the current pipeline; the next accepted ROS frame rebuilds
   // appsrc state.
   void onPipelineFailure(const std::string & reason);
-  void runFailureLoop();
+  void stopPipelineAfterFailure();
 
   void onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image);
   void onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image);
@@ -104,9 +103,7 @@ private:
   // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
   mutable std::mutex mutex_;
   bool is_shutdown_ = false;
-  bool failure_pending_ = false;
-  std::condition_variable failure_condition_;
-  std::thread failure_worker_;
+  VideoPipelineFailureHandler failure_handler_;
 };
 
 }  // namespace livekit_ros2_bridge

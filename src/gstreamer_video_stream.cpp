@@ -37,19 +37,13 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 GStreamerVideoStream::GStreamerVideoStream(VideoStreamSpec spec, VideoTrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(
-    GStreamerPipelineCallbacks{
-      [this]() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return is_shutdown_;
-      },
-      [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
-        publisher_.captureFrame(frame, timestamp_us);
-      },
-      [this](const std::string & error) { publisher_.onSampleUnpackFailed(error); },
-      [this](const std::string & error) { publisher_.onCaptureFailed(error); },
-      [this](const std::string & reason) { onPipelineFailure(reason); },
-    })
+, pipeline_(publisher.makePipelineCallbacks(
+    [this]() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return is_shutdown_;
+    },
+    [this](const std::string & reason) { onPipelineFailure(reason); }))
+, failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
 GStreamerVideoStream::~GStreamerVideoStream()
@@ -64,13 +58,11 @@ void GStreamerVideoStream::start()
     throw std::runtime_error("Video stream is shut down.");
   }
 
-  const auto & input = requireOtherVideoInput(spec_);
-  pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
+  startPipelineLocked();
 }
 
 void GStreamerVideoStream::close()
 {
-  std::thread worker;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -78,15 +70,9 @@ void GStreamerVideoStream::close()
     }
 
     is_shutdown_ = true;
-    restart_condition_.notify_all();
-    worker = std::move(restart_worker_);
   }
 
-  // The restart worker captures this, so join it before members destruct.
-  if (worker.joinable()) {
-    worker.join();
-  }
-
+  failure_handler_.close();
   pipeline_.stop();
 }
 
@@ -96,52 +82,36 @@ void GStreamerVideoStream::onPipelineFailure(const std::string & reason)
   if (is_shutdown_ || !pipeline_.isActive()) {
     return;
   }
-  if (restart_pending_) {
+  if (!failure_handler_.schedule()) {
     return;
   }
 
-  restart_pending_ = true;
   LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
     .warn();
-
-  if (!restart_worker_.joinable()) {
-    restart_worker_ = std::thread([this]() { runRestartLoop(); });
-  }
-  restart_condition_.notify_one();
 }
 
-void GStreamerVideoStream::runRestartLoop()
+void GStreamerVideoStream::restartPipelineAfterFailure()
 {
-  std::unique_lock<std::mutex> lock(mutex_);
-  while (true) {
-    restart_condition_.wait(lock, [this]() { return is_shutdown_ || restart_pending_; });
-    if (is_shutdown_) {
-      return;
-    }
-
-    if (restart_condition_.wait_for(lock, kRestartDelay, [this]() { return is_shutdown_; })) {
-      return;
-    }
-
-    lock.unlock();
-    lock.lock();
-    if (is_shutdown_) {
-      return;
-    }
-
-    pipeline_.stop();
-    restart_pending_ = false;
-
-    try {
-      const auto & input = requireOtherVideoInput(spec_);
-      pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
-    } catch (const std::exception & exc) {
-      publisher_.onRestartFailed(exc.what());
-    }
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
   }
+
+  pipeline_.stop();
+  try {
+    startPipelineLocked();
+  } catch (const std::exception & exc) {
+    publisher_.onRestartFailed(exc.what());
+  }
+}
+
+void GStreamerVideoStream::startPipelineLocked()
+{
+  const auto & input = requireOtherVideoInput(spec_);
+  pipeline_.start(buildPipelineDescription(input.ingress_fragment, input.transform_fragment), false);
 }
 
 }  // namespace livekit_ros2_bridge

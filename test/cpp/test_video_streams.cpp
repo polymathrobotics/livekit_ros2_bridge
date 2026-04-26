@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -27,6 +31,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "utils/gstreamer_raii.hpp"
+#include "video_pipeline_failure_handler.hpp"
 #include "video_track_publisher.hpp"
 
 namespace livekit_ros2_bridge
@@ -122,6 +127,84 @@ TEST_F(VideoStreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 
   EXPECT_NE(pipeline.appsrc(), nullptr);
   pipeline.stop();
+}
+
+TEST_F(VideoStreamTest, FailureHandlerCoalescesPendingFailures)
+{
+  std::atomic<int> action_count{0};
+  VideoPipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++action_count; });
+
+  EXPECT_TRUE(handler.schedule());
+  EXPECT_FALSE(handler.schedule());
+  handler.clearPending();
+  EXPECT_TRUE(handler.schedule());
+  handler.close();
+
+  EXPECT_EQ(action_count.load(), 0);
+}
+
+TEST_F(VideoStreamTest, FailureHandlerRunsScheduledFailure)
+{
+  std::mutex mutex;
+  std::condition_variable condition;
+  int action_count = 0;
+  VideoPipelineFailureHandler handler(std::chrono::milliseconds::zero(), [&]() {
+    std::lock_guard<std::mutex> lock(mutex);
+    ++action_count;
+    condition.notify_all();
+  });
+
+  EXPECT_TRUE(handler.schedule());
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return action_count == 1; }));
+  lock.unlock();
+  handler.close();
+
+  EXPECT_EQ(action_count, 1);
+}
+
+TEST_F(VideoStreamTest, FailureHandlerCoalescesWhileActionRuns)
+{
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::unique_ptr<VideoPipelineFailureHandler> handler;
+  int action_count = 0;
+  bool reschedule_checked = false;
+  bool reschedule_accepted = true;
+  handler = std::make_unique<VideoPipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      ++action_count;
+    }
+    const bool accepted = handler->schedule();
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      reschedule_accepted = accepted;
+      reschedule_checked = true;
+      condition.notify_all();
+    }
+  });
+
+  EXPECT_TRUE(handler->schedule());
+  std::unique_lock<std::mutex> lock(mutex);
+  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return reschedule_checked; }));
+  lock.unlock();
+  handler->close();
+
+  EXPECT_EQ(action_count, 1);
+  EXPECT_FALSE(reschedule_accepted);
+}
+
+TEST_F(VideoStreamTest, FailureHandlerCloseCancelsDelayedFailure)
+{
+  std::atomic<int> action_count{0};
+  VideoPipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++action_count; });
+
+  EXPECT_TRUE(handler.schedule());
+  handler.close();
+
+  EXPECT_EQ(action_count.load(), 0);
+  EXPECT_FALSE(handler.schedule());
 }
 
 TEST_F(VideoStreamTest, OtherVideoLifecycleIsIdempotent)

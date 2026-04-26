@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,6 +36,7 @@ struct SubscriptionQosConfig;
 
 class GStreamerVideoStream;
 class RosVideoStream;
+struct GStreamerPipelineCallbacks;
 
 class VideoTrackPublisher final
 {
@@ -75,6 +77,9 @@ private:
   void onCaptureFailed(const std::string & error);
   void onRestartFailed(const std::string & error);
   void onPushFailed(const std::string & error);
+
+  GStreamerPipelineCallbacks makePipelineCallbacks(
+    std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
 
   void close();
 

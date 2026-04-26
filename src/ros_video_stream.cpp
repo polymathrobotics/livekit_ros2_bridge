@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -157,18 +158,11 @@ RosVideoStream::RosVideoStream(
   VideoTrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(
-    GStreamerPipelineCallbacks{
-      [this]() { return isShutdown(); },
-      [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
-        publisher_.captureFrame(frame, timestamp_us);
-      },
-      [this](const std::string & error) { publisher_.onSampleUnpackFailed(error); },
-      [this](const std::string & error) { publisher_.onCaptureFailed(error); },
-      [this](const std::string & reason) { onPipelineFailure(reason); },
-    })
+, pipeline_(publisher.makePipelineCallbacks(
+    [this]() { return isShutdown(); }, [this](const std::string & reason) { onPipelineFailure(reason); }))
 , node_interfaces_(std::move(node_interfaces))
 , qos_config_(qos_config)
+, failure_handler_(std::chrono::milliseconds::zero(), [this]() { stopPipelineAfterFailure(); })
 {}
 
 RosVideoStream::~RosVideoStream()
@@ -217,7 +211,6 @@ void RosVideoStream::close()
 {
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr raw_subscription;
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
-  std::thread worker;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (is_shutdown_) {
@@ -225,15 +218,11 @@ void RosVideoStream::close()
     }
 
     is_shutdown_ = true;
-    failure_condition_.notify_all();
-    worker = std::move(failure_worker_);
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
   }
 
-  if (worker.joinable()) {
-    worker.join();
-  }
+  failure_handler_.close();
 
   // Subscription teardown can wait for executor callbacks, which take mutex_.
   raw_subscription.reset();
@@ -253,41 +242,25 @@ void RosVideoStream::onPipelineFailure(const std::string & reason)
   if (is_shutdown_ || !pipeline_.isActive()) {
     return;
   }
-  if (failure_pending_) {
+  if (!failure_handler_.schedule()) {
     return;
   }
 
-  failure_pending_ = true;
   LogEvent(kLogger, "video_stream_pipeline_recovery_disabled")
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .warn();
-
-  if (!failure_worker_.joinable()) {
-    failure_worker_ = std::thread([this]() { runFailureLoop(); });
-  }
-  failure_condition_.notify_one();
 }
 
-void RosVideoStream::runFailureLoop()
+void RosVideoStream::stopPipelineAfterFailure()
 {
-  std::unique_lock<std::mutex> lock(mutex_);
-  while (true) {
-    failure_condition_.wait(lock, [this]() { return is_shutdown_ || failure_pending_; });
-    if (is_shutdown_) {
-      return;
-    }
-
-    lock.unlock();
-    {
-      std::lock_guard<std::mutex> stop_lock(mutex_);
-      if (!is_shutdown_) {
-        resetPipelineStateLocked();
-        pipeline_.stop();
-      }
-    }
-    lock.lock();
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (is_shutdown_) {
+    return;
   }
+
+  resetPipelineStateLocked();
+  pipeline_.stop();
 }
 
 void RosVideoStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
@@ -428,7 +401,7 @@ void RosVideoStream::resetPipelineStateLocked()
 {
   layout_.reset();
   codec_.reset();
-  failure_pending_ = false;
+  failure_handler_.clearPending();
 }
 
 }  // namespace livekit_ros2_bridge
