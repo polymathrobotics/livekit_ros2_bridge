@@ -15,7 +15,6 @@
 #include "data_track_publisher.hpp"
 
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -35,8 +34,8 @@
 #include "rclcpp/serialized_message.hpp"
 #include "room_connection.hpp"
 #include "subscription_qos.hpp"
+#include "utils/callback_gate.hpp"
 #include "utils/log_event.hpp"
-#include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge
 {
@@ -90,33 +89,7 @@ public:
     State(State &&) = delete;
     State & operator=(State &&) = delete;
 
-    void closeAndWait()
-    {
-      std::unique_lock<std::mutex> lock(lifecycle_mutex_);
-      closed_ = true;
-      idle_.wait(lock, [this]() { return active_callbacks_ == 0U; });
-    }
-
-    bool tryEnter()
-    {
-      std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-      if (closed_) {
-        return false;
-      }
-
-      ++active_callbacks_;
-      return true;
-    }
-
-    void leave()
-    {
-      {
-        std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-        --active_callbacks_;
-      }
-
-      idle_.notify_all();
-    }
+    CallbackGate callback_gate_;
 
     void setIntervalMs(int interval_ms)
     {
@@ -190,11 +163,6 @@ public:
     std::string track_name_;
     std::shared_ptr<livekit::LocalDataTrack> track_;
 
-    std::mutex lifecycle_mutex_;
-    std::condition_variable idle_;
-    bool closed_ = false;
-    std::size_t active_callbacks_ = 0U;
-
     std::mutex throttle_mutex_;
     int interval_ms_ = 0;
     std::optional<std::chrono::steady_clock::time_point> last_push_at_;
@@ -227,7 +195,7 @@ public:
 
   ~Publication()
   {
-    state_->closeAndWait();
+    (void)state_->callback_gate_.closeAndWait();
     subscription_.reset();
     state_->unpublish();
   }
@@ -269,11 +237,10 @@ private:
       qos.qos,
       [weak_state = std::weak_ptr<State>(state_)](std::shared_ptr<rclcpp::SerializedMessage> message) {
         const auto state = weak_state.lock();
-        if (state == nullptr || !state->tryEnter()) {
+        if (state == nullptr) {
           return;
         }
-        ScopeExit leave([&state]() { state->leave(); });
-        state->push(*message);
+        (void)state->callback_gate_.run([&state, &message]() { state->push(*message); });
       });
   }
 

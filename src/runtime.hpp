@@ -14,13 +14,9 @@
 
 #pragma once
 
-#include <condition_variable>
-#include <cstddef>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <utility>
 
 #include "connection_watchdog.hpp"
 #include "rclcpp/clock.hpp"
@@ -41,54 +37,10 @@
 #include "rpc_router.hpp"
 #include "runtime_config.hpp"
 #include "subscription_lease_manager.hpp"
+#include "utils/callback_gate.hpp"
 
 namespace livekit_ros2_bridge
 {
-
-class CallbackGate final
-{
-public:
-  // Prevents SDK-thread callbacks from outliving Runtime-owned targets.
-  template <typename Fn>
-  bool run(Fn && fn)
-  {
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (closed_) {
-        return false;
-      }
-
-      ++active_;
-    }
-
-    struct Active
-    {
-      CallbackGate & gate;
-
-      ~Active()
-      {
-        {
-          std::lock_guard<std::mutex> lock(gate.mutex_);
-          --gate.active_;
-        }
-
-        gate.idle_.notify_all();
-      }
-    } active{*this};
-
-    std::forward<Fn>(fn)();
-    return true;
-  }
-
-  // Waits for active callbacks; returns true only for the first close.
-  bool closeAndWait();
-
-private:
-  std::mutex mutex_;
-  std::condition_variable idle_;
-  bool closed_ = false;
-  std::size_t active_ = 0U;
-};
 
 class Runtime final
 {

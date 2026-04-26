@@ -97,15 +97,6 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
   return callbacks;
 }
 
-bool CallbackGate::closeAndWait()
-{
-  std::unique_lock<std::mutex> lock(mutex_);
-  const bool first_close = !closed_;
-  closed_ = true;
-  idle_.wait(lock, [this]() { return active_ == 0U; });
-  return first_close;
-}
-
 void Runtime::onUserPacketReceived(const livekit::UserDataPacketEvent & event)
 {
   const std::string topic = event.topic;

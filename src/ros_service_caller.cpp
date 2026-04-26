@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -52,6 +51,7 @@
 #include "ros_interfaces/message_type_support.hpp"
 #include "ros_interfaces/service_type_support.hpp"
 #include "rosidl_runtime_cpp/message_initialization.hpp"
+#include "utils/callback_gate.hpp"
 #include "utils/event_throttle.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
@@ -246,11 +246,6 @@ struct RosServiceCaller::Impl
   void drainResponses();
   void syncWaitableLocked(bool wake = true);
   void detachWaitable();
-  bool isWaitableOpen();
-  void closeWaitable();
-  bool tryBeginWaitableCallback();
-  void finishWaitableCallback();
-  void awaitWaitableIdle();
 
   template <typename ShouldFailFn>
   void failMatchingCalls(
@@ -308,12 +303,8 @@ struct RosServiceCaller::Impl
   InflightMap inflight_calls;
   std::unordered_map<std::string, int> inflight_counts;
   std::mutex state_mutex;
-  // shutdown() may run from executeWaitable(); same-thread reentry must not wait on itself.
+  CallbackGate waitable_callback_gate{CallbackGate::Concurrency::Exclusive};
   std::mutex waitable_lifecycle_mutex;
-  std::condition_variable waitable_idle;
-  bool waitable_closed = false;
-  bool waitable_active = false;
-  std::thread::id waitable_owner_thread_id{};
   EventThrottle late_response_throttle{kLogThrottle};
 };
 
@@ -586,6 +577,8 @@ public:
 
   void stopAndWait()
   {
+    // This guard protects raw rclcpp Waitable entry points during waitable
+    // removal and timer finalization, so it intentionally stays local/atomic.
     std::size_t state = use_state_.fetch_or(kUseStopped, std::memory_order_acq_rel) | kUseStopped;
     while ((state & kUseCountMask) != 0U) {
       std::this_thread::yield();
@@ -775,7 +768,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
 
   std::string interface_type;
 
-  if (!impl_->isWaitableOpen()) {
+  if (impl_->waitable_callback_gate.isClosed()) {
     const std::runtime_error exc("Service caller is shut down.");
     logRejectedCall(request, requester, interface_type, "shutdown", exc, false);
     promise.set_exception(std::make_exception_ptr(exc));
@@ -802,7 +795,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
     }
 
     std::lock_guard<std::mutex> lock(impl_->state_mutex);
-    if (!impl_->isWaitableOpen()) {
+    if (impl_->waitable_callback_gate.isClosed()) {
       const std::runtime_error exc("Service caller is shut down.");
       logRejectedCall(request, requester, interface_type, "shutdown", exc, false);
       throw exc;
@@ -899,8 +892,8 @@ void RosServiceCaller::cancelForRequester(const std::string & requester)
 
 void RosServiceCaller::shutdown()
 {
-  impl_->closeWaitable();
-  impl_->awaitWaitableIdle();
+  // shutdown() may run from executeWaitable(); same-thread reentry must not wait on itself.
+  (void)impl_->waitable_callback_gate.closeAndWait(CallbackGate::WaitMode::ExcludingCurrentThread);
   impl_->detachWaitable();
 
   std::lock_guard<std::mutex> lock(impl_->state_mutex);
@@ -951,66 +944,19 @@ void RosServiceCaller::Impl::releaseInflightSlot(const std::string & requester)
 
 void RosServiceCaller::Impl::executeWaitable()
 {
-  if (!tryBeginWaitableCallback()) {
-    return;
-  }
+  (void)waitable_callback_gate.run([this]() {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    if (waitable_callback_gate.isClosed()) {
+      return;
+    }
 
-  ScopeExit finish([this]() { finishWaitableCallback(); });
+    drainResponses();
+    const auto now = std::chrono::steady_clock::now();
+    failMatchingCalls(
+      [now](const InflightCall & call) { return now >= call.deadline; }, "Service call timed out.", "timeout", true);
 
-  std::lock_guard<std::mutex> lock(state_mutex);
-  if (!isWaitableOpen()) {
-    return;
-  }
-
-  drainResponses();
-  const auto now = std::chrono::steady_clock::now();
-  failMatchingCalls(
-    [now](const InflightCall & call) { return now >= call.deadline; }, "Service call timed out.", "timeout", true);
-
-  syncWaitableLocked(false);
-}
-
-bool RosServiceCaller::Impl::isWaitableOpen()
-{
-  std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-  return !waitable_closed;
-}
-
-void RosServiceCaller::Impl::closeWaitable()
-{
-  std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-  waitable_closed = true;
-}
-
-bool RosServiceCaller::Impl::tryBeginWaitableCallback()
-{
-  std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-  if (waitable_closed || waitable_active) {
-    return false;
-  }
-
-  waitable_active = true;
-  waitable_owner_thread_id = std::this_thread::get_id();
-  return true;
-}
-
-void RosServiceCaller::Impl::finishWaitableCallback()
-{
-  {
-    std::lock_guard<std::mutex> lock(waitable_lifecycle_mutex);
-    waitable_active = false;
-    waitable_owner_thread_id = std::thread::id{};
-  }
-
-  waitable_idle.notify_all();
-}
-
-void RosServiceCaller::Impl::awaitWaitableIdle()
-{
-  const auto caller_thread_id = std::this_thread::get_id();
-  std::unique_lock<std::mutex> lock(waitable_lifecycle_mutex);
-  waitable_idle.wait(
-    lock, [this, caller_thread_id]() { return !waitable_active || waitable_owner_thread_id == caller_thread_id; });
+    syncWaitableLocked(false);
+  });
 }
 
 void RosServiceCaller::Impl::syncWaitableLocked(bool wake)

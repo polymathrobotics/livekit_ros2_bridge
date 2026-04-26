@@ -149,6 +149,8 @@ PipelineCallbacks GStreamerPipeline::callbacks() const
   return callbacks == nullptr ? PipelineCallbacks{} : *callbacks;
 }
 
+// GStreamer may enter raw C callbacks from streaming/bus threads while stop()
+// clears callback pointers, so this tight atomic gate intentionally stays local.
 bool GStreamerPipeline::beginCallback()
 {
   std::size_t state = callback_state_.load(std::memory_order_acquire);
