@@ -496,8 +496,8 @@ TEST_F(RuntimeTest, VideoTrackTeardownHappensBeforeRoomStop)
     255,
     255,
   };
-  ASSERT_TRUE(publishUntil(
-    executor, publisher, image, [&]() { return harness.state->published_video_track_names.size() == 1U; }));
+  ASSERT_TRUE(
+    publishUntil(executor, publisher, image, [&]() { return harness.state->publishedVideoTrackCount() == 1U; }));
   const std::string track_name = harness.state->published_video_track_names.front();
 
   harness.runtime.reset();
@@ -657,7 +657,7 @@ TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)
   };
   publisher->publish(image);
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_video_track_names.size() == 1U; }));
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->publishedVideoTrackCount() == 1U; }));
 }
 
 TEST_F(RuntimeTest, StopTimeCallbacksDoNotSubmitNewIngressAfterShutdownStarts)

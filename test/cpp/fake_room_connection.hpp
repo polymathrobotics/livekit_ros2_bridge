@@ -15,10 +15,12 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -89,6 +91,19 @@ struct FakeRoomConnectionState
   bool throw_on_publish_data = false;
   bool throw_on_unpublish_video = false;
   int publish_data_call_count = 0;
+
+  std::size_t publishedVideoTrackCount() const
+  {
+    return published_video_track_count.load(std::memory_order_acquire);
+  }
+
+  void notePublishedVideoTrack()
+  {
+    published_video_track_count.store(published_video_track_names.size(), std::memory_order_release);
+  }
+
+private:
+  std::atomic<std::size_t> published_video_track_count{0};
 };
 
 class FakeRoomConnection final : public RoomConnection
@@ -105,6 +120,7 @@ public:
 
   void start(LiveKitConfig config, RoomEventCallbacks callbacks) override
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     state->started = true;
     state->access_token = std::move(config.access_token);
     state->callbacks = std::move(callbacks);
@@ -113,6 +129,7 @@ public:
 
   bool registerRpc(const std::string & method, livekit::LocalParticipant::RpcHandler handler) override
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     state->registered_rpc_methods.push_back(method);
     const bool registration_rejected =
       std::find(state->rejected_rpc_methods.begin(), state->rejected_rpc_methods.end(), method) !=
@@ -126,6 +143,7 @@ public:
 
   bool unregisterRpc(const std::string & method) override
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     state->event_log.push_back("unregister:" + method);
     state->unregistered_rpc_methods.push_back(method);
     state->rpc_handlers.erase(method);
@@ -138,6 +156,7 @@ public:
     const std::vector<std::string> & destination_identities,
     const std::string & topic) override
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     state->publish_data_call_count++;
     if (state->throw_on_publish_data) {
       throw std::runtime_error("simulated publishData failure");
@@ -148,10 +167,17 @@ public:
 
   std::shared_ptr<livekit::LocalDataTrack> publishDataTrack(const std::string & name) override
   {
-    state->event_log.push_back("publish_data_track:" + name);
-    state->published_data_track_names.push_back(name);
-    auto track = state->publish_data_track_handler ? state->publish_data_track_handler(name) : makeSyntheticDataTrack();
+    std::function<std::shared_ptr<livekit::LocalDataTrack>(const std::string & name)> handler;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state->event_log.push_back("publish_data_track:" + name);
+      state->published_data_track_names.push_back(name);
+      handler = state->publish_data_track_handler;
+    }
+
+    auto track = handler ? handler(name) : makeSyntheticDataTrack();
     if (track != nullptr) {
+      std::lock_guard<std::mutex> lock(mutex_);
       data_track_names_[track.get()] = name;
     }
     return track;
@@ -161,11 +187,19 @@ public:
     const std::shared_ptr<livekit::LocalDataTrack> & track, const livekit::DataTrackFrame & frame) override
   {
     const std::string name = lookupDataTrackName(track);
-    state->event_log.push_back("push_data_track:" + name);
-    const auto result = state->try_push_data_track_handler
-                          ? state->try_push_data_track_handler(name, frame)
-                          : livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
+    std::function<livekit::Result<void, livekit::LocalDataTrackTryPushError>(
+      const std::string & name, const livekit::DataTrackFrame & frame)>
+      handler;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state->event_log.push_back("push_data_track:" + name);
+      handler = state->try_push_data_track_handler;
+    }
+
+    const auto result =
+      handler ? handler(name, frame) : livekit::Result<void, livekit::LocalDataTrackTryPushError>::success();
     if (result) {
+      std::lock_guard<std::mutex> lock(mutex_);
       state->pushed_data_track_frames.push_back({name, frame});
     }
     return result;
@@ -174,6 +208,7 @@ public:
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
     const std::string name = lookupDataTrackName(track);
+    std::lock_guard<std::mutex> lock(mutex_);
     state->unpublish_attempted_data_track_names.push_back(name);
     const bool unpublish_rejected =
       std::find(
@@ -193,14 +228,21 @@ public:
     const livekit::TrackPublishOptions & options) override
   {
     (void)source;
-    state->event_log.push_back("publish_video_track:" + name);
-    state->published_video_track_names.push_back(name);
-    state->published_video_options.push_back(options);
-    if (state->publish_video_track_hook) {
-      state->publish_video_track_hook(name);
+    std::function<void(const std::string & name)> hook;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state->event_log.push_back("publish_video_track:" + name);
+      state->published_video_track_names.push_back(name);
+      state->published_video_options.push_back(options);
+      state->notePublishedVideoTrack();
+      hook = state->publish_video_track_hook;
+    }
+    if (hook) {
+      hook(name);
     }
 
     auto track = makeSyntheticVideoTrack();
+    std::lock_guard<std::mutex> lock(mutex_);
     video_track_names_[track.get()] = name;
     return track;
   }
@@ -208,30 +250,47 @@ public:
   void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) override
   {
     const std::string name = lookupVideoTrackName(track);
-    state->event_log.push_back("unpublish_video_track:" + name);
-    state->unpublished_video_track_names.push_back(name);
-    video_track_names_.erase(track.get());
-    if (state->unpublish_video_track_hook) {
-      state->unpublish_video_track_hook(name);
+    std::function<void(const std::string & name)> hook;
+    bool throw_on_unpublish_video = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state->event_log.push_back("unpublish_video_track:" + name);
+      state->unpublished_video_track_names.push_back(name);
+      video_track_names_.erase(track.get());
+      hook = state->unpublish_video_track_hook;
+      throw_on_unpublish_video = state->throw_on_unpublish_video;
     }
-    if (state->throw_on_unpublish_video) {
+    if (hook) {
+      hook(name);
+    }
+    if (throw_on_unpublish_video) {
       throw std::runtime_error("simulated video unpublish failure");
     }
   }
 
   void stop() override
   {
-    if (state->stopped) {
-      return;
+    std::function<void(FakeRoomConnection & connection)> hook;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (state->stopped) {
+        return;
+      }
+
+      state->stopped = true;
+      state->event_log.push_back("stop");
+      hook = state->stop_hook;
     }
 
-    state->stopped = true;
-    state->event_log.push_back("stop");
-    if (state->stop_hook) {
-      state->stop_hook(*this);
+    if (hook) {
+      hook(*this);
     }
-    state->callbacks = RoomEventCallbacks{};
-    state->connection_state = livekit::ConnectionState::Disconnected;
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state->callbacks = RoomEventCallbacks{};
+      state->connection_state = livekit::ConnectionState::Disconnected;
+    }
   }
 
   void emitConnected() const
@@ -261,24 +320,34 @@ public:
 
   void emitParticipantDisconnected(const std::string & requester_identity) const
   {
-    const bool should_forward = state->connection_state == livekit::ConnectionState::Connected &&
-                                !requester_identity.empty() &&
-                                static_cast<bool>(state->callbacks.on_participant_disconnected);
-    if (!should_forward) {
-      return;
+    std::function<void(const livekit::ParticipantDisconnectedEvent &)> callback;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (
+        state->connection_state != livekit::ConnectionState::Connected || requester_identity.empty() ||
+        !state->callbacks.on_participant_disconnected)
+      {
+        return;
+      }
+      callback = state->callbacks.on_participant_disconnected;
     }
 
     livekit::ParticipantDisconnectedEvent event;
     auto participant = makeRemoteParticipant(requester_identity);
     event.participant = &participant;
-    state->callbacks.on_participant_disconnected(event);
+    callback(event);
   }
 
   void emitUserPacket(
     std::vector<std::uint8_t> payload, std::string topic, const std::string & requester_identity) const
   {
-    if (!state->callbacks.on_user_packet_received) {
-      return;
+    std::function<void(const livekit::UserDataPacketEvent &)> callback;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!state->callbacks.on_user_packet_received) {
+        return;
+      }
+      callback = state->callbacks.on_user_packet_received;
     }
 
     livekit::UserDataPacketEvent event;
@@ -286,13 +355,13 @@ public:
     event.topic = std::move(topic);
 
     if (requester_identity.empty()) {
-      state->callbacks.on_user_packet_received(event);
+      callback(event);
       return;
     }
 
     auto participant = makeRemoteParticipant(requester_identity);
     event.participant = &participant;
-    state->callbacks.on_user_packet_received(event);
+    callback(event);
   }
 
   void emitUserPacket(const std::string & payload, std::string topic, const std::string & requester_identity) const
@@ -302,13 +371,13 @@ public:
 
   std::shared_ptr<livekit::LocalDataTrack> makeSyntheticDataTrack()
   {
-    auto owner = std::make_shared<int>(next_track_id_++);
+    auto owner = std::make_shared<int>(next_track_id_.fetch_add(1, std::memory_order_relaxed));
     return std::shared_ptr<livekit::LocalDataTrack>(owner, reinterpret_cast<livekit::LocalDataTrack *>(owner.get()));
   }
 
   std::shared_ptr<livekit::LocalVideoTrack> makeSyntheticVideoTrack()
   {
-    auto owner = std::make_shared<int>(next_track_id_++);
+    auto owner = std::make_shared<int>(next_track_id_.fetch_add(1, std::memory_order_relaxed));
     return std::shared_ptr<livekit::LocalVideoTrack>(owner, reinterpret_cast<livekit::LocalVideoTrack *>(owner.get()));
   }
 
@@ -317,12 +386,17 @@ public:
 private:
   void emitConnectionState(livekit::ConnectionState new_state) const
   {
-    if (state->connection_state == new_state) {
-      return;
+    std::function<void(livekit::ConnectionState)> callback;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (state->connection_state == new_state) {
+        return;
+      }
+      state->connection_state = new_state;
+      callback = state->callbacks.on_state_changed;
     }
-    state->connection_state = new_state;
-    if (state->callbacks.on_state_changed) {
-      state->callbacks.on_state_changed(new_state);
+    if (callback) {
+      callback(new_state);
     }
   }
 
@@ -341,17 +415,20 @@ private:
 
   std::string lookupDataTrackName(const std::shared_ptr<livekit::LocalDataTrack> & track) const
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto it = data_track_names_.find(track.get());
     return it == data_track_names_.end() ? kUnknownDataTrackName : it->second;
   }
 
   std::string lookupVideoTrackName(const std::shared_ptr<livekit::LocalVideoTrack> & track) const
   {
+    std::lock_guard<std::mutex> lock(mutex_);
     const auto it = video_track_names_.find(track.get());
     return it == video_track_names_.end() ? kUnknownDataTrackName : it->second;
   }
 
-  int next_track_id_ = 1;
+  mutable std::mutex mutex_;
+  std::atomic<int> next_track_id_{1};
   std::map<const livekit::LocalDataTrack *, std::string> data_track_names_;
   std::map<const livekit::LocalVideoTrack *, std::string> video_track_names_;
 };

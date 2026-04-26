@@ -82,15 +82,18 @@ public:
       }
     };
 
-    std::unique_lock<std::mutex> lock(mutex_);
-    if (shutdown_) {
+    auto state = state_;
+    std::unique_lock<std::mutex> lock(state->mutex);
+    if (state->shutdown) {
       lock.unlock();
-      LogEvent(logger_, "executor_task_rejected").field("reason", "shutdown").warnThrottle(*log_clock_, kLogThrottle);
+      LogEvent(logger_, "executor_task_rejected")
+        .field("reason", "shutdown")
+        .warnThrottle(*state->log_clock, kLogThrottle);
       task.cancel();
       return future;
     }
 
-    tasks_.push(std::move(task));
+    state->tasks.push(std::move(task));
     lock.unlock();
 
     wake();
@@ -110,30 +113,37 @@ private:
     std::function<void()> cancel;
   };
 
+  struct State
+  {
+    explicit State(rclcpp::Clock::SharedPtr clock)
+    : log_clock(std::move(clock))
+    {}
+
+    std::mutex mutex;
+    std::queue<Task> tasks;
+    rclcpp::Clock::SharedPtr log_clock;
+
+    bool shutdown = false;
+
+    // Identifies the active drain so shutdown() can wait without deadlocking when
+    // called by the drain owner.
+    std::condition_variable idle;
+    bool draining = false;
+    std::thread::id drain_owner{};
+  };
+
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
   inline static const auto logger_ = rclcpp::get_logger("ros_executor_queue");
 
-  std::mutex mutex_;
-  std::queue<Task> tasks_;
-
-  // Cleared during shutdown so concurrent wake() becomes a no-op.
+  std::shared_ptr<State> state_;
+  // The node may keep the waitable while its executor is still spinning. The
+  // waitable only keeps weak queue state, so late executor callbacks are no-ops.
   std::shared_ptr<DrainWaitable> waitable_;
-  // Retained so shutdown() can unregister waitable_ from the same node.
   rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr waitables_;
 
-  rclcpp::Clock::SharedPtr log_clock_;
-
-  bool shutdown_ = false;
-
-  // Identifies the active drain so shutdown() can wait without deadlocking when
-  // called by the drain owner.
-  std::condition_variable idle_;
-  bool draining_ = false;
-  std::thread::id drain_owner_{};
-
-  void drain();
+  static void drain(const std::shared_ptr<State> & state);
+  static void awaitIdle(const std::shared_ptr<State> & state);
   void wake();
-  void awaitIdle();
 };
 
 }  // namespace livekit_ros2_bridge

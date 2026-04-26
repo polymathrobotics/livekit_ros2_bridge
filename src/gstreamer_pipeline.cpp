@@ -19,9 +19,11 @@
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 #include "livekit/video_source.h"
+#include "utils/scope_exit.hpp"
 #include "video_pipeline_description.hpp"
 
 namespace livekit_ros2_bridge
@@ -121,8 +123,10 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
 }  // namespace
 
 GStreamerPipeline::GStreamerPipeline(GStreamerPipelineCallbacks callbacks)
-: callbacks_(std::move(callbacks))
-{}
+{
+  callbacks_ = std::make_unique<GStreamerPipelineCallbacks>(std::move(callbacks));
+  callbacks_ptr_.store(callbacks_.get(), std::memory_order_release);
+}
 
 GStreamerPipeline::~GStreamerPipeline()
 {
@@ -139,10 +143,48 @@ GstAppSrc * GStreamerPipeline::appsrc() const noexcept
   return appsrc_.get();
 }
 
+GStreamerPipelineCallbacks GStreamerPipeline::callbacks() const
+{
+  const auto * callbacks = callbacks_ptr_.load(std::memory_order_acquire);
+  return callbacks == nullptr ? GStreamerPipelineCallbacks{} : *callbacks;
+}
+
+bool GStreamerPipeline::beginCallback()
+{
+  std::size_t state = callback_state_.load(std::memory_order_acquire);
+  while ((state & kCallbacksStopped) == 0U) {
+    if (callback_state_.compare_exchange_weak(state, state + 1U, std::memory_order_acq_rel, std::memory_order_acquire))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+void GStreamerPipeline::endCallback()
+{
+  (void)callback_state_.fetch_sub(1U, std::memory_order_acq_rel);
+}
+
+void GStreamerPipeline::resumeCallbacks()
+{
+  callback_state_.store(0U, std::memory_order_release);
+}
+
+void GStreamerPipeline::stopCallbacksAndWait()
+{
+  std::size_t state = callback_state_.fetch_or(kCallbacksStopped, std::memory_order_acq_rel) | kCallbacksStopped;
+  while ((state & kCallbackCountMask) != 0U) {
+    std::this_thread::yield();
+    state = callback_state_.load(std::memory_order_acquire);
+  }
+}
+
 void GStreamerPipeline::start(const std::string & description, bool require_appsrc)
 {
   ensureGStreamerInitialized();
   stop();
+  resumeCallbacks();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
@@ -217,7 +259,11 @@ void GStreamerPipeline::stop()
 
   GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
   gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
-  gst_element_set_state(pipeline_.get(), GST_STATE_NULL);
+  const GstStateChangeReturn result = gst_element_set_state(pipeline_.get(), GST_STATE_NULL);
+  if (result == GST_STATE_CHANGE_ASYNC) {
+    (void)gst_element_get_state(pipeline_.get(), nullptr, nullptr, GST_CLOCK_TIME_NONE);
+  }
+  stopCallbacksAndWait();
 
   appsrc_.reset();
   pipeline_.reset();
@@ -225,6 +271,11 @@ void GStreamerPipeline::stop()
 
 GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
 {
+  if (!beginCallback()) {
+    return GST_FLOW_FLUSHING;
+  }
+  const ScopeExit callback_exit([this]() { endCallback(); });
+  const auto callbacks = this->callbacks();
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
   if (sample == nullptr) {
     return GST_FLOW_EOS;
@@ -239,28 +290,33 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
   try {
     frame = unpackI420Frame(sample.get());
   } catch (const std::exception & exc) {
-    callbacks_.on_unpack_failed(exc.what());
+    callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
   }
 
-  if (callbacks_.is_shutdown()) {
+  if (callbacks.is_shutdown()) {
     return GST_FLOW_FLUSHING;
   }
 
   try {
-    callbacks_.on_frame(frame, timestamp_us);
+    callbacks.on_frame(frame, timestamp_us);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
-    callbacks_.on_capture_failed(exc.what());
+    callbacks.on_capture_failed(exc.what());
     return GST_FLOW_ERROR;
   }
 }
 
 void GStreamerPipeline::onBusMessage(GstMessage * message)
 {
+  if (!beginCallback()) {
+    return;
+  }
+  const ScopeExit callback_exit([this]() { endCallback(); });
+  const auto callbacks = this->callbacks();
   const GstMessageType type = GST_MESSAGE_TYPE(message);
   if (type == GST_MESSAGE_EOS) {
-    callbacks_.on_failed("eos");
+    callbacks.on_failed("eos");
     return;
   }
   if (type != GST_MESSAGE_ERROR) {
@@ -271,7 +327,7 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   gst_message_parse_error(message, &raw_error, nullptr);
   GErrorPtr error(raw_error);
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-  callbacks_.on_failed(reason);
+  callbacks.on_failed(reason);
 }
 
 }  // namespace livekit_ros2_bridge

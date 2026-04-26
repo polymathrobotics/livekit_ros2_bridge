@@ -18,8 +18,10 @@
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include "livekit/video_frame.h"
@@ -59,10 +61,22 @@ public:
   void stop();
 
 private:
+  bool beginCallback();
+  void endCallback();
+  void resumeCallbacks();
+  void stopCallbacksAndWait();
+
+  GStreamerPipelineCallbacks callbacks() const;
+
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
 
-  GStreamerPipelineCallbacks callbacks_;
+  static constexpr std::size_t kCallbacksStopped = ~(~std::size_t{0} >> 1U);
+  static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
+
+  std::unique_ptr<GStreamerPipelineCallbacks> callbacks_;
+  std::atomic<const GStreamerPipelineCallbacks *> callbacks_ptr_{nullptr};
+  std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
 };

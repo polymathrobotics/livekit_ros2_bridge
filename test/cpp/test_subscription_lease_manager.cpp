@@ -678,7 +678,7 @@ TEST(SubscriptionLeaseManagerTest, EquivalentRosVideoRequestsShareCanonicalSubsc
 
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(publishUntil(
-    executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
+    executor, publisher, makeRgbImage(), [&]() { return session.state->publishedVideoTrackCount() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
 }
 
@@ -695,16 +695,17 @@ TEST(SubscriptionLeaseManagerTest, EquivalentOtherVideoRequestsShareCanonicalSub
 
   const auto first = sendHeartbeatAndExtractStatus(
     registry, *session.state, "alice", makeHeartbeat({makeOtherVideoDemand(canonical_source)}));
+  const std::string track_name = first["delivery"]["track_name"].get<std::string>();
+  ASSERT_TRUE(waitUntil([&session]() { return session.state->publishedVideoTrackCount() == 1U; }));
+
   const auto second = sendHeartbeatAndExtractStatus(
     registry, *session.state, "bob", makeHeartbeat({makeOtherVideoDemand(variant_source)}));
-  const std::string track_name = first["delivery"]["track_name"].get<std::string>();
 
   EXPECT_EQ(first["name"], canonical_source);
   EXPECT_EQ(second["name"], canonical_source);
   EXPECT_EQ(first["delivery"]["kind"], "video");
   EXPECT_EQ(second["delivery"]["track_name"], track_name);
 
-  ASSERT_TRUE(waitUntil([&session]() { return session.state->published_video_track_names.size() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
 }
 
@@ -739,7 +740,7 @@ TEST(SubscriptionLeaseManagerTest, VideoLeaseExpiryBeforeFirstFrameAllowsLaterRe
   ASSERT_TRUE(spinUntil(executor, [&publisher]() { return publisher->get_subscription_count() == 1U; }));
 
   ASSERT_TRUE(publishUntil(
-    executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
+    executor, publisher, makeRgbImage(), [&]() { return session.state->publishedVideoTrackCount() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
 }
 
@@ -782,12 +783,10 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishOptionsAreAppliedToEachPublis
   ASSERT_TRUE(spinUntil(executor, [&first_publisher]() { return first_publisher->get_subscription_count() == 1U; }));
   ASSERT_TRUE(spinUntil(executor, [&second_publisher]() { return second_publisher->get_subscription_count() == 1U; }));
 
-  ASSERT_TRUE(publishUntil(executor, first_publisher, makeRgbImage(2, 2), [&]() {
-    return session.state->published_video_options.size() == 1U;
-  }));
-  ASSERT_TRUE(publishUntil(executor, second_publisher, makeRgbImage(4, 4), [&]() {
-    return session.state->published_video_options.size() == 2U;
-  }));
+  ASSERT_TRUE(publishUntil(
+    executor, first_publisher, makeRgbImage(2, 2), [&]() { return session.state->publishedVideoTrackCount() == 1U; }));
+  ASSERT_TRUE(publishUntil(
+    executor, second_publisher, makeRgbImage(4, 4), [&]() { return session.state->publishedVideoTrackCount() == 2U; }));
 
   EXPECT_EQ(
     session.state->published_video_track_names,
@@ -907,7 +906,7 @@ TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedVideoTr
   const std::string track_name = status["delivery"]["track_name"].get<std::string>();
 
   ASSERT_TRUE(publishUntil(
-    executor, publisher, makeRgbImage(), [&]() { return session.state->published_video_track_names.size() == 1U; }));
+    executor, publisher, makeRgbImage(), [&]() { return session.state->publishedVideoTrackCount() == 1U; }));
   EXPECT_EQ(session.state->published_video_track_names, std::vector<std::string>{track_name});
 
   std::this_thread::sleep_for(kShortHeartbeatLeaseDuration + kLeaseWaitBuffer);

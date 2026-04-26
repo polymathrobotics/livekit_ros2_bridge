@@ -15,6 +15,7 @@
 #include "ros_service_caller.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -496,6 +497,7 @@ public:
 
   ~ServiceWaitable() override
   {
+    stopAndWait();
     std::lock_guard<std::mutex> lock(timer_mutex_);
     const rcl_ret_t ret = rcl_timer_fini(&deadline_timer_);
     (void)ret;
@@ -508,50 +510,86 @@ public:
 #if RCLCPP_VERSION_GTE(28, 0, 0)
   void add_to_wait_set(rcl_wait_set_t & wait_set) override
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     addToWaitSet(&wait_set);
   }
 
   bool is_ready(const rcl_wait_set_t & wait_set) override
   {
+    if (!beginUse()) {
+      return false;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return isReady(&wait_set);
   }
 
   void execute(const std::shared_ptr<void> & ignored_data) override
   {
     (void)ignored_data;
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     executeReady();
   }
 #else
   void add_to_wait_set(rcl_wait_set_t * wait_set) override
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     addToWaitSet(wait_set);
   }
 
   bool is_ready(rcl_wait_set_t * wait_set) override
   {
+    if (!beginUse()) {
+      return false;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return isReady(wait_set);
   }
 
   void execute(std::shared_ptr<void> & ignored_data) override
   {
     (void)ignored_data;
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     executeReady();
   }
 #endif
 
   std::shared_ptr<void> take_data() override
   {
+    if (!beginUse()) {
+      return nullptr;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return nullptr;
   }
 
   std::shared_ptr<void> take_data_by_entity_id(size_t entity_id) override
   {
     (void)entity_id;
+    if (!beginUse()) {
+      return nullptr;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return nullptr;
   }
 
   size_t get_number_of_ready_clients() override
   {
+    if (!beginUse()) {
+      return 0U;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     // Kilted reuses wait-set capacity after attach, so report the bounded cap.
     // getClient() enforces the same limit.
     return kMaxCachedServiceClients;
@@ -559,16 +597,28 @@ public:
 
   size_t get_number_of_ready_timers() override
   {
+    if (!beginUse()) {
+      return 0U;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return 1U;
   }
 
   size_t get_number_of_ready_guard_conditions() override
   {
+    if (!beginUse()) {
+      return 0U;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return 1U;
   }
 
   void set_on_ready_callback(std::function<void(size_t, int)> on_ready) override
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     std::function<void(size_t, int)> callback;
     size_t pending_wakes = 0U;
 
@@ -592,23 +642,39 @@ public:
 
   void clear_on_ready_callback() override
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     std::lock_guard<std::mutex> lock(callback_mutex_);
     on_ready_ = nullptr;
   }
 
   std::vector<std::shared_ptr<rclcpp::TimerBase>> get_timers() const
   {
+    if (!beginUse()) {
+      return {};
+    }
+    const ScopeExit finish([this]() { endUse(); });
     return {};
   }
 
   void setClients(std::vector<ClientPtr> clients)
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     std::lock_guard<std::mutex> lock(clients_mutex_);
     pending_clients_.emplace(std::move(clients));
   }
 
   void setDeadline(std::optional<std::chrono::steady_clock::time_point> deadline)
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     std::lock_guard<std::mutex> lock(timer_mutex_);
     if (!deadline.has_value()) {
       const rcl_ret_t ret = rcl_timer_cancel(&deadline_timer_);
@@ -637,6 +703,10 @@ public:
 
   void wake()
   {
+    if (!beginUse()) {
+      return;
+    }
+    const ScopeExit finish([this]() { endUse(); });
     guard_condition_->trigger();
     std::function<void(size_t, int)> callback;
 
@@ -652,7 +722,32 @@ public:
     callback(1U, kReadyEntityId);
   }
 
+  void stopAndWait()
+  {
+    std::size_t state = use_state_.fetch_or(kUseStopped, std::memory_order_acq_rel) | kUseStopped;
+    while ((state & kUseCountMask) != 0U) {
+      std::this_thread::yield();
+      state = use_state_.load(std::memory_order_acquire);
+    }
+  }
+
 private:
+  bool beginUse() const
+  {
+    std::size_t state = use_state_.load(std::memory_order_acquire);
+    while ((state & kUseStopped) == 0U) {
+      if (use_state_.compare_exchange_weak(state, state + 1U, std::memory_order_acq_rel, std::memory_order_acquire)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void endUse() const
+  {
+    (void)use_state_.fetch_sub(1U, std::memory_order_acq_rel);
+  }
+
   void addToWaitSet(rcl_wait_set_t * wait_set)
   {
     if (wait_set == nullptr) {
@@ -768,6 +863,9 @@ private:
   }
 
   Impl & impl_;
+  static constexpr std::size_t kUseStopped = ~(~std::size_t{0} >> 1U);
+  static constexpr std::size_t kUseCountMask = ~kUseStopped;
+
   rclcpp::Context::SharedPtr context_;
   rclcpp::GuardCondition::SharedPtr guard_condition_;
   rclcpp::Clock::SharedPtr deadline_clock_;
@@ -779,6 +877,7 @@ private:
   std::mutex callback_mutex_;
   std::function<void(size_t, int)> on_ready_;
   size_t pending_wakes_ = 0U;
+  mutable std::atomic<std::size_t> use_state_{0};
 };
 
 RosServiceCaller::Impl::Impl(
@@ -1135,6 +1234,7 @@ void RosServiceCaller::Impl::detachWaitable()
 
   if (removed != nullptr) {
     node_waitables->remove_waitable(removed, group);
+    removed->stopAndWait();
   }
 }
 
