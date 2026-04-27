@@ -429,17 +429,20 @@ private:
   void transitionState(livekit::ConnectionState state)
   {
     std::function<void(livekit::ConnectionState)> callback;
+    std::string livekit_url;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (state_ == state) {
         return;
       }
       state_ = state;
+      livekit_url = config_.url;
       callback = callbacks_.on_state_changed;
     }
 
     auto log = LogEvent(kLogger, "room_connection_state_changed").field("connection_state", stateName(state));
     if (state == livekit::ConnectionState::Connected) {
+      log.fieldOr("url", livekit_url);
       log.info();
     } else {
       log.warn();
