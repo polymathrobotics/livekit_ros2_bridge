@@ -15,6 +15,7 @@
 #include "connection_watchdog.hpp"
 
 #include <cstdlib>
+#include <exception>
 #include <thread>
 #include <utility>
 
@@ -142,16 +143,27 @@ void ConnectionWatchdog::check()
     if (now < outage_->deadline) {
       return;
     }
-  }
-
-  if (!close_()) {
-    return;
+    outage_.reset();
   }
 
   LogEvent(logger_, "connection_watchdog_shutdown")
     .field("shutdown_reason", "recovery_timeout")
     .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
     .error();
+
+  try {
+    auto close = close_;
+    auto logger = logger_;
+    std::thread([close = std::move(close), logger]() mutable {
+      try {
+        (void)close();
+      } catch (...) {
+        LogEvent(logger, "connection_watchdog_close_failed").fieldException("error", std::current_exception()).error();
+      }
+    }).detach();
+  } catch (...) {
+    LogEvent(logger_, "connection_watchdog_close_failed").fieldException("error", std::current_exception()).error();
+  }
 
   if (rclcpp::ok()) {
     rclcpp::shutdown();

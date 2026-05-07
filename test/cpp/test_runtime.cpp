@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "connection_watchdog.hpp"
 #include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
@@ -240,6 +241,31 @@ TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
       options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
       runRuntimeScenario(
         options, [](RuntimeHarness &) {}, kWatchdogObservationWindow, kRuntimeScenarioTimedOutWithoutWatchdog);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
+}
+
+TEST_F(RuntimeTest, WatchdogExitsEvenWhenCloseCallbackBlocks)
+{
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  EXPECT_EXIT(
+    {
+      ScopedRclcppInit rclcpp_init;
+      auto node = std::make_shared<rclcpp::Node>(nextNodeName("watchdog_blocking_close_node"));
+
+      RuntimeConfig::Watchdog config;
+      config.recovery_timeout = std::chrono::milliseconds(0);
+      ConnectionWatchdog watchdog(config, *node, []() {
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+        return true;
+      });
+
+      rclcpp::executors::SingleThreadedExecutor executor;
+      executor.add_node(node);
+      spinExecutorFor(executor, kWatchdogObservationWindow);
+      std::_Exit(kRuntimeScenarioTimedOutWithoutWatchdog);
     },
     ::testing::ExitedWithCode(EXIT_FAILURE),
     ".*");
