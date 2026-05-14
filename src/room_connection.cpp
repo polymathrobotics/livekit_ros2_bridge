@@ -324,6 +324,10 @@ private:
     }
 
     ref.participant->unpublishTrack(publication->sid());
+    LogEvent(kLogger, "video_track_unpublished")
+      .fieldOr("track_name", publication->name())
+      .fieldOr("track_sid", publication->sid())
+      .info();
   }
 
   void recordTrackIfCurrent(
