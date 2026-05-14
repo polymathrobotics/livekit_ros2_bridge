@@ -89,6 +89,7 @@ private:
   std::mutex mutex_;
   bool closed_ = false;
   bool published_once_ = false;
+  bool captured_frame_logged_ = false;
   std::shared_ptr<RosStream> ros_stream_;
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> source_;

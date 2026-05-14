@@ -131,6 +131,7 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
       connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
     source_ = std::move(source);
     track_ = std::move(track);
+    captured_frame_logged_ = false;
 
     published_once_ = true;
     if (republish) {
@@ -143,6 +144,16 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
   }
 
   source_->captureFrame(frame, captureOptions(timestamp_us));
+  if (!captured_frame_logged_) {
+    LogEvent(kLogger, "video_stream_frame_captured")
+      .fieldOr("stream_key", spec_.stream_key)
+      .fieldOr("track_name", spec_.track_name)
+      .field("width", width)
+      .field("height", height)
+      .field("timestamp_us", timestamp_us)
+      .info();
+    captured_frame_logged_ = true;
+  }
 }
 
 void TrackPublisher::close()
@@ -159,6 +170,7 @@ void TrackPublisher::close()
     }
 
     published_once_ = false;
+    captured_frame_logged_ = false;
     closed_ = true;
     ros_stream = std::move(ros_stream_);
     gstreamer_stream = std::move(gstreamer_stream_);

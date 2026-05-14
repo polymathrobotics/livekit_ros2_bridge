@@ -517,8 +517,15 @@ private:
     callback(event);
   }
 
-  void onRoomSidChanged(livekit::Room &, const livekit::RoomSidChangedEvent & event) override
+  void onRoomSidChanged(livekit::Room & room, const livekit::RoomSidChangedEvent & event) override
   {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (room_.get() != &room || state_ == livekit::ConnectionState::Disconnected) {
+        return;
+      }
+    }
+
     LogEvent(kLogger, "room_sid_changed").fieldOr("room_sid", event.sid).info();
   }
 
