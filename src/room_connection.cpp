@@ -150,8 +150,13 @@ public:
   {
     const auto ref = participantRef();
     if (ref.participant == nullptr) {
+      LogEvent(kLogger, "data_track_publish_failed")
+        .fieldOr("track_name", name)
+        .field("reason", "local_participant_unavailable")
+        .warn();
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
+
     auto result = ref.participant->publishDataTrack(name);
     if (!result) {
       const auto & error = result.error();
@@ -162,7 +167,13 @@ public:
         .warn();
       throw std::runtime_error("Failed to publish data track '" + name + "': " + result.error().message);
     }
+
     auto track = result.value();
+    if (track == nullptr) {
+      LogEvent(kLogger, "data_track_publish_failed").fieldOr("track_name", name).field("reason", "null_track").warn();
+      throw std::runtime_error("LiveKit returned a null data track.");
+    }
+
     const auto & info = track->info();
     LogEvent(kLogger, "data_track_published").fieldOr("track_name", info.name).fieldOr("track_sid", info.sid).info();
     return track;
