@@ -89,7 +89,7 @@ void logRejectedCall(
   LogEvent(kLogger, "service_call_rejected")
     .field("reason", reason)
     .fieldOr("service", request.name)
-    .fieldIfNotEmpty("interface_type", logged_type)
+    .fieldOr("interface_type", logged_type)
     .fieldOr("requester_identity", requester)
     .fieldIf(log_error, "error", exc.what())
     .warn();
@@ -840,7 +840,7 @@ std::future<RosServiceCaller::Response> RosServiceCaller::call(
       LogEvent(kLogger, "service_call_failed")
         .field("reason", "start_failed")
         .fieldOr("service", request.name)
-        .fieldIfNotEmpty("interface_type", interface_type)
+        .fieldOr("interface_type", interface_type)
         .fieldOr("requester_identity", requester)
         .field("error", exc.what())
         .error();
@@ -1032,8 +1032,8 @@ void RosServiceCaller::Impl::drainResponses()
         if (const std::size_t pending = late_response_throttle.record(); pending > 0U) {
           LogEvent(kLogger, "service_response_dropped")
             .field("reason", "late_or_unknown_pending_call")
-            .field("service", client->get_service_name())
-            .field("interface_type", client->interface_type)
+            .fieldOr("service", client->get_service_name())
+            .fieldOr("interface_type", client->interface_type)
             .field("count", pending)
             .warn();
         }

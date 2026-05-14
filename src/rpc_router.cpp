@@ -42,7 +42,7 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-const auto kLogger = rclcpp::get_logger("rpc_router");
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.rpc_router");
 
 constexpr std::array<const char *, 4> kMethods{
   protocol::kCallServiceMethod,
@@ -50,15 +50,6 @@ constexpr std::array<const char *, 4> kMethods{
   protocol::kListServicesMethod,
   protocol::kListTopicsMethod,
 };
-
-template <typename EventT>
-EventT && addLogFields(EventT && event, const char * method, const livekit::RpcInvocationData & invocation)
-{
-  event.field("method", method)
-    .fieldOr("request_id", invocation.request_id)
-    .fieldOr("requester_identity", invocation.caller_identity);
-  return std::forward<EventT>(event);
-}
 
 [[noreturn]] void throwRpcError(
   const char * method,
@@ -72,7 +63,9 @@ EventT && addLogFields(EventT && event, const char * method, const livekit::RpcI
   const auto code = invalid_request ? protocol::kInvalidRequestRpcCode : protocol::kInternalRpcCode;
   const bool internal = code == protocol::kInternalRpcCode;
   LogEvent event(kLogger, internal ? "rpc_request_failed" : "rpc_request_rejected");
-  addLogFields(event, method, invocation);
+  event.field("method", method)
+    .fieldOr("request_id", invocation.request_id)
+    .fieldOr("requester_identity", invocation.caller_identity);
   if (!internal) {
     event.field("reason", "invalid_request");
   }
@@ -82,7 +75,7 @@ EventT && addLogFields(EventT && event, const char * method, const livekit::RpcI
   }
 
   if (service) {
-    event.field("service", *service);
+    event.fieldOr("service", *service);
   }
   event.field("error", exc.what());
 
@@ -138,6 +131,7 @@ std::optional<std::string> withCallerIdentity(
     LogEvent(kLogger, "rpc_request_rejected")
       .field("method", method)
       .fieldOr("request_id", invocation.request_id)
+      .fieldOr("requester_identity", invocation.caller_identity)
       .field("reason", "unauthorized")
       .warn();
     throw livekit::RpcError(protocol::kUnauthorizedRpcCode, "caller_identity is required for this RPC");
@@ -217,9 +211,12 @@ std::optional<std::string> RpcRouter::callService(const livekit::RpcInvocationDa
     auto request = protocol::services::parse(invocation.payload);
 
     if (!policy_.allows(AccessOperation::CallService, request.name)) {
-      addLogFields(LogEvent(kLogger, "rpc_request_rejected"), protocol::kCallServiceMethod, invocation)
+      LogEvent(kLogger, "rpc_request_rejected")
+        .field("method", protocol::kCallServiceMethod)
+        .fieldOr("request_id", invocation.request_id)
+        .fieldOr("requester_identity", invocation.caller_identity)
         .field("reason", "forbidden")
-        .field("service", request.name)
+        .fieldOr("service", request.name)
         .warn();
       throw livekit::RpcError(protocol::kForbiddenRpcCode, "ROS service '" + request.name + "' not permitted.");
     }

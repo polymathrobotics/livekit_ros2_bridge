@@ -48,7 +48,7 @@ public:
   DataTrackPublisher(DataTrackPublisher &&) = delete;
   DataTrackPublisher & operator=(DataTrackPublisher &&) = delete;
 
-  // Publish failures are logged and retried by later calls.
+  // Publish failures are retried by later calls.
   void publish();
   int intervalMs() const;
   bool isPublished() const;

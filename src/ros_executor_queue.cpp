@@ -267,10 +267,7 @@ void RosExecutorQueue::wake()
   try {
     waitable->wake();
   } catch (...) {
-    LogEvent(logger_, "executor_wake_failed")
-      .field("action", "shutdown")
-      .fieldException("error", std::current_exception())
-      .error();
+    LogEvent(logger_, "executor_wake_failed").fieldException("error", std::current_exception()).error();
     shutdown();
   }
 }

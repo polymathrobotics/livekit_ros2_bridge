@@ -52,7 +52,7 @@ const video::StreamConfig & defaultStreamConfig()
   return kDefaultConfig;
 }
 
-const char * targetKindLabel(SubscriptionTargetKind kind)
+const char * targetKindKeyPrefix(SubscriptionTargetKind kind)
 {
   switch (kind) {
     case SubscriptionTargetKind::Topic:
@@ -64,21 +64,9 @@ const char * targetKindLabel(SubscriptionTargetKind kind)
   throw std::invalid_argument("subscription target kind is invalid");
 }
 
-const char * deliveryKindLabel(SubscriptionDeliveryKind delivery)
-{
-  switch (delivery) {
-    case SubscriptionDeliveryKind::Data:
-      return "data";
-    case SubscriptionDeliveryKind::Video:
-      return "video";
-  }
-
-  throw std::invalid_argument("subscription delivery kind is invalid");
-}
-
 std::string makeKey(SubscriptionTargetKind kind, const std::string & name)
 {
-  const auto label = targetKindLabel(kind);
+  const auto label = targetKindKeyPrefix(kind);
   std::string key;
   key.reserve(std::char_traits<char>::length(label) + 1U + name.size());
   key.append(label);
@@ -190,7 +178,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
     if (it == session_leases_.end()) {
       LogEvent(kLogger, "heartbeat_dropped")
         .field("reason", "anonymous_requester_without_resolvable_client_session")
-        .fieldOr("session_id", session_id.value_or(""), "<absent>")
+        .fieldOr("session_id", session_id, "<absent>")
         .warnThrottle(*clock_, kLogThrottle);
 
       return std::nullopt;
@@ -208,7 +196,7 @@ std::optional<std::string> SubscriptionLeaseManager::resolveIdentity(
     if (const std::size_t pending = conflict_throttle_.record(); pending > 0U) {
       LogEvent(kLogger, "heartbeat_client_session_conflict")
         .field("requester_identity", requester_identity)
-        .fieldOr("session_id", session_id.value_or(""), "<absent>")
+        .fieldOr("session_id", session_id, "<absent>")
         .field("existing_requester_identity", it->second.requester_identity)
         .field("count", pending)
         .warn();
@@ -359,7 +347,7 @@ void SubscriptionLeaseManager::publishStatusReport(
   } catch (const std::exception & exc) {
     LogEvent(kLogger, "subscription_status_publish_failed")
       .field("requester_identity", requester_identity)
-      .fieldOr("session_id", session_id.value_or(""), "<absent>")
+      .fieldOr("session_id", session_id, "<absent>")
       .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
   }
@@ -409,7 +397,7 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
   } catch (...) {
     LogEvent(kLogger, "subscription_renew_failed")
       .field("resource", subscription.name)
-      .field("kind", targetKindLabel(subscription.kind))
+      .fieldEnum("kind", subscription.kind)
       .field("requester_identity", requester_identity)
       .fieldException("error", std::current_exception())
       .warn();
@@ -458,8 +446,8 @@ SubscriptionStatus SubscriptionLeaseManager::create(
     SubscriptionStatus result = status(it->second);
     LogEvent(kLogger, "subscription_created")
       .field("resource", it->second.name)
-      .field("kind", targetKindLabel(demand.kind))
-      .field("delivery", deliveryKindLabel(result.delivery))
+      .fieldEnum("kind", demand.kind)
+      .fieldEnum("delivery", result.delivery)
       .field("requester_identity", requester_identity)
       .info();
 
@@ -467,7 +455,7 @@ SubscriptionStatus SubscriptionLeaseManager::create(
   } catch (...) {
     LogEvent(kLogger, "subscription_create_failed")
       .field("resource", demand.name)
-      .field("kind", targetKindLabel(demand.kind))
+      .fieldEnum("kind", demand.kind)
       .field("requester_identity", requester_identity)
       .fieldException("error", std::current_exception())
       .warn();
@@ -624,7 +612,7 @@ void SubscriptionLeaseManager::pruneLeases(Clock::time_point now)
 
     LogEvent(kLogger, "subscription_pruned")
       .field("resource", subscription.name)
-      .field("kind", targetKindLabel(subscription.kind))
+      .fieldEnum("kind", subscription.kind)
       .field("reason", kLeaseExpiredReason)
       .info();
     it = subscriptions_.erase(it);

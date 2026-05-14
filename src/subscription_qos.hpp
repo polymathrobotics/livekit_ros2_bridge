@@ -76,8 +76,4 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
   const rclcpp::QoS & base,
   const SubscriptionQosConfig * config);
 
-const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source);
-const char * subscriptionQosReliabilityString(rclcpp::ReliabilityPolicy policy);
-const char * subscriptionQosDurabilityString(rclcpp::DurabilityPolicy policy);
-
 }  // namespace livekit_ros2_bridge

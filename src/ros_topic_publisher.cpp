@@ -20,6 +20,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "protocol/topic_publish_json.hpp"
@@ -82,13 +83,13 @@ void RosTopicPublisher::handlePayload(const std::string & requester_identity, co
   try {
     publish(requester_identity, protocol::topic_publish::parse(payload));
   } catch (const std::exception & exc) {
-    LogEvent event(kLogger, "livekit_packet_rejected");
-    event.field("reason", "invalid_publish_request").fieldOr("requester_identity", requester_identity);
     const auto * validation = dynamic_cast<const protocol::ValidationError *>(&exc);
-    if (validation != nullptr) {
-      event.field("request_field", validation->field());
-    }
-    event.field("error", exc.what()).warnThrottle(*clock_, kLogThrottle);
+    LogEvent(kLogger, "livekit_packet_rejected")
+      .field("reason", "invalid_publish_request")
+      .fieldOr("requester_identity", requester_identity)
+      .fieldOr("request_field", validation == nullptr ? std::string_view{} : validation->field())
+      .field("error", exc.what())
+      .warnThrottle(*clock_, kLogThrottle);
     return;
   }
 }
@@ -156,7 +157,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
       .field("reason", "invalid_request")
       .fieldOr("topic", topic)
       .fieldOr("requester_identity", requester_identity)
-      .field("interface_type", request.interface_type)
+      .fieldOr("interface_type", request.interface_type)
       .field("error", exc.what())
       .warnThrottle(*clock_, kLogThrottle);
 
@@ -195,7 +196,7 @@ void RosTopicPublisher::publish(const std::string & requester_identity, const Ro
     LogEvent(kLogger, "topic_publish_request_failed")
       .fieldOr("topic", topic)
       .fieldOr("requester_identity", requester_identity)
-      .field("interface_type", type)
+      .fieldOr("interface_type", type)
       .field("error", exc.what())
       .error();
   }

@@ -22,7 +22,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -49,19 +48,6 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.room_connection");
 constexpr char kLocalParticipantUnavailable[] = "LiveKit local participant unavailable.";
-
-std::string_view stateName(livekit::ConnectionState state)
-{
-  switch (state) {
-    case livekit::ConnectionState::Disconnected:
-      return "disconnected";
-    case livekit::ConnectionState::Connected:
-      return "connected";
-    case livekit::ConnectionState::Reconnecting:
-      return "reconnecting";
-  }
-  return "unknown";
-}
 
 struct ParticipantRef
 {
@@ -168,9 +154,18 @@ public:
     }
     auto result = ref.participant->publishDataTrack(name);
     if (!result) {
+      const auto & error = result.error();
+      LogEvent(kLogger, "data_track_publish_failed")
+        .fieldOr("track_name", name)
+        .fieldEnum("sdk_error_code", error.code)
+        .fieldOr("error", error.message)
+        .warn();
       throw std::runtime_error("Failed to publish data track '" + name + "': " + result.error().message);
     }
-    return result.value();
+    auto track = result.value();
+    const auto & info = track->info();
+    LogEvent(kLogger, "data_track_published").fieldOr("track_name", info.name).fieldOr("track_sid", info.sid).info();
+    return track;
   }
 
   livekit::Result<void, livekit::LocalDataTrackTryPushError> tryPushDataTrack(
@@ -181,6 +176,10 @@ public:
 
   void unpublishDataTrack(const std::shared_ptr<livekit::LocalDataTrack> & track) override
   {
+    if (track == nullptr) {
+      return;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ == livekit::ConnectionState::Disconnected) {
       return;
@@ -189,7 +188,18 @@ public:
     if (participant == nullptr) {
       return;
     }
-    participant->unpublishDataTrack(track);
+    const auto & info = track->info();
+    try {
+      participant->unpublishDataTrack(track);
+    } catch (...) {
+      LogEvent(kLogger, "data_track_unpublish_failed")
+        .fieldOr("track_name", info.name)
+        .fieldOr("track_sid", info.sid)
+        .fieldException("error", std::current_exception())
+        .warn();
+      throw;
+    }
+    LogEvent(kLogger, "data_track_unpublished").fieldOr("track_name", info.name).fieldOr("track_sid", info.sid).info();
   }
 
   std::shared_ptr<livekit::LocalVideoTrack> publishVideoTrack(
@@ -209,21 +219,37 @@ public:
       throw std::runtime_error(kLocalParticipantUnavailable);
     }
 
-    auto track = livekit::LocalVideoTrack::createLocalVideoTrack(name, source);
-    livekit::TrackPublishOptions publish_options = options;
-    publish_options.source = livekit::TrackSource::SOURCE_CAMERA;
-    ref.participant->publishTrack(track, publish_options);
+    try {
+      auto track = livekit::LocalVideoTrack::createLocalVideoTrack(name, source);
+      if (track == nullptr) {
+        throw std::runtime_error("Failed to publish video track '" + name + "'.");
+      }
 
-    if (track == nullptr) {
-      throw std::runtime_error("Failed to publish video track '" + name + "'.");
-    }
-    const auto publication = track->publication();
-    if (publication == nullptr) {
-      throw std::runtime_error("Failed to publish video track '" + name + "'.");
-    }
+      livekit::TrackPublishOptions publish_options = options;
+      publish_options.source = livekit::TrackSource::SOURCE_CAMERA;
+      ref.participant->publishTrack(track, publish_options);
 
-    recordTrackIfCurrent(name, track, ref.room_generation);
-    return track;
+      const auto publication = track->publication();
+      if (publication == nullptr) {
+        throw std::runtime_error("Failed to publish video track '" + name + "'.");
+      }
+
+      LogEvent(kLogger, "video_track_published")
+        .fieldOr("track_sid", publication->sid())
+        .fieldOr("track_name", publication->name())
+        .info();
+
+      recordTrackIfCurrent(name, track, ref.room_generation);
+      return track;
+    } catch (...) {
+      LogEvent(kLogger, "video_track_publish_failed")
+        .fieldOr("track_name", name)
+        .field("track_width", source->width())
+        .field("track_height", source->height())
+        .fieldException("error", std::current_exception())
+        .warn();
+      throw;
+    }
   }
 
   void unpublishVideoTrack(const std::shared_ptr<livekit::LocalVideoTrack> & track) override
@@ -239,6 +265,7 @@ public:
       try {
         LogEvent(kLogger, "video_track_unpublish_failed")
           .field("track_name", name)
+          .fieldOr("track_sid", track->sid())
           .fieldException("error", std::current_exception())
           .warn();
       } catch (...) {}
@@ -294,7 +321,10 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     if (room_generation != room_generation_) {
       // The room changed while publishTrack() was in flight; leave this stale track untracked.
-      LogEvent(kLogger, "video_track_publish_stale").field("track_name", name).warn();
+      LogEvent(kLogger, "video_track_publish_stale")
+        .field("track_name", name)
+        .fieldOr("track_sid", track->sid())
+        .warn();
       return;
     }
     track_room_generations_[track.get()] = room_generation;
@@ -339,11 +369,17 @@ private:
       }
     }
 
+    auto active_room = room;
     if (!activateRoom(std::move(room))) {
       detachRoom();
       return false;
     }
 
+    LogEvent(kLogger, "room_connected")
+      .fieldOr("url", config.url)
+      .fieldOr("room_sid", active_room->room_info().sid)
+      .fieldOr("room_name", active_room->room_info().name)
+      .info();
     transitionState(livekit::ConnectionState::Connected);
     return true;
   }
@@ -429,24 +465,15 @@ private:
   void transitionState(livekit::ConnectionState state)
   {
     std::function<void(livekit::ConnectionState)> callback;
-    std::string livekit_url;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (state_ == state) {
         return;
       }
       state_ = state;
-      livekit_url = config_.url;
       callback = callbacks_.on_state_changed;
     }
 
-    auto log = LogEvent(kLogger, "room_connection_state_changed").field("connection_state", stateName(state));
-    if (state == livekit::ConnectionState::Connected) {
-      log.fieldOr("url", livekit_url);
-      log.info();
-    } else {
-      log.warn();
-    }
     if (callback) {
       callback(state);
     }
@@ -479,6 +506,16 @@ private:
     callback(event);
   }
 
+  void onRoomSidChanged(livekit::Room &, const livekit::RoomSidChangedEvent & event) override
+  {
+    LogEvent(kLogger, "room_sid_changed").fieldOr("room_sid", event.sid).info();
+  }
+
+  void onRoomMoved(livekit::Room &, const livekit::RoomMovedEvent & event) override
+  {
+    LogEvent(kLogger, "room_moved").fieldOr("room_sid", event.info.sid).info();
+  }
+
   void onUserPacketReceived(livekit::Room &, const livekit::UserDataPacketEvent & event) override
   {
     std::function<void(const livekit::UserDataPacketEvent &)> callback;
@@ -500,23 +537,27 @@ private:
     transitionState(event.state);
   }
 
-  void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent &) override
+  void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent & event) override
   {
+    LogEvent(kLogger, "room_disconnected").fieldEnum("disconnect_reason", event.reason).warn();
     transitionState(livekit::ConnectionState::Disconnected);
   }
 
-  void onReconnecting(livekit::Room &, const livekit::ReconnectingEvent &) override
+  void onReconnecting(livekit::Room & room, const livekit::ReconnectingEvent &) override
   {
+    LogEvent(kLogger, "room_reconnecting").fieldOr("room_sid", room.room_info().sid).warn();
     transitionState(livekit::ConnectionState::Reconnecting);
   }
 
-  void onReconnected(livekit::Room &, const livekit::ReconnectedEvent &) override
+  void onReconnected(livekit::Room & room, const livekit::ReconnectedEvent &) override
   {
+    LogEvent(kLogger, "room_reconnected").fieldOr("room_sid", room.room_info().sid).info();
     transitionState(livekit::ConnectionState::Connected);
   }
 
   void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
   {
+    LogEvent(kLogger, "room_eos").warn();
     transitionState(livekit::ConnectionState::Disconnected);
   }
 

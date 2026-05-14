@@ -95,9 +95,7 @@ void logRawLayoutChange(const StreamSpec & spec, const RawLayout & previous, con
     event.field("previous_stride", previous.stride).field("stride", layout.stride);
   }
   if (previous.format != layout.format) {
-    const char * previous_format = gst_video_format_to_string(previous.format);
-    const char * format = gst_video_format_to_string(layout.format);
-    event.fieldOr("previous_format", previous_format).fieldOr("format", format);
+    event.fieldEnum("previous_format", previous.format).fieldEnum("format", layout.format);
   }
   event.info();
 }
@@ -137,9 +135,9 @@ void logSubscriptionQos(const StreamSpec & spec, const ResolvedSubscriptionQos &
     .field("resource", input.topic)
     .field("interface_type", input.interface_type)
     .field("publisher_count", qos.publisher_count)
-    .field("source", subscriptionQosSourceString(qos.source))
-    .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-    .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+    .fieldEnum("source", qos.source)
+    .fieldEnum("reliability", qos.qos.reliability())
+    .fieldEnum("durability", qos.qos.durability())
     .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
     .fieldIf(qos.mixed_durability, "mixed_durability", true)
     .fieldIfNotEmpty("override_id", qos.override_id)
@@ -362,9 +360,12 @@ void RosStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::Const
     if (codec_) {
       if (*codec_ != codec) {
         const auto & input = requireRosInput(spec_);
-        LogEvent event(kLogger, "video_stream_input_codec_changed");
-        event.field("stream_key", spec_.stream_key).field("topic", input.topic);
-        event.field("previous_codec", *codec_).field("codec", codec).info();
+        LogEvent(kLogger, "video_stream_input_codec_changed")
+          .field("stream_key", spec_.stream_key)
+          .field("topic", input.topic)
+          .field("previous_codec", *codec_)
+          .field("codec", codec)
+          .info();
       } else if (pipeline_.isActive()) {
         should_start = false;
       }

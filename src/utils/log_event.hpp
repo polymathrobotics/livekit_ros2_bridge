@@ -16,11 +16,14 @@
 
 #include <chrono>
 #include <exception>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include <magic_enum.hpp>
 
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logging.hpp"
@@ -69,6 +72,20 @@ public:
   LogEvent && field(std::string_view key, const char * value) &&
   {
     static_cast<LogEvent &>(*this).field(key, value);
+    return std::move(*this);
+  }
+
+  template <typename T>
+  LogEvent & fieldEnum(std::string_view key, T value) &
+  {
+    message_ << " " << key << "=" << magic_enum::enum_name(value);
+    return *this;
+  }
+
+  template <typename T>
+  LogEvent && fieldEnum(std::string_view key, T value) &&
+  {
+    static_cast<LogEvent &>(*this).fieldEnum(key, value);
     return std::move(*this);
   }
 
@@ -172,8 +189,70 @@ public:
     return std::move(*this);
   }
 
+  template <typename T>
+  LogEvent & fieldOr(
+    std::string_view key, const std::optional<T> & value, std::string_view fallback = kUnknownFieldValue) &
+  {
+    message_ << " " << key << "=";
+    if (value.has_value()) {
+      message_ << value.value();
+    } else {
+      message_ << fallback;
+    }
+    return *this;
+  }
+
+  template <typename T>
+  LogEvent && fieldOr(
+    std::string_view key, const std::optional<T> & value, std::string_view fallback = kUnknownFieldValue) &&
+  {
+    static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
+    return std::move(*this);
+  }
+
+  LogEvent & fieldOr(
+    std::string_view key, const std::optional<std::string> & value, std::string_view fallback = kUnknownFieldValue) &
+  {
+    if (value.has_value()) {
+      return fieldOr(key, value.value(), fallback);
+    }
+    message_ << " " << key << "=" << fallback;
+    return *this;
+  }
+
+  LogEvent && fieldOr(
+    std::string_view key, const std::optional<std::string> & value, std::string_view fallback = kUnknownFieldValue) &&
+  {
+    static_cast<LogEvent &>(*this).fieldOr(key, value, fallback);
+    return std::move(*this);
+  }
+
+  template <typename T>
+  LogEvent & fieldEnumOr(
+    std::string_view key, const std::optional<T> & value, std::string_view fallback = kUnknownFieldValue) &
+  {
+    if (value.has_value()) {
+      return fieldEnum(key, value.value());
+    }
+    message_ << " " << key << "=" << fallback;
+    return *this;
+  }
+
+  template <typename T>
+  LogEvent && fieldEnumOr(
+    std::string_view key, const std::optional<T> & value, std::string_view fallback = kUnknownFieldValue) &&
+  {
+    static_cast<LogEvent &>(*this).fieldEnumOr(key, value, fallback);
+    return std::move(*this);
+  }
+
   LogEvent & fieldException(std::string_view key, std::exception_ptr error) &
   {
+    if (error == nullptr) {
+      field(key, kUnknownExceptionValue);
+      return *this;
+    }
+
     try {
       std::rethrow_exception(error);
     } catch (const std::exception & exc) {

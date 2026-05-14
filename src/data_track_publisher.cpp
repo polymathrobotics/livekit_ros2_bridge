@@ -121,19 +121,10 @@ public:
       }
 
       const auto & error = result.error();
-      if (error.code == livekit::LocalDataTrackTryPushErrorCode::QUEUE_FULL) {
-        LogEvent(kLogger, "data_track_delivery_dropped")
-          .field("resource", ros_topic_)
-          .field("track_name", track_name_)
-          .field("reason", "queue_full")
-          .warnThrottle(*clock_, kLogThrottle);
-        return;
-      }
-
       LogEvent(kLogger, "data_track_push_failed")
         .field("resource", ros_topic_)
         .field("track_name", track_name_)
-        .field("sdk_error_code", static_cast<std::uint32_t>(error.code))
+        .fieldEnum("sdk_error_code", error.code)
         .fieldOr("error", error.message)
         .warnThrottle(*clock_, kLogThrottle);
     }
@@ -148,11 +139,7 @@ public:
         room_connection_.unpublishDataTrack(track_);
         track_.reset();
       } catch (...) {
-        LogEvent(kLogger, "data_track_unpublish_failed")
-          .field("resource", ros_topic_)
-          .field("track_name", track_name_)
-          .fieldException("error", std::current_exception())
-          .warn();
+        // RoomConnection logs SDK unpublish failures before propagating them.
       }
     }
 
@@ -183,11 +170,18 @@ public:
   , qos_config_(qos_config)
   , ros_topic_(std::move(ros_topic))
   , interface_type_(std::move(interface_type))
-  , state_(std::make_shared<State>(ros_topic_, std::move(track_name), interval_ms, std::move(clock), room_connection))
+  , track_name_(std::move(track_name))
+  , state_(std::make_shared<State>(ros_topic_, track_name_, interval_ms, std::move(clock), room_connection))
   {
     try {
       subscribe();
     } catch (...) {
+      LogEvent(kLogger, "data_track_publish_failed")
+        .field("resource", ros_topic_)
+        .field("interface_type", interface_type_)
+        .field("track_name", track_name_)
+        .fieldException("error", std::current_exception())
+        .warn();
       state_->unpublish();
       throw;
     }
@@ -221,9 +215,9 @@ private:
         .field("resource", ros_topic_)
         .field("interface_type", interface_type_)
         .field("publisher_count", qos.publisher_count)
-        .field("source", subscriptionQosSourceString(qos.source))
-        .field("reliability", subscriptionQosReliabilityString(qos.qos.reliability()))
-        .field("durability", subscriptionQosDurabilityString(qos.qos.durability()))
+        .fieldEnum("source", qos.source)
+        .fieldEnum("reliability", qos.qos.reliability())
+        .fieldEnum("durability", qos.qos.durability())
         .fieldIf(qos.mixed_reliability, "mixed_reliability", true)
         .fieldIf(qos.mixed_durability, "mixed_durability", true)
         .fieldIfNotEmpty("override_id", qos.override_id)
@@ -250,6 +244,7 @@ private:
 
   std::string ros_topic_;
   std::string interface_type_;
+  std::string track_name_;
 
   std::shared_ptr<State> state_;
   std::shared_ptr<rclcpp::GenericSubscription> subscription_;
@@ -285,11 +280,7 @@ void DataTrackPublisher::publish()
     publication_ = std::make_unique<Publication>(
       ros_topic_, interface_type_, track_name_, interval_ms_, topics_, graph_, clock_, room_connection_, qos_config_);
   } catch (...) {
-    LogEvent(kLogger, "data_track_publish_failed")
-      .field("resource", ros_topic_)
-      .field("track_name", track_name_)
-      .fieldException("error", std::current_exception())
-      .warn();
+    // Publish failures are logged at their owning boundary; later publish() calls retry.
   }
 }
 

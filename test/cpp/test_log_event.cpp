@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -24,6 +25,17 @@
 
 namespace livekit_ros2_bridge
 {
+
+namespace
+{
+
+enum class SampleLogEnum
+{
+  FirstValue,
+  SECOND_VALUE,
+};
+
+}  // namespace
 
 TEST(LogEventTest, BuildsStructuredMessageWithFallbacksInFieldOrder)
 {
@@ -70,16 +82,51 @@ TEST(LogEventTest, UsesCustomFallbacksForStringViewAndCStringInputs)
     "present_cstr=ok");
 }
 
+TEST(LogEventTest, UsesFallbacksForOptionalFieldInputs)
+{
+  const std::optional<int> missing_count;
+  const std::optional<int> present_count = 7;
+  const std::optional<std::string> empty_name = std::string{};
+  const std::optional<std::string> present_name = std::string{"ready"};
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .fieldOr("missing_count", missing_count, "<missing>")
+      .fieldOr("present_count", present_count, "<missing>")
+      .fieldOr("empty_name", empty_name, "<missing>")
+      .fieldOr("present_name", present_name, "<missing>")
+      .str(),
+    "event=sample_event missing_count=<missing> present_count=7 empty_name=<missing> present_name=ready");
+}
+
+TEST(LogEventTest, UsesMagicEnumNamesForEnumFields)
+{
+  const std::optional<SampleLogEnum> missing_value;
+  const std::optional<SampleLogEnum> present_value = SampleLogEnum::SECOND_VALUE;
+
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event")
+      .fieldEnum("direct", SampleLogEnum::FirstValue)
+      .fieldEnumOr("missing", missing_value, "<missing>")
+      .fieldEnumOr("present", present_value, "<missing>")
+      .str(),
+    "event=sample_event direct=FirstValue missing=<missing> present=SECOND_VALUE");
+}
+
 TEST(LogEventTest, FormatsExceptionMessagesAndFallbacks)
 {
   const auto exception = std::make_exception_ptr(std::runtime_error("boom"));
   const auto non_std_exception = std::make_exception_ptr(7);
+  const std::exception_ptr missing_exception;
 
   EXPECT_EQ(
     LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", exception).str(),
     "event=sample_event error=boom");
   EXPECT_EQ(
     LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", non_std_exception).str(),
+    "event=sample_event error=unknown_exception");
+  EXPECT_EQ(
+    LogEvent(rclcpp::get_logger("log_event_test"), "sample_event").fieldException("error", missing_exception).str(),
     "event=sample_event error=unknown_exception");
 }
 

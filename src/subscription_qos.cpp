@@ -19,7 +19,6 @@
 #include <optional>
 #include <stdexcept>
 
-#include "rmw/qos_string_conversions.h"
 #include "utils/ros_resource_name_utils.hpp"
 
 namespace livekit_ros2_bridge
@@ -186,32 +185,6 @@ ResolvedSubscriptionQos resolveSubscriptionQos(
     publisher_qos.push_back(publisher.qos_profile());
   }
   return resolveSubscriptionQos(topic, base, config, publisher_qos);
-}
-
-const char * subscriptionQosSourceString(SubscriptionQosResolutionSource source)
-{
-  switch (source) {
-    case SubscriptionQosResolutionSource::Fallback:
-      return "fallback";
-    case SubscriptionQosResolutionSource::PublisherQos:
-      return "publisher_qos";
-    case SubscriptionQosResolutionSource::Override:
-      return "override";
-  }
-
-  return "unknown";
-}
-
-const char * subscriptionQosReliabilityString(rclcpp::ReliabilityPolicy policy)
-{
-  const char * name = rmw_qos_reliability_policy_to_str(static_cast<rmw_qos_reliability_policy_t>(policy));
-  return name == nullptr ? "unknown" : name;
-}
-
-const char * subscriptionQosDurabilityString(rclcpp::DurabilityPolicy policy)
-{
-  const char * name = rmw_qos_durability_policy_to_str(static_cast<rmw_qos_durability_policy_t>(policy));
-  return name == nullptr ? "unknown" : name;
 }
 
 }  // namespace livekit_ros2_bridge

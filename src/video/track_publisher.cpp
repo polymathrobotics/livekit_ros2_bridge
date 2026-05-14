@@ -15,7 +15,6 @@
 #include "video/track_publisher.hpp"
 
 #include <cstdint>
-#include <exception>
 #include <memory>
 #include <utility>
 #include <variant>
@@ -124,29 +123,19 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
   if (source_ == nullptr || source_->width() != width || source_->height() != height) {
     const bool republish = published_once_;
 
-    try {
-      tryUnpublish(connection_, track_);
-      track_.reset();
-      source_.reset();
-      auto source = std::make_shared<livekit::VideoSource>(width, height);
-      auto track =
-        connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
-      source_ = std::move(source);
-      track_ = std::move(track);
-    } catch (...) {
-      LogEvent(kLogger, republish ? "video_track_republish_failed" : "video_track_publish_failed")
-        .field("track_name", spec_.track_name)
-        .field("width", width)
-        .field("height", height)
-        .fieldException("error", std::current_exception())
-        .warn();
-      throw;
-    }
+    tryUnpublish(connection_, track_);
+    track_.reset();
+    source_.reset();
+    auto source = std::make_shared<livekit::VideoSource>(width, height);
+    auto track =
+      connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
+    source_ = std::move(source);
+    track_ = std::move(track);
 
     published_once_ = true;
     if (republish) {
       LogEvent(kLogger, "video_stream_track_republished")
-        .field("stream_key", spec_.stream_key)
+        .fieldOr("stream_key", spec_.stream_key)
         .field("width", width)
         .field("height", height)
         .info();
@@ -196,8 +185,8 @@ void TrackPublisher::onSampleUnpackFailed(const std::string & error)
   }
 
   LogEvent(kLogger, "video_stream_sample_unpack_failed")
-    .field("stream_key", spec_.stream_key)
-    .field("error", error)
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
     .warn();
 }
 
@@ -208,7 +197,10 @@ void TrackPublisher::onCaptureFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_capture_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
+  LogEvent(kLogger, "video_stream_capture_failed")
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
+    .warn();
 }
 
 void TrackPublisher::onRestartFailed(const std::string & error)
@@ -218,7 +210,10 @@ void TrackPublisher::onRestartFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_restart_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
+  LogEvent(kLogger, "video_stream_restart_failed")
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
+    .warn();
 }
 
 void TrackPublisher::onAppsrcPushFailed(const std::string & error)
@@ -228,7 +223,7 @@ void TrackPublisher::onAppsrcPushFailed(const std::string & error)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_push_failed").field("stream_key", spec_.stream_key).field("error", error).warn();
+  LogEvent(kLogger, "video_stream_push_failed").fieldOr("stream_key", spec_.stream_key).fieldOr("error", error).warn();
 }
 
 }  // namespace livekit_ros2_bridge::video

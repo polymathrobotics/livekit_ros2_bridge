@@ -33,20 +33,6 @@ constexpr auto kCheckInterval = std::chrono::milliseconds(250);
 constexpr auto kExitDelay = std::chrono::milliseconds(100);
 constexpr std::string_view kStartupPendingReason = "startup_connect_pending";
 
-std::string_view stateName(livekit::ConnectionState state)
-{
-  switch (state) {
-    case livekit::ConnectionState::Disconnected:
-      return "disconnected";
-    case livekit::ConnectionState::Connected:
-      return "connected";
-    case livekit::ConnectionState::Reconnecting:
-      return "reconnecting";
-  }
-
-  return "unknown";
-}
-
 }  // namespace
 
 ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, NodeInterfaces interfaces, CloseCallback close)
@@ -74,7 +60,7 @@ void ConnectionWatchdog::onStateChanged(livekit::ConnectionState state)
     return;
   }
 
-  startOutage(stateName(state));
+  startOutage(state);
 }
 
 void ConnectionWatchdog::clearOutage()
@@ -101,14 +87,14 @@ void ConnectionWatchdog::clearOutage()
   LogEvent(logger_, "connection_watchdog_recovered").field("unhealthy_duration_seconds", *duration).info();
 }
 
-void ConnectionWatchdog::startOutage(std::string_view reason)
+bool ConnectionWatchdog::startOutageTimer()
 {
   if (!config_.enabled) {
-    return;
+    return false;
   }
 
   const auto now = SteadyClock::now();
-  const bool started = [&]() {
+  return [&]() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (outage_.has_value()) {
       // Do not extend outage deadlines; reconnect failure may never emit a terminal event.
@@ -117,19 +103,30 @@ void ConnectionWatchdog::startOutage(std::string_view reason)
     outage_ = Outage{now, now + config_.recovery_timeout};
     return true;
   }();
+}
 
-  if (!started) {
+void ConnectionWatchdog::startOutage(std::string_view reason)
+{
+  if (!startOutageTimer()) {
     return;
   }
 
-  LogEvent event = LogEvent(logger_, "connection_watchdog_unhealthy")
-                     .field("reason", reason)
-                     .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0);
-  if (reason == kStartupPendingReason) {
-    event.info();
+  LogEvent(logger_, "connection_watchdog_unhealthy")
+    .field("reason", reason)
+    .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
+    .info();
+}
+
+void ConnectionWatchdog::startOutage(livekit::ConnectionState state)
+{
+  if (!startOutageTimer()) {
     return;
   }
-  event.warn();
+
+  LogEvent(logger_, "connection_watchdog_unhealthy")
+    .fieldEnum("connection_state", state)
+    .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
+    .warn();
 }
 
 void ConnectionWatchdog::check()

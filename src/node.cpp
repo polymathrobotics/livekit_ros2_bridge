@@ -17,7 +17,6 @@
 #include <exception>
 #include <memory>
 
-#include "rclcpp/logging.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
 #include "room_connection.hpp"
 #include "runtime.hpp"
