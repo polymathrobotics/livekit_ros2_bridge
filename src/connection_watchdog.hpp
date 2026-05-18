@@ -50,7 +50,6 @@ private:
   void startOutage(std::string_view reason);
   void startOutage(livekit::ConnectionState state);
   void run();
-  void triggerShutdown();
 
   RuntimeConfig::Watchdog config_;
   rclcpp::Logger logger_;

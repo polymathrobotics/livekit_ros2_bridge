@@ -153,26 +153,23 @@ void ConnectionWatchdog::run()
     }
 
     const auto deadline = outage_->deadline;
-    if (wake_.wait_until(lock, deadline, [this]() { return stop_requested_ || !outage_.has_value(); })) {
+    (void)wake_.wait_until(lock, deadline);
+
+    if (stop_requested_ || !outage_.has_value() || SteadyClock::now() < outage_->deadline) {
       continue;
     }
 
     outage_.reset();
     lock.unlock();
-    triggerShutdown();
-    return;
+
+    LogEvent(logger_, "connection_watchdog_shutdown")
+      .field("shutdown_reason", "recovery_timeout")
+      .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
+      .error();
+
+    std::this_thread::sleep_for(kExitDelay);
+    std::_Exit(EXIT_FAILURE);
   }
-}
-
-void ConnectionWatchdog::triggerShutdown()
-{
-  LogEvent(logger_, "connection_watchdog_shutdown")
-    .field("shutdown_reason", "recovery_timeout")
-    .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
-    .error();
-
-  std::this_thread::sleep_for(kExitDelay);
-  std::_Exit(EXIT_FAILURE);
 }
 
 }  // namespace livekit_ros2_bridge
