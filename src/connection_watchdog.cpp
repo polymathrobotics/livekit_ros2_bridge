@@ -16,10 +16,8 @@
 
 #include <cstdlib>
 #include <exception>
-#include <thread>
 #include <utility>
 
-#include "rclcpp/create_timer.hpp"
 #include "rclcpp/utilities.hpp"
 #include "utils/log_event.hpp"
 
@@ -29,28 +27,41 @@ namespace livekit_ros2_bridge
 namespace
 {
 
-constexpr auto kCheckInterval = std::chrono::milliseconds(250);
 constexpr auto kExitDelay = std::chrono::milliseconds(100);
 constexpr std::string_view kStartupPendingReason = "startup_connect_pending";
 
 }  // namespace
 
-ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, NodeInterfaces interfaces, CloseCallback close)
+ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, rclcpp::Logger logger, CloseCallback close)
 : config_(config)
-, logger_(interfaces.get_node_logging_interface()->get_logger())
+, logger_(std::move(logger))
 , close_(std::move(close))
 {
   if (!config_.enabled) {
     return;
   }
 
-  timer_ = rclcpp::create_wall_timer(
-    kCheckInterval,
-    [this]() { check(); },
-    nullptr,
-    interfaces.get_node_base_interface().get(),
-    interfaces.get_node_timers_interface().get());
+  thread_ = std::thread([this]() { run(); });
   startOutage(kStartupPendingReason);
+}
+
+ConnectionWatchdog::~ConnectionWatchdog()
+{
+  stop();
+}
+
+void ConnectionWatchdog::stop()
+{
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stop_requested_ = true;
+    outage_.reset();
+  }
+  wake_.notify_all();
+
+  if (thread_.joinable()) {
+    thread_.join();
+  }
 }
 
 void ConnectionWatchdog::onStateChanged(livekit::ConnectionState state)
@@ -84,6 +95,7 @@ void ConnectionWatchdog::clearOutage()
     return;
   }
 
+  wake_.notify_all();
   LogEvent(logger_, "connection_watchdog_recovered").field("unhealthy_duration_seconds", *duration).info();
 }
 
@@ -94,7 +106,7 @@ bool ConnectionWatchdog::startOutageTimer()
   }
 
   const auto now = SteadyClock::now();
-  return [&]() {
+  const bool started = [&]() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (outage_.has_value()) {
       // Do not extend outage deadlines; reconnect failure may never emit a terminal event.
@@ -103,6 +115,11 @@ bool ConnectionWatchdog::startOutageTimer()
     outage_ = Outage{now, now + config_.recovery_timeout};
     return true;
   }();
+
+  if (started) {
+    wake_.notify_all();
+  }
+  return started;
 }
 
 void ConnectionWatchdog::startOutage(std::string_view reason)
@@ -129,18 +146,36 @@ void ConnectionWatchdog::startOutage(livekit::ConnectionState state)
     .warn();
 }
 
-void ConnectionWatchdog::check()
+void ConnectionWatchdog::run()
 {
-  const auto now = SteadyClock::now();
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
+  while (!stop_requested_) {
     if (!outage_.has_value()) {
-      return;
+      wake_.wait(lock, [this]() { return stop_requested_ || outage_.has_value(); });
+      continue;
     }
-    if (now < outage_->deadline) {
-      return;
+
+    const auto deadline = outage_->deadline;
+    if (wake_.wait_until(lock, deadline, [this]() { return stop_requested_ || !outage_.has_value(); })) {
+      continue;
     }
+
     outage_.reset();
+    lock.unlock();
+    triggerShutdown();
+    return;
+  }
+}
+
+void ConnectionWatchdog::triggerShutdown()
+{
+  try {
+    std::thread([]() {
+      std::this_thread::sleep_for(kExitDelay);
+      std::_Exit(EXIT_FAILURE);
+    }).detach();
+  } catch (...) {
+    std::_Exit(EXIT_FAILURE);
   }
 
   LogEvent(logger_, "connection_watchdog_shutdown")

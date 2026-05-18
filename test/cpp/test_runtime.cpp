@@ -257,7 +257,7 @@ TEST_F(RuntimeTest, WatchdogExitsEvenWhenCloseCallbackBlocks)
 
       RuntimeConfig::Watchdog config;
       config.recovery_timeout = std::chrono::milliseconds(0);
-      ConnectionWatchdog watchdog(config, *node, []() {
+      ConnectionWatchdog watchdog(config, node->get_logger(), []() {
         std::this_thread::sleep_for(std::chrono::seconds(30));
         return true;
       });
@@ -352,6 +352,52 @@ TEST_F(RuntimeTest, WatchdogExitsWhenSdkReconnectNeverRecovers)
     ".*");
 }
 
+TEST_F(RuntimeTest, WatchdogExitsEvenWhenRosExecutorWorkBlocks)
+{
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+
+  EXPECT_EXIT(
+    {
+      ScopedRclcppInit rclcpp_init;
+
+      auto options = makeStaticTokenOptions();
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
+      options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
+      auto harness = makeRuntimeHarness(options, [](FakeRoomConnection & room_connection) {
+        room_connection.state->publish_data_track_handler = [&room_connection](const std::string &) {
+          std::this_thread::sleep_for(std::chrono::seconds(30));
+          return room_connection.makeSyntheticDataTrack();
+        };
+      });
+      harness.fake_room_connection->emitConnected();
+
+      auto observer = std::make_shared<rclcpp::Node>(nextNodeName("watchdog_blocked_executor_observer"));
+      auto publisher = observer->create_publisher<sensor_msgs::msg::BatteryState>("/battery", rclcpp::QoS(10));
+      (void)publisher;
+
+      rclcpp::executors::SingleThreadedExecutor executor;
+      executor.add_node(harness.node);
+      executor.add_node(observer);
+      if (!waitForTopicType(executor, harness.node, "/battery", "sensor_msgs/msg/BatteryState")) {
+        std::_Exit(kRuntimeScenarioTimedOutWithoutWatchdog);
+      }
+
+      harness.fake_room_connection->emitReconnecting();
+      std::thread([]() {
+        std::this_thread::sleep_for(kWatchdogObservationWindow);
+        std::_Exit(kRuntimeScenarioTimedOutWithoutWatchdog);
+      }).detach();
+
+      const std::string heartbeat =
+        R"({"subscriptions":[{"kind":"topic","name":"/battery","delivery_preferences":{"interval_ms":125}}]})";
+      harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
+      executor.spin();
+      std::_Exit(kRuntimeScenarioTimedOutWithoutWatchdog);
+    },
+    ::testing::ExitedWithCode(EXIT_FAILURE),
+    ".*");
+}
+
 TEST_F(RuntimeTest, WatchdogClearsSdkReconnectTimeoutAfterRecovery)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
@@ -397,7 +443,7 @@ TEST_F(RuntimeTest, ShutdownPreventsPendingWatchdogExit)
   EXPECT_EXIT(
     {
       auto options = makeStaticTokenOptions();
-      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.0);
+      options.append_parameter_override("health.watchdog.recovery_timeout_seconds", 0.3);
       runRuntimeScenario(
         options,
         [](RuntimeHarness & harness) { harness.runtime.reset(); },
