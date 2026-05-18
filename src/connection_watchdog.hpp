@@ -16,7 +16,6 @@
 
 #include <chrono>
 #include <condition_variable>
-#include <functional>
 #include <mutex>
 #include <optional>
 #include <string_view>
@@ -32,10 +31,9 @@ namespace livekit_ros2_bridge
 class ConnectionWatchdog final
 {
 public:
-  using CloseCallback = std::function<bool()>;
   using SteadyClock = std::chrono::steady_clock;
 
-  ConnectionWatchdog(RuntimeConfig::Watchdog config, rclcpp::Logger logger, CloseCallback close);
+  ConnectionWatchdog(RuntimeConfig::Watchdog config, rclcpp::Logger logger);
   ~ConnectionWatchdog();
 
   ConnectionWatchdog(const ConnectionWatchdog &) = delete;
@@ -56,7 +54,6 @@ private:
 
   RuntimeConfig::Watchdog config_;
   rclcpp::Logger logger_;
-  CloseCallback close_;
 
   struct Outage
   {

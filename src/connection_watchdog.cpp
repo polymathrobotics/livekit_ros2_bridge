@@ -15,10 +15,8 @@
 #include "connection_watchdog.hpp"
 
 #include <cstdlib>
-#include <exception>
 #include <utility>
 
-#include "rclcpp/utilities.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -32,10 +30,9 @@ constexpr std::string_view kStartupPendingReason = "startup_connect_pending";
 
 }  // namespace
 
-ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, rclcpp::Logger logger, CloseCallback close)
+ConnectionWatchdog::ConnectionWatchdog(RuntimeConfig::Watchdog config, rclcpp::Logger logger)
 : config_(config)
 , logger_(std::move(logger))
-, close_(std::move(close))
 {
   if (!config_.enabled) {
     return;
@@ -169,37 +166,10 @@ void ConnectionWatchdog::run()
 
 void ConnectionWatchdog::triggerShutdown()
 {
-  try {
-    std::thread([]() {
-      std::this_thread::sleep_for(kExitDelay);
-      std::_Exit(EXIT_FAILURE);
-    }).detach();
-  } catch (...) {
-    std::_Exit(EXIT_FAILURE);
-  }
-
   LogEvent(logger_, "connection_watchdog_shutdown")
     .field("shutdown_reason", "recovery_timeout")
     .field("recovery_timeout_seconds", config_.recovery_timeout.count() / 1000.0)
     .error();
-
-  try {
-    auto close = close_;
-    auto logger = logger_;
-    std::thread([close = std::move(close), logger]() mutable {
-      try {
-        (void)close();
-      } catch (...) {
-        LogEvent(logger, "connection_watchdog_close_failed").fieldException("error", std::current_exception()).error();
-      }
-    }).detach();
-  } catch (...) {
-    LogEvent(logger_, "connection_watchdog_close_failed").fieldException("error", std::current_exception()).error();
-  }
-
-  if (rclcpp::ok()) {
-    rclcpp::shutdown();
-  }
 
   std::this_thread::sleep_for(kExitDelay);
   std::_Exit(EXIT_FAILURE);

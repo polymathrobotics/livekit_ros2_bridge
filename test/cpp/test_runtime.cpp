@@ -246,31 +246,6 @@ TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
     ".*");
 }
 
-TEST_F(RuntimeTest, WatchdogExitsEvenWhenCloseCallbackBlocks)
-{
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
-
-  EXPECT_EXIT(
-    {
-      ScopedRclcppInit rclcpp_init;
-      auto node = std::make_shared<rclcpp::Node>(nextNodeName("watchdog_blocking_close_node"));
-
-      RuntimeConfig::Watchdog config;
-      config.recovery_timeout = std::chrono::milliseconds(0);
-      ConnectionWatchdog watchdog(config, node->get_logger(), []() {
-        std::this_thread::sleep_for(std::chrono::seconds(30));
-        return true;
-      });
-
-      rclcpp::executors::SingleThreadedExecutor executor;
-      executor.add_node(node);
-      spinExecutorFor(executor, kWatchdogObservationWindow);
-      std::_Exit(kRuntimeScenarioTimedOutWithoutWatchdog);
-    },
-    ::testing::ExitedWithCode(EXIT_FAILURE),
-    ".*");
-}
-
 TEST_F(RuntimeTest, WatchdogDoesNotExitAfterInitialConnectSucceeds)
 {
   ::testing::FLAGS_gtest_death_test_style = "threadsafe";
