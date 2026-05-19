@@ -149,31 +149,6 @@ TEST(DataTrackPublisherTest, SuppressesMessagesAccordingToAppliedInterval)
   ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 2U));
 }
 
-TEST(DataTrackPublisherTest, RepublishResetsSuppressionBeforeIntervalExpires)
-{
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("data_track_publisher_republish_test");
-  FakeRoomConnection room_connection;
-  const std::string topic = "/battery/per_track_republish";
-  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
-
-  rclcpp::executors::SingleThreadedExecutor executor;
-  executor.add_node(node);
-  ASSERT_TRUE(waitForTopicType(executor, node, topic, batteryStateInterfaceType()));
-
-  auto track_publisher = createDataTrackPublisher(*node, room_connection, topic);
-  track_publisher->setIntervalMs(1000);
-  track_publisher->publish();
-  const auto message = makeBatteryState();
-
-  ASSERT_TRUE(publishUntilFrameCount(executor, publisher, message, room_connection, 1U));
-
-  track_publisher->republish();
-
-  ASSERT_TRUE(
-    publishUntilFrameCount(executor, publisher, message, room_connection, 2U, std::chrono::milliseconds(300)));
-}
-
 TEST(DataTrackPublisherTest, RecoversFromPublishFailureWithoutStartingSuppressionWindow)
 {
   ScopedRclcppInit init;

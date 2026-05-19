@@ -581,7 +581,7 @@ TEST_F(RuntimeTest, UserPacketDropsUnsupportedTopicsWithoutExecutorDispatch)
   EXPECT_FALSE(received_message.has_value());
 }
 
-TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
+TEST_F(RuntimeTest, ParticipantRefreshReusesDataTrackOnNextHeartbeat)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("access.rules.subscribe.allow", std::vector<std::string>{"/battery"});
@@ -603,11 +603,14 @@ TEST_F(RuntimeTest, ParticipantRefreshRepublishesDataTrackOnNextHeartbeat)
   harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
   ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 1U; }));
+  const auto track_name = harness.state->published_data_track_names.front();
 
   harness.fake_room_connection->emitParticipantDisconnected("participant-1");
   harness.fake_room_connection->emitUserPacket(heartbeat, protocol::kHeartbeatTopic, "participant-1");
 
-  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_track_names.size() == 2U; }));
+  ASSERT_TRUE(spinUntil(executor, [&]() { return harness.state->published_data_calls.size() == 2U; }));
+  EXPECT_EQ(harness.state->published_data_track_names, std::vector<std::string>{track_name});
+  EXPECT_TRUE(harness.state->unpublished_data_track_names.empty());
 }
 
 TEST_F(RuntimeTest, VideoHeartbeatPublishesTrackNameAndInProcessVideoTrack)

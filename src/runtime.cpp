@@ -88,10 +88,7 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
   callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
     (void)callback_gate_.run([this, &event]() {
       std::string identity = event.participant->identity();
-      submitRosWork([this, identity = std::move(identity)]() {
-        subscription_lease_manager_.onRemoteParticipantDisconnected(identity);
-        ros_service_caller_.cancelForRequester(identity);
-      });
+      submitRosWork([this, identity = std::move(identity)]() { ros_service_caller_.cancelForRequester(identity); });
     });
   };
 

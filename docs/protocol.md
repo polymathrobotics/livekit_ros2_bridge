@@ -181,12 +181,6 @@ Two clients subscribing to the same [normalized](#versioning-and-terminology) no
 - Each subscription lease lasts 45 seconds from the heartbeat that renewed it.
 - Omitting a target from a later heartbeat MUST NOT cancel its existing lease immediately.
 - The bridge MUST allow unrenewed leases to expire naturally.
-- If a client reconnects while still owning a live data subscription, the bridge MUST republish the data track after a heartbeat confirms the client.
-- A well-formed heartbeat MAY therefore trigger one data-track republish after a page refresh or participant reconnect.
-
-### Example
-
-If a browser refreshes but sends a valid heartbeat before the old lease expires, the bridge can re-announce the same data-track delivery without recreating the subscription.
 
 ## Data-Packet Topic: `lkros.heartbeat`
 

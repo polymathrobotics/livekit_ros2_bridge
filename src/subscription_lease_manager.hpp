@@ -23,7 +23,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -79,9 +78,6 @@ public:
     rclcpp::node_interfaces::NodeTimersInterface::SharedPtr timers,
     ExecutorSubmitter submit_to_executor);
   void handleHeartbeatPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
-
-  // Defer republish until a later heartbeat proves the data subscription is still live.
-  void onRemoteParticipantDisconnected(const std::string & requester_identity);
   void pruneExpiredLeases();
   void shutdown();
 
@@ -147,7 +143,6 @@ private:
   // Canonical target (`kind:name`) to the data or video runtime shared by live requesters.
   Subscriptions subscriptions_;
 
-  std::unordered_set<std::string> republish_requesters_;
   EventThrottle conflict_throttle_{kLogThrottle};
 
   void handleHeartbeat(const std::string & requester_identity, const SubscriptionHeartbeat & heartbeat);
@@ -179,7 +174,6 @@ private:
     const SubscriptionStatusReport & report);
 
   void pruneLeases(Clock::time_point now);
-  void republishTracks(const std::string & requester_identity);
 };
 
 }  // namespace livekit_ros2_bridge

@@ -163,9 +163,6 @@ void SubscriptionLeaseManager::handleHeartbeat(
 
   const auto report = createStatusReport(heartbeat, requester, expiry);
 
-  // Page refreshes can leave the data track attached to the old LiveKit participant session.
-  republishTracks(requester);
-
   publishStatusReport(requester, heartbeat.session_id, report);
 }
 
@@ -374,7 +371,6 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
   Subscription & subscription, const std::string & requester_identity, const Lease & lease)
 {
   try {
-    const bool had_requester = subscription.leases.find(requester_identity) != subscription.leases.end();
     subscription.leases[requester_identity] = lease;
 
     auto * runtime = std::get_if<DataPublisher>(&subscription.runtime);
@@ -385,11 +381,6 @@ SubscriptionStatus SubscriptionLeaseManager::renew(
     auto & publisher = **runtime;
     const bool was_published = publisher.isPublished();
     publisher.setIntervalMs(minimumIntervalMs(subscription.leases));
-
-    if (!had_requester && was_published) {
-      // Status can reach a new participant before LiveKit surfaces the existing data track.
-      republish_requesters_.insert(requester_identity);
-    }
 
     if (!was_published) {
       publisher.publish();
@@ -463,70 +454,6 @@ SubscriptionStatus SubscriptionLeaseManager::create(
   }
 }
 
-void SubscriptionLeaseManager::onRemoteParticipantDisconnected(const std::string & requester_identity)
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  if (requester_identity.empty()) {
-    throw std::invalid_argument("requester_identity is required");
-  }
-
-  for (const auto & [key, subscription] : subscriptions_) {
-    (void)key;
-    const auto * runtime = std::get_if<DataPublisher>(&subscription.runtime);
-    if (runtime == nullptr) {
-      continue;
-    }
-
-    const auto & publisher = **runtime;
-    if (!publisher.isPublished()) {
-      continue;
-    }
-    if (subscription.leases.find(requester_identity) == subscription.leases.end()) {
-      continue;
-    }
-
-    // One published data track with a live lease is enough for republishTracks() to sweep the rest.
-    republish_requesters_.insert(requester_identity);
-
-    return;
-  }
-}
-
-void SubscriptionLeaseManager::republishTracks(const std::string & requester_identity)
-{
-  if (is_shutdown_.load()) {
-    return;
-  }
-  if (republish_requesters_.erase(requester_identity) == 0U) {
-    return;
-  }
-
-  for (auto & [key, subscription] : subscriptions_) {
-    (void)key;
-    auto * runtime = std::get_if<DataPublisher>(&subscription.runtime);
-    if (runtime == nullptr) {
-      continue;
-    }
-
-    auto & publisher = **runtime;
-    if (!publisher.isPublished()) {
-      continue;
-    }
-    if (subscription.leases.find(requester_identity) == subscription.leases.end()) {
-      continue;
-    }
-
-    LogEvent(kLogger, "data_track_republish")
-      .field("resource", subscription.name)
-      .field("track_name", publisher.trackName())
-      .field("requester_identity", requester_identity)
-      .info();
-    publisher.republish();
-  }
-}
-
 void SubscriptionLeaseManager::pruneExpiredLeases()
 {
   if (is_shutdown_.load()) {
@@ -593,7 +520,6 @@ void SubscriptionLeaseManager::pruneLeases(Clock::time_point now)
       }
 
       removed_any = true;
-      republish_requesters_.erase(lease_it->first);
       lease_it = subscription.leases.erase(lease_it);
     }
 
@@ -632,7 +558,6 @@ void SubscriptionLeaseManager::shutdown()
   session_leases_.clear();
   auto owned_subscriptions = std::move(subscriptions_);
   subscriptions_.clear();
-  republish_requesters_.clear();
 
   owned_subscriptions.clear();
 }

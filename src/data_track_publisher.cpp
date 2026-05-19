@@ -294,12 +294,6 @@ bool DataTrackPublisher::isPublished() const
   return publication_ != nullptr;
 }
 
-void DataTrackPublisher::republish()
-{
-  publication_.reset();
-  publish();
-}
-
 void DataTrackPublisher::setIntervalMs(int interval_ms)
 {
   interval_ms_ = interval_ms;

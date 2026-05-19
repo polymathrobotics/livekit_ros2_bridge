@@ -53,9 +53,6 @@ public:
   int intervalMs() const;
   bool isPublished() const;
 
-  // Replaces the active publication without changing the LiveKit track name.
-  void republish();
-
   // Zero disables suppression; nonzero values update active and future publications.
   void setIntervalMs(int interval_ms);
 

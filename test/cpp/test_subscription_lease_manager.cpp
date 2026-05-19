@@ -367,20 +367,6 @@ protected:
   AccessPolicy access_policy_;
 };
 
-void expectInvalidArgumentMessage(const std::function<void()> & fn, const char * expected_message)
-{
-  try {
-    fn();
-    FAIL() << "Expected std::invalid_argument";
-  } catch (const std::invalid_argument & exc) {
-    EXPECT_STREQ(exc.what(), expected_message);
-  } catch (const std::exception & exc) {
-    FAIL() << "Expected std::invalid_argument, got: " << exc.what();
-  } catch (...) {
-    FAIL() << "Expected std::invalid_argument";
-  }
-}
-
 TEST_F(SubscriptionLeaseManagerHeartbeatTest, HeartbeatPayloadParsesAndHandlesSubscriptions)
 {
   rclcpp::executors::SingleThreadedExecutor executor;
@@ -442,13 +428,8 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
   EXPECT_EQ(second["delivery"]["track_name"], first["delivery"]["track_name"]);
   EXPECT_EQ(
     session.state->published_data_track_names,
-    (std::vector<std::string>{
-      first["delivery"]["track_name"].get<std::string>(),
-      first["delivery"]["track_name"].get<std::string>(),
-    }));
-  EXPECT_EQ(
-    session.state->unpublished_data_track_names,
     (std::vector<std::string>{first["delivery"]["track_name"].get<std::string>()}));
+  EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
 }
 
 TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)
@@ -812,12 +793,12 @@ TEST(SubscriptionLeaseManagerTest, PerStreamPublishOptionsAreAppliedToEachPublis
   EXPECT_EQ(second_options.simulcast, second_publish_options.simulcast);
 }
 
-TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTrackWithoutDroppingLease)
+TEST(SubscriptionLeaseManagerTest, RepeatedRequesterHeartbeatReusesPublishedDataTrack)
 {
   ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("subscription_registry_republish_test");
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_refresh_reuse_test");
   FakeRoomConnection session;
-  const std::string topic = "/battery/refresh_replay";
+  const std::string topic = "/battery/refresh_reuse";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
   (void)publisher;
 
@@ -830,19 +811,18 @@ TEST(SubscriptionLeaseManagerTest, ParticipantRefreshRepublishesPublishedDataTra
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 1000)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
 
-  registry.onRemoteParticipantDisconnected("alice");
   const auto renewed =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 1000)}));
 
   EXPECT_EQ(renewed["delivery"]["track_name"], track_name);
-  EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
-  EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{track_name, track_name}));
+  EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
+  EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{track_name});
 }
 
-TEST(SubscriptionLeaseManagerTest, NewRequesterHeartbeatRepublishesAlreadyPublishedDataTrack)
+TEST(SubscriptionLeaseManagerTest, NewRequesterHeartbeatReusesAlreadyPublishedDataTrack)
 {
   ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_test");
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_new_requester_reuse_test");
   FakeRoomConnection session;
   const std::string topic = "/battery/new_requester";
   auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
@@ -860,8 +840,8 @@ TEST(SubscriptionLeaseManagerTest, NewRequesterHeartbeatRepublishesAlreadyPublis
     sendHeartbeatAndExtractStatus(registry, *session.state, "bob", makeHeartbeat({makeTopicDemand(topic, 250)}));
 
   EXPECT_EQ(second["delivery"]["track_name"], track_name);
-  EXPECT_EQ(session.state->unpublished_data_track_names, std::vector<std::string>{track_name});
-  EXPECT_EQ(session.state->published_data_track_names, (std::vector<std::string>{track_name, track_name}));
+  EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
+  EXPECT_EQ(session.state->published_data_track_names, std::vector<std::string>{track_name});
 }
 
 TEST(SubscriptionLeaseManagerTest, PruneExpiredLeasesUnpublishesPublishedTrack)
@@ -1020,17 +1000,6 @@ TEST(SubscriptionLeaseManagerTest, QueueFullPushLeavesSubscriptionActive)
   const auto status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
   expectStatusEntry(status, "topic", topic.c_str(), "active");
-}
-
-TEST(SubscriptionLeaseManagerTest, OnRemoteParticipantDisconnectedRejectsEmptyIdentity)
-{
-  ScopedRclcppInit init;
-  auto node = std::make_shared<rclcpp::Node>("subscription_registry_empty_requester_test");
-  FakeRoomConnection session;
-  auto registry = makeLeaseManager(*node, session);
-
-  expectInvalidArgumentMessage(
-    [&registry]() { registry.onRemoteParticipantDisconnected(""); }, "requester_identity is required");
 }
 
 TEST(SubscriptionLeaseManagerTest, ShutdownReportsNotFoundSubscriptionsAndFurtherLifecycleCallsAreNoOps)
