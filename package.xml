@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>livekit_ros2_bridge</name>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <description>Generic bridge for connecting ROS2 pub/sub into LiveKit.</description>
   <maintainer email="engineering@polymathrobotics.com">Polymath Robotics</maintainer>
   <license>Apache License 2.0</license>
