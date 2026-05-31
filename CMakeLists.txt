@@ -38,7 +38,6 @@ if(livekit_ros2_bridge_package_xml MATCHES "<version>([^<]+)</version>")
   set(LIVEKIT_ROS2_BRIDGE_PACKAGE_VERSION "${CMAKE_MATCH_1}")
 endif()
 
-set(LIVEKIT_ROS2_BRIDGE_SOURCE_REVISION "" CACHE STRING "Source revision to include in startup logs")
 configure_file(
   cmake/build_info.hpp.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/livekit_ros2_bridge/build_info.hpp"

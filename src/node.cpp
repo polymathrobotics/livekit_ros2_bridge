@@ -32,9 +32,7 @@ Node::Node(const rclcpp::NodeOptions & options)
 : rclcpp::Node("livekit_ros2_bridge", options)
 {
   LogEvent(get_logger(), "node_startup")
-    .field("package", build_info::kPackageName)
     .field("version", build_info::kPackageVersion)
-    .fieldIfNotEmpty("source_revision", build_info::kSourceRevision)
     .field("protocol_version", protocol::kProtocolVersion)
     .info();
 

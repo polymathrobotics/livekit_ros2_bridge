@@ -19,8 +19,6 @@
 namespace livekit_ros2_bridge::build_info
 {
 
-inline constexpr std::string_view kPackageName = "@PROJECT_NAME@";
 inline constexpr std::string_view kPackageVersion = "@LIVEKIT_ROS2_BRIDGE_PACKAGE_VERSION@";
-inline constexpr std::string_view kSourceRevision = "@LIVEKIT_ROS2_BRIDGE_SOURCE_REVISION@";
 
 }  // namespace livekit_ros2_bridge::build_info

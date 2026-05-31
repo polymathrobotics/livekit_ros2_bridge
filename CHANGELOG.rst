@@ -7,7 +7,7 @@ Changelog for package livekit_ros2_bridge
 * Move watchdog timeout enforcement off the ROS executor and fix stale recovery-deadline handling.
 * Improve logging around LiveKit room and track lifecycle events.
 * Stop republishing already published data tracks on participant refresh/reconnect.
-* Log package version, optional source revision, and protocol version at node startup.
+* Log package version and protocol version at node startup.
 
 0.1.0 (Unreleased)
 ------------------
