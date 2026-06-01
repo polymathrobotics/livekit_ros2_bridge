@@ -33,7 +33,7 @@ struct RuntimeConfig
   struct Watchdog
   {
     bool enabled = true;
-    // Watchdog closes the room when SDK reconnect exceeds this window.
+    // Watchdogs shut down the bridge when recovery exceeds this window.
     std::chrono::milliseconds recovery_timeout{std::chrono::seconds(75)};
   };
 

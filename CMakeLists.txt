@@ -110,6 +110,7 @@ add_library(${PROJECT_NAME} SHARED
   src/protocol/topic_publish_json.cpp
   src/room_connection.cpp
   src/ros_executor_queue.cpp
+  src/ros_executor_watchdog.cpp
   src/ros_service_caller.cpp
   src/ros_topic_publisher.cpp
   src/rpc_router.cpp
@@ -218,6 +219,7 @@ if(BUILD_TESTING)
     nlohmann_json::nlohmann_json
   )
   livekit_ros2_bridge_add_test(test_ros_executor_queue test/cpp/test_ros_executor_queue.cpp)
+  livekit_ros2_bridge_add_test(test_ros_executor_watchdog test/cpp/test_ros_executor_watchdog.cpp)
   livekit_ros2_bridge_add_test(test_ros_resource_name_utils test/cpp/test_ros_resource_name_utils.cpp)
   livekit_ros2_bridge_add_test(test_ros_service_caller test/cpp/test_ros_service_caller.cpp ${std_srvs_TARGETS})
   livekit_ros2_bridge_add_test(test_rpc_router test/cpp/test_rpc_router.cpp ${std_srvs_TARGETS})

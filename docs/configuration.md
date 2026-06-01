@@ -41,7 +41,7 @@ Notes:
 | Parameter | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
 | `health.watchdog.enabled` | `true` | `true`, `false` | Enables shutdown after the recovery timeout expires |
-| `health.watchdog.recovery_timeout_seconds` | `75.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity before it exits |
+| `health.watchdog.recovery_timeout_seconds` | `75.0` | double `>= 0.0` | Maximum time the bridge may spend recovering connectivity or ROS executor progress before it exits |
 
 Notes:
 

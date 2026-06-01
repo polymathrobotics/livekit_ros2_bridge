@@ -48,7 +48,8 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     &config_.subscription_qos,
     &config_.video_stream)
 , rpc_router_(interfaces.get_node_graph_interface(), config_.access_policy, ros_executor_queue_, ros_service_caller_)
-, watchdog_(config_.watchdog, logger_)
+, livekit_watchdog_(config_.watchdog, logger_)
+, ros_executor_watchdog_(config_.watchdog, ros_executor_queue_, logger_)
 {
   subscription_lease_manager_.startPruneTimer(
     interfaces.get_node_base_interface(), interfaces.get_node_timers_interface(), [this](std::function<void()> work) {
@@ -61,6 +62,7 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
   }
 
   room_connection_->start(config_.livekit, makeRoomCallbacks());
+  ros_executor_watchdog_.start();
 }
 
 Runtime::~Runtime()
@@ -69,7 +71,8 @@ Runtime::~Runtime()
     LogEvent(logger_, "node_shutdown_start").info();
   }
 
-  watchdog_.stop();
+  ros_executor_watchdog_.stop();
+  livekit_watchdog_.stop();
   ros_executor_queue_.shutdown();
   subscription_lease_manager_.shutdown();
   rpc_router_.unregisterRpcs();
@@ -80,7 +83,7 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
 {
   RoomEventCallbacks callbacks;
   callbacks.on_state_changed = [this](livekit::ConnectionState state) {
-    (void)callback_gate_.run([this, state]() { watchdog_.onStateChanged(state); });
+    (void)callback_gate_.run([this, state]() { livekit_watchdog_.onStateChanged(state); });
   };
   callbacks.on_user_packet_received = [this](const livekit::UserDataPacketEvent & event) {
     (void)callback_gate_.run([this, &event]() { onUserPacketReceived(event); });

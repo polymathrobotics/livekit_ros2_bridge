@@ -21,14 +21,13 @@ livekit_ros2_bridge:
       enabled:
         type: bool
         default_value: true
-        description: "Shut down the bridge when it stays unhealthy longer than the configured recovery timeout."
+        description: "Shut down the bridge when a watchdog stays unhealthy longer than the configured recovery timeout."
       recovery_timeout_seconds:
         type: double
         default_value: 75.0
         description: >-
-          Maximum time the bridge may spend recovering connectivity before it
-          shuts down. The 75-second default keeps recovery bounded while the
-          SDK owns reconnect.
+          Maximum time the bridge may spend recovering connectivity or ROS
+          executor progress before it shuts down.
         validation:
           gt_eq<>: [0.0]
 

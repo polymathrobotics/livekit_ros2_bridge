@@ -32,6 +32,7 @@
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "room_connection.hpp"
 #include "ros_executor_queue.hpp"
+#include "ros_executor_watchdog.hpp"
 #include "ros_service_caller.hpp"
 #include "ros_topic_publisher.hpp"
 #include "rpc_router.hpp"
@@ -78,7 +79,8 @@ private:
   RosServiceCaller ros_service_caller_;
   SubscriptionLeaseManager subscription_lease_manager_;
   RpcRouter rpc_router_;
-  ConnectionWatchdog watchdog_;
+  ConnectionWatchdog livekit_watchdog_;
+  RosExecutorWatchdog ros_executor_watchdog_;
 };
 
 }  // namespace livekit_ros2_bridge
