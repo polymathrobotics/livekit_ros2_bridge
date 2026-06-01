@@ -32,11 +32,7 @@ find_package(OpenSSL REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_library(SPDLOG_LIBRARY NAMES spdlog REQUIRED)
 
-set(LIVEKIT_ROS2_BRIDGE_PACKAGE_VERSION "unknown")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.xml" livekit_ros2_bridge_package_xml)
-if(livekit_ros2_bridge_package_xml MATCHES "<version>([^<]+)</version>")
-  set(LIVEKIT_ROS2_BRIDGE_PACKAGE_VERSION "${CMAKE_MATCH_1}")
-endif()
+set(LIVEKIT_ROS2_BRIDGE_PACKAGE_VERSION "${${PROJECT_NAME}_VERSION}")
 
 configure_file(
   cmake/build_info.hpp.in
