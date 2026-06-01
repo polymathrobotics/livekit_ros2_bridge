@@ -2,6 +2,10 @@
 Changelog for package livekit_ros2_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.1.2 (Unreleased)
+------------------
+* Add a ROS executor watchdog that shuts down the bridge when executor progress stalls.
+
 0.1.1 (Unreleased)
 ------------------
 * Move watchdog timeout enforcement off the ROS executor and fix stale recovery-deadline handling.
