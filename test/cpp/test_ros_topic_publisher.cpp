@@ -28,6 +28,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
+#include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_topic_publisher.hpp"
@@ -486,13 +487,14 @@ TEST(TopicPublisherTest, CachedPublisherPinsTypeOnCacheHits)
   first_message.voltage = 48.5F;
   publisher.publish("alice", makeRequest(topic, first_message));
   ASSERT_TRUE(harness.waitForPublisherSubscriberMatch(topic));
-  const auto deliveries_before_second_publish = received_voltages.size();
 
   sensor_msgs::msg::BatteryState second_message;
   second_message.voltage = 49.0F;
   publisher.publish("alice", makeRequest(topic, second_message));
 
-  ASSERT_TRUE(harness.spinUntil([&]() { return received_voltages.size() > deliveries_before_second_publish; }));
+  // Discovery can complete before the first publication reaches the subscription.
+  ASSERT_TRUE(harness.spinUntil(
+    [&]() { return !received_voltages.empty() && received_voltages.back() == second_message.voltage; }));
   EXPECT_NEAR(received_voltages.back(), 49.0F, 1e-6F);
 
   const auto deliveries_after_second_publish = received_voltages.size();

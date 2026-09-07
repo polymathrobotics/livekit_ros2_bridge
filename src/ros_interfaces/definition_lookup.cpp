@@ -23,6 +23,9 @@
 #include <string>
 
 #include "ament_index_cpp/get_resource.hpp"
+#if __has_include("ament_index_cpp/version.h")
+  #include "ament_index_cpp/version.h"
+#endif
 #include "ros_interfaces/failure_cache.hpp"
 
 namespace livekit_ros2_bridge::ros_interfaces
@@ -77,11 +80,21 @@ struct ParsedType
 
 std::filesystem::path resolveDefinitionPath(const ParsedType & parsed)
 {
+// Older ament_index_cpp releases do not provide a version header.
+#if AMENT_INDEX_CPP_VERSION_MAJOR > 1 || (AMENT_INDEX_CPP_VERSION_MAJOR == 1 && AMENT_INDEX_CPP_VERSION_MINOR >= 13)
+  const auto resource = ament_index_cpp::get_resource(kAmentResourceType, parsed.package);
+  if (!resource.resourcePath.has_value()) {
+    throw std::runtime_error("Package '" + parsed.package + "' not found in ament index");
+  }
+  const auto & index = resource.contents;
+  const auto & prefix = *resource.resourcePath;
+#else
   std::string index;
   std::string prefix;
   if (!ament_index_cpp::get_resource(kAmentResourceType, parsed.package, index, &prefix)) {
     throw std::runtime_error("Package '" + parsed.package + "' not found in ament index");
   }
+#endif
 
   const std::string requested_path = parsed.kind + "/" + parsed.name + "." + parsed.kind;
   std::istringstream lines(index);
