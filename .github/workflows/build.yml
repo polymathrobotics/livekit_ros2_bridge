@@ -35,6 +35,7 @@ jobs:
         with:
           target-ros2-distro: ${{ matrix.ros }}
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: colcon-logs-${{ matrix.ros }}
           path: ros_ws/log
