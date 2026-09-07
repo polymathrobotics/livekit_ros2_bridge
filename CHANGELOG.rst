@@ -2,6 +2,10 @@
 Changelog for package livekit_ros2_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.3.0 (Unreleased)
+------------------
+* Add configured non-ROS audio sources as mono LiveKit tracks.
+
 0.2.0 (Unreleased)
 ------------------
 * Bump the LiveKit C++ SDK to 1.6.0, which adds a libcurl runtime dependency. Publish options
