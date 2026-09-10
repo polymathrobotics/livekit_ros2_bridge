@@ -24,6 +24,9 @@
 #include <utility>
 
 #include "builtin_interfaces/msg/time.hpp"
+#include "rclcpp/create_timer.hpp"
+
+// Rolling's subscription helper needs the timer factory declared first.
 #include "rclcpp/create_subscription.hpp"
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"

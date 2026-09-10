@@ -20,6 +20,8 @@ jobs:
             ubuntu: noble
           - ros: kilted
             ubuntu: noble
+          - ros: lyrical
+            ubuntu: resolute
           - ros: rolling
             ubuntu: resolute
     name: ROS 2 ${{ matrix.ros }}

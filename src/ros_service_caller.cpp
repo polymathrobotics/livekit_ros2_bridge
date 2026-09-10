@@ -74,9 +74,6 @@ constexpr char kInflightLimitReachedError[] = "Requester identity service call l
 constexpr int kReadyEntityId = 0;
 const auto kLogger = rclcpp::get_logger("ros_service_caller");
 
-void deadlineTimerCallback(rcl_timer_t *, int64_t)
-{}
-
 void logRejectedCall(
   const ServiceCallRequest & request,
   const std::string & requester,
@@ -149,7 +146,13 @@ struct ServiceClient : public rclcpp::ClientBase
     return std::make_shared<rmw_request_id_t>();
   }
 
+// rclcpp 31+ passes response pointers by const reference.
+#if RCLCPP_VERSION_GTE(31, 0, 0)
+  void handle_response(
+    const std::shared_ptr<rmw_request_id_t> & request_header, const std::shared_ptr<void> & response) override
+#else
   void handle_response(std::shared_ptr<rmw_request_id_t> request_header, std::shared_ptr<void> response) override
+#endif
   {
     (void)request_header;
     (void)response;
@@ -319,6 +322,7 @@ public:
   , deadline_clock_(std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME))
   , deadline_timer_(rcl_get_zero_initialized_timer())
   {
+    // The waitable handles expired deadlines; the timer needs no callback.
     // Jazzy added rcl_timer_init2() with explicit autostart.
 #if RCLCPP_VERSION_GTE(28, 0, 0)
     const rcl_ret_t init_ret = rcl_timer_init2(
@@ -326,7 +330,7 @@ public:
       deadline_clock_->get_clock_handle(),
       context_->get_rcl_context().get(),
       std::chrono::nanoseconds(1).count(),
-      deadlineTimerCallback,
+      nullptr,
       rcl_get_default_allocator(),
       false);
 #else
@@ -335,7 +339,7 @@ public:
       deadline_clock_->get_clock_handle(),
       context_->get_rcl_context().get(),
       std::chrono::nanoseconds(1).count(),
-      deadlineTimerCallback,
+      nullptr,
       rcl_get_default_allocator());
 #endif
     if (init_ret != RCL_RET_OK) {

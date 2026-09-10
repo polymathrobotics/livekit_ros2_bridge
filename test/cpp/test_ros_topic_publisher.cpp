@@ -28,6 +28,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
+#include "rclcpp/node.hpp"
 #include "rclcpp/node_options.hpp"
 #include "rclcpp/serialization.hpp"
 #include "ros_topic_publisher.hpp"
