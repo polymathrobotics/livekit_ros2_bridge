@@ -22,7 +22,7 @@ namespace livekit_ros2_bridge::utils
 
 // Percent-encodes every byte outside the RFC 3986 unreserved set so a
 // configured source name can be embedded in a LiveKit track name reversibly.
-// Shared by the video and audio other-source track names.
+// Shared by the video and audio external-source track names.
 std::string percentEncodeUnreserved(std::string_view name);
 
 }  // namespace livekit_ros2_bridge::utils

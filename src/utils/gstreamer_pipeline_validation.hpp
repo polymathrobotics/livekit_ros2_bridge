@@ -48,9 +48,9 @@ struct EndpointLayout
 // validate fragments identically at startup.
 void validatePipeline(const std::string & context, const std::string & description, const EndpointLayout & layout);
 
-// Other-source fragments must provide exactly one appsink, which the bridge
+// External-source fragments must provide exactly one appsink, which the bridge
 // recovers by the reserved name passed here (per media kind).
-constexpr EndpointLayout makeOtherSourceLayout(const char * bridge_appsink_name)
+constexpr EndpointLayout makeExternalSourceLayout(const char * bridge_appsink_name)
 {
   return EndpointLayout{0U, 1U, 0U, 1U, nullptr, bridge_appsink_name};
 }

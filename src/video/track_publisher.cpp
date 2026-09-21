@@ -79,7 +79,7 @@ std::shared_ptr<TrackPublisher> TrackPublisher::create(
   const SubscriptionQosConfig * qos_config)
 {
   auto publisher = std::make_shared<TrackPublisher>(connection, std::move(spec));
-  if (std::holds_alternative<OtherInput>(publisher->spec_.input)) {
+  if (std::holds_alternative<ExternalInput>(publisher->spec_.input)) {
     auto stream = std::make_unique<GStreamerStream>(publisher->spec_, *publisher);
     stream->start();
     publisher->gstreamer_stream_ = std::move(stream);

@@ -43,12 +43,12 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-StreamSpec makeOtherSpec()
+StreamSpec makeExternalSpec()
 {
   StreamSpec spec;
-  spec.stream_key = "other_video:test";
-  spec.track_name = "lkros.video.other.test";
-  spec.input = OtherInput{"test", "", ""};
+  spec.stream_key = "external_video:test";
+  spec.track_name = "lkros.video.external.test";
+  spec.input = ExternalInput{"test", "", ""};
   return spec;
 }
 
@@ -210,10 +210,10 @@ TEST_F(StreamTest, PipelineFailureHandlerCloseCancelsDelayedFailure)
   EXPECT_FALSE(handler.schedule());
 }
 
-TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
+TEST_F(StreamTest, ExternalVideoLifecycleIsIdempotent)
 {
-  StreamSpec spec = makeOtherSpec();
-  spec.input = OtherInput{"test", "videotestsrc is-live=true pattern=black", ""};
+  StreamSpec spec = makeExternalSpec();
+  spec.input = ExternalInput{"test", "videotestsrc is-live=true pattern=black", ""};
 
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, spec);

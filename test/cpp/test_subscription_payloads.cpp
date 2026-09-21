@@ -110,15 +110,15 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
 
   expectDemand(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
-    SubscriptionTargetKind::OtherVideo,
+      R"({"subscriptions":[{"kind":"external_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
+    SubscriptionTargetKind::ExternalVideo,
     "front_camera",
     125);
 
   expectDemand(
     nlohmann::json::parse(
-      R"({"subscriptions":[{"kind":"other_audio","name":" cab_mic ","delivery_preferences":{"interval_ms":125}}]})"),
-    SubscriptionTargetKind::OtherAudio,
+      R"({"subscriptions":[{"kind":"external_audio","name":" cab_mic ","delivery_preferences":{"interval_ms":125}}]})"),
+    SubscriptionTargetKind::ExternalAudio,
     "cab_mic",
     125);
 
@@ -127,6 +127,24 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatNormalizesTargetsAndIntervals)
     SubscriptionTargetKind::Topic,
     expandHeartbeatTopicName("/camera"),
     std::nullopt);
+}
+
+TEST(SubscriptionPayloadsTest, ParseHeartbeatAcceptsDeprecatedOtherKindsAsAliases)
+{
+  // Deprecated aliases for one release; old clients still send other_*.
+  expectDemand(
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":" other_video ","name":" front_camera ","delivery_preferences":{"interval_ms":125}}]})"),
+    SubscriptionTargetKind::ExternalVideo,
+    "front_camera",
+    125);
+
+  expectDemand(
+    nlohmann::json::parse(
+      R"({"subscriptions":[{"kind":"other_audio","name":" cab_mic ","delivery_preferences":{"interval_ms":125}}]})"),
+    SubscriptionTargetKind::ExternalAudio,
+    "cab_mic",
+    125);
 }
 
 TEST(SubscriptionPayloadsTest, ParseHeartbeatParsesOptionalSessionIdAndRejectsMistypedValues)
@@ -211,12 +229,12 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatRejectsBlankOrUnsupportedTargets)
   }
 
   expectParseError(
-    nlohmann::json::parse(R"({"subscriptions":[{"kind":"other_video","name":"   "}]})"),
-    "heartbeat subscription other source name must trim to a non-empty name",
+    nlohmann::json::parse(R"({"subscriptions":[{"kind":"external_video","name":"   "}]})"),
+    "heartbeat subscription external source name must trim to a non-empty name",
     "subscriptions.name");
   expectParseError(
     nlohmann::json::parse(R"({"subscriptions":[{"kind":"service","name":"/battery"}]})"),
-    "heartbeat subscription 'kind' must be 'topic', 'other_video', or 'other_audio'",
+    "heartbeat subscription 'kind' must be 'topic', 'external_video', or 'external_audio'",
     "subscriptions.kind");
 }
 
@@ -268,15 +286,15 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateTopicsUsingMinimu
     25);
 }
 
-TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateOtherVideoTargetsUsingTrimmedName)
+TEST(SubscriptionPayloadsTest, ParseHeartbeatCoalescesDuplicateExternalVideoTargetsUsingTrimmedName)
 {
   expectDemand(
     nlohmann::json::parse(
       R"({"subscriptions":[
-      {"kind":"other_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
-      {"kind":" other_video ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
+      {"kind":"external_video","name":" front_camera ","delivery_preferences":{"interval_ms":125}},
+      {"kind":" external_video ","name":"front_camera","delivery_preferences":{"interval_ms":25}}
     ]})"),
-    SubscriptionTargetKind::OtherVideo,
+    SubscriptionTargetKind::ExternalVideo,
     "front_camera",
     25);
 }
@@ -318,16 +336,16 @@ TEST(SubscriptionPayloadsTest, ParseHeartbeatKeepsDistinctTargetsSeparate)
   const auto body = nlohmann::json::parse(
     R"({"subscriptions":[
       {"kind":"topic","name":"/camera/front","delivery_preferences":{"interval_ms":25}},
-      {"kind":"other_video","name":"/camera/front","delivery_preferences":{"interval_ms":125}},
-      {"kind":"other_video","name":"front_camera","delivery_preferences":{"interval_ms":25}},
-      {"kind":"other_video","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
+      {"kind":"external_video","name":"/camera/front","delivery_preferences":{"interval_ms":125}},
+      {"kind":"external_video","name":"front_camera","delivery_preferences":{"interval_ms":25}},
+      {"kind":"external_video","name":"front_camera/","delivery_preferences":{"interval_ms":125}}
     ]})");
   const auto heartbeat = parsePayload(body.dump());
 
   ASSERT_EQ(heartbeat.demands.size(), 4U);
   EXPECT_EQ(heartbeat.demands[0].kind, SubscriptionTargetKind::Topic);
   EXPECT_EQ(heartbeat.demands[0].name, expandHeartbeatTopicName("/camera/front"));
-  EXPECT_EQ(heartbeat.demands[1].kind, SubscriptionTargetKind::OtherVideo);
+  EXPECT_EQ(heartbeat.demands[1].kind, SubscriptionTargetKind::ExternalVideo);
   EXPECT_EQ(heartbeat.demands[1].name, "/camera/front");
   EXPECT_EQ(heartbeat.demands[2].name, "front_camera");
   EXPECT_EQ(heartbeat.demands[3].name, "front_camera/");
@@ -340,12 +358,12 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
   topic_data.interface_type = "sensor_msgs/msg/PointCloud2";
   topic_data.interval_ms = 50;
 
-  auto other_video = makeStatus(
-    SubscriptionTargetKind::OtherVideo,
+  auto external_video = makeStatus(
+    SubscriptionTargetKind::ExternalVideo,
     "/sources/front",
     SubscriptionDeliveryKind::Video,
-    "lkros.video.other.%2Fsources%2Ffront");
-  other_video.degradation_reason = "source warming up";
+    "lkros.video.external.%2Fsources%2Ffront");
+  external_video.degradation_reason = "source warming up";
 
   nlohmann::json expected = {
     {"v", protocol::kProtocolVersion},
@@ -364,16 +382,17 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
       {"interval_ms", 50}}},
   });
   expected["subscriptions"].push_back({
-    {"kind", "other_video"},
+    {"kind", "external_video"},
     {"name", "/sources/front"},
     {"status", "active"},
     {"degraded_reason", "source warming up"},
-    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.other.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.external.%2Fsources%2Ffront"}}},
   });
 
   EXPECT_EQ(
     statusBody(
-      std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{topic_data}, SubscriptionStatusEntry{other_video}},
+      std::vector<SubscriptionStatusEntry>{
+        SubscriptionStatusEntry{topic_data}, SubscriptionStatusEntry{external_video}},
       std::nullopt,
       std::nullopt),
     expected);
@@ -381,11 +400,11 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesSuccessOnl
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesAudioDelivery)
 {
-  auto other_audio = makeStatus(
-    SubscriptionTargetKind::OtherAudio,
+  auto external_audio = makeStatus(
+    SubscriptionTargetKind::ExternalAudio,
     "/sources/cab_mic",
     SubscriptionDeliveryKind::Audio,
-    "lkros.audio.other.%2Fsources%2Fcab_mic");
+    "lkros.audio.external.%2Fsources%2Fcab_mic");
 
   nlohmann::json expected = {
     {"v", protocol::kProtocolVersion},
@@ -393,14 +412,15 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesAudioDeliv
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
-    {"kind", "other_audio"},
+    {"kind", "external_audio"},
     {"name", "/sources/cab_mic"},
     {"status", "active"},
-    {"delivery", {{"kind", "audio"}, {"track_name", "lkros.audio.other.%2Fsources%2Fcab_mic"}}},
+    {"delivery", {{"kind", "audio"}, {"track_name", "lkros.audio.external.%2Fsources%2Fcab_mic"}}},
   });
 
   EXPECT_EQ(
-    statusBody(std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{other_audio}}, std::nullopt, std::nullopt),
+    statusBody(
+      std::vector<SubscriptionStatusEntry>{SubscriptionStatusEntry{external_audio}}, std::nullopt, std::nullopt),
     expected);
 }
 
@@ -418,10 +438,10 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
     {"error", {{"reason", "forbidden"}, {"message", "ROS topic '/battery_state' not permitted."}}},
   });
   expected["subscriptions"].push_back({
-    {"kind", "other_video"},
+    {"kind", "external_video"},
     {"name", "/sources/missing"},
     {"status", "error"},
-    {"error", {{"reason", "not_found"}, {"message", "Unknown other video source '/sources/missing'."}}},
+    {"error", {{"reason", "not_found"}, {"message", "Unknown external video source '/sources/missing'."}}},
   });
 
   EXPECT_EQ(
@@ -433,10 +453,10 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesErrorOnlyB
           SubscriptionErrorReason::Forbidden,
           "ROS topic '/battery_state' not permitted.")},
         SubscriptionStatusEntry{makeErrorStatus(
-          SubscriptionTargetKind::OtherVideo,
+          SubscriptionTargetKind::ExternalVideo,
           "/sources/missing",
           SubscriptionErrorReason::NotFound,
-          "Unknown other video source '/sources/missing'.")},
+          "Unknown external video source '/sources/missing'.")},
       },
       std::nullopt,
       std::nullopt),
@@ -518,11 +538,11 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesExpiryWith
 
 TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatuses)
 {
-  auto other_video = makeStatus(
-    SubscriptionTargetKind::OtherVideo,
+  auto external_video = makeStatus(
+    SubscriptionTargetKind::ExternalVideo,
     "/sources/front",
     SubscriptionDeliveryKind::Video,
-    "lkros.video.other.%2Fsources%2Ffront");
+    "lkros.video.external.%2Fsources%2Ffront");
 
   nlohmann::json expected = {
     {"v", protocol::kProtocolVersion},
@@ -530,10 +550,10 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
     {"subscriptions", nlohmann::json::array()},
   };
   expected["subscriptions"].push_back({
-    {"kind", "other_video"},
+    {"kind", "external_video"},
     {"name", "/sources/front"},
     {"status", "active"},
-    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.other.%2Fsources%2Ffront"}}},
+    {"delivery", {{"kind", "video"}, {"track_name", "lkros.video.external.%2Fsources%2Ffront"}}},
   });
   expected["subscriptions"].push_back({
     {"kind", "topic"},
@@ -545,7 +565,7 @@ TEST(SubscriptionPayloadsTest, SerializeSubscriptionStatusesSerializesMixedStatu
   EXPECT_EQ(
     statusBody(
       std::vector<SubscriptionStatusEntry>{
-        SubscriptionStatusEntry{other_video},
+        SubscriptionStatusEntry{external_video},
         SubscriptionStatusEntry{makeErrorStatus(
           SubscriptionTargetKind::Topic,
           "/nonexistent_topic",

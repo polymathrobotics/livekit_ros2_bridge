@@ -27,30 +27,30 @@ namespace livekit_ros2_bridge::audio
 namespace
 {
 
-constexpr char kOtherAudioKeyPrefix[] = "other_audio";
-constexpr char kOtherTrackPrefix[] = "lkros.audio.other.";
+constexpr char kExternalAudioKeyPrefix[] = "external_audio";
+constexpr char kExternalTrackPrefix[] = "lkros.audio.external.";
 const auto kLogger = rclcpp::get_logger("audio_stream_spec");
 
 }  // namespace
 
-StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string & source_name)
+StreamSpec resolveExternalSourceSpec(const StreamConfig & config, const std::string & source_name)
 {
   const std::string name = trim(source_name);
   if (name.empty()) {
-    throw std::invalid_argument("Invalid other audio name.");
+    throw std::invalid_argument("Invalid external audio name.");
   }
 
-  const auto it = config.other_sources.find(name);
-  if (it == config.other_sources.end()) {
-    throw std::invalid_argument("Unknown other audio source '" + name + "'.");
+  const auto it = config.external_sources.find(name);
+  if (it == config.external_sources.end()) {
+    throw std::invalid_argument("Unknown external audio source '" + name + "'.");
   }
 
   const auto & source = it->second;
 
   StreamSpec spec;
-  spec.stream_key = std::string{kOtherAudioKeyPrefix} + ":" + name;
-  spec.track_name = std::string{kOtherTrackPrefix} + utils::percentEncodeUnreserved(name);
-  spec.input = OtherInput{name, source.source_fragment, source.transform_fragment};
+  spec.stream_key = std::string{kExternalAudioKeyPrefix} + ":" + name;
+  spec.track_name = std::string{kExternalTrackPrefix} + utils::percentEncodeUnreserved(name);
+  spec.input = ExternalInput{name, source.source_fragment, source.transform_fragment};
   spec.publish_options = source.publish_options;
   return spec;
 }

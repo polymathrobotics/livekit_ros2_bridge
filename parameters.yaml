@@ -66,14 +66,14 @@ livekit_ros2_bridge:
     type: string_array
     default_value: []
     description: "Video topic ids defined under video.topics.<id>."
-  video_other_ids:
+  video_external_ids:
     type: string_array
     default_value: []
-    description: "Other video ids defined under video.other.<id>."
-  audio_other_ids:
+    description: "External video ids defined under video.external.<id>."
+  audio_external_ids:
     type: string_array
     default_value: []
-    description: "Other audio ids defined under audio.other.<id>."
+    description: "External audio ids defined under audio.external.<id>."
 
   video:
     publish:
@@ -135,27 +135,27 @@ livekit_ros2_bridge:
             description: "Optional LiveKit simulcast override for this video topic. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
-    other:
-      __map_video_other_ids:
+    external:
+      __map_video_external_ids:
         source:
           type: string
-          description: "Ingress fragment for this other video source (e.g. uridecodebin, v4l2src)."
+          description: "Ingress fragment for this external video source (e.g. uridecodebin, v4l2src)."
         transform:
           type: string
           default_value: ""
-          description: "Optional GStreamer transform fragment inserted after other video ingress."
+          description: "Optional GStreamer transform fragment inserted after external video ingress."
         publish:
           codec:
             type: string
             default_value: ""
-            description: "Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec."
+            description: "Optional LiveKit codec override for this external video source. Empty inherits from video.publish.codec."
             validation:
               one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
           max_bitrate_bps:
             type: int
             default_value: -1
             description: >-
-              Optional LiveKit max video bitrate override for this other video
+              Optional LiveKit max video bitrate override for this external video
               source in bps. -1 inherits from
               video.publish.max_bitrate_bps.
             validation:
@@ -163,13 +163,13 @@ livekit_ros2_bridge:
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate."
+            description: "Optional LiveKit max video framerate override for this external video source. -1 inherits from video.publish.max_framerate."
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ""
-            description: "Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast."
+            description: "Optional LiveKit simulcast override for this external video source. Empty inherits from video.publish.simulcast."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
 
@@ -193,21 +193,21 @@ livekit_ros2_bridge:
         description: "Global LiveKit RED override: auto, enabled, or disabled."
         validation:
           one_of<>: [["auto", "enabled", "disabled"]]
-    other:
-      __map_audio_other_ids:
+    external:
+      __map_audio_external_ids:
         source:
           type: string
-          description: "Ingress fragment for this other audio source (e.g. audiotestsrc, pulsesrc)."
+          description: "Ingress fragment for this external audio source (e.g. audiotestsrc, pulsesrc)."
         transform:
           type: string
           default_value: ""
-          description: "Optional GStreamer transform fragment inserted after other audio ingress."
+          description: "Optional GStreamer transform fragment inserted after external audio ingress."
         publish:
           max_bitrate_bps:
             type: int
             default_value: -1
             description: >-
-              Optional LiveKit max audio bitrate override for this other audio
+              Optional LiveKit max audio bitrate override for this external audio
               source in bps. -1 inherits from
               audio.publish.max_bitrate_bps.
             validation:
@@ -215,13 +215,13 @@ livekit_ros2_bridge:
           dtx:
             type: string
             default_value: ""
-            description: "Optional LiveKit DTX override for this other audio source. Empty inherits from audio.publish.dtx."
+            description: "Optional LiveKit DTX override for this external audio source. Empty inherits from audio.publish.dtx."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
           red:
             type: string
             default_value: ""
-            description: "Optional LiveKit RED override for this other audio source. Empty inherits from audio.publish.red."
+            description: "Optional LiveKit RED override for this external audio source. Empty inherits from audio.publish.red."
             validation:
               one_of<>: [["", "auto", "enabled", "disabled"]]
 

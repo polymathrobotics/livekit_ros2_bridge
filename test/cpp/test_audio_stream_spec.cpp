@@ -34,7 +34,7 @@ void expectThrowsWithMessage(std::function<void()> callable, const char * expect
   }
 }
 
-TEST(AudioStreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
+TEST(AudioStreamSpecTest, ResolveExternalSourceSpecTrimsExternalSourceName)
 {
   StreamConfig config = makeDefaultConfig();
   livekit::TrackPublishOptions expected_options;
@@ -44,18 +44,18 @@ TEST(AudioStreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   encoding.max_bitrate = 64000U;
   expected_options.audio_encoding = encoding;
 
-  OtherSource source;
+  ExternalSource source;
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
   source.transform_fragment = "volume volume=0.5";
   source.publish_options = expected_options;
 
-  config.other_sources.emplace("cab_mic", std::move(source));
+  config.external_sources.emplace("cab_mic", std::move(source));
 
-  const auto spec = resolveOtherSourceSpec(config, "  cab_mic  ");
+  const auto spec = resolveExternalSourceSpec(config, "  cab_mic  ");
   const auto & input = spec.input;
 
-  EXPECT_EQ(spec.stream_key, "other_audio:cab_mic");
-  EXPECT_EQ(spec.track_name, "lkros.audio.other.cab_mic");
+  EXPECT_EQ(spec.stream_key, "external_audio:cab_mic");
+  EXPECT_EQ(spec.track_name, "lkros.audio.external.cab_mic");
   EXPECT_EQ(input.name, "cab_mic");
   EXPECT_EQ(input.source_fragment, "audiotestsrc is-live=true wave=sine");
   EXPECT_EQ(input.transform_fragment, "volume volume=0.5");
@@ -65,28 +65,28 @@ TEST(AudioStreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   EXPECT_EQ(spec.publish_options.audio_encoding->max_bitrate, 64000U);
 }
 
-TEST(AudioStreamSpecTest, ResolveOtherSourceSpecPercentEncodesTrackNameSuffix)
+TEST(AudioStreamSpecTest, ResolveExternalSourceSpecPercentEncodesTrackNameSuffix)
 {
   StreamConfig config = makeDefaultConfig();
 
-  OtherSource source;
+  ExternalSource source;
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
 
-  config.other_sources.emplace("/sources/cab:mic%", std::move(source));
+  config.external_sources.emplace("/sources/cab:mic%", std::move(source));
 
-  const auto spec = resolveOtherSourceSpec(config, "/sources/cab:mic%");
+  const auto spec = resolveExternalSourceSpec(config, "/sources/cab:mic%");
 
-  EXPECT_EQ(spec.track_name, "lkros.audio.other.%2Fsources%2Fcab%3Amic%25");
+  EXPECT_EQ(spec.track_name, "lkros.audio.external.%2Fsources%2Fcab%3Amic%25");
 }
 
-TEST(AudioStreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
+TEST(AudioStreamSpecTest, ResolveExternalSourceSpecRejectsInvalidNames)
 {
   const StreamConfig config = makeDefaultConfig();
 
   expectThrowsWithMessage(
-    [&]() { (void)resolveOtherSourceSpec(config, "sources/missing"); },
-    "Unknown other audio source 'sources/missing'.");
-  expectThrowsWithMessage([&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other audio name.");
+    [&]() { (void)resolveExternalSourceSpec(config, "sources/missing"); },
+    "Unknown external audio source 'sources/missing'.");
+  expectThrowsWithMessage([&]() { (void)resolveExternalSourceSpec(config, " \t\n "); }, "Invalid external audio name.");
 }
 
 }  // namespace

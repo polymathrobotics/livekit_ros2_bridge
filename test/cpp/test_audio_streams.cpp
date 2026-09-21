@@ -40,12 +40,12 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::AudioSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-StreamSpec makeOtherSpec()
+StreamSpec makeExternalSpec()
 {
   StreamSpec spec;
-  spec.stream_key = "other_audio:test";
-  spec.track_name = "lkros.audio.other.test";
-  spec.input = OtherInput{"test", "", ""};
+  spec.stream_key = "external_audio:test";
+  spec.track_name = "lkros.audio.external.test";
+  spec.input = ExternalInput{"test", "", ""};
   return spec;
 }
 
@@ -88,10 +88,10 @@ TEST_F(AudioStreamTest, PipelineStartRejectsNamedNonAppSink)
     pipeline, "audiotestsrc is-live=true ! fakesink name=bridge_audio_sink", "must be a GstAppSink");
 }
 
-TEST_F(AudioStreamTest, OtherAudioLifecycleIsIdempotent)
+TEST_F(AudioStreamTest, ExternalAudioLifecycleIsIdempotent)
 {
-  StreamSpec spec = makeOtherSpec();
-  spec.input = OtherInput{"test", "audiotestsrc is-live=true wave=sine", ""};
+  StreamSpec spec = makeExternalSpec();
+  spec.input = ExternalInput{"test", "audiotestsrc is-live=true wave=sine", ""};
 
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, spec);
@@ -108,8 +108,8 @@ TEST_F(AudioStreamTest, OtherAudioLifecycleIsIdempotent)
 // has to complete afterwards.
 TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
 {
-  StreamSpec spec = makeOtherSpec();
-  spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.mp3", ""};
+  StreamSpec spec = makeExternalSpec();
+  spec.input = ExternalInput{"test", "filesrc location=/nonexistent/lkros_missing_source.mp3", ""};
 
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, spec);

@@ -141,7 +141,7 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
 }
 
 constexpr utils::EndpointLayout kRosTopicRuleLayout{1U, 1U, 1U, 1U, kBridgeAppSrcName, kBridgeAppSinkName};
-constexpr utils::EndpointLayout kOtherSourceLayout = utils::makeOtherSourceLayout(kBridgeAppSinkName);
+constexpr utils::EndpointLayout kExternalSourceLayout = utils::makeExternalSourceLayout(kBridgeAppSinkName);
 
 using utils::requireUniqueEntry;
 
@@ -184,17 +184,17 @@ StreamConfig loadConfig(const Params & params)
     config.ros_topic_rules.push_back(std::move(rule));
   }
 
-  for (const auto & id : params.video_other_ids) {
+  for (const auto & id : params.video_external_ids) {
     const auto & entry = requireUniqueEntry(
-      seen_source_ids, id, params.video.other.video_other_ids_map, "other video id", "other video source");
+      seen_source_ids, id, params.video.external.video_external_ids_map, "external video id", "external video source");
 
-    const std::string source_context = "other video source '" + id + "'";
+    const std::string source_context = "external video source '" + id + "'";
     const std::string source_fragment = trim(entry.source);
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
     const std::string transform = trim(entry.transform);
-    validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kOtherSourceLayout);
+    validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kExternalSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string name = trim(id);
@@ -202,14 +202,14 @@ StreamConfig loadConfig(const Params & params)
       throw std::runtime_error(source_context + " must trim to a non-empty name");
     }
     if (!seen_source_names.emplace(name).second) {
-      throw std::runtime_error("duplicate other video source name '" + name + "'");
+      throw std::runtime_error("duplicate external video source name '" + name + "'");
     }
 
-    OtherSource source;
+    ExternalSource source;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
     source.publish_options = parsePublishOptions(entry, config.default_publish_options);
-    config.other_sources.emplace(name, std::move(source));
+    config.external_sources.emplace(name, std::move(source));
   }
 
   config.ros_topic_rules.insert(

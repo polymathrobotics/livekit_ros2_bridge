@@ -559,7 +559,7 @@ TEST_F(RpcRouterTest, TopicEchoOnceRpcRejectsUnsupportedKindAsInvalidRequest)
     [&]() {
       harness.invokeRpc(
         protocol::kTopicEchoOnceMethod,
-        makeRpcInvocation("participant-1", makeEchoOnceRequest("other_video", "/rpc_router/echo_once_topic")));
+        makeRpcInvocation("participant-1", makeEchoOnceRequest("external_video", "/rpc_router/echo_once_topic")));
     },
     protocol::kInvalidRequestRpcCode);
   EXPECT_TRUE(harness.connection.state->sent_byte_streams.empty());

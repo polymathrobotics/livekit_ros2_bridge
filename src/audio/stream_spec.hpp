@@ -24,7 +24,7 @@
 namespace livekit_ros2_bridge::audio
 {
 
-struct OtherSource
+struct ExternalSource
 {
   std::string source_fragment;
   std::string transform_fragment;
@@ -34,7 +34,7 @@ struct OtherSource
 struct StreamConfig
 {
   // Keyed by the trimmed configured source name.
-  std::unordered_map<std::string, OtherSource> other_sources;
+  std::unordered_map<std::string, ExternalSource> external_sources;
   livekit::TrackPublishOptions default_publish_options;
 };
 
@@ -43,7 +43,7 @@ inline StreamConfig makeDefaultConfig()
   return StreamConfig{};
 }
 
-struct OtherInput
+struct ExternalInput
 {
   std::string name;
   std::string source_fragment;
@@ -52,15 +52,15 @@ struct OtherInput
 
 struct StreamSpec
 {
-  // Stable runtime key: "other_audio:<trimmed source name>".
+  // Stable runtime key: "external_audio:<trimmed source name>".
   std::string stream_key;
-  // LiveKit track name: reversible percent-encoded other-audio suffix.
+  // LiveKit track name: reversible percent-encoded external-audio suffix.
   std::string track_name;
 
-  OtherInput input;
+  ExternalInput input;
   livekit::TrackPublishOptions publish_options;
 };
 
-StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string & source_name);
+StreamSpec resolveExternalSourceSpec(const StreamConfig & config, const std::string & source_name);
 
 }  // namespace livekit_ros2_bridge::audio

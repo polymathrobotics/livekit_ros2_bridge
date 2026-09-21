@@ -226,53 +226,53 @@ TEST(StreamSpecTest, ResolveRosTopicSpecDoesNotInterpolateTopicPlaceholders)
   EXPECT_EQ(requireRosInput(spec).transform_fragment, "{topic}");
 }
 
-TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
+TEST(StreamSpecTest, ResolveExternalSourceSpecTrimsExternalSourceName)
 {
   StreamConfig config = makeDefaultConfig();
   const auto expected_publish_options =
     makeTrackPublishOptions(videoCodec(4), livekit::VideoEncodingOptions{1200000U, 10.0}, false);
 
-  OtherSource source;
+  ExternalSource source;
   source.source_fragment = "videotestsrc is-live=true pattern=black";
   source.transform_fragment = "videobalance saturation=0.0";
   source.publish_options = expected_publish_options;
 
-  config.other_sources.emplace("front_camera", std::move(source));
+  config.external_sources.emplace("front_camera", std::move(source));
 
-  const auto spec = resolveOtherSourceSpec(config, "  front_camera  ");
-  const auto & input = requireOtherInput(spec);
+  const auto spec = resolveExternalSourceSpec(config, "  front_camera  ");
+  const auto & input = requireExternalInput(spec);
 
-  EXPECT_EQ(spec.stream_key, "other_video:front_camera");
-  EXPECT_EQ(spec.track_name, "lkros.video.other.front_camera");
+  EXPECT_EQ(spec.stream_key, "external_video:front_camera");
+  EXPECT_EQ(spec.track_name, "lkros.video.external.front_camera");
   EXPECT_EQ(input.name, "front_camera");
   EXPECT_EQ(input.source_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
   expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
 }
 
-TEST(StreamSpecTest, ResolveOtherSourceSpecPercentEncodesTrackNameSuffix)
+TEST(StreamSpecTest, ResolveExternalSourceSpecPercentEncodesTrackNameSuffix)
 {
   StreamConfig config = makeDefaultConfig();
 
-  OtherSource source;
+  ExternalSource source;
   source.source_fragment = "videotestsrc is-live=true pattern=black";
 
-  config.other_sources.emplace("/sources/front:rgb%", std::move(source));
+  config.external_sources.emplace("/sources/front:rgb%", std::move(source));
 
-  const auto spec = resolveOtherSourceSpec(config, "/sources/front:rgb%");
+  const auto spec = resolveExternalSourceSpec(config, "/sources/front:rgb%");
 
-  EXPECT_EQ(spec.track_name, "lkros.video.other.%2Fsources%2Ffront%3Argb%25");
+  EXPECT_EQ(spec.track_name, "lkros.video.external.%2Fsources%2Ffront%3Argb%25");
 }
 
-TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
+TEST(StreamSpecTest, ResolveExternalSourceSpecRejectsInvalidNames)
 {
   const StreamConfig config = makeDefaultConfig();
 
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveOtherSourceSpec(config, "sources/missing"); },
-    "Unknown other video source 'sources/missing'.");
+    [&]() { (void)resolveExternalSourceSpec(config, "sources/missing"); },
+    "Unknown external video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
-    [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+    [&]() { (void)resolveExternalSourceSpec(config, " \t\n "); }, "Invalid external video name.");
 }
 
 }  // namespace

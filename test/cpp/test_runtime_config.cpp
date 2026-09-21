@@ -248,12 +248,12 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_topic_ids", std::vector<std::string>{"front_camera"});
-  options.append_parameter_override("video_other_ids", std::vector<std::string>{"front_rtsp"});
+  options.append_parameter_override("video_external_ids", std::vector<std::string>{"front_rtsp"});
   options.append_parameter_override("video.topics.front_camera.pattern", "/camera/front/*");
   options.append_parameter_override(
     "video.topics.front_camera.transform", "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
-  options.append_parameter_override("video.other.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
-  options.append_parameter_override("video.other.front_rtsp.transform", "videobalance saturation=0.0");
+  options.append_parameter_override("video.external.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
+  options.append_parameter_override("video.external.front_rtsp.transform", "videobalance saturation=0.0");
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_video_params", options);
 
@@ -264,10 +264,10 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   EXPECT_EQ(front_rule.transform_fragment, "videoconvert ! videoscale ! video/x-raw,width=640,height=360");
   const auto & fallback_rule = config.video_stream.ros_topic_rules.back();
   EXPECT_EQ(fallback_rule.rule_id, "default_ros");
-  ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+  ASSERT_EQ(config.video_stream.external_sources.size(), 1U);
   EXPECT_EQ(
-    config.video_stream.other_sources.at("front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(config.video_stream.other_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
+    config.video_stream.external_sources.at("front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(config.video_stream.external_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, TrackPublishOptionsLoadFromUnifiedParams)
@@ -414,14 +414,14 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
   {
     auto options = makeStaticTokenOptions();
     appendVideoPublishOverrides(options, "vp8", 500000, 30.0, "disabled");
-    options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-    options.append_parameter_override("video.other.front.source", "videotestsrc pattern=ball");
-    options.append_parameter_override("video.other.front.publish.codec", "h265");
+    options.append_parameter_override("video_external_ids", std::vector<std::string>{"front"});
+    options.append_parameter_override("video.external.front.source", "videotestsrc pattern=ball");
+    options.append_parameter_override("video.external.front.publish.codec", "h265");
 
-    const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_publish_override", options);
+    const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_external_video_publish_override", options);
 
     expectPublishOptionsEq(
-      config.video_stream.other_sources.at("front").publish_options,
+      config.video_stream.external_sources.at("front").publish_options,
       makeExpectedPublishOptions(kLivekitVideoCodecH265, 500000U, 30.0, false));
   }
 }
@@ -459,21 +459,23 @@ TEST_F(RuntimeConfigTest, MissingGeneratedVideoParametersAreRejectedByParameterL
 
   {
     auto options = makeStaticTokenOptions();
-    options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
+    options.append_parameter_override("video_external_ids", std::vector<std::string>{"front"});
 
     expectConfigErrorContains(
-      "startup_config_missing_video_other_params", options, "parameter 'video.other.front.source' is not initialized");
+      "startup_config_missing_video_external_params",
+      options,
+      "parameter 'video.external.front.source' is not initialized");
   }
 }
 
-TEST_F(RuntimeConfigTest, OtherVideoRejectsWhitespaceOnlySourceFragment)
+TEST_F(RuntimeConfigTest, ExternalVideoRejectsWhitespaceOnlySourceFragment)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("video.other.front.source", " \t\n ");
+  options.append_parameter_override("video_external_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.external.front.source", " \t\n ");
 
   expectConfigError(
-    "startup_config_empty_other_video_source", options, "other video source 'front' requires a non-empty source");
+    "startup_config_empty_external_video_source", options, "external video source 'front' requires a non-empty source");
 }
 
 TEST_F(RuntimeConfigTest, BridgeManagedEndpointsAreRejectedInVideoFragments)
@@ -492,13 +494,13 @@ TEST_F(RuntimeConfigTest, BridgeManagedEndpointsAreRejectedInVideoFragments)
 
   {
     auto options = makeStaticTokenOptions();
-    options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-    options.append_parameter_override("video.other.front.source", "appsrc ! videoconvert");
+    options.append_parameter_override("video_external_ids", std::vector<std::string>{"front"});
+    options.append_parameter_override("video.external.front.source", "appsrc ! videoconvert");
 
     expectConfigError(
-      "startup_config_other_video_appsrc_rejected",
+      "startup_config_external_video_appsrc_rejected",
       options,
-      "other video source 'front' must not define appsrc/appsink endpoints; the bridge owns them");
+      "external video source 'front' must not define appsrc/appsink endpoints; the bridge owns them");
   }
 }
 
@@ -527,18 +529,18 @@ TEST_F(RuntimeConfigTest, DuplicateVideoIdsReportSectionSpecificErrors)
 
   {
     auto options = makeStaticTokenOptions();
-    options.append_parameter_override("video_other_ids", std::vector<std::string>{"front", "front"});
-    options.append_parameter_override("video.other.front.source", "videotestsrc pattern=ball");
+    options.append_parameter_override("video_external_ids", std::vector<std::string>{"front", "front"});
+    options.append_parameter_override("video.external.front.source", "videotestsrc pattern=ball");
 
-    expectConfigError("startup_config_duplicate_video_other_id", options, "duplicate other video id 'front'");
+    expectConfigError("startup_config_duplicate_video_external_id", options, "duplicate external video id 'front'");
   }
 }
 
-TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
+TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctExternalSources)
 {
-  const std::string node_name = "startup_config_distinct_slash_other_video_sources";
+  const std::string node_name = "startup_config_distinct_slash_external_video_sources";
   const auto params_path =
-    std::filesystem::temp_directory_path() / "livekit_ros2_bridge_distinct_slash_other_video_sources_params.yaml";
+    std::filesystem::temp_directory_path() / "livekit_ros2_bridge_distinct_slash_external_video_sources_params.yaml";
 
   {
     std::ofstream params_file(params_path);
@@ -547,38 +549,38 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
     params_file << "  ros__parameters:\n";
     params_file << "    livekit.url: ws://test:7880\n";
     params_file << "    livekit.token: static-token\n";
-    params_file << "    video_other_ids: ['/front_rtsp', '/front_rtsp/']\n";
-    params_file << "    \"video.other./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";
-    params_file << "    \"video.other./front_rtsp/.source\": 'videotestsrc is-live=true pattern=smpte'\n";
+    params_file << "    video_external_ids: ['/front_rtsp', '/front_rtsp/']\n";
+    params_file << "    \"video.external./front_rtsp.source\": 'videotestsrc is-live=true pattern=ball'\n";
+    params_file << "    \"video.external./front_rtsp/.source\": 'videotestsrc is-live=true pattern=smpte'\n";
   }
 
   rclcpp::NodeOptions options;
   options.arguments({"--ros-args", "--params-file", params_path.string()});
   const RuntimeConfig config = loadRuntimeConfigForNode(node_name, options);
 
-  ASSERT_EQ(config.video_stream.other_sources.size(), 2U);
+  ASSERT_EQ(config.video_stream.external_sources.size(), 2U);
   EXPECT_EQ(
-    config.video_stream.other_sources.at("/front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
+    config.video_stream.external_sources.at("/front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
   EXPECT_EQ(
-    config.video_stream.other_sources.at("/front_rtsp/").source_fragment, "videotestsrc is-live=true pattern=smpte");
+    config.video_stream.external_sources.at("/front_rtsp/").source_fragment, "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);
 }
 
-TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
+TEST_F(RuntimeConfigTest, ExternalAudioLoadsWithGlobalAndPerSourcePublishOptions)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("audio.publish.max_bitrate_bps", 64000);
   options.append_parameter_override("audio.publish.dtx", "enabled");
   options.append_parameter_override("audio.publish.red", "disabled");
-  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic"});
-  options.append_parameter_override("audio.other.cab_mic.source", "audiotestsrc is-live=true wave=sine");
-  options.append_parameter_override("audio.other.cab_mic.publish.max_bitrate_bps", 96000);
-  options.append_parameter_override("audio.other.cab_mic.publish.dtx", "disabled");
+  options.append_parameter_override("audio_external_ids", std::vector<std::string>{"cab_mic"});
+  options.append_parameter_override("audio.external.cab_mic.source", "audiotestsrc is-live=true wave=sine");
+  options.append_parameter_override("audio.external.cab_mic.publish.max_bitrate_bps", 96000);
+  options.append_parameter_override("audio.external.cab_mic.publish.dtx", "disabled");
 
-  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_publish_override", options);
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_external_audio_publish_override", options);
 
-  const auto & source = config.audio_stream.other_sources.at("cab_mic");
+  const auto & source = config.audio_stream.external_sources.at("cab_mic");
   EXPECT_EQ(source.source_fragment, "audiotestsrc is-live=true wave=sine");
   ASSERT_TRUE(source.publish_options.audio_encoding.has_value());
   EXPECT_EQ(source.publish_options.audio_encoding->max_bitrate, 96000U);
@@ -586,45 +588,49 @@ TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
   EXPECT_EQ(source.publish_options.red, false);
 }
 
-TEST_F(RuntimeConfigTest, OtherAudioRejectsWhitespaceOnlySourceFragment)
+TEST_F(RuntimeConfigTest, ExternalAudioRejectsWhitespaceOnlySourceFragment)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic"});
-  options.append_parameter_override("audio.other.cab_mic.source", " \t\n ");
+  options.append_parameter_override("audio_external_ids", std::vector<std::string>{"cab_mic"});
+  options.append_parameter_override("audio.external.cab_mic.source", " \t\n ");
 
   expectConfigError(
-    "startup_config_empty_other_audio_source", options, "other audio source 'cab_mic' requires a non-empty source");
+    "startup_config_empty_external_audio_source",
+    options,
+    "external audio source 'cab_mic' requires a non-empty source");
 }
 
 TEST_F(RuntimeConfigTest, BridgeManagedEndpointsAreRejectedInAudioFragments)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic"});
-  options.append_parameter_override("audio.other.cab_mic.source", "appsrc ! audioconvert");
+  options.append_parameter_override("audio_external_ids", std::vector<std::string>{"cab_mic"});
+  options.append_parameter_override("audio.external.cab_mic.source", "appsrc ! audioconvert");
 
   expectConfigError(
-    "startup_config_other_audio_appsrc_rejected",
+    "startup_config_external_audio_appsrc_rejected",
     options,
-    "other audio source 'cab_mic' must not define appsrc/appsink endpoints; the bridge owns them");
+    "external audio source 'cab_mic' must not define appsrc/appsink endpoints; the bridge owns them");
 }
 
 TEST_F(RuntimeConfigTest, InvalidAudioSourceSyntaxIsRejected)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic"});
-  options.append_parameter_override("audio.other.cab_mic.source", "audiotestsrc ! )");
+  options.append_parameter_override("audio_external_ids", std::vector<std::string>{"cab_mic"});
+  options.append_parameter_override("audio.external.cab_mic.source", "audiotestsrc ! )");
 
   expectConfigErrorContains(
-    "startup_config_invalid_audio_source_syntax", options, "other audio source 'cab_mic' has invalid GStreamer syntax");
+    "startup_config_invalid_audio_source_syntax",
+    options,
+    "external audio source 'cab_mic' has invalid GStreamer syntax");
 }
 
 TEST_F(RuntimeConfigTest, DuplicateAudioIdsReportSectionSpecificErrors)
 {
   auto options = makeStaticTokenOptions();
-  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic", "cab_mic"});
-  options.append_parameter_override("audio.other.cab_mic.source", "audiotestsrc is-live=true wave=sine");
+  options.append_parameter_override("audio_external_ids", std::vector<std::string>{"cab_mic", "cab_mic"});
+  options.append_parameter_override("audio.external.cab_mic.source", "audiotestsrc is-live=true wave=sine");
 
-  expectConfigError("startup_config_duplicate_audio_other_id", options, "duplicate other audio id 'cab_mic'");
+  expectConfigError("startup_config_duplicate_audio_external_id", options, "duplicate external audio id 'cab_mic'");
 }
 
 }  // namespace livekit_ros2_bridge

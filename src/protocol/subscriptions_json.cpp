@@ -43,10 +43,10 @@ const char * toWire(SubscriptionTargetKind kind)
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return "topic";
-    case SubscriptionTargetKind::OtherVideo:
-      return "other_video";
-    case SubscriptionTargetKind::OtherAudio:
-      return "other_audio";
+    case SubscriptionTargetKind::ExternalVideo:
+      return "external_video";
+    case SubscriptionTargetKind::ExternalAudio:
+      return "external_audio";
   }
 
   throw std::invalid_argument("subscription target kind is invalid");
@@ -124,13 +124,16 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
   const std::string kind = trim(kind_field->get_ref<const std::string &>());
   if (kind == "topic") {
     demand.kind = SubscriptionTargetKind::Topic;
-  } else if (kind == "other_video") {
-    demand.kind = SubscriptionTargetKind::OtherVideo;
-  } else if (kind == "other_audio") {
-    demand.kind = SubscriptionTargetKind::OtherAudio;
+  } else if (kind == "external_video") {
+    demand.kind = SubscriptionTargetKind::ExternalVideo;
+  } else if (kind == "external_audio") {
+    demand.kind = SubscriptionTargetKind::ExternalAudio;
+  } else if (kind == "other_video" || kind == "other_audio") {
+    // Deprecated alias for one release; old clients still send other_*.
+    demand.kind = kind == "other_video" ? SubscriptionTargetKind::ExternalVideo : SubscriptionTargetKind::ExternalAudio;
   } else {
     throw ValidationError(
-      kSubscriptionKindField, "heartbeat subscription 'kind' must be 'topic', 'other_video', or 'other_audio'");
+      kSubscriptionKindField, "heartbeat subscription 'kind' must be 'topic', 'external_video', or 'external_audio'");
   }
 
   const auto name_field = entry.find("name");
@@ -153,7 +156,7 @@ void parseTarget(const nlohmann::json & entry, SubscriptionDemand & demand)
   demand.name = trim(raw);
   if (demand.name.empty()) {
     throw ValidationError(
-      kSubscriptionNameField, "heartbeat subscription other source name must trim to a non-empty name");
+      kSubscriptionNameField, "heartbeat subscription external source name must trim to a non-empty name");
   }
 }
 

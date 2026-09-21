@@ -40,7 +40,7 @@ This specification does not define:
 
 - how LiveKit access tokens are issued, signed, or validated;
 - how the bridge joins a LiveKit room or how rooms are provisioned;
-- the bridge's configuration file schema, including how `access.rules.*`, `video.other.*`, and similar policies are authored;
+- the bridge's configuration file schema, including how `access.rules.*`, `video.external.*`, and similar policies are authored;
 - the ROS 2 discovery, DDS, or networking configuration the bridge runs under;
 - operational concerns such as logging format, metrics, or deployment topology.
 
@@ -55,7 +55,7 @@ The [`lkros.status`](#data-packet-topic-lkrosstatus) packet carries a protocol v
 ### Terms
 
 - **bridge**: the `livekit_ros2_bridge` participant in the LiveKit room.
-- **canonical name**: the `(kind, name)` pair used to identify a heartbeat target after `topic` names are normalized and `other_video` / `other_audio` names are trimmed
+- **canonical name**: the `(kind, name)` pair used to identify a heartbeat target after `topic` names are normalized and `external_video` / `external_audio` names are trimmed
 - **client**: the non-bridge participant interacting with the bridge over LiveKit.
 - **control-plane message**: a bridge-directed message about subscription lease or status state.
 - **data-packet topic**: the LiveKit topic string on a `publishData` packet (outside RPC).
@@ -65,7 +65,7 @@ The [`lkros.status`](#data-packet-topic-lkrosstatus) packet carries a protocol v
 - **ROS publish request**: a bridge-accepted request to publish one message to a ROS topic.
 - **ROS resource name**: a normalized ROS topic or service name accepted as a valid resource identifier by the bridge.
 - **video track**: a LiveKit video publication carrying a ROS-backed or GStreamer-backed stream.
-- **audio track**: a LiveKit audio publication carrying one configured other-audio source as a mono stream.
+- **audio track**: a LiveKit audio publication carrying one configured external-audio source as a mono stream.
 
 ## Protocol Surfaces
 
@@ -77,8 +77,8 @@ Every surface in this specification runs over LiveKit. Requests and control flow
 | Data-Packet Topic | `lkros.status` | bridge → client | Report per-subscription status |
 | Data-Packet Topic | `ros2.topic.pub` | client → bridge | Best-effort ROS topic publication |
 | Data Track | `delivery.track_name` | bridge → client | Stream active non-video ROS topics |
-| Video Track | `delivery.track_name` | bridge → client | Stream ROS image topics or `other_video` sources |
-| Audio Track | `delivery.track_name` | bridge → client | Stream `other_audio` sources |
+| Video Track | `delivery.track_name` | bridge → client | Stream ROS image topics or `external_video` sources |
+| Audio Track | `delivery.track_name` | bridge → client | Stream `external_audio` sources |
 | Byte Stream | `lkros.echo.once` | bridge → client | Deliver a topic's cached last message on request |
 | RPC | `ros2.interface.show` | client ↔ bridge | Fetch interface definitions |
 | RPC | `ros2.service.call` | client ↔ bridge | Call an authorized ROS service |
@@ -167,7 +167,7 @@ If a client sends malformed `ros2.topic.pub` JSON, the bridge logs and drops it 
 | --- | --- | --- | --- |
 | Non-video ROS topic | [normalized](#versioning-and-terminology) topic name and unique graph type | data track | one ROS subscription and one data track per normalized topic |
 | ROS video topic | normalized topic name, unique graph type, and matching video topic entry | video track | one in-process video stream per resolved `stream_key` |
-| Other video | matching `video.other.*` entry | video track | one in-process video stream per resolved `stream_key` |
+| External video | matching `video.external.*` entry | video track | one in-process video stream per resolved `stream_key` |
 
 ### Requirements
 
@@ -206,11 +206,11 @@ Two clients subscribing to the same [normalized](#versioning-and-terminology) no
       }
     },
     {
-      "kind": "other_video",
+      "kind": "external_video",
       "name": "front_camera"
     },
     {
-      "kind": "other_audio",
+      "kind": "external_audio",
       "name": "cab_mic"
     }
   ]
@@ -223,18 +223,19 @@ Two clients subscribing to the same [normalized](#versioning-and-terminology) no
 
 - `subscriptions` MUST be present and MUST be an array.
 - Each entry MUST be an object with string `kind` and `name` fields.
-- `kind` MUST be `topic`, `other_video`, or `other_audio`.
+- `kind` MUST be `topic`, `external_video`, or `external_audio`.
+- `other_video` and `other_audio` are accepted as deprecated aliases for `external_video` and `external_audio` for one release; clients should migrate to the `external_*` kinds.
 - `topic` names MUST [normalize](#versioning-and-terminology) to non-empty [ROS resource names](#versioning-and-terminology).
-- `other_video` names MUST address configured entries from `video.other.<id>`.
-- `other_audio` names MUST address configured entries from `audio.other.<id>`.
+- `external_video` names MUST address configured entries from `video.external.<id>`.
+- `external_audio` names MUST address configured entries from `audio.external.<id>`.
 - `delivery_preferences`, when present, MUST be an object.
 - `delivery_preferences.interval_ms`, when present, MUST be an integer.
 
 #### Authorization
 
 - `topic` subscriptions MUST be authorized against `access.rules.subscribe.*`.
-- `other_video` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by the configured `video_other_ids` and `video.other.*` entries.
-- `other_audio` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by the configured `audio_other_ids` and `audio.other.*` entries.
+- `external_video` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by the configured `video_external_ids` and `video.external.*` entries.
+- `external_audio` targets MUST NOT use `access.rules.subscribe.*`; they are controlled by the configured `audio_external_ids` and `audio.external.*` entries.
 
 #### Coalescing
 
@@ -308,7 +309,7 @@ LiveKit exposes client identity through `caller_identity` on RPCs and `requester
 
 Every entry MUST include:
 
-- `kind`: `topic`, `other_video`, or `other_audio`.
+- `kind`: `topic`, `external_video`, or `external_audio`.
 - `name`.
 - `status`: `active` or `error`.
 
@@ -318,7 +319,7 @@ Active entries (`status: "active"`):
 
 - MUST include `delivery`.
 - MUST include `interface_type` when `kind` is `topic`, even when delivered as video.
-- MUST NOT include `interface_type` when `kind` is `other_video` or `other_audio`.
+- MUST NOT include `interface_type` when `kind` is `external_video` or `external_audio`.
 - MUST set `delivery.kind` to `data`, `video`, or `audio`.
 - MUST include `delivery.track_name`.
 - MAY include `degraded_reason` on video entries when the stream is degraded but still deliverable.
@@ -386,12 +387,12 @@ Video deliveries use deterministic track names.
 
 ```json
 {
-  "kind": "other_video",
+  "kind": "external_video",
   "name": "front_camera",
   "status": "active",
   "delivery": {
     "kind": "video",
-    "track_name": "lkros.video.other.front_camera"
+    "track_name": "lkros.video.external.front_camera"
   }
 }
 ```
@@ -400,11 +401,11 @@ Video deliveries use deterministic track names.
 
 - `delivery.kind` MUST be `video`.
 - `delivery.track_name` MUST always be present.
-- `other_video` targets MUST always use video delivery.
+- `external_video` targets MUST always use video delivery.
 - ROS topics MUST use video delivery only when their resolved type is `sensor_msgs/msg/Image` or `sensor_msgs/msg/CompressedImage`.
 - Active `topic` entries using video delivery MUST still include `interface_type`.
 - Video `track_name` values MUST be deterministic and stable for the target name.
-- `other_video` track names MUST percent-encode any byte outside the RFC 3986 unreserved set.
+- `external_video` track names MUST percent-encode any byte outside the RFC 3986 unreserved set.
 
 ### Audio-Track Delivery
 
@@ -414,12 +415,12 @@ Audio deliveries use deterministic track names.
 
 ```json
 {
-  "kind": "other_audio",
+  "kind": "external_audio",
   "name": "cab_mic",
   "status": "active",
   "delivery": {
     "kind": "audio",
-    "track_name": "lkros.audio.other.cab_mic"
+    "track_name": "lkros.audio.external.cab_mic"
   }
 }
 ```
@@ -428,10 +429,10 @@ Audio deliveries use deterministic track names.
 
 - `delivery.kind` MUST be `audio`.
 - `delivery.track_name` MUST always be present.
-- `other_audio` targets MUST always use audio delivery.
+- `external_audio` targets MUST always use audio delivery.
 - Audio `track_name` values MUST be deterministic and stable for the target name.
-- `other_audio` track names MUST percent-encode any byte outside the RFC 3986 unreserved set.
-- Each configured other-audio source publishes as exactly one mono audio track; stereo is client-side routing of two mono tracks.
+- `external_audio` track names MUST percent-encode any byte outside the RFC 3986 unreserved set.
+- Each configured external-audio source publishes as exactly one mono audio track; stereo is client-side routing of two mono tracks.
 
 ## Byte Stream: `lkros.echo.once`
 
@@ -716,7 +717,7 @@ Clients that omit `interface_type` should be prepared for ambiguity to fail the 
 
 ### Request Requirements
 
-- `kind` MUST be present and MUST be the string `"topic"`; any other value (including subscription kinds such as `other_video` and any future kind) MUST be rejected as an invalid request rather than answered with `"none"`.
+- `kind` MUST be present and MUST be the string `"topic"`; any other value (including subscription kinds such as `external_video` and any future kind) MUST be rejected as an invalid request rather than answered with `"none"`.
 - `name` MUST be a present, non-empty string and MUST [normalize](#versioning-and-terminology) to a valid [ROS resource name](#versioning-and-terminology); relative names are expanded to absolute form.
 - `kind` and `name` MAY carry surrounding whitespace, which the bridge trims.
 - Anonymous calls MUST be rejected (see [Error Model](#error-model)).
@@ -781,19 +782,19 @@ A common data-subscription path:
 3. If the status is `active` and `delivery.kind` is `data`, subscribe to the announced LiveKit data track.
 4. Decode incoming bytes on that track as raw ROS CDR for the reported `interface_type`.
 
-### Other-Video Flow
+### External-Video Flow
 
 A common non-ROS video path:
 
-1. Send `lkros.heartbeat` with `kind: "other_video"` and the configured source id as `name`.
+1. Send `lkros.heartbeat` with `kind: "external_video"` and the configured source id as `name`.
 2. Read `lkros.status`.
 3. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
 
-### Other-Audio Flow
+### External-Audio Flow
 
 A common non-ROS audio path:
 
-1. Send `lkros.heartbeat` with `kind: "other_audio"` and the configured source id as `name`.
+1. Send `lkros.heartbeat` with `kind: "external_audio"` and the configured source id as `name`.
 2. Read `lkros.status`.
 3. If the status is `active` and `delivery.kind` is `audio`, subscribe to the announced LiveKit audio publication.
 4. Route each mono audio track to a speaker (e.g. left/right) for a stereo-operator experience.

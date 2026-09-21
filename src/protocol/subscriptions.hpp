@@ -26,8 +26,8 @@ namespace livekit_ros2_bridge
 enum class SubscriptionTargetKind
 {
   Topic,
-  OtherVideo,
-  OtherAudio,
+  ExternalVideo,
+  ExternalAudio,
 };
 
 struct SubscriptionDemand

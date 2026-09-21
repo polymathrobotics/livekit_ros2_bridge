@@ -50,8 +50,8 @@ livekit::AudioFrame makeFrame(int sample_rate = 48000, int channels = 1, int sam
 TEST(AudioTrackPublisherTest, FirstFramePublishesAndDestructionUnpublishes)
 {
   FakeRoomConnection connection;
-  auto publisher =
-    std::make_unique<TrackPublisher>(connection, makeSpec("other_audio:lifecycle", "lkros.audio.other.lifecycle"));
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makeSpec("external_audio:lifecycle", "lkros.audio.external.lifecycle"));
 
   publisher->capture(makeFrame());
   publisher->capture(makeFrame());
@@ -60,15 +60,15 @@ TEST(AudioTrackPublisherTest, FirstFramePublishesAndDestructionUnpublishes)
   EXPECT_EQ(
     connection.state->event_log,
     (std::vector<std::string>{
-      "publish_audio_track:lkros.audio.other.lifecycle",
-      "unpublish_audio_track:lkros.audio.other.lifecycle",
+      "publish_audio_track:lkros.audio.external.lifecycle",
+      "unpublish_audio_track:lkros.audio.external.lifecycle",
     }));
 }
 
 TEST(AudioTrackPublisherTest, PublishOptionsFlowThroughToRoomConnection)
 {
   FakeRoomConnection connection;
-  StreamSpec spec = makeSpec("other_audio:options", "lkros.audio.other.options");
+  StreamSpec spec = makeSpec("external_audio:options", "lkros.audio.external.options");
   livekit::TrackPublishOptions options;
   options.dtx = true;
   options.red = true;
@@ -94,15 +94,17 @@ TEST(AudioTrackPublisherTest, DestructionUsesBestEffortPublishedTrackCleanup)
   FakeRoomConnection connection;
   connection.state->throw_on_unpublish_audio = true;
   auto publisher = std::make_unique<TrackPublisher>(
-    connection, makeSpec("other_audio:unpublish_failure", "lkros.audio.other.unpublish_failure"));
+    connection, makeSpec("external_audio:unpublish_failure", "lkros.audio.external.unpublish_failure"));
 
   publisher->capture(makeFrame());
   EXPECT_NO_THROW(publisher.reset());
 
   EXPECT_EQ(
-    connection.state->published_audio_track_names, (std::vector<std::string>{"lkros.audio.other.unpublish_failure"}));
+    connection.state->published_audio_track_names,
+    (std::vector<std::string>{"lkros.audio.external.unpublish_failure"}));
   EXPECT_EQ(
-    connection.state->unpublished_audio_track_names, (std::vector<std::string>{"lkros.audio.other.unpublish_failure"}));
+    connection.state->unpublished_audio_track_names,
+    (std::vector<std::string>{"lkros.audio.external.unpublish_failure"}));
 }
 
 TEST(AudioTrackPublisherTest, TeardownSurvivesForeignAndFailingTrackUnpublish)
@@ -118,8 +120,8 @@ TEST(AudioTrackPublisherTest, TeardownSurvivesForeignAndFailingTrackUnpublish)
   // The best-effort teardown path also swallows a throwing unpublish rather
   // than letting a stale-SID failure escape destruction.
   connection.state->throw_on_unpublish_audio = true;
-  auto publisher =
-    std::make_unique<TrackPublisher>(connection, makeSpec("other_audio:stale_sid", "lkros.audio.other.stale_sid"));
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makeSpec("external_audio:stale_sid", "lkros.audio.external.stale_sid"));
 
   publisher->capture(makeFrame());
   EXPECT_NO_THROW(publisher.reset());
@@ -142,7 +144,7 @@ TEST(AudioTrackPublisherTest, PublishFailureIsNonFatalAndRetriesAfterBackoff)
   // interval an "immediate" second capture could already land outside it.
   auto publisher = std::make_unique<TrackPublisher>(
     connection,
-    makeSpec("other_audio:publish_retry", "lkros.audio.other.publish_retry"),
+    makeSpec("external_audio:publish_retry", "lkros.audio.external.publish_retry"),
     std::chrono::milliseconds(50));
 
   // First frame: the LiveKit publish fails. This must NOT throw or tear the
@@ -162,11 +164,11 @@ TEST(AudioTrackPublisherTest, PublishFailureIsNonFatalAndRetriesAfterBackoff)
   EXPECT_EQ(
     connection.state->published_audio_track_names,
     (std::vector<std::string>{
-      "lkros.audio.other.publish_retry",
-      "lkros.audio.other.publish_retry",
+      "lkros.audio.external.publish_retry",
+      "lkros.audio.external.publish_retry",
     }));
   EXPECT_EQ(
-    connection.state->unpublished_audio_track_names, (std::vector<std::string>{"lkros.audio.other.publish_retry"}));
+    connection.state->unpublished_audio_track_names, (std::vector<std::string>{"lkros.audio.external.publish_retry"}));
 }
 
 }  // namespace

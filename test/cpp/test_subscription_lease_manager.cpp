@@ -137,21 +137,21 @@ bool publishUntil(
   return predicate();
 }
 
-video::StreamConfig makeOtherSourceConfig()
+video::StreamConfig makeExternalSourceConfig()
 {
   video::StreamConfig config = video::makeDefaultConfig();
-  video::OtherSource source;
+  video::ExternalSource source;
   source.source_fragment = "videotestsrc is-live=true pattern=black";
-  config.other_sources.emplace("/sources/front", std::move(source));
+  config.external_sources.emplace("/sources/front", std::move(source));
   return config;
 }
 
-audio::StreamConfig makeOtherAudioSourceConfig()
+audio::StreamConfig makeExternalAudioSourceConfig()
 {
   audio::StreamConfig config = audio::makeDefaultConfig();
-  audio::OtherSource source;
+  audio::ExternalSource source;
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
-  config.other_sources.emplace("/sources/cab_mic", std::move(source));
+  config.external_sources.emplace("/sources/cab_mic", std::move(source));
   return config;
 }
 
@@ -194,14 +194,14 @@ SubscriptionDemand makeTopicDemand(const std::string & name, std::optional<int> 
   return SubscriptionDemand{SubscriptionTargetKind::Topic, name, interval_ms};
 }
 
-SubscriptionDemand makeOtherVideoDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+SubscriptionDemand makeExternalVideoDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return SubscriptionDemand{SubscriptionTargetKind::OtherVideo, name, interval_ms};
+  return SubscriptionDemand{SubscriptionTargetKind::ExternalVideo, name, interval_ms};
 }
 
-SubscriptionDemand makeOtherAudioDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
+SubscriptionDemand makeExternalAudioDemand(const std::string & name, std::optional<int> interval_ms = std::nullopt)
 {
-  return SubscriptionDemand{SubscriptionTargetKind::OtherAudio, name, interval_ms};
+  return SubscriptionDemand{SubscriptionTargetKind::ExternalAudio, name, interval_ms};
 }
 
 SubscriptionHeartbeat makeHeartbeat(
@@ -229,10 +229,10 @@ std::vector<std::uint8_t> heartbeatPayloadBytes(const SubscriptionHeartbeat & he
 
   for (const auto & demand : heartbeat.demands) {
     const char * kind = "topic";
-    if (demand.kind == SubscriptionTargetKind::OtherVideo) {
-      kind = "other_video";
-    } else if (demand.kind == SubscriptionTargetKind::OtherAudio) {
-      kind = "other_audio";
+    if (demand.kind == SubscriptionTargetKind::ExternalVideo) {
+      kind = "external_video";
+    } else if (demand.kind == SubscriptionTargetKind::ExternalAudio) {
+      kind = "external_audio";
     }
     nlohmann::json entry = {
       {"kind", kind},
@@ -634,12 +634,12 @@ TEST(SubscriptionLeaseManagerTest, OmittedHeartbeatTargetExpiresWhileRenewedSibl
   EXPECT_EQ(renewed_a["delivery"]["track_name"], "lkros.data.battery.omitted_stays_alive");
 }
 
-TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOtherSources)
+TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndExternalSources)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_test");
   FakeRoomConnection session;
-  const video::StreamConfig video_config = makeOtherSourceConfig();
+  const video::StreamConfig video_config = makeExternalSourceConfig();
   const std::string video_topic = "/camera/front";
   auto publisher = node->create_publisher<sensor_msgs::msg::Image>(video_topic, rclcpp::QoS(10));
   (void)publisher;
@@ -653,7 +653,7 @@ TEST(SubscriptionLeaseManagerTest, CreatesVideoSubscriptionsForRosTopicsAndOther
   const auto topic_status =
     sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(video_topic)}));
   const auto source_status = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "bob", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
+    registry, *session.state, "bob", makeHeartbeat({makeExternalVideoDemand("/sources/front")}));
 
   EXPECT_EQ(topic_status["delivery"]["kind"], "video");
   EXPECT_EQ(topic_status["delivery"]["track_name"], "lkros.video.camera.front");
@@ -693,24 +693,24 @@ TEST(SubscriptionLeaseManagerTest, EquivalentRosVideoRequestsShareCanonicalSubsc
   EXPECT_EQ(session.state->published_video_track_names, (std::vector<std::string>{track_name}));
 }
 
-TEST(SubscriptionLeaseManagerTest, EquivalentOtherVideoRequestsShareCanonicalSubscriptionAndTrack)
+TEST(SubscriptionLeaseManagerTest, EquivalentExternalVideoRequestsShareCanonicalSubscriptionAndTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_video_canonical_other_test");
   FakeRoomConnection session;
-  const video::StreamConfig video_config = makeOtherSourceConfig();
+  const video::StreamConfig video_config = makeExternalSourceConfig();
   const std::string canonical_source = "/sources/front";
   const std::string variant_source = "  /sources/front  ";
 
   auto registry = makeLeaseManager(*node, session, &video_config);
 
   const auto first = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "alice", makeHeartbeat({makeOtherVideoDemand(canonical_source)}));
+    registry, *session.state, "alice", makeHeartbeat({makeExternalVideoDemand(canonical_source)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
   ASSERT_TRUE(waitUntil([&session]() { return session.state->publishedVideoTrackCount() == 1U; }));
 
   const auto second = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "bob", makeHeartbeat({makeOtherVideoDemand(variant_source)}));
+    registry, *session.state, "bob", makeHeartbeat({makeExternalVideoDemand(variant_source)}));
 
   EXPECT_EQ(first["name"], canonical_source);
   EXPECT_EQ(second["name"], canonical_source);
@@ -1075,70 +1075,70 @@ TEST_F(SubscriptionLeaseManagerHeartbeatTest, ForbiddenTopicReturnsError)
     *state_, "requester-1", "topic", "/battery_state", "forbidden", "ROS topic '/battery_state' not permitted.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherVideoBypassesRosAccessPolicyAndReturnsVideoStatus)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, ExternalVideoBypassesRosAccessPolicyAndReturnsVideoStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const video::StreamConfig video_config = makeOtherSourceConfig();
+  const video::StreamConfig video_config = makeExternalSourceConfig();
 
   auto manager = makeManager(deny_all, &video_config);
 
-  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/front")}));
+  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeExternalVideoDemand("/sources/front")}));
 
   const auto status = extractPublishedStatusEntry(*state_, "requester-1");
-  expectStatusEntry(status, "other_video", "/sources/front", "active");
+  expectStatusEntry(status, "external_video", "/sources/front", "active");
   const auto & delivery = status["delivery"];
   EXPECT_EQ(delivery["kind"], "video");
   EXPECT_FALSE(delivery["track_name"].get<std::string>().empty());
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingOtherVideoReturnsErrorOnSourceIdField)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingExternalVideoReturnsErrorOnSourceIdField)
 {
-  const video::StreamConfig video_config = makeOtherSourceConfig();
+  const video::StreamConfig video_config = makeExternalSourceConfig();
 
   auto manager = makeManager(access_policy_, &video_config);
 
-  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherVideoDemand("/sources/missing")}));
+  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeExternalVideoDemand("/sources/missing")}));
 
   expectPublishedError(
     *state_,
     "requester-1",
-    "other_video",
+    "external_video",
     "/sources/missing",
     "not_found",
-    "Unknown other video source '/sources/missing'.");
+    "Unknown external video source '/sources/missing'.");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, OtherAudioBypassesRosAccessPolicyAndReturnsAudioStatus)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, ExternalAudioBypassesRosAccessPolicyAndReturnsAudioStatus)
 {
   const AccessPolicy deny_all = makeSubscribePolicy({}, {"*"});
-  const audio::StreamConfig audio_config = makeOtherAudioSourceConfig();
+  const audio::StreamConfig audio_config = makeExternalAudioSourceConfig();
 
   auto manager = makeManager(deny_all, nullptr, &audio_config);
 
-  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherAudioDemand("/sources/cab_mic")}));
+  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeExternalAudioDemand("/sources/cab_mic")}));
 
   const auto status = extractPublishedStatusEntry(*state_, "requester-1");
-  expectStatusEntry(status, "other_audio", "/sources/cab_mic", "active");
+  expectStatusEntry(status, "external_audio", "/sources/cab_mic", "active");
   const auto & delivery = status["delivery"];
   EXPECT_EQ(delivery["kind"], "audio");
-  EXPECT_EQ(delivery["track_name"], "lkros.audio.other.%2Fsources%2Fcab_mic");
+  EXPECT_EQ(delivery["track_name"], "lkros.audio.external.%2Fsources%2Fcab_mic");
 }
 
-TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingOtherAudioReturnsErrorOnSourceIdField)
+TEST_F(SubscriptionLeaseManagerHeartbeatTest, MissingExternalAudioReturnsErrorOnSourceIdField)
 {
-  const audio::StreamConfig audio_config = makeOtherAudioSourceConfig();
+  const audio::StreamConfig audio_config = makeExternalAudioSourceConfig();
 
   auto manager = makeManager(access_policy_, nullptr, &audio_config);
 
-  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeOtherAudioDemand("/sources/missing")}));
+  sendHeartbeat(manager, *state_, "requester-1", makeHeartbeat({makeExternalAudioDemand("/sources/missing")}));
 
   expectPublishedError(
     *state_,
     "requester-1",
-    "other_audio",
+    "external_audio",
     "/sources/missing",
     "not_found",
-    "Unknown other audio source '/sources/missing'.");
+    "Unknown external audio source '/sources/missing'.");
 }
 
 TEST(SubscriptionLeaseManagerTest, HealthyAudioFlowLeavesDegradedReasonAbsent)
@@ -1146,42 +1146,42 @@ TEST(SubscriptionLeaseManagerTest, HealthyAudioFlowLeavesDegradedReasonAbsent)
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_audio_healthy_status_test");
   FakeRoomConnection session;
-  const audio::StreamConfig audio_config = makeOtherAudioSourceConfig();
+  const audio::StreamConfig audio_config = makeExternalAudioSourceConfig();
 
   auto registry = makeLeaseManager(*node, session, nullptr, &audio_config);
 
   const auto first = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "alice", makeHeartbeat({makeOtherAudioDemand("/sources/cab_mic")}));
+    registry, *session.state, "alice", makeHeartbeat({makeExternalAudioDemand("/sources/cab_mic")}));
   ASSERT_TRUE(waitUntil([&session]() { return !session.state->published_audio_track_names.empty(); }));
 
   // Audio status never carries degraded_reason.
   const auto second = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "alice", makeHeartbeat({makeOtherAudioDemand("/sources/cab_mic")}));
+    registry, *session.state, "alice", makeHeartbeat({makeExternalAudioDemand("/sources/cab_mic")}));
 
-  expectStatusEntry(first, "other_audio", "/sources/cab_mic", "active");
-  expectStatusEntry(second, "other_audio", "/sources/cab_mic", "active");
+  expectStatusEntry(first, "external_audio", "/sources/cab_mic", "active");
+  expectStatusEntry(second, "external_audio", "/sources/cab_mic", "active");
   EXPECT_FALSE(first.contains("degraded_reason"));
   EXPECT_FALSE(second.contains("degraded_reason"));
 }
 
-TEST(SubscriptionLeaseManagerTest, EquivalentOtherAudioRequestsShareCanonicalSubscriptionAndTrack)
+TEST(SubscriptionLeaseManagerTest, EquivalentExternalAudioRequestsShareCanonicalSubscriptionAndTrack)
 {
   ScopedRclcppInit init;
   auto node = std::make_shared<rclcpp::Node>("subscription_registry_audio_canonical_other_test");
   FakeRoomConnection session;
-  const audio::StreamConfig audio_config = makeOtherAudioSourceConfig();
+  const audio::StreamConfig audio_config = makeExternalAudioSourceConfig();
   const std::string canonical_source = "/sources/cab_mic";
   const std::string variant_source = "  /sources/cab_mic  ";
 
   auto registry = makeLeaseManager(*node, session, nullptr, &audio_config);
 
   const auto first = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "alice", makeHeartbeat({makeOtherAudioDemand(canonical_source)}));
+    registry, *session.state, "alice", makeHeartbeat({makeExternalAudioDemand(canonical_source)}));
   const std::string track_name = first["delivery"]["track_name"].get<std::string>();
   ASSERT_TRUE(waitUntil([&session]() { return !session.state->published_audio_track_names.empty(); }));
 
   const auto second = sendHeartbeatAndExtractStatus(
-    registry, *session.state, "bob", makeHeartbeat({makeOtherAudioDemand(variant_source)}));
+    registry, *session.state, "bob", makeHeartbeat({makeExternalAudioDemand(variant_source)}));
 
   EXPECT_EQ(first["name"], canonical_source);
   EXPECT_EQ(second["name"], canonical_source);

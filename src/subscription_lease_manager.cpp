@@ -65,10 +65,10 @@ const char * targetKindKeyPrefix(SubscriptionTargetKind kind)
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return "topic";
-    case SubscriptionTargetKind::OtherVideo:
-      return "other_video";
-    case SubscriptionTargetKind::OtherAudio:
-      return "other_audio";
+    case SubscriptionTargetKind::ExternalVideo:
+      return "external_video";
+    case SubscriptionTargetKind::ExternalAudio:
+      return "external_audio";
   }
 
   throw std::invalid_argument("subscription target kind is invalid");
@@ -92,7 +92,7 @@ std::string resolveName(
     return topics.resolve_topic_name(trim(name));
   }
 
-  if (kind == SubscriptionTargetKind::OtherVideo || kind == SubscriptionTargetKind::OtherAudio) {
+  if (kind == SubscriptionTargetKind::ExternalVideo || kind == SubscriptionTargetKind::ExternalAudio) {
     return trim(name);
   }
 
@@ -260,10 +260,10 @@ video::StreamSpec SubscriptionLeaseManager::resolveVideoSpec(
   switch (kind) {
     case SubscriptionTargetKind::Topic:
       return video::resolveRosTopicSpec(videoStreamConfig(), name, interface_type);
-    case SubscriptionTargetKind::OtherVideo:
-      return video::resolveOtherSourceSpec(videoStreamConfig(), name);
-    case SubscriptionTargetKind::OtherAudio:
-      throw std::invalid_argument("other audio is not a video stream request");
+    case SubscriptionTargetKind::ExternalVideo:
+      return video::resolveExternalSourceSpec(videoStreamConfig(), name);
+    case SubscriptionTargetKind::ExternalAudio:
+      throw std::invalid_argument("external audio is not a video stream request");
   }
 
   // All SubscriptionTargetKind enumerators are handled above; the switch cannot
@@ -275,11 +275,11 @@ audio::StreamSpec SubscriptionLeaseManager::resolveAudioSpec(
   SubscriptionTargetKind kind, const std::string & name) const
 {
   switch (kind) {
-    case SubscriptionTargetKind::OtherAudio:
-      return audio::resolveOtherSourceSpec(audioStreamConfig(), name);
+    case SubscriptionTargetKind::ExternalAudio:
+      return audio::resolveExternalSourceSpec(audioStreamConfig(), name);
     case SubscriptionTargetKind::Topic:
-    case SubscriptionTargetKind::OtherVideo:
-      throw std::invalid_argument("only other audio requests resolve to audio streams");
+    case SubscriptionTargetKind::ExternalVideo:
+      throw std::invalid_argument("only external audio requests resolve to audio streams");
   }
 
   // All SubscriptionTargetKind enumerators are handled above; the switch cannot
@@ -309,7 +309,7 @@ void SubscriptionLeaseManager::resolveDemandDelivery(ResolvedDemand & demand) co
     }
   }
 
-  if (demand.kind == SubscriptionTargetKind::OtherAudio) {
+  if (demand.kind == SubscriptionTargetKind::ExternalAudio) {
     demand.audio_spec = resolveAudioSpec(demand.kind, demand.name);
     return;
   }
@@ -338,7 +338,7 @@ void SubscriptionLeaseManager::appendDemandStatus(
   const SubscriptionDemand & demand,
   Clock::time_point expiry)
 {
-  // Bridge-owned `other_video` sources are config entries; subscribe ACLs apply to ROS topics.
+  // Bridge-owned `external_video` sources are config entries; subscribe ACLs apply to ROS topics.
   if (demand.kind == SubscriptionTargetKind::Topic && !access_policy_.allows(AccessOperation::Subscribe, demand.name)) {
     report.statuses.emplace_back(
       SubscriptionErrorStatus{

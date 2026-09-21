@@ -33,7 +33,7 @@ The bridge uses three kinds of LiveKit surfaces:
 The bridge has two delivery modes:
 
 - non-video ROS topics are delivered as raw CDR bytes on a LiveKit data track
-- ROS image topics(`sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`) and other video targets are delivered as LiveKit video tracks
+- ROS image topics(`sensor_msgs/msg/Image` and `sensor_msgs/msg/CompressedImage`) and external video targets are delivered as LiveKit video tracks
 
 The `ros2.*` names mirror the corresponding ROS 2 CLI commands, but request and response bodies
 still use the bridge's JSON/CDR protocol rather than CLI text, flags, or YAML.
@@ -41,7 +41,7 @@ still use the bridge's JSON/CDR protocol rather than CLI text, flags, or YAML.
 This means your client needs different expectations for each:
 
 - data-track subscriptions need interface definitions from `ros2.interface.show`
-- video subscriptions depend on `video_topic_ids`, `video_other_ids`, and the matching `video.topics.*` / `video.other.*` configuration
+- video subscriptions depend on `video_topic_ids`, `video_external_ids`, and the matching `video.topics.*` / `video.external.*` configuration
 
 The full contract lives in [docs/protocol.md](./docs/protocol.md).
 
@@ -102,7 +102,7 @@ Supported today:
 - topic subscriptions
 - video subscriptions
 - small ROS topic publications into ROS 2
-- other video sources
+- external video sources
 - opt-in replay of a transient_local topic's last message for late-joining clients
 
 Not supported today:

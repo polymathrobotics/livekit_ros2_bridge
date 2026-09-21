@@ -35,7 +35,7 @@ struct RosTopicRule
   livekit::TrackPublishOptions publish_options;
 };
 
-struct OtherSource
+struct ExternalSource
 {
   std::string source_fragment;
   std::string transform_fragment;
@@ -46,7 +46,7 @@ struct StreamConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
   // Keyed by the trimmed configured source name.
-  std::unordered_map<std::string, OtherSource> other_sources;
+  std::unordered_map<std::string, ExternalSource> external_sources;
   livekit::TrackPublishOptions default_publish_options;
 };
 
@@ -73,20 +73,20 @@ struct RosInput
   std::string transform_fragment;
 };
 
-struct OtherInput
+struct ExternalInput
 {
   std::string name;
   std::string source_fragment;
   std::string transform_fragment;
 };
 
-using StreamInput = std::variant<RosInput, OtherInput>;
+using StreamInput = std::variant<RosInput, ExternalInput>;
 
 struct StreamSpec
 {
-  // Stable runtime key: "topic:<normalized topic>" or "other_video:<trimmed source name>".
+  // Stable runtime key: "topic:<normalized topic>" or "external_video:<trimmed source name>".
   std::string stream_key;
-  // LiveKit track name: legacy lossy ROS suffixes, reversible other-video suffixes.
+  // LiveKit track name: legacy lossy ROS suffixes, reversible external-video suffixes.
   std::string track_name;
 
   StreamInput input;
@@ -96,11 +96,11 @@ struct StreamSpec
 std::optional<RosIngestMode> classifyRosIngestMode(std::string_view interface_type);
 
 const RosInput & requireRosInput(const StreamSpec & spec);
-const OtherInput & requireOtherInput(const StreamSpec & spec);
+const ExternalInput & requireExternalInput(const StreamSpec & spec);
 
 // ROS topics are normalized before matching and identifier generation. Longest match wins; ties keep declaration order.
 StreamSpec resolveRosTopicSpec(
   const StreamConfig & config, const std::string & requested_topic, const std::string & interface_type);
-StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string & source_name);
+StreamSpec resolveExternalSourceSpec(const StreamConfig & config, const std::string & source_name);
 
 }  // namespace livekit_ros2_bridge::video

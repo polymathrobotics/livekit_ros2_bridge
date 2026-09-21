@@ -107,19 +107,20 @@ StreamConfig loadConfig(const Params & params)
 
   std::unordered_set<std::string> seen_source_ids;
   std::unordered_set<std::string> seen_source_names;
-  constexpr utils::EndpointLayout kOtherSourceLayout = utils::makeOtherSourceLayout(kBridgeAppSinkName);
+  constexpr utils::EndpointLayout kExternalSourceLayout = utils::makeExternalSourceLayout(kBridgeAppSinkName);
 
-  for (const auto & id : params.audio_other_ids) {
+  for (const auto & id : params.audio_external_ids) {
     const auto & entry = requireUniqueEntry(
-      seen_source_ids, id, params.audio.other.audio_other_ids_map, "other audio id", "other audio source");
+      seen_source_ids, id, params.audio.external.audio_external_ids_map, "external audio id", "external audio source");
 
-    const std::string source_context = "other audio source '" + id + "'";
+    const std::string source_context = "external audio source '" + id + "'";
     const std::string source_fragment = trim(entry.source);
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
     const std::string transform = trim(entry.transform);
-    utils::validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kOtherSourceLayout);
+    utils::validatePipeline(
+      source_context, buildPipelineDescription(source_fragment, transform), kExternalSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string name = trim(id);
@@ -127,14 +128,14 @@ StreamConfig loadConfig(const Params & params)
       throw std::runtime_error(source_context + " must trim to a non-empty name");
     }
     if (!seen_source_names.emplace(name).second) {
-      throw std::runtime_error("duplicate other audio source name '" + name + "'");
+      throw std::runtime_error("duplicate external audio source name '" + name + "'");
     }
 
-    OtherSource source;
+    ExternalSource source;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
     source.publish_options = parsePublishOptions(entry, config.default_publish_options);
-    config.other_sources.emplace(name, std::move(source));
+    config.external_sources.emplace(name, std::move(source));
   }
 
   return config;
