@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,7 +18,14 @@
 #include <memory>
 #include <string>
 
-#include "connection_watchdog.hpp"
+#include "core/connection_watchdog.hpp"
+#include "core/room_connection.hpp"
+#include "core/ros_executor_queue.hpp"
+#include "core/ros_service_caller.hpp"
+#include "core/ros_topic_publisher.hpp"
+#include "core/rpc_router.hpp"
+#include "core/runtime_config.hpp"
+#include "core/subscription_lease_manager.hpp"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
@@ -30,13 +37,6 @@
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
-#include "room_connection.hpp"
-#include "ros_executor_queue.hpp"
-#include "ros_service_caller.hpp"
-#include "ros_topic_publisher.hpp"
-#include "rpc_router.hpp"
-#include "runtime_config.hpp"
-#include "subscription_lease_manager.hpp"
 #include "utils/callback_gate.hpp"
 
 namespace livekit_ros2_bridge

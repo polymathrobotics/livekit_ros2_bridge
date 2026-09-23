@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,14 +21,15 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/gstreamer_stream.hpp"
 #include "audio/track_publisher.hpp"
-#include "fake_room_connection.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
-#include "ros_test_support.hpp"
+#include "support/fake_room_connection.hpp"
+#include "support/ros_test_support.hpp"
 #include "utils/gstreamer_resources.hpp"
 
 namespace livekit_ros2_bridge::audio
@@ -118,7 +119,8 @@ TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
   auto started = std::async(std::launch::async, [&stream]() {
     try {
       stream.start();
-    } catch (const std::exception &) {}
+    } catch (const std::exception &) {
+    }
   });
   EXPECT_EQ(started.wait_for(std::chrono::seconds(10)), std::future_status::ready);
 

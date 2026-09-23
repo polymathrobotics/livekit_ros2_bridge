@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/room_connection.hpp"
 #include "livekit/audio_source.h"
 #include "livekit/data_track_error.h"
 #include "livekit/data_track_frame.h"
@@ -34,7 +35,6 @@
 #include "livekit/remote_participant.h"
 #include "livekit/result.h"
 #include "livekit/room_event_types.h"
-#include "room_connection.hpp"
 
 namespace livekit_ros2_bridge
 {

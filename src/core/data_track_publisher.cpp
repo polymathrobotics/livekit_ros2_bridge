@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "data_track_publisher.hpp"
+#include "core/data_track_publisher.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -22,9 +22,12 @@
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "core/room_connection.hpp"
+#include "core/subscription_qos.hpp"
 #include "livekit/data_track_error.h"
 #include "livekit/data_track_frame.h"
 #include "livekit/result.h"
@@ -32,8 +35,6 @@
 #include "rclcpp/logging.hpp"
 #include "rclcpp/qos.hpp"
 #include "rclcpp/serialized_message.hpp"
-#include "room_connection.hpp"
-#include "subscription_qos.hpp"
 #include "utils/callback_gate.hpp"
 #include "utils/log_event.hpp"
 

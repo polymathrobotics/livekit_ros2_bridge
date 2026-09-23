@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,8 +24,11 @@
 #include <utility>
 #include <vector>
 
-#include "access_policy.hpp"
-#include "fake_room_connection.hpp"
+#include "core/access_policy.hpp"
+#include "core/ros_executor_queue.hpp"
+#include "core/ros_service_caller.hpp"
+#include "core/rpc_router.hpp"
+#include "core/subscription_lease_manager.hpp"
 #include "gtest/gtest.h"
 #include "livekit/local_participant.h"
 #include "livekit/rpc_error.h"
@@ -35,13 +38,10 @@
 #include "protocol/detail/base64.hpp"
 #include "rclcpp/executors/single_threaded_executor.hpp"
 #include "rclcpp/serialization.hpp"
-#include "ros_executor_queue.hpp"
-#include "ros_service_caller.hpp"
-#include "ros_test_support.hpp"
-#include "rpc_router.hpp"
 #include "sensor_msgs/msg/battery_state.hpp"
 #include "std_srvs/srv/set_bool.hpp"
-#include "subscription_lease_manager.hpp"
+#include "support/fake_room_connection.hpp"
+#include "support/ros_test_support.hpp"
 #include "utils/serialized_message.hpp"
 
 namespace livekit_ros2_bridge
@@ -406,9 +406,8 @@ TEST_F(RpcRouterTest, ServiceCallRpcDispatchesAndReturnsResponse)
   executor.add_node(harness.node);
   executor.add_node(server_node);
 
-  ASSERT_TRUE(test_support::spinUntil(executor, [&]() {
-    return harness.node->get_service_names_and_types().count("/rpc_router/set_bool") > 0U;
-  }));
+  ASSERT_TRUE(test_support::spinUntil(
+    executor, [&]() { return harness.node->get_service_names_and_types().count("/rpc_router/set_bool") > 0U; }));
 
   ScopedExecutorThread executor_thread(executor);
   const auto rpc_response = harness.invokeRpc(

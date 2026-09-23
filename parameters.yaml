@@ -7,21 +7,21 @@ livekit_ros2_bridge:
   livekit:
     url:
       type: string
-      default_value: ""
-      description: "LiveKit server URL."
+      default_value: ''
+      description: LiveKit server URL.
       validation:
-        not_empty<>: null
+        not_empty<>:
     token:
       type: string
-      default_value: ""
-      description: "LiveKit startup token falls back to the LIVEKIT_TOKEN environment variable."
+      default_value: ''
+      description: LiveKit startup token falls back to the LIVEKIT_TOKEN environment variable.
 
   health:
     watchdog:
       enabled:
         type: bool
         default_value: true
-        description: "Shut down the bridge when it stays unhealthy longer than the configured recovery timeout."
+        description: Shut down the bridge when it stays unhealthy longer than the configured recovery timeout.
       recovery_timeout_seconds:
         type: double
         default_value: 75.0
@@ -38,119 +38,119 @@ livekit_ros2_bridge:
         allow:
           type: string_array
           default_value: []
-          description: "Allowlist patterns for publish targets. Empty allowlist denies all requests."
+          description: Allowlist patterns for publish targets. Empty allowlist denies all requests.
         deny:
           type: string_array
           default_value: []
-          description: "Denylist patterns for publish targets."
+          description: Denylist patterns for publish targets.
       subscribe:
         allow:
           type: string_array
           default_value: []
-          description: "Allowlist patterns for subscribe targets. Empty allowlist denies all requests."
+          description: Allowlist patterns for subscribe targets. Empty allowlist denies all requests.
         deny:
           type: string_array
           default_value: []
-          description: "Denylist patterns for subscribe targets."
+          description: Denylist patterns for subscribe targets.
       service:
         allow:
           type: string_array
           default_value: []
-          description: "Allowlist patterns for service targets. Empty allowlist denies all requests."
+          description: Allowlist patterns for service targets. Empty allowlist denies all requests.
         deny:
           type: string_array
           default_value: []
-          description: "Denylist patterns for service targets."
+          description: Denylist patterns for service targets.
 
   video_topic_ids:
     type: string_array
     default_value: []
-    description: "Video topic ids defined under video.topics.<id>."
+    description: Video topic ids defined under video.topics.<id>.
   video_other_ids:
     type: string_array
     default_value: []
-    description: "Other video ids defined under video.other.<id>."
+    description: Other video ids defined under video.other.<id>.
   audio_other_ids:
     type: string_array
     default_value: []
-    description: "Other audio ids defined under audio.other.<id>."
+    description: Other audio ids defined under audio.other.<id>.
 
   video:
     publish:
       codec:
         type: string
-        default_value: "auto"
-        description: "Global LiveKit video codec override: auto, vp8, h264, av1, vp9, or h265."
+        default_value: auto
+        description: 'Global LiveKit video codec override: auto, vp8, h264, av1, vp9, or h265.'
         validation:
-          one_of<>: [["auto", "vp8", "h264", "av1", "vp9", "h265"]]
+          one_of<>: [[auto, vp8, h264, av1, vp9, h265]]
       max_bitrate_bps:
         type: int
         default_value: 0
-        description: "Global LiveKit max video bitrate override in bps. 0 uses SDK defaults."
+        description: Global LiveKit max video bitrate override in bps. 0 uses SDK defaults.
         validation:
           gt_eq<>: [0]
       max_framerate:
         type: double
         default_value: 0.0
-        description: "Global LiveKit max video framerate override. 0 uses SDK defaults."
+        description: Global LiveKit max video framerate override. 0 uses SDK defaults.
         validation:
           gt_eq<>: [0.0]
       simulcast:
         type: string
-        default_value: "auto"
-        description: "Global LiveKit simulcast override: auto, enabled, or disabled."
+        default_value: auto
+        description: 'Global LiveKit simulcast override: auto, enabled, or disabled.'
         validation:
-          one_of<>: [["auto", "enabled", "disabled"]]
+          one_of<>: [[auto, enabled, disabled]]
     topics:
       __map_video_topic_ids:
         pattern:
           type: string
-          description: "Topic pattern for this video topic (e.g. '/camera/front/*')."
+          description: Topic pattern for this video topic (e.g. '/camera/front/*').
         transform:
           type: string
-          default_value: ""
-          description: "Optional GStreamer transform fragment inserted after bridge-managed ROS ingress."
+          default_value: ''
+          description: Optional GStreamer transform fragment inserted after bridge-managed ROS ingress.
         publish:
           codec:
             type: string
-            default_value: ""
-            description: "Optional LiveKit codec override for this video topic. Empty inherits from video.publish.codec."
+            default_value: ''
+            description: Optional LiveKit codec override for this video topic. Empty inherits from video.publish.codec.
             validation:
-              one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
+              one_of<>: [['', auto, vp8, h264, av1, vp9, h265]]
           max_bitrate_bps:
             type: int
             default_value: -1
-            description: "Optional LiveKit max video bitrate override for this video topic in bps. -1 inherits from video.publish.max_bitrate_bps."
+            description: Optional LiveKit max video bitrate override for this video topic in bps. -1 inherits from video.publish.max_bitrate_bps.
             validation:
               gt_eq<>: [-1]
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this video topic. -1 inherits from video.publish.max_framerate."
+            description: Optional LiveKit max video framerate override for this video topic. -1 inherits from video.publish.max_framerate.
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
-            default_value: ""
-            description: "Optional LiveKit simulcast override for this video topic. Empty inherits from video.publish.simulcast."
+            default_value: ''
+            description: Optional LiveKit simulcast override for this video topic. Empty inherits from video.publish.simulcast.
             validation:
-              one_of<>: [["", "auto", "enabled", "disabled"]]
+              one_of<>: [['', auto, enabled, disabled]]
     other:
       __map_video_other_ids:
         source:
           type: string
-          description: "Ingress fragment for this other video source (e.g. uridecodebin, v4l2src)."
+          description: Ingress fragment for this other video source (e.g. uridecodebin, v4l2src).
         transform:
           type: string
-          default_value: ""
-          description: "Optional GStreamer transform fragment inserted after other video ingress."
+          default_value: ''
+          description: Optional GStreamer transform fragment inserted after other video ingress.
         publish:
           codec:
             type: string
-            default_value: ""
-            description: "Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec."
+            default_value: ''
+            description: Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec.
             validation:
-              one_of<>: [["", "auto", "vp8", "h264", "av1", "vp9", "h265"]]
+              one_of<>: [['', auto, vp8, h264, av1, vp9, h265]]
           max_bitrate_bps:
             type: int
             default_value: -1
@@ -163,45 +163,45 @@ livekit_ros2_bridge:
           max_framerate:
             type: double
             default_value: -1.0
-            description: "Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate."
+            description: Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate.
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
-            default_value: ""
-            description: "Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast."
+            default_value: ''
+            description: Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast.
             validation:
-              one_of<>: [["", "auto", "enabled", "disabled"]]
+              one_of<>: [['', auto, enabled, disabled]]
 
   audio:
     publish:
       max_bitrate_bps:
         type: int
         default_value: 0
-        description: "Global LiveKit max audio bitrate override in bps. 0 uses SDK defaults."
+        description: Global LiveKit max audio bitrate override in bps. 0 uses SDK defaults.
         validation:
           gt_eq<>: [0]
       dtx:
         type: string
-        default_value: "auto"
-        description: "Global LiveKit DTX override: auto, enabled, or disabled."
+        default_value: auto
+        description: 'Global LiveKit DTX override: auto, enabled, or disabled.'
         validation:
-          one_of<>: [["auto", "enabled", "disabled"]]
+          one_of<>: [[auto, enabled, disabled]]
       red:
         type: string
-        default_value: "auto"
-        description: "Global LiveKit RED override: auto, enabled, or disabled."
+        default_value: auto
+        description: 'Global LiveKit RED override: auto, enabled, or disabled.'
         validation:
-          one_of<>: [["auto", "enabled", "disabled"]]
+          one_of<>: [[auto, enabled, disabled]]
     other:
       __map_audio_other_ids:
         source:
           type: string
-          description: "Ingress fragment for this other audio source (e.g. audiotestsrc, pulsesrc)."
+          description: Ingress fragment for this other audio source (e.g. audiotestsrc, pulsesrc).
         transform:
           type: string
-          default_value: ""
-          description: "Optional GStreamer transform fragment inserted after other audio ingress."
+          default_value: ''
+          description: Optional GStreamer transform fragment inserted after other audio ingress.
         publish:
           max_bitrate_bps:
             type: int
@@ -214,38 +214,38 @@ livekit_ros2_bridge:
               gt_eq<>: [-1]
           dtx:
             type: string
-            default_value: ""
-            description: "Optional LiveKit DTX override for this other audio source. Empty inherits from audio.publish.dtx."
+            default_value: ''
+            description: Optional LiveKit DTX override for this other audio source. Empty inherits from audio.publish.dtx.
             validation:
-              one_of<>: [["", "auto", "enabled", "disabled"]]
+              one_of<>: [['', auto, enabled, disabled]]
           red:
             type: string
-            default_value: ""
-            description: "Optional LiveKit RED override for this other audio source. Empty inherits from audio.publish.red."
+            default_value: ''
+            description: Optional LiveKit RED override for this other audio source. Empty inherits from audio.publish.red.
             validation:
-              one_of<>: [["", "auto", "enabled", "disabled"]]
+              one_of<>: [['', auto, enabled, disabled]]
 
   subscription_qos_ids:
     type: string_array
     default_value: []
-    description: "QoS ids defined under subscription.qos.<id>."
+    description: QoS ids defined under subscription.qos.<id>.
 
   subscription:
     qos:
       __map_subscription_qos_ids:
         pattern:
           type: string
-          default_value: ""
-          description: "ROS topic pattern to match for this subscriber QoS entry."
+          default_value: ''
+          description: ROS topic pattern to match for this subscriber QoS entry.
         reliability:
           type: string
-          default_value: "auto"
-          description: "Subscriber reliability override: auto, reliable, or best_effort."
+          default_value: auto
+          description: 'Subscriber reliability override: auto, reliable, or best_effort.'
           validation:
-            one_of<>: [["auto", "reliable", "best_effort"]]
+            one_of<>: [[auto, reliable, best_effort]]
         durability:
           type: string
-          default_value: "auto"
-          description: "Subscriber durability override: auto, volatile, or transient_local."
+          default_value: auto
+          description: 'Subscriber durability override: auto, volatile, or transient_local.'
           validation:
-            one_of<>: [["auto", "volatile", "transient_local"]]
+            one_of<>: [[auto, volatile, transient_local]]

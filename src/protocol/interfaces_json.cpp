@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,7 +15,9 @@
 #include "protocol/interfaces_json.hpp"
 
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 #include "protocol/detail/json_fields.hpp"
@@ -85,12 +87,11 @@ std::string serialize(const std::vector<InterfaceDefinition> & definitions)
   Json::array_t entries;
   entries.reserve(definitions.size());
   for (const auto & definition : definitions) {
-    entries.push_back(
-      Json{
-        {kTypeField, definition.type},
-        {kFormatField, "ros2msg"},
-        {kDefinitionField, definition.body},
-      });
+    entries.push_back(Json{
+      {kTypeField, definition.type},
+      {kFormatField, "ros2msg"},
+      {kDefinitionField, definition.body},
+    });
   }
 
   return Json{{kInterfacesField, std::move(entries)}}.dump();

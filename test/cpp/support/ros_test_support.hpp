@@ -1,10 +1,10 @@
-// Copyright (c) 2025-present Polymath Robotics, Inc.
+// Copyright 2025 Polymath Robotics, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//    http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,6 +15,8 @@
 #pragma once
 
 #include <chrono>
+#include <cinttypes>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <memory>
@@ -115,7 +117,8 @@ public:
   {
     try {
       apply(previous_value_);
-    } catch (...) {}
+    } catch (...) {
+    }
   }
 
 private:
@@ -209,10 +212,10 @@ inline bool waitForTopicType(
   if (!found) {
     RCLCPP_WARN(
       node->get_logger(),
-      "event=wait_for_topic_type_timeout topic=%s expected_type=%s timeout_ms=%lld",
+      "event=wait_for_topic_type_timeout topic=%s expected_type=%s timeout_ms=%" PRId64,
       topic.c_str(),
       expected_type.c_str(),
-      static_cast<long long>(timeout.count()));
+      static_cast<std::int64_t>(timeout.count()));
   }
 
   return found;
