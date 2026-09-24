@@ -55,5 +55,13 @@ TEST(RoomConnectionSendByteStreamTest, UnavailableLocalParticipantThrowsRuntimeE
     std::runtime_error);
 }
 
+TEST(RoomConnectionRemoteTrackTest, SubscribeAndSnapshotRefuseOutsideARoomEvent)
+{
+  // The SDK's publication maps are only safe to read inside its room-event callbacks.
+  const auto connection = createRoomConnection();
+  EXPECT_FALSE(connection->subscribeRemoteTrack("participant-1", "TR_a"));
+  EXPECT_TRUE(connection->remoteTrackSnapshot().empty());
+}
+
 }  // namespace
 }  // namespace livekit_ros2_bridge

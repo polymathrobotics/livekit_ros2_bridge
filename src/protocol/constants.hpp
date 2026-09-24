@@ -34,6 +34,10 @@ inline constexpr char kCapabilityMethod[] = "lkros.capability";
 // ROS topic rides in the stream's `name` field, so no per-topic stream names are derived.
 inline constexpr char kEchoOnceTopic[] = "lkros.echo.once";
 
+// Fixed wire name of the client-published audio track the bridge plays out
+// its configured sink. The only remote media track the bridge names.
+inline constexpr char kAudioOutTrackName[] = "lkros.audio.out";
+
 inline constexpr char kCdrContentType[] = "application/x-ros-cdr";
 
 inline constexpr char kVideoDeliveryKind[] = "video";

@@ -17,10 +17,12 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
   - [Audio](#audio)
     - [Defaults](#audio-defaults)
     - [Other audio sources](#other-audio-sources)
+    - [Audio output](#audio-output)
   - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
   - [RTSP or device inputs](#rtsp-or-device-inputs)
   - [Cab microphones](#cab-microphones)
+  - [Audio output playback](#audio-output-playback)
 
 ## Reference
 
@@ -215,6 +217,31 @@ Lookup notes:
 - other audio track names percent-encode bytes outside RFC 3986 unreserved characters
 - other audio sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `audio_other_ids` and `audio.other.*`
 
+#### Audio output
+
+| Parameter | Default | Allowed values | Notes |
+| --- | --- | --- | --- |
+| `audio.out.sink` | `""` | non-empty GStreamer sink fragment | Audio output playback pipeline. Empty (default) disables audio output entirely. |
+
+Behavior notes:
+
+- audio output is disabled by default; the feature never half-works on robots without an output device
+- a non-empty `audio.out.sink` enables the feature and advertises `audio.out`, with the `track_name` to publish, through the [`lkros.capability`](protocol.md#rpc-lkroscapability) RPC, so client UIs offer audio output only where it can work
+- the bridge connects with auto-subscribe disabled and subscribes only to the fixed-name audio output track (`lkros.audio.out`); other published media is never received
+- the bridge performs no identity checks on the audio output publisher; who may publish is enforced by the application layer
+- the playback pipeline is `appsrc ! audioconvert ! audioresample ! <audio.out.sink>`; appsrc is the only bridge-owned buffer and holds at most 200 ms, dropping the oldest audio beyond that, so an output that falls behind skips instead of building up delay; the fragment is inserted verbatim after those bridge-owned stages
+- `audio.out.sink` must not define `appsrc` or `appsink`; the bridge owns those endpoints
+- playback is paced by arrival: the bridge sets `sync=false` on every sink in the fragment, overriding the fragment's own setting, so outputs that buffer more than they declare (e.g. `alsasink` through the ALSA pulse plugin) still play
+- output-device failures restart the pipeline at a bounded rate (~4/s) and only while audio is arriving; a missing device never crashes the node, never cycles while idle, and self-heals when audio arrives with the device restored
+- mute is silence-through: no bridge reaction, the sink stays claimed until the track is unpublished
+
+Fragment notes:
+
+- raw ALSA (recommended v1 deployment): `alsasink device=...` with the device passed through into the container
+- a sound server (e.g. `pulsesink server=...`): needs the socket/environment plumbing in the deployment inventory
+- a networked audio device: any GStreamer sink fragment that terminates in an audio device
+- clock-disciplined sinks (anything syncing to the pipeline clock, e.g. `pulsesink` without `sync=false`) crackle at the 10 ms cadence; end the fragment with `sync=false` (e.g. `pulsesink sync=false`) unless the sink is clock-disciplined by design
+
 ### QoS
 
 | Parameter | Default | Allowed values | Notes |
@@ -348,3 +375,36 @@ Use `audio.other.*` when the bridge should ingest audio directly from GStreamer 
    - the track name is deterministic, for example `lkros.audio.other.left_mic`
    - if the source id contains reserved bytes, the track-name suffix is percent-encoded
    - if a client asks for a source that does not exist, the bridge reports `not_found`
+
+### Audio output playback
+
+Set `audio.out.sink` when the bridge should play client-published audio through an output device on the robot. The feature is off unless the fragment is configured.
+
+1. Configure the output device as one free-form GStreamer sink fragment.
+
+   ```yaml
+   livekit_ros2_bridge:
+     ros__parameters:
+       audio.out.sink: "alsasink device=hw:0,0"
+   ```
+
+   - the fragment is deployment's choice: raw ALSA, a sound server, or a networked audio device — bridge code is identical either way
+   - the sink's GStreamer plugin is deployment's to install: `alsasink` needs the ALSA plugin (`gstreamer1.0-alsa` on Debian/Ubuntu) in the runtime image; without it, startup fails with `no element "alsasink"`
+   - do not put `appsrc` or `appsink` into the fragment; the bridge owns those endpoints and prepends its own appsrc/convert/resample stages
+   - the container needs access to the audio device (e.g. `devices: ["/dev/snd"]` in the service spec); that is deployment inventory, not a bridge parameter
+
+2. Expect the feature to be discoverable.
+
+   - `lkros.capability` answers `{"v": 2, "features": {"audio": {"out": {"track_name": "lkros.audio.out"}}}}`
+   - with `audio.out.sink` empty (or absent), `features` is `{}` and no track is ever subscribed
+
+3. Expect the client side to be self-enforcing.
+
+   - the client publishes its audio track as `lkros.audio.out` while it holds the control lease and unpublishes on lease loss; the bridge rebinds its sink to the next output track's first frame
+   - a second live output track is logged and dropped; it never steals the sink
+   - the bridge performs no identity checks on the publisher
+
+4. Expect bounded, self-healing playback.
+
+   - a missing output device restarts the pipeline at ~4/s only while audio arrives, never on an idle robot, and never crashes the node
+   - plugging the output device in mid-stream restores audio output without a node restart

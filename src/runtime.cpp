@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "audio/audio_output_manager.hpp"
 #include "livekit/remote_participant.h"
 #include "livekit/room_event_types.h"
 #include "protocol/constants.hpp"
@@ -53,13 +54,25 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     config_.access_policy,
     ros_executor_queue_,
     ros_service_caller_,
-    subscription_lease_manager_)
+    subscription_lease_manager_,
+    !config_.audio_output.sink_fragment.empty())
 , watchdog_(config_.watchdog, logger_)
 {
   subscription_lease_manager_.startPruneTimer(
     interfaces.get_node_base_interface(), interfaces.get_node_timers_interface(), [this](std::function<void()> work) {
       submitRosWork(std::move(work));
     });
+
+  // Audio output exists only when an output device is configured. The manager's
+  // construction order relative to rpc_router_ does not matter for the
+  // capability advertisement: the router is configured above from the same
+  // runtime snapshot. The manager is created here so an unconfigured
+  // deployment never touches track events.
+  if (!config_.audio_output.sink_fragment.empty()) {
+    audio_output_manager_ =
+      std::make_unique<audio::AudioOutputManager>(*room_connection_, config_.audio_output.sink_fragment);
+    LogEvent(logger_, "audio_out_enabled").info();
+  }
 
   const bool rpcs_registered = rpc_router_.registerRpcs(*room_connection_);
   if (!rpcs_registered) {
@@ -79,6 +92,10 @@ Runtime::~Runtime()
   ros_executor_queue_.shutdown();
   subscription_lease_manager_.shutdown();
   rpc_router_.unregisterRpcs();
+  // Destroy the audio output manager before the room stops: it flips every
+  // reader's stop flag and closes the streams so no reader thread outlives
+  // this Runtime.
+  audio_output_manager_.reset();
   room_connection_->stop();
 }
 
@@ -93,10 +110,46 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
   };
   callbacks.on_participant_disconnected = [this](const livekit::ParticipantDisconnectedEvent & event) {
     (void)callback_gate_.run([this, &event]() {
+      if (audio_output_manager_ != nullptr) {
+        audio_output_manager_->onParticipantDisconnected(event);
+      }
       std::string identity = event.participant->identity();
       submitRosWork([this, identity = std::move(identity)]() { ros_service_caller_.cancelForRequester(identity); });
     });
   };
+
+  // Audio output track events run on SDK delegate threads and are wrapped in
+  // callback_gate_ like every other callback. They only log, subscribe, and
+  // start or stop the reader threads that feed the sink; no ROS work is submitted.
+  if (audio_output_manager_ != nullptr) {
+    audio::AudioOutputManager * audio_output_manager = audio_output_manager_.get();
+    // Readers survive a reconnect; catching up only subscribes output tracks
+    // the snapshot reports as not yet subscribed, including re-announced ones.
+    callbacks.on_remote_tracks_ready = [this, audio_output_manager]() {
+      (void)callback_gate_.run([audio_output_manager]() { audio_output_manager->onConnected(); });
+    };
+    callbacks.on_remote_track_published = [this, audio_output_manager](const RemoteTrackEvent & event) {
+      (void)callback_gate_.run(
+        [audio_output_manager, &event]() { audio_output_manager->onRemoteTrackPublished(event); });
+    };
+    callbacks.on_remote_track_unpublished = [this, audio_output_manager](const RemoteTrackEvent & event) {
+      (void)callback_gate_.run(
+        [audio_output_manager, &event]() { audio_output_manager->onRemoteTrackUnpublished(event); });
+    };
+    callbacks.on_remote_track_subscribed = [this, audio_output_manager](const RemoteTrackEvent & event) {
+      (void)callback_gate_.run(
+        [audio_output_manager, &event]() { audio_output_manager->onRemoteTrackSubscribed(event); });
+    };
+    callbacks.on_remote_track_unsubscribed = [this, audio_output_manager](const RemoteTrackEvent & event) {
+      (void)callback_gate_.run(
+        [audio_output_manager, &event]() { audio_output_manager->onRemoteTrackUnsubscribed(event); });
+    };
+    callbacks.on_remote_track_subscription_failed =
+      [this, audio_output_manager](const RemoteTrackSubscriptionFailedEvent & event) {
+        (void)callback_gate_.run(
+          [audio_output_manager, &event]() { audio_output_manager->onRemoteTrackSubscriptionFailed(event); });
+      };
+  }
 
   return callbacks;
 }

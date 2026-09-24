@@ -191,7 +191,7 @@ AccessPolicy makeServicePolicy(std::vector<std::string> allow = {}, std::vector<
 class RpcRouterHarness
 {
 public:
-  explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy())
+  explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy(), bool audio_output_enabled = false)
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
   , queue(RosExecutorQueue::NodeInterfaces(*node), node->get_clock())
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
@@ -204,7 +204,7 @@ public:
       node->get_clock(),
       connection,
       makeSubscribePolicy({"*"}))
-  , router(node->get_node_graph_interface(), policy, queue, caller, lease_manager)
+  , router(node->get_node_graph_interface(), policy, queue, caller, lease_manager, audio_output_enabled)
   {
     router.registerRpcs(connection);
   }
@@ -247,12 +247,12 @@ TEST_F(RpcRouterTest, RegisteredRpcHandlersRequireCallerIdentityBeforeParsing)
   expectUnauthorized(protocol::kTopicEchoOnceMethod);
 }
 
-void expectCapabilityBody(const std::optional<std::string> & response)
+void expectCapabilityBody(const std::optional<std::string> & response, const nlohmann::json & expected_features)
 {
   ASSERT_TRUE(response.has_value());
   const auto parsed = nlohmann::json::parse(*response);
   const nlohmann::json expected = {
-    {"features", nlohmann::json::object()},
+    {"features", expected_features},
     {"v", protocol::kProtocolVersion},
   };
   ASSERT_EQ(parsed, expected);
@@ -263,7 +263,7 @@ TEST_F(RpcRouterTest, CapabilityRpcReturnsExactBodyWithoutIdentityOrPayloadValid
   RpcRouterHarness harness;
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({not-json})"));
-  expectCapabilityBody(response);
+  expectCapabilityBody(response, nlohmann::json::object());
 }
 
 TEST_F(RpcRouterTest, CapabilityRpcIgnoresJunkPayloadAndAnswersUnderDefaultDenyPolicy)
@@ -271,9 +271,17 @@ TEST_F(RpcRouterTest, CapabilityRpcIgnoresJunkPayloadAndAnswersUnderDefaultDenyP
   RpcRouterHarness harness(makeServicePolicy({}, {"*"}));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("participant-1", R"("junk")"));
-  expectCapabilityBody(response);
+  expectCapabilityBody(response, nlohmann::json::object());
   EXPECT_TRUE(harness.connection.state->sent_byte_streams.empty());
   EXPECT_TRUE(harness.connection.state->published_data_calls.empty());
+}
+
+TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputOnlyWhenConfigured)
+{
+  RpcRouterHarness harness(makeServicePolicy(), true);
+
+  const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
+  expectCapabilityBody(response, nlohmann::json::parse(R"({"audio":{"out":{"track_name":"lkros.audio.out"}}})"));
 }
 
 TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)

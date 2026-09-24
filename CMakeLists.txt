@@ -114,6 +114,8 @@ add_library(livekit_ros2_bridge_audio STATIC
   src/audio/gstreamer_stream.cpp
   src/audio/stream_config.cpp
   src/audio/stream_spec.cpp
+  src/audio/audio_output_manager.cpp
+  src/audio/audio_output_sink.cpp
   src/audio/track_publisher.cpp
 )
 set_target_properties(livekit_ros2_bridge_audio PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -126,10 +128,10 @@ target_link_libraries(livekit_ros2_bridge_audio PUBLIC
   LiveKit::livekit
   livekit_ros2_bridge_parameters
   livekit_ros2_bridge_utils
-)
-target_link_libraries(livekit_ros2_bridge_audio PRIVATE
   PkgConfig::gstreamer
   PkgConfig::gstreamer-app
+)
+target_link_libraries(livekit_ros2_bridge_audio PRIVATE
   PkgConfig::gstreamer-audio
 )
 
@@ -201,6 +203,8 @@ if(BUILD_TESTING)
       rclcpp::rclcpp
       livekit_ros2_bridge_parameters
       ${sensor_msgs_TARGETS}
+      PkgConfig::gstreamer
+      PkgConfig::gstreamer-app
       ${ARGN}
     )
   endfunction()
@@ -300,6 +304,9 @@ if(BUILD_TESTING)
     PkgConfig::gstreamer-audio
   )
   livekit_ros2_bridge_add_test(test_audio_track_publisher test/cpp/test_audio_track_publisher.cpp)
+  livekit_ros2_bridge_add_test(test_audio_output_sink test/cpp/test_audio_output_sink.cpp PkgConfig::gstreamer-app)
+  livekit_ros2_bridge_add_test(test_audio_output_manager test/cpp/test_audio_output_manager.cpp)
+  livekit_ros2_bridge_add_test(test_pipeline_failure_handler test/cpp/test_pipeline_failure_handler.cpp)
 endif()
 
 ament_package()

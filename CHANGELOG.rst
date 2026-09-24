@@ -4,6 +4,12 @@ Changelog for package livekit_ros2_bridge
 
 0.3.1 (Unreleased)
 ------------------
+* Add audio output: a client-published audio track (`lkros.audio.out`, the only remote
+  media track the bridge subscribes to) plays through a bridge-owned GStreamer playback pipeline
+  configured with the new `audio.out.sink` parameter, off by default. `lkros.capability` advertises
+  `audio.out`, with the track name to publish, if and only if the sink is configured, and feature
+  values are now objects carrying details rather than booleans. The bridge now connects with
+  auto-subscribe disabled.
 * Add the `lkros.capability` RPC for bridge feature discovery, answerable by any room participant
   without caller identity or access-policy checks.
 * Answer heartbeat entries with unrecognized subscription kinds via an `unsupported_kind` error

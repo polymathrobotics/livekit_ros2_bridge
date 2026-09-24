@@ -55,4 +55,11 @@ constexpr EndpointLayout makeOtherSourceLayout(const char * bridge_appsink_name)
   return EndpointLayout{0U, 1U, 0U, 1U, nullptr, bridge_appsink_name};
 }
 
+// Audio output playback fragments must not define endpoints; the bridge owns the
+// single appsrc named here.
+constexpr EndpointLayout makeAudioOutputSinkLayout(const char * bridge_appsrc_name)
+{
+  return EndpointLayout{1U, 0U, 1U, 0U, bridge_appsrc_name, nullptr};
+}
+
 }  // namespace livekit_ros2_bridge::utils

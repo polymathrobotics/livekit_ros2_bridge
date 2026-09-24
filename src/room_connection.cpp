@@ -19,7 +19,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -35,6 +34,7 @@
 #include "livekit/local_participant.h"
 #include "livekit/local_video_track.h"
 #include "livekit/remote_participant.h"
+#include "livekit/remote_track_publication.h"
 #include "livekit/room_delegate.h"
 #include "livekit/rpc_error.h"
 #include "livekit/video_source.h"
@@ -57,6 +57,83 @@ struct ParticipantRef
   std::shared_ptr<livekit::LocalParticipant> participant;
   std::uint64_t room_generation = 0;
 };
+
+// The room whose event callback is running on this thread, or null. The SDK changes remote
+// participants' publication maps only while handling room events, one at a time, so those maps are
+// safe to read only from inside such a callback.
+thread_local livekit::Room * current_event_room = nullptr;
+
+// Marks this thread as inside a room-event callback for `room` until destroyed.
+class RoomEventScope
+{
+public:
+  explicit RoomEventScope(livekit::Room & room)
+  : previous_room_(current_event_room)
+  {
+    current_event_room = &room;
+  }
+
+  ~RoomEventScope()
+  {
+    current_event_room = previous_room_;
+  }
+
+  RoomEventScope(const RoomEventScope &) = delete;
+  RoomEventScope & operator=(const RoomEventScope &) = delete;
+
+private:
+  livekit::Room * previous_room_;
+};
+
+// The bridge follows the SDK's state once the room is activated and is Disconnected before that, so
+// it never reports Connected while RPCs are unregistered.
+livekit::ConnectionState bridgeConnectionState(livekit::ConnectionState sdk_state, bool room_activated)
+{
+  if (!room_activated) {
+    return livekit::ConnectionState::Disconnected;
+  }
+  return sdk_state;
+}
+
+RemoteTrackEvent makeRemoteTrackEvent(
+  const livekit::RemoteParticipant * participant,
+  const std::shared_ptr<livekit::RemoteTrackPublication> & publication,
+  const std::shared_ptr<livekit::Track> & track)
+{
+  RemoteTrackEvent remote_event;
+  if (participant != nullptr) {
+    remote_event.participant_identity = participant->identity();
+  }
+  if (publication != nullptr) {
+    remote_event.track_sid = publication->sid();
+    remote_event.track_name = publication->name();
+    remote_event.track_kind = publication->kind();
+  }
+  if (track == nullptr) {
+    return remote_event;
+  }
+  if (remote_event.track_sid.empty()) {
+    remote_event.track_sid = track->sid();
+    remote_event.track_kind = track->kind();
+  }
+  remote_event.track = track;
+  return remote_event;
+}
+
+std::shared_ptr<livekit::RemoteTrackPublication> findRemotePublication(
+  const livekit::Room & room, const std::string & participant_identity, const std::string & track_sid)
+{
+  const auto participant = room.remoteParticipant(participant_identity).lock();
+  if (participant == nullptr) {
+    return nullptr;
+  }
+  const auto & publications = participant->trackPublications();
+  const auto publication = publications.find(track_sid);
+  if (publication == publications.end()) {
+    return nullptr;
+  }
+  return publication->second;
+}
 
 class SdkRoomConnection final : public RoomConnection, private livekit::RoomDelegate
 {
@@ -355,6 +432,72 @@ public:
     }
   }
 
+  bool subscribeRemoteTrack(const std::string & participant_identity, const std::string & track_sid) override
+  {
+    if (participant_identity.empty() || track_sid.empty()) {
+      return false;
+    }
+    if (current_event_room == nullptr) {
+      LogEvent(kLogger, "remote_track_subscribe_failed")
+        .field("reason", "outside_room_event")
+        .fieldOr("participant_identity", participant_identity)
+        .fieldOr("track_sid", track_sid)
+        .error();
+      return false;
+    }
+
+    const auto publication = findRemotePublication(*current_event_room, participant_identity, track_sid);
+    if (publication == nullptr) {
+      LogEvent(kLogger, "remote_track_subscribe_failed")
+        .field("reason", "publication_unavailable")
+        .fieldOr("participant_identity", participant_identity)
+        .fieldOr("track_sid", track_sid)
+        .warn();
+      return false;
+    }
+    if (publication->subscribed()) {
+      return true;
+    }
+
+    // setSubscribed() is a blocking FFI request; never hold mutex_ across it.
+    try {
+      publication->setSubscribed(true);
+    } catch (const std::exception & exception) {
+      LogEvent(kLogger, "remote_track_subscribe_failed")
+        .fieldOr("participant_identity", participant_identity)
+        .fieldOr("track_sid", track_sid)
+        .field("error", exception.what())
+        .warn();
+      return false;
+    }
+    return true;
+  }
+
+  std::vector<RoomConnection::RemoteTrackSnapshotEntry> remoteTrackSnapshot() override
+  {
+    std::vector<RoomConnection::RemoteTrackSnapshotEntry> entries;
+    if (current_event_room == nullptr) {
+      LogEvent(kLogger, "remote_track_snapshot_failed").field("reason", "outside_room_event").error();
+      return entries;
+    }
+
+    for (const auto & remote_handle : current_event_room->remoteParticipants()) {
+      const auto participant = remote_handle.lock();
+      if (participant == nullptr) {
+        continue;
+      }
+      for (const auto & [track_sid, publication] : participant->trackPublications()) {
+        if (publication == nullptr || track_sid.empty()) {
+          continue;
+        }
+        entries.push_back(
+          RoomConnection::RemoteTrackSnapshotEntry{
+            participant->identity(), track_sid, publication->name(), publication->kind(), publication->subscribed()});
+      }
+    }
+    return entries;
+  }
+
   void sendByteStream(
     const std::string & topic,
     const std::string & name,
@@ -573,16 +716,19 @@ private:
       return false;
     }
 
+    bool stop_requested = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      if (stop_requested_) {
-        room->setDelegate(nullptr);
-        return false;
-      }
+      stop_requested = stop_requested_;
+    }
+    if (stop_requested) {
+      abandonRoom(*room);
+      return false;
     }
 
     auto active_room = room;
     if (!activateRoom(std::move(room))) {
+      // The room was never activated, so the bridge never left Disconnected and nothing is reported.
       detachRoom();
       return false;
     }
@@ -592,7 +738,8 @@ private:
       .fieldOr("room_sid", active_room->roomInfo().sid)
       .fieldOr("room_name", active_room->roomInfo().name)
       .info();
-    transitionState(livekit::ConnectionState::Connected);
+    // Reports Connected now if the SDK's Connected already arrived; otherwise that event will.
+    reportBridgeState();
     return true;
   }
 
@@ -601,7 +748,19 @@ private:
     auto room = std::make_shared<livekit::Room>();
     room->setDelegate(this);
 
-    const livekit::RoomOptions options;
+    // The bridge subscribes only to tracks it names; room-wide media
+    // reception was never a contract. Track events still arrive for publications
+    // the bridge deliberately subscribes to.
+    livekit::RoomOptions options;
+    options.auto_subscribe = false;
+
+    // Set before connect(): the SDK can deliver this room's events before activateRoom() runs.
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      event_room_ = room.get();
+      sdk_state_ = livekit::ConnectionState::Disconnected;
+    }
+
     bool connected = false;
     try {
       connected = room->connect(config.url, config.access_token, options);
@@ -622,7 +781,7 @@ private:
     }
 
     if (!connected) {
-      room->setDelegate(nullptr);
+      abandonRoom(*room);
       return nullptr;
     }
 
@@ -632,11 +791,23 @@ private:
         .fieldOr("url", config.url)
         .field("token_present", !config.access_token.empty())
         .error();
-      room->setDelegate(nullptr);
+      abandonRoom(*room);
       return nullptr;
     }
 
     return room;
+  }
+
+  // Detaches a room that never became room_. It was never activated, so the bridge is still
+  // Disconnected and its late events can no longer report anything.
+  void abandonRoom(livekit::Room & room)
+  {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      event_room_ = nullptr;
+      sdk_state_ = livekit::ConnectionState::Disconnected;
+    }
+    room.setDelegate(nullptr);
   }
 
   bool activateRoom(std::shared_ptr<livekit::Room> room)
@@ -651,6 +822,7 @@ private:
         registered = false;
       }
     }
+    room_activated_ = registered;
     return registered;
   }
 
@@ -665,6 +837,9 @@ private:
       }
       // Old-room tracks must not unpublish from the replacement room.
       track_room_generations_.clear();
+      event_room_ = nullptr;
+      room_activated_ = false;
+      sdk_state_ = livekit::ConnectionState::Disconnected;
       state_ = livekit::ConnectionState::Disconnected;
     }
 
@@ -674,11 +849,40 @@ private:
     }
   }
 
-  void transitionState(livekit::ConnectionState state)
+  // Applies an SDK connection event from `room`; events from any room but the current one are
+  // ignored. Entering Connected fires on_remote_tracks_ready in this same callback, before the SDK
+  // can deliver a later track event, so catching up and forwarding new publishes cannot interleave.
+  void updateSdkState(livekit::Room & room, livekit::ConnectionState sdk_state)
   {
-    std::function<void(livekit::ConnectionState)> callback;
+    const RoomEventScope scope(room);
+    std::function<void()> ready_callback;
     {
       std::lock_guard<std::mutex> lock(mutex_);
+      if (&room != event_room_ || sdk_state_ == sdk_state) {
+        return;
+      }
+      sdk_state_ = sdk_state;
+      if (sdk_state == livekit::ConnectionState::Connected) {
+        ready_callback = callbacks_.on_remote_tracks_ready;
+      }
+    }
+
+    reportBridgeState();
+    if (ready_callback) {
+      ready_callback();
+    }
+  }
+
+  // Reports a change in the bridge state derived from sdk_state_ and room_activated_. The connect
+  // thread and the SDK thread both report, so state_report_mutex_ keeps their reports in order.
+  void reportBridgeState()
+  {
+    const std::lock_guard<std::mutex> report_lock(state_report_mutex_);
+    std::function<void(livekit::ConnectionState)> callback;
+    livekit::ConnectionState state = livekit::ConnectionState::Disconnected;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      state = bridgeConnectionState(sdk_state_, room_activated_);
       if (state_ == state) {
         return;
       }
@@ -691,31 +895,124 @@ private:
     }
   }
 
-  void onParticipantDisconnected(livekit::Room &, const livekit::ParticipantDisconnectedEvent & event) override
+  // Copies the callback under mutex_: stop() reassigns callbacks_ under it, and the SDK does not wait
+  // for an in-flight delegate call when the delegate is detached. Returns an empty callback for events
+  // from a stale room, while the SDK is Disconnected, or (with `connected_only`) while it is not
+  // Connected. Gating on the SDK state keeps events that arrive before activation.
+  template <typename CallbackT>
+  CallbackT currentCallback(
+    const livekit::Room & room, CallbackT RoomEventCallbacks::* callback_member, bool connected_only) const
   {
-    const auto * participant = event.participant;
-    if (participant == nullptr) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (&room != event_room_ || sdk_state_ == livekit::ConnectionState::Disconnected) {
+      return {};
+    }
+    if (connected_only && sdk_state_ != livekit::ConnectionState::Connected) {
+      return {};
+    }
+    return callbacks_.*callback_member;
+  }
+
+  void forwardRemoteTrackEvent(
+    const livekit::Room & room,
+    std::function<void(const RemoteTrackEvent &)> RoomEventCallbacks::* callback_member,
+    const RemoteTrackEvent & remote_event)
+  {
+    const auto callback = currentCallback(room, callback_member, false);
+    if (callback) {
+      callback(remote_event);
+    }
+  }
+
+  // Forwarded only while the SDK is Connected, since SDK reconnects suppress transient disconnects.
+  void onParticipantDisconnected(livekit::Room & room, const livekit::ParticipantDisconnectedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    if (event.participant == nullptr || event.participant->identity().empty()) {
       return;
     }
-
-    std::function<void(const livekit::ParticipantDisconnectedEvent &)> callback;
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (state_ != livekit::ConnectionState::Connected) {
-        return;
-      }
-      callback = callbacks_.on_participant_disconnected;
+    const auto callback = currentCallback(room, &RoomEventCallbacks::on_participant_disconnected, true);
+    if (callback) {
+      callback(event);
     }
+  }
 
+  // Forwarded only while the SDK is Connected: the on_remote_tracks_ready snapshot covers anything
+  // published before it, including the tracks a full restart re-announces while Reconnecting.
+  void onTrackPublished(livekit::Room & room, const livekit::TrackPublishedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    if (event.participant == nullptr) {
+      return;
+    }
+    const auto callback = currentCallback(room, &RoomEventCallbacks::on_remote_track_published, true);
     if (!callback) {
       return;
     }
 
-    if (participant->identity().empty()) {
+    if (event.publication != nullptr && !event.publication->sid().empty()) {
+      callback(makeRemoteTrackEvent(event.participant, event.publication, nullptr));
       return;
     }
 
-    callback(event);
+    // SDK v1.6.0 kTrackPublished moves the publication into the participant's map and then hands the
+    // delegate the moved-from (null) pointer. Announce all of the participant's publications instead;
+    // subscribers match by name and skip tracks already subscribed.
+    std::vector<RemoteTrackEvent> announced;
+    for (const auto & [track_sid, publication] : event.participant->trackPublications()) {
+      if (publication == nullptr || track_sid.empty()) {
+        continue;
+      }
+      announced.push_back(makeRemoteTrackEvent(event.participant, publication, nullptr));
+    }
+    for (const auto & remote_event : announced) {
+      callback(remote_event);
+    }
+  }
+
+  void onTrackUnpublished(livekit::Room & room, const livekit::TrackUnpublishedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    forwardRemoteTrackEvent(
+      room,
+      &RoomEventCallbacks::on_remote_track_unpublished,
+      makeRemoteTrackEvent(event.participant, event.publication, nullptr));
+  }
+
+  void onTrackSubscribed(livekit::Room & room, const livekit::TrackSubscribedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    forwardRemoteTrackEvent(
+      room,
+      &RoomEventCallbacks::on_remote_track_subscribed,
+      makeRemoteTrackEvent(event.participant, event.publication, event.track));
+  }
+
+  void onTrackUnsubscribed(livekit::Room & room, const livekit::TrackUnsubscribedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    forwardRemoteTrackEvent(
+      room,
+      &RoomEventCallbacks::on_remote_track_unsubscribed,
+      makeRemoteTrackEvent(event.participant, event.publication, event.track));
+  }
+
+  void onTrackSubscriptionFailed(livekit::Room & room, const livekit::TrackSubscriptionFailedEvent & event) override
+  {
+    const RoomEventScope scope(room);
+    const auto callback = currentCallback(room, &RoomEventCallbacks::on_remote_track_subscription_failed, false);
+    if (!callback) {
+      return;
+    }
+
+    RemoteTrackSubscriptionFailedEvent translated;
+    if (event.participant != nullptr) {
+      translated.participant_identity = event.participant->identity();
+    }
+    translated.track_sid = event.track_sid;
+    translated.error = event.error;
+
+    callback(translated);
   }
 
   void onRoomSidChanged(livekit::Room & room, const livekit::RoomSidChangedEvent & event) override
@@ -751,33 +1048,33 @@ private:
     }
   }
 
-  void onConnectionStateChanged(livekit::Room &, const livekit::ConnectionStateChangedEvent & event) override
+  void onConnectionStateChanged(livekit::Room & room, const livekit::ConnectionStateChangedEvent & event) override
   {
-    transitionState(event.state);
+    updateSdkState(room, event.state);
   }
 
-  void onDisconnected(livekit::Room &, const livekit::DisconnectedEvent & event) override
+  void onDisconnected(livekit::Room & room, const livekit::DisconnectedEvent & event) override
   {
     LogEvent(kLogger, "room_disconnected").fieldEnum("disconnect_reason", event.reason).warn();
-    transitionState(livekit::ConnectionState::Disconnected);
+    updateSdkState(room, livekit::ConnectionState::Disconnected);
   }
 
   void onReconnecting(livekit::Room & room, const livekit::ReconnectingEvent &) override
   {
     LogEvent(kLogger, "room_reconnecting").fieldOr("room_sid", room.roomInfo().sid).warn();
-    transitionState(livekit::ConnectionState::Reconnecting);
+    updateSdkState(room, livekit::ConnectionState::Reconnecting);
   }
 
   void onReconnected(livekit::Room & room, const livekit::ReconnectedEvent &) override
   {
     LogEvent(kLogger, "room_reconnected").fieldOr("room_sid", room.roomInfo().sid).info();
-    transitionState(livekit::ConnectionState::Connected);
+    updateSdkState(room, livekit::ConnectionState::Connected);
   }
 
-  void onRoomEos(livekit::Room &, const livekit::RoomEosEvent &) override
+  void onRoomEos(livekit::Room & room, const livekit::RoomEosEvent &) override
   {
     LogEvent(kLogger, "room_eos").warn();
-    transitionState(livekit::ConnectionState::Disconnected);
+    updateSdkState(room, livekit::ConnectionState::Disconnected);
   }
 
   bool registerRpcLocked(const std::string & method)
@@ -832,11 +1129,20 @@ private:
   std::unordered_map<const livekit::LocalVideoTrack *, std::uint64_t> track_room_generations_;
   // Guards audio unpublish against tracks published by an older room.
   std::unordered_map<const livekit::LocalAudioTrack *, std::uint64_t> audio_track_room_generations_;
+  // The room whose delegate events are accepted; compared, never dereferenced.
+  const livekit::Room * event_room_ = nullptr;
 
   bool stop_requested_ = false;
   bool sdk_initialized_ = false;
+  // True between a successful activateRoom() and detachRoom().
+  bool room_activated_ = false;
   std::uint64_t room_generation_ = 0;
+  // The SDK's state for event_room_; gates remote-track events.
+  livekit::ConnectionState sdk_state_ = livekit::ConnectionState::Disconnected;
+  // The bridge state reported through on_state_changed; see bridgeConnectionState().
   livekit::ConnectionState state_ = livekit::ConnectionState::Disconnected;
+  // Taken before mutex_, never while holding it.
+  std::mutex state_report_mutex_;
 };
 
 }  // namespace

@@ -768,4 +768,140 @@ TEST_F(RuntimeTest, ShutdownWaitsForRunningPublishTrackBeforeClearingSubscriptio
   EXPECT_EQ(harness.state->published_data_track_names.size(), 1U);
 }
 
+TEST_F(RuntimeTest, CapabilityAdvertisesAudioOutputOnlyWithSinkConfigured)
+{
+  auto configured_options = makeStaticTokenOptions();
+  configured_options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto configured_harness = makeRuntimeHarness(configured_options);
+
+  const auto capability_entry = configured_harness.state->rpc_handlers.find(protocol::kCapabilityMethod);
+  ASSERT_TRUE(capability_entry != configured_harness.state->rpc_handlers.end());
+  livekit::RpcInvocationData invocation;
+  invocation.caller_identity = "";
+  invocation.payload = "{}";
+  invocation.request_id = "capability-request";
+  invocation.response_timeout_sec = 0.0;
+  const auto response = capability_entry->second(invocation);
+  ASSERT_TRUE(response.has_value());
+  EXPECT_EQ(
+    nlohmann::json::parse(*response),
+    nlohmann::json::parse(R"({"v":2,"features":{"audio":{"out":{"track_name":"lkros.audio.out"}}}})"));
+
+  configured_harness.runtime.reset();
+
+  // Without `audio.out.sink`, the feature must be absent entirely.
+  auto default_harness = makeRuntimeHarness(makeStaticTokenOptions());
+  const auto default_capability_entry = default_harness.state->rpc_handlers.find(protocol::kCapabilityMethod);
+  ASSERT_TRUE(default_capability_entry != default_harness.state->rpc_handlers.end());
+  const auto default_response = default_capability_entry->second(invocation);
+  ASSERT_TRUE(default_response.has_value());
+  EXPECT_EQ(nlohmann::json::parse(*default_response), nlohmann::json::parse(R"({"v":2,"features":{}})"));
+}
+
+TEST_F(RuntimeTest, AudioOutputSubscribesOnlyTheOutputTrack)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto harness = makeRuntimeHarness(options);
+  harness.fake_room_connection->emitConnected();
+
+  // The audio output track publish triggers exactly one subscribe call.
+  harness.fake_room_connection->emitRemoteTrackPublished("publisher-1", "PA_out", protocol::kAudioOutTrackName);
+  ASSERT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+  EXPECT_EQ(
+    harness.state->subscribe_remote_track_calls.front(),
+    (std::pair<std::string, std::string>{"publisher-1", "PA_out"}));
+
+  // A second, unrelated publication is never subscribed.
+  harness.fake_room_connection->emitRemoteTrackPublished("spectator-1", "PA_other", "unrelated_feed");
+  EXPECT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+}
+
+TEST_F(RuntimeTest, AudioOutputResumeKeepsTheExistingSubscription)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto harness = makeRuntimeHarness(options);
+
+  // A published-but-unsubscribed output track exists before the first connect.
+  harness.fake_room_connection->setRemoteTrackSnapshot({RoomConnection::RemoteTrackSnapshotEntry{
+    "publisher-1", "PA_out", protocol::kAudioOutTrackName, livekit::TrackKind::KIND_AUDIO, false}});
+
+  harness.fake_room_connection->emitConnected();
+  EXPECT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+
+  // A resume sends no track events; the track stays subscribed, so neither
+  // Reconnecting nor Reconnected issues another subscription.
+  harness.fake_room_connection->emitReconnecting();
+  harness.fake_room_connection->emitReconnected();
+  EXPECT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+}
+
+TEST_F(RuntimeTest, AudioOutputCatchUpRunsOnRemoteTracksReadyNotOnStateChange)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto harness = makeRuntimeHarness(options);
+  harness.fake_room_connection->setRemoteTrackSnapshot({RoomConnection::RemoteTrackSnapshotEntry{
+    "publisher-1", "PA_out", protocol::kAudioOutTrackName, livekit::TrackKind::KIND_AUDIO, false}});
+
+  // The bridge state only feeds the watchdog; the snapshot is read only where it is safe.
+  harness.state->callbacks.on_state_changed(livekit::ConnectionState::Connected);
+  EXPECT_TRUE(harness.state->subscribe_remote_track_calls.empty());
+
+  harness.state->callbacks.on_remote_tracks_ready();
+  ASSERT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+  EXPECT_EQ(
+    harness.state->subscribe_remote_track_calls.front(),
+    (std::pair<std::string, std::string>{"publisher-1", "PA_out"}));
+}
+
+TEST_F(RuntimeTest, AudioOutputFullRestartResubscribesOnlyOnConnected)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto harness = makeRuntimeHarness(options);
+  harness.fake_room_connection->emitConnected();
+  harness.fake_room_connection->emitRemoteTrackPublished("publisher-1", "PA_out", protocol::kAudioOutTrackName);
+  ASSERT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+
+  // A full restart unpublishes the track and disconnects its participant while
+  // still Connected, then re-announces it while Reconnecting.
+  auto track = harness.fake_room_connection->makeSyntheticRemoteTrack(livekit::TrackKind::KIND_AUDIO, "PA_out");
+  harness.fake_room_connection->emitRemoteTrackUnsubscribed("publisher-1", track, protocol::kAudioOutTrackName);
+  harness.fake_room_connection->emitRemoteTrackUnpublished("publisher-1", "PA_out", protocol::kAudioOutTrackName);
+  harness.fake_room_connection->emitParticipantDisconnected("publisher-1");
+  harness.fake_room_connection->emitReconnecting();
+  harness.fake_room_connection->emitRemoteTrackPublished("publisher-1", "PA_out", protocol::kAudioOutTrackName);
+  EXPECT_EQ(harness.state->subscribe_remote_track_calls.size(), 1U);
+
+  // Reconnected subscribes the re-announced track from the snapshot.
+  harness.fake_room_connection->emitReconnected();
+  ASSERT_EQ(harness.state->subscribe_remote_track_calls.size(), 2U);
+  EXPECT_EQ(
+    harness.state->subscribe_remote_track_calls.back(), (std::pair<std::string, std::string>{"publisher-1", "PA_out"}));
+}
+
+TEST_F(RuntimeTest, AudioOutputWiresSubscriptionFailuresOnlyWhenConfigured)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto audio_output_harness = makeRuntimeHarness(options);
+  EXPECT_TRUE(static_cast<bool>(audio_output_harness.state->callbacks.on_remote_track_subscription_failed));
+
+  auto plain_harness = makeRuntimeHarness(makeStaticTokenOptions());
+  EXPECT_FALSE(static_cast<bool>(plain_harness.state->callbacks.on_remote_track_subscription_failed));
+}
+
+TEST_F(RuntimeTest, AudioOutputEnabledShutdownUnregistersRpcsBeforeRoomStop)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio.out.sink", "fakesink sync=false");
+  auto harness = makeRuntimeHarness(options);
+
+  harness.runtime.reset();
+
+  expectRpcUnregistersBeforeStop(*harness.state);
+}
+
 }  // namespace livekit_ros2_bridge

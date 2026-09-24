@@ -24,11 +24,13 @@
 #include <unordered_set>
 #include <utility>
 
+#include "audio/audio_output_sink.hpp"
 #include "audio/stream_config.hpp"
 #include "livekit_ros2_bridge/livekit_ros2_bridge_parameters.hpp"
 #include "rclcpp/logging.hpp"
 #include "rmw/qos_string_conversions.h"
 #include "subscription_qos.hpp"
+#include "utils/gstreamer_pipeline_validation.hpp"
 #include "utils/log_event.hpp"
 #include "utils/param_entries.hpp"
 #include "utils/ros_resource_name_utils.hpp"
@@ -152,6 +154,15 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
 
     stage = "audio_config";
     config.audio_stream = audio::loadConfig(params);
+
+    stage = "audio_output_config";
+    config.audio_output.sink_fragment = trim(params.audio.out.sink);
+    if (!config.audio_output.sink_fragment.empty()) {
+      utils::validatePipeline(
+        "audio.out.sink",
+        audio::buildAudioOutputSinkPipelineDescription(config.audio_output.sink_fragment),
+        utils::makeAudioOutputSinkLayout(audio::kBridgeAppSrcName));
+    }
 
     return config;
   } catch (...) {

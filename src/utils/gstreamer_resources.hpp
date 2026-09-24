@@ -25,49 +25,59 @@ namespace livekit_ros2_bridge::utils
 struct GstObjectDeleter
 {
   template <typename T>
-  void operator()(T * ptr) const
+  void operator()(T * object) const
   {
-    gst_object_unref(ptr);
+    gst_object_unref(object);
   }
 };
 
 struct GErrorDeleter
 {
-  void operator()(GError * ptr) const
+  void operator()(GError * object) const
   {
-    g_error_free(ptr);
+    g_error_free(object);
   }
 };
 
 struct GCharDeleter
 {
-  void operator()(gchar * ptr) const
+  void operator()(gchar * object) const
   {
-    g_free(ptr);
+    g_free(object);
   }
 };
 
 struct GstIteratorDeleter
 {
-  void operator()(GstIterator * ptr) const
+  void operator()(GstIterator * object) const
   {
-    gst_iterator_free(ptr);
+    gst_iterator_free(object);
+  }
+};
+
+struct GstCapsDeleter
+{
+  void operator()(GstCaps * object) const
+  {
+    // GstCaps is a GstMiniObject, not a GObject: it must be released with
+    // gst_caps_unref, never gst_object_unref/g_object_unref.
+    gst_caps_unref(object);
   }
 };
 
 struct GstBufferDeleter
 {
-  void operator()(GstBuffer * ptr) const
+  void operator()(GstBuffer * object) const
   {
-    gst_buffer_unref(ptr);
+    gst_buffer_unref(object);
   }
 };
 
 struct GstSampleDeleter
 {
-  void operator()(GstSample * ptr) const
+  void operator()(GstSample * object) const
   {
-    gst_sample_unref(ptr);
+    gst_sample_unref(object);
   }
 };
 
@@ -76,6 +86,7 @@ using GstObjectPtr = std::unique_ptr<T, GstObjectDeleter>;
 
 using GstElementPtr = GstObjectPtr<GstElement>;
 using GstBusPtr = GstObjectPtr<GstBus>;
+using GstCapsPtr = std::unique_ptr<GstCaps, GstCapsDeleter>;
 using GErrorPtr = std::unique_ptr<GError, GErrorDeleter>;
 using GCharPtr = std::unique_ptr<gchar, GCharDeleter>;
 using GstIteratorPtr = std::unique_ptr<GstIterator, GstIteratorDeleter>;

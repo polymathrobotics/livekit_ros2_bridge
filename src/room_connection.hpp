@@ -23,6 +23,7 @@
 #include "livekit/data_track_frame.h"
 #include "livekit/local_participant.h"
 #include "livekit/room_event_types.h"
+#include "livekit/track.h"
 
 namespace livekit
 {
@@ -48,14 +49,50 @@ struct LiveKitConfig
 
 struct RoomEventCallbacks
 {
-  // Initial successful Connect() is reported as Connected before delegate events are reliable.
+  // Bridge connection state. Connected means the SDK is connected and the room is activated (RPCs
+  // registered); each change is reported once, in order.
   std::function<void(livekit::ConnectionState)> on_state_changed;
+
+  // Fires inside the SDK's Connected/Reconnected event, before any later remote-track event, so a
+  // handler can catch up from remoteTrackSnapshot(). May fire before the bridge reports Connected.
+  std::function<void()> on_remote_tracks_ready;
 
   // Runs on a connection-managed thread, not necessarily a ROS executor thread.
   std::function<void(const livekit::UserDataPacketEvent &)> on_user_packet_received;
 
   // SDK reconnect suppresses transient disconnects; LiveKit owns the event lifetime.
   std::function<void(const livekit::ParticipantDisconnectedEvent &)> on_participant_disconnected;
+
+  // Remote media track events, translated out of SDK publication objects so
+  // handlers never depend on publication lifetimes. Forwarded only after remote
+  // tracks are ready and until the SDK disconnects; published events only while
+  // it is Connected. `track` is set only on subscribed/unsubscribed events.
+  std::function<void(const struct RemoteTrackEvent &)> on_remote_track_published;
+  std::function<void(const struct RemoteTrackEvent &)> on_remote_track_unpublished;
+  std::function<void(const struct RemoteTrackEvent &)> on_remote_track_subscribed;
+  std::function<void(const struct RemoteTrackEvent &)> on_remote_track_unsubscribed;
+  std::function<void(const struct RemoteTrackSubscriptionFailedEvent &)> on_remote_track_subscription_failed;
+};
+
+// Plain remote-media-track event the connection derives from SDK track events.
+// `track` is the media track handle on subscribed/unsubscribed events and null
+// on published/unpublished events (no media exists before subscription).
+struct RemoteTrackEvent
+{
+  std::string participant_identity;
+  std::string track_sid;
+  std::string track_name;
+  livekit::TrackKind track_kind = livekit::TrackKind::KIND_UNKNOWN;
+  std::shared_ptr<livekit::Track> track;
+};
+
+// Plain event the connection derives from the SDK's TrackSubscriptionFailedEvent.
+// Carries no publication object; the bridge reports and cleans up, never retries.
+struct RemoteTrackSubscriptionFailedEvent
+{
+  std::string participant_identity;
+  std::string track_sid;
+  std::string error;
 };
 
 // Thread-safe facade around one SDK-owned room; callbacks may run on connection-managed threads.
@@ -104,6 +141,28 @@ public:
     const livekit::TrackPublishOptions & options) = 0;
 
   virtual void unpublishAudioTrack(const std::shared_ptr<livekit::LocalAudioTrack> & track) = 0;
+
+  // subscribeRemoteTrack() and remoteTrackSnapshot() read the SDK's publication state, so they work
+  // only from inside on_remote_tracks_ready or a remote-track callback; elsewhere they log and return
+  // false or an empty snapshot.
+
+  // Requests media delivery for one already-published remote track by identity. A false return
+  // means the subscription request could not be issued; the subscriber may retry on a later event.
+  virtual bool subscribeRemoteTrack(const std::string & participant_identity, const std::string & track_sid) = 0;
+
+  // Snapshots the remote participants' media-track publications currently in the room so a
+  // re-subscriber can recover state from after a (re)connect. Returns one entry per published
+  // remote media track, including tracks the bridge has not subscribed to.
+  struct RemoteTrackSnapshotEntry
+  {
+    std::string participant_identity;
+    std::string track_sid;
+    std::string track_name;
+    livekit::TrackKind track_kind = livekit::TrackKind::KIND_UNKNOWN;
+    bool subscribed = false;
+  };
+
+  virtual std::vector<RemoteTrackSnapshotEntry> remoteTrackSnapshot() = 0;
 
   // Send raw bytes as a targeted byte stream addressed to exactly one participant.
   // `topic` is the fixed stream topic (e.g. lkros.echo.once); `name` is the per-delivery label the

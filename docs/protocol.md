@@ -12,8 +12,9 @@ The bridge supports four kinds of interaction:
 - **Fire-and-forget publishes** to allowed ROS topics, over LiveKit [data packets](https://docs.livekit.io/home/client/data/packets/).
 - **Request/response** against ROS services, over LiveKit [RPC](https://docs.livekit.io/home/client/data/rpc/).
 - **Non-ROS video sources** configured on the bridge, delivered on video tracks.
+- **Audio output**: the client publishes a fixed-name audio track, the bridge plays it out of a configured sink.
 
-This specification covers the client-facing surface of that contract: the RPC methods the bridge exposes, the data-packet topics it accepts, the data-packet topics and media it emits, and the shared request, response, authorization, and delivery semantics behind them.
+This specification covers the client-facing surface of that contract: the RPC methods the bridge exposes, the data-packet topics it accepts, the data-packet topics and media it emits, the remote media track it consumes, and the shared request, response, authorization, and delivery semantics behind them.
 
 A conforming client MUST follow the schemas and behavioral rules below, and MUST NOT rely on any behavior this document does not specify.
 
@@ -30,6 +31,7 @@ Every section is normative unless its heading begins with **Informative:**, or i
 - The wire format of LiveKit data-packet topic messages the bridge accepts and produces.
 - The wire format of LiveKit RPC requests and responses the bridge accepts and produces.
 - The naming, content type, and payload format of data tracks and video tracks the bridge publishes.
+- The naming and media format of the remote audio track the bridge consumes for audio output.
 - Identity, authorization, and session handling as observed by clients.
 - Subscription lease lifetime and reconnect behavior.
 - The error vocabulary surfaced to clients.
@@ -66,6 +68,7 @@ The [`lkros.status`](#data-packet-topic-lkrosstatus) packet and the [`lkros.capa
 - **ROS resource name**: a normalized ROS topic or service name accepted as a valid resource identifier by the bridge.
 - **video track**: a LiveKit video publication carrying a ROS-backed or GStreamer-backed stream.
 - **audio track**: a LiveKit audio publication carrying one configured other-audio source as a mono stream.
+- **audio output track**: a LiveKit audio publication a client publishes with the fixed name `lkros.audio.out`; the only remote media track the bridge subscribes to.
 
 ## Protocol Surfaces
 
@@ -86,6 +89,7 @@ Every surface in this specification runs over LiveKit. Requests and control flow
 | RPC | `ros2.topic.list` | client ↔ bridge | List authorized ROS topics |
 | RPC | `ros2.topic.echo.once` | client ↔ bridge | Request a topic's cached last message |
 | RPC | `lkros.capability` | client ↔ bridge | Discover optional bridge features |
+| Audio Track | `lkros.audio.out` | client → bridge | Audio output playback (feature-gated) |
 
 Data-track and video-track names are not fixed strings. Clients learn them from an active [`lkros.status`](#data-packet-topic-lkrosstatus) entry and subscribe to the LiveKit publication with that name.
 
@@ -176,6 +180,8 @@ If a client sends malformed `ros2.topic.pub` JSON, the bridge logs and drops it 
 
 - The bridge MUST NOT guess when topic type resolution is ambiguous.
 - When the last client lease disappears, the shared data track or video stream MUST be torn down.
+- The bridge MUST connect with auto-subscribe disabled and MUST subscribe only to media tracks it names, by exact track name.
+- A client publishing a media track the bridge did not subscribe to MUST NOT expect the bridge to receive it.
 
 ### Example
 
@@ -458,6 +464,36 @@ Audio deliveries use deterministic track names.
 - Audio `track_name` values MUST be deterministic and stable for the target name.
 - `other_audio` track names MUST percent-encode any byte outside the RFC 3986 unreserved set.
 - Each configured other-audio source publishes as exactly one mono audio track; stereo is client-side routing of two mono tracks.
+
+## Remote Media Track: `lkros.audio.out` (Audio Output)
+
+### Purpose
+
+The audio output track carries live audio from a client into the bridge, which plays it through its configured sink. It is the only remote media track the bridge subscribes to, and it exists only on bridges configured with an output sink (see `audio.out.sink` in the [configuration guide](configuration.md#audio-output)). Who may publish is enforced by the application layer, not the bridge: the bridge performs no identity checks on the publisher.
+
+### Name
+
+`lkros.audio.out` is fixed, and bridges advertise it as `features.audio.out.track_name` in [`lkros.capability`](#rpc-lkroscapability). It carries no per-identity suffix — client identities churn on every page reload, and the name describes the track's role: audio the bridge plays out.
+
+### Requirements
+
+- The bridge MUST connect with auto-subscribe disabled and subscribe only to remote tracks it names. Today that is exactly one name: `lkros.audio.out`.
+- A client that holds the publish right (granted by the app layer on a verified lease) publishes one audio track with this name; the bridge subscribes to it by exact name and plays the decoded audio out of its configured output.
+- The bridge MUST NOT perform identity checks on the publisher; enforcement of who may publish belongs entirely to the app layer.
+- Mute is silence-through: a muted publisher MUST keep the track alive with silent frames; the bridge MUST NOT react to mute state.
+- When the track is unpublished, the client disconnects, or the client loses its lease (which the app layer signals by unpublishing), the bridge MUST release the sink and rebind it to the next track with this name that delivers a frame.
+- A second track with this name delivering frames while one is live MUST be logged and dropped; the active track never loses the sink to a racing publisher.
+- A client MUST NOT expect acknowledgement or status entries for audio output; the feature is one-way media with no control-plane messages.
+- On a bridge without `audio.out.sink` configured, no track named `lkros.audio.out` is ever subscribed; publishing one is harmless and produces no effect.
+
+### Format
+
+Frames arrive at 10 ms cadence, 48 kHz mono int16 PCM. The bridge reads the first frame's actual rate and channel count and configures its playback pipeline from that; clients SHOULD publish mono 48 kHz.
+
+### Notes
+
+- A client offers audio output only when [`lkros.capability`](#rpc-lkroscapability) advertises `audio.out`; publishing the track without that advertisement has no effect on unconfigured bridges.
+- The bridge plays the newest audio: it holds at most 200 ms of received audio and drops the oldest beyond that, so neither a stalled link nor a slow output builds up unbounded delay.
 
 ## Byte Stream: `lkros.echo.once`
 
@@ -771,10 +807,27 @@ Any payload is valid. The bridge accepts and ignores it:
 
 ### Example Response
 
+A bridge with no optional features configured:
+
 ```json
 {
   "v": 2,
   "features": {}
+}
+```
+
+A bridge with an audio output sink configured:
+
+```json
+{
+  "v": 2,
+  "features": {
+    "audio": {
+      "out": {
+        "track_name": "lkros.audio.out"
+      }
+    }
+  }
 }
 ```
 
@@ -788,9 +841,12 @@ Any payload is valid. The bridge accepts and ignores it:
 
 - A successful response MUST be a JSON object with a `features` field.
 - `v` MUST be the protocol version, currently `2`.
-- `features` MUST be a JSON object keyed by feature name with boolean values, all of which are `true` in this protocol version. Presence in the object advertises the feature; a feature that is not available on the bridge MUST be absent from the object rather than advertised with `false`.
+- `features` MUST be a JSON object keyed by feature name. Presence of a key advertises the feature, and its value MUST be a JSON object carrying the feature's details (empty when it has none). Related features MAY be grouped under one key, as `audio.out` is under `audio`; a group with no available feature MUST be absent.
+- A feature that is not available on the bridge MUST be absent from the object rather than advertised with `false` or `null`.
 - A feature MUST be advertised if and only if its availability is configuration-derived; a feature absent from `features` means "not available on this bridge".
-- The schema is additive: new feature names MAY appear in later versions, and clients MUST ignore unknown feature names.
+- `audio.out` MUST be advertised if and only if the bridge has an output sink configured (`audio.out.sink`); an advertised `audio.out` means the bridge subscribes to the audio output track (see [Remote Media Track: `lkros.audio.out`](#remote-media-track-lkrosaudioout-audio-output)) and plays it.
+- `audio.out.track_name` MUST be the name of that track. A client MUST publish under the advertised `track_name`.
+- The schema is additive: new feature names and new fields MAY appear in later versions, and clients MUST ignore unknown feature names and unknown fields.
 - A bridge that predates this RPC answers with the LiveKit SDK's built-in unsupported-method error (`1400`). A client MUST treat that error as "this bridge does not support capability discovery" and MUST NOT interpret it as an empty feature set; the error and the empty `features` object are the two states of the discovery contract.
 
 ### Notes
@@ -868,6 +924,16 @@ A common non-ROS audio path:
 2. Read `lkros.status`.
 3. If the status is `active` and `delivery.kind` is `audio`, subscribe to the announced LiveKit audio publication.
 4. Route each mono audio track to a speaker (e.g. left/right) for a stereo-operator experience.
+
+### Audio Output Flow
+
+A common audio output path (only on bridges advertising `audio.out`):
+
+1. Call `lkros.capability` on join; offer audio output only when `features.audio.out` is present, and read its `track_name`.
+2. When output starts, publish one audio track named with the advertised `track_name` (48 kHz mono).
+3. Keep publishing while output is live; a mute is silence-through, and no further signaling is needed.
+4. On lease loss, unpublish the track so the next lease holder can claim the bridge's sink.
+5. Regaining the lease republishes when output next starts; the bridge rebinds its sink to the track's first frame.
 
 ### Heartbeat with `session_id` Fallback
 

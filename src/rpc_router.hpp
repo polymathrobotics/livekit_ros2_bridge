@@ -36,7 +36,8 @@ public:
     const AccessPolicy & policy,
     RosExecutorQueue & queue,
     RosServiceCaller & caller,
-    SubscriptionLeaseManager & lease_manager);
+    SubscriptionLeaseManager & lease_manager,
+    bool audio_output_enabled = false);
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -67,6 +68,8 @@ private:
   std::optional<std::string> listTopics(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> requestEchoOnce(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> capability(const livekit::RpcInvocationData & invocation);
+
+  bool audio_output_enabled_ = false;
 };
 
 }  // namespace livekit_ros2_bridge

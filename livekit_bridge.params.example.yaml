@@ -90,3 +90,11 @@ livekit_ros2_bridge:
     #
     # Test source (no microphone needed):
     # audio.other.test.source: "audiotestsrc is-live=true wave=sine"
+
+    # Optional audio output playback. Leave empty (default) to disable audio
+    # output entirely. A non-empty GStreamer sink fragment plays the
+    # client-published track (lkros.audio.out) out of the configured sink
+    # and advertises audio.out through lkros.capability. The fragment is
+    # inserted after the bridge-owned appsrc/queue/convert/resample stages and
+    # must not contain appsrc or appsink.
+    # audio.out.sink: "alsasink device=hw:0,0"
