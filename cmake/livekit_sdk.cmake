@@ -18,13 +18,9 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-set(LIVEKIT_SDK_VERSION "1.6.0")
+set(LIVEKIT_SDK_VERSION "1.12.2")
 set(
-  LIVEKIT_SDK_JAMMY_BASE_URL
-  "https://github.com/jon-mcmillan/livekit-client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
-)
-set(
-  LIVEKIT_SDK_NOBLE_BASE_URL
+  LIVEKIT_SDK_BASE_URL
   "https://github.com/livekit/client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
 )
 set(
@@ -53,19 +49,19 @@ set(
 )
 set(
   LIVEKIT_SDK_SHA256_JAMMY_X64
-  "491d7f1eba744a2cfd1666d8c0728444ddbe3599758cc77aca2d8d0f0fe93259"
+  "a262e98006f95bd24f75c44068eeeaeb91d4830c75f6c20fee032c8fefd1b034"
 )
 set(
   LIVEKIT_SDK_SHA256_JAMMY_ARM64
-  "ff7f41bdb419000520d45aa956dc82fd821e5ad05816c73d32a88c16a487cc26"
+  "57234960500ea1013fd89e6c9cac313bd90170101f8366da973d61d46ef104e9"
 )
 set(
   LIVEKIT_SDK_SHA256_NOBLE_X64
-  "671421ab7c2cb3956a173afb23a3a55ddd0023394e51c36e2b07b943a98d5182"
+  "a7566af830b839ec8a0682f8a2569b9f8becbba91bca85b2348a09e893d763e9"
 )
 set(
   LIVEKIT_SDK_SHA256_NOBLE_ARM64
-  "21f0d4bc8b8949fc142ed570b91bfbc80e94cce050520f6c474547860c7f7045"
+  "7db2d9d76c014bad248d83f34d5da43d66758180b0b6b8578a1f1c5fd06e29f8"
 )
 
 macro(livekit_ros2_bridge_configure_livekit_sdk)
@@ -108,15 +104,16 @@ macro(livekit_ros2_bridge_configure_livekit_sdk)
     set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE_ARM64}")
   endif()
 
-  # Jammy stays on the fork because we need Jammy-specific artifacts there.
-  # Noble uses the official upstream tarballs by default. Both can still be
-  # overridden.
+  if(_sdk_distro STREQUAL "jammy")
+    set(_sdk_ubuntu_version "22.04")
+  else()
+    set(_sdk_ubuntu_version "24.04")
+  endif()
+
   if(LIVEKIT_SDK_URL_OVERRIDE)
     set(_sdk_url "${LIVEKIT_SDK_URL_OVERRIDE}")
-  elseif(_sdk_distro STREQUAL "jammy")
-    set(_sdk_url "${LIVEKIT_SDK_JAMMY_BASE_URL}/livekit-sdk-linux-${_sdk_arch}-${_sdk_distro}-${LIVEKIT_SDK_VERSION}.tar.gz")
   else()
-    set(_sdk_url "${LIVEKIT_SDK_NOBLE_BASE_URL}/livekit-sdk-linux-${_sdk_arch}-${LIVEKIT_SDK_VERSION}.tar.gz")
+    set(_sdk_url "${LIVEKIT_SDK_BASE_URL}/livekit-sdk-ubuntu-${_sdk_ubuntu_version}-${_sdk_arch}-${LIVEKIT_SDK_VERSION}.tar.gz")
   endif()
 
   if(LIVEKIT_SDK_SHA256_OVERRIDE)
