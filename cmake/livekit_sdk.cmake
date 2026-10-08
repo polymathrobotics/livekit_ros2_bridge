@@ -23,6 +23,7 @@ set(
   LIVEKIT_SDK_BASE_URL
   "https://github.com/livekit/client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
 )
+
 set(
   LIVEKIT_SDK_URL_OVERRIDE
   ""
@@ -35,6 +36,7 @@ set(
   CACHE STRING
   "Optional SHA256 override for a custom LiveKit C++ SDK artifact URL."
 )
+
 set(
   LIVEKIT_SDK_DISTRO
   ""
@@ -59,10 +61,12 @@ macro(livekit_ros2_bridge_configure_sdk)
 
   if(_sdk_distro STREQUAL "jammy")
     set(_sdk_ubuntu_version "22.04")
+
     set(_sdk_x64_sha256 "a262e98006f95bd24f75c44068eeeaeb91d4830c75f6c20fee032c8fefd1b034")
     set(_sdk_arm64_sha256 "57234960500ea1013fd89e6c9cac313bd90170101f8366da973d61d46ef104e9")
   elseif(_sdk_distro STREQUAL "noble")
     set(_sdk_ubuntu_version "24.04")
+
     set(_sdk_x64_sha256 "a7566af830b839ec8a0682f8a2569b9f8becbba91bca85b2348a09e893d763e9")
     set(_sdk_arm64_sha256 "7db2d9d76c014bad248d83f34d5da43d66758180b0b6b8578a1f1c5fd06e29f8")
   else()
