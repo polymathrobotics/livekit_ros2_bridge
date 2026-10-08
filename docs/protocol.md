@@ -831,6 +831,24 @@ A bridge with an audio output sink configured:
 }
 ```
 
+A bridge with an audio output sink and two other audio sources configured:
+
+```json
+{
+  "v": 2,
+  "features": {
+    "audio": {
+      "out": {
+        "track_name": "lkros.audio.out"
+      },
+      "other": {
+        "ids": ["cab_mic", "ambient"]
+      }
+    }
+  }
+}
+```
+
 ### Request Requirements
 
 - The request payload MUST be accepted regardless of content; the bridge MUST ignore it.
@@ -841,11 +859,13 @@ A bridge with an audio output sink configured:
 
 - A successful response MUST be a JSON object with a `features` field.
 - `v` MUST be the protocol version, currently `2`.
-- `features` MUST be a JSON object keyed by feature name. Presence of a key advertises the feature, and its value MUST be a JSON object carrying the feature's details (empty when it has none). Related features MAY be grouped under one key, as `audio.out` is under `audio`; a group with no available feature MUST be absent.
+- `features` MUST be a JSON object keyed by feature name. Presence of a key advertises the feature, and its value MUST be a JSON object carrying the feature's details (empty when it has none). Related features MAY be grouped under one key, as `audio.out` and `audio.other` are under `audio`; a group with no available feature MUST be absent.
 - A feature that is not available on the bridge MUST be absent from the object rather than advertised with `false` or `null`.
 - A feature MUST be advertised if and only if its availability is configuration-derived; a feature absent from `features` means "not available on this bridge".
 - `audio.out` MUST be advertised if and only if the bridge has an output sink configured (`audio.out.sink`); an advertised `audio.out` means the bridge subscribes to the audio output track (see [Remote Media Track: `lkros.audio.out`](#remote-media-track-lkrosaudioout-audio-output)) and plays it.
 - `audio.out.track_name` MUST be the name of that track. A client MUST publish under the advertised `track_name`.
+- `audio.other` MUST be advertised if and only if at least one other audio source is configured (`audio_other_ids`); it MUST NOT be advertised with an empty list.
+- `audio.other.ids` MUST be the configured other audio source ids, in configured order, each trimmed of surrounding whitespace. Each id is a valid `name` for a `kind: "other_audio"` heartbeat entry (see [Other-Audio Flow](#other-audio-flow)).
 - The schema is additive: new feature names and new fields MAY appear in later versions, and clients MUST ignore unknown feature names and unknown fields.
 - A bridge that predates this RPC answers with the LiveKit SDK's built-in unsupported-method error (`1400`). A client MUST treat that error as "this bridge does not support capability discovery" and MUST NOT interpret it as an empty feature set; the error and the empty `features` object are the two states of the discovery contract.
 
@@ -920,10 +940,11 @@ A common non-ROS video path:
 
 A common non-ROS audio path:
 
-1. Send `lkros.heartbeat` with `kind: "other_audio"` and the configured source id as `name`.
-2. Read `lkros.status`.
-3. If the status is `active` and `delivery.kind` is `audio`, subscribe to the announced LiveKit audio publication.
-4. Route each mono audio track to a speaker (e.g. left/right) for a stereo-operator experience.
+1. Call `lkros.capability` on join; `features.audio.other.ids` lists the configured source ids, and its absence means none are configured.
+2. Send `lkros.heartbeat` with `kind: "other_audio"` and a configured source id as `name`.
+3. Read `lkros.status`.
+4. If the status is `active` and `delivery.kind` is `audio`, subscribe to the announced LiveKit audio publication.
+5. Route each mono audio track to a speaker (e.g. left/right) for a stereo-operator experience.
 
 ### Audio Output Flow
 

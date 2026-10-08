@@ -135,6 +135,7 @@ StreamConfig loadConfig(const Params & params)
     source.transform_fragment = transform;
     source.publish_options = parsePublishOptions(entry, config.default_publish_options);
     config.other_sources.emplace(name, std::move(source));
+    config.other_source_names.push_back(name);
   }
 
   return config;

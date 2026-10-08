@@ -16,6 +16,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "core/access_policy.hpp"
 #include "core/room_connection.hpp"
@@ -37,7 +38,8 @@ public:
     RosExecutorQueue & queue,
     RosServiceCaller & caller,
     SubscriptionLeaseManager & lease_manager,
-    bool audio_output_enabled = false);
+    bool audio_output_enabled = false,
+    std::vector<std::string> audio_other_ids = {});
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -70,6 +72,8 @@ private:
   std::optional<std::string> capability(const livekit::RpcInvocationData & invocation);
 
   bool audio_output_enabled_ = false;
+  // Configured other-audio source names, in configured order.
+  std::vector<std::string> audio_other_ids_;
 };
 
 }  // namespace livekit_ros2_bridge
