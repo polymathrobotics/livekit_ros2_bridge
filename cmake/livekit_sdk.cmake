@@ -47,22 +47,6 @@ set(
   CACHE STRING
   "Artifact architecture to fetch for the LiveKit C++ SDK. Empty selects from CMAKE_SYSTEM_PROCESSOR."
 )
-set(
-  LIVEKIT_SDK_SHA256_JAMMY_X64
-  "a262e98006f95bd24f75c44068eeeaeb91d4830c75f6c20fee032c8fefd1b034"
-)
-set(
-  LIVEKIT_SDK_SHA256_JAMMY_ARM64
-  "57234960500ea1013fd89e6c9cac313bd90170101f8366da973d61d46ef104e9"
-)
-set(
-  LIVEKIT_SDK_SHA256_NOBLE_X64
-  "a7566af830b839ec8a0682f8a2569b9f8becbba91bca85b2348a09e893d763e9"
-)
-set(
-  LIVEKIT_SDK_SHA256_NOBLE_ARM64
-  "7db2d9d76c014bad248d83f34d5da43d66758180b0b6b8578a1f1c5fd06e29f8"
-)
 
 macro(livekit_ros2_bridge_configure_livekit_sdk)
   if(LIVEKIT_SDK_DISTRO)
@@ -73,7 +57,15 @@ macro(livekit_ros2_bridge_configure_livekit_sdk)
     set(_sdk_distro "noble")
   endif()
 
-  if(NOT _sdk_distro STREQUAL "jammy" AND NOT _sdk_distro STREQUAL "noble")
+  if(_sdk_distro STREQUAL "jammy")
+    set(_sdk_ubuntu_version "22.04")
+    set(_sdk_x64_sha256 "a262e98006f95bd24f75c44068eeeaeb91d4830c75f6c20fee032c8fefd1b034")
+    set(_sdk_arm64_sha256 "57234960500ea1013fd89e6c9cac313bd90170101f8366da973d61d46ef104e9")
+  elseif(_sdk_distro STREQUAL "noble")
+    set(_sdk_ubuntu_version "24.04")
+    set(_sdk_x64_sha256 "a7566af830b839ec8a0682f8a2569b9f8becbba91bca85b2348a09e893d763e9")
+    set(_sdk_arm64_sha256 "7db2d9d76c014bad248d83f34d5da43d66758180b0b6b8578a1f1c5fd06e29f8")
+  else()
     message(FATAL_ERROR "LIVEKIT_SDK_DISTRO must be 'jammy' or 'noble', got '${_sdk_distro}'.")
   endif()
 
@@ -90,24 +82,12 @@ macro(livekit_ros2_bridge_configure_livekit_sdk)
     endif()
   endif()
 
-  if(NOT _sdk_arch STREQUAL "x64" AND NOT _sdk_arch STREQUAL "arm64")
+  if(_sdk_arch STREQUAL "x64")
+    set(_sdk_sha256 "${_sdk_x64_sha256}")
+  elseif(_sdk_arch STREQUAL "arm64")
+    set(_sdk_sha256 "${_sdk_arm64_sha256}")
+  else()
     message(FATAL_ERROR "LIVEKIT_SDK_ARCH must be 'x64' or 'arm64', got '${_sdk_arch}'.")
-  endif()
-
-  if(_sdk_distro STREQUAL "jammy" AND _sdk_arch STREQUAL "x64")
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY_X64}")
-  elseif(_sdk_distro STREQUAL "jammy" AND _sdk_arch STREQUAL "arm64")
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_JAMMY_ARM64}")
-  elseif(_sdk_distro STREQUAL "noble" AND _sdk_arch STREQUAL "x64")
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE_X64}")
-  else()
-    set(_sdk_sha256 "${LIVEKIT_SDK_SHA256_NOBLE_ARM64}")
-  endif()
-
-  if(_sdk_distro STREQUAL "jammy")
-    set(_sdk_ubuntu_version "22.04")
-  else()
-    set(_sdk_ubuntu_version "24.04")
   endif()
 
   if(LIVEKIT_SDK_URL_OVERRIDE)
