@@ -2,6 +2,10 @@
 Changelog for package livekit_ros2_bridge
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+0.4.0 (Unreleased)
+------------------
+* Upgrade the LiveKit C++ SDK to 1.12.2 and use official Ubuntu builds, including for Humble.
+
 0.3.1 (Unreleased)
 ------------------
 * Add audio output: a client-published audio track (`lkros.audio.out`, the only remote
