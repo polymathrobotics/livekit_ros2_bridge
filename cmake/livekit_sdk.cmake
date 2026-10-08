@@ -48,7 +48,7 @@ set(
   "Artifact architecture to fetch for the LiveKit C++ SDK. Empty selects from CMAKE_SYSTEM_PROCESSOR."
 )
 
-macro(livekit_ros2_bridge_configure_livekit_sdk)
+macro(livekit_ros2_bridge_configure_sdk)
   if(LIVEKIT_SDK_DISTRO)
     set(_sdk_distro "${LIVEKIT_SDK_DISTRO}")
   elseif("$ENV{ROS_DISTRO}" STREQUAL "humble")

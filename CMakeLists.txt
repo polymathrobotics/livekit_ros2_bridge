@@ -39,7 +39,7 @@ configure_file(
 )
 
 include(cmake/livekit_sdk.cmake)
-livekit_ros2_bridge_configure_livekit_sdk()
+livekit_ros2_bridge_configure_sdk()
 
 generate_parameter_library(livekit_ros2_bridge_parameters
   parameters.yaml
