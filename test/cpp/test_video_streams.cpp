@@ -122,14 +122,20 @@ TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
     "must be a GstAppSrc");
 }
 
-TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
+TEST_F(StreamTest, PipelineCanRestartWithoutFrames)
 {
   GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
 
-  pipeline.start("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
+  // Exercise shutdown while the source may still be starting or waiting for data.
+  for (int iteration = 0; iteration < 100; ++iteration) {
+    SCOPED_TRACE(iteration);
+    pipeline.start("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 
-  EXPECT_NE(pipeline.appsrc(), nullptr);
-  pipeline.stop();
+    EXPECT_NE(pipeline.appsrc(), nullptr);
+    pipeline.stop();
+    EXPECT_EQ(pipeline.appsrc(), nullptr);
+    EXPECT_FALSE(pipeline.isActive());
+  }
 }
 
 TEST_F(StreamTest, PipelineFailureHandlerCoalescesPendingFailures)
