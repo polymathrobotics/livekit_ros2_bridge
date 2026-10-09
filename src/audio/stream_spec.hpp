@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "livekit/room_event_types.h"
 
@@ -35,6 +36,8 @@ struct StreamConfig
 {
   // Keyed by the trimmed configured source name.
   std::unordered_map<std::string, OtherSource> other_sources;
+  // The other_sources keys in configured order, for capability advertisement.
+  std::vector<std::string> other_source_names;
   livekit::TrackPublishOptions default_publish_options;
 };
 

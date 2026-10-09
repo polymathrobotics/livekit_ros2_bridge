@@ -580,6 +580,27 @@ TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
   EXPECT_EQ(source.publish_options.red, false);
 }
 
+TEST_F(RuntimeConfigTest, OtherAudioDefaultsToNoSources)
+{
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_default", makeStaticTokenOptions());
+
+  EXPECT_TRUE(config.audio_stream.other_sources.empty());
+  EXPECT_TRUE(config.audio_stream.other_source_names.empty());
+}
+
+TEST_F(RuntimeConfigTest, OtherAudioSourceNamesKeepConfiguredOrder)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic", "ambient"});
+  options.append_parameter_override("audio.other.cab_mic.source", "audiotestsrc is-live=true wave=sine");
+  options.append_parameter_override("audio.other.ambient.source", "audiotestsrc is-live=true wave=silence");
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_order", options);
+
+  EXPECT_EQ(config.audio_stream.other_source_names, (std::vector<std::string>{"cab_mic", "ambient"}));
+  EXPECT_EQ(config.audio_stream.other_sources.size(), 2U);
+}
+
 TEST_F(RuntimeConfigTest, OtherAudioRejectsWhitespaceOnlySourceFragment)
 {
   auto options = makeStaticTokenOptions();

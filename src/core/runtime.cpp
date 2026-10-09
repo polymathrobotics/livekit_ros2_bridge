@@ -57,7 +57,8 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     ros_executor_queue_,
     ros_service_caller_,
     subscription_lease_manager_,
-    !config_.audio_output.sink_fragment.empty())
+    !config_.audio_output.sink_fragment.empty(),
+    config_.audio_stream.other_source_names)
 , watchdog_(config_.watchdog, logger_)
 {
   subscription_lease_manager_.startPruneTimer(

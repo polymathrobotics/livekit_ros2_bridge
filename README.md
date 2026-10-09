@@ -106,7 +106,7 @@ Supported today:
 - small ROS topic publications into ROS 2
 - other video sources
 - opt-in replay of a `transient_local` topic's last message for late-joining clients
-- feature discovery, so clients can learn which optional bridge features are available
+- feature discovery, so clients can learn which optional bridge features (audio output, other audio sources) are available
 - audio output playback (opt-in with `audio.out.sink`), via the fixed-name `lkros.audio.out` track
 
 Not supported today:
