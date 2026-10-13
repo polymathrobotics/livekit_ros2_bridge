@@ -798,13 +798,15 @@ TEST_F(RuntimeTest, CapabilityAdvertisesAudioOutputOnlyWithSinkConfigured)
   EXPECT_EQ(nlohmann::json::parse(*default_response), nlohmann::json::parse(R"({"v":2,"features":{}})"));
 }
 
-TEST_F(RuntimeTest, CapabilityAdvertisesConfiguredOtherAudioIds)
+TEST_F(RuntimeTest, CapabilityAdvertisesConfiguredOtherSourceIds)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("audio.out.sink", "fakesink sync=false");
   options.append_parameter_override("audio_other_ids", std::vector<std::string>{"cab_mic", "ambient"});
   options.append_parameter_override("audio.other.cab_mic.source", "audiotestsrc is-live=true wave=sine");
   options.append_parameter_override("audio.other.ambient.source", "audiotestsrc is-live=true wave=silence");
+  options.append_parameter_override("video_other_ids", std::vector<std::string>{"front_rtsp"});
+  options.append_parameter_override("video.other.front_rtsp.source", "videotestsrc is-live=true pattern=ball");
   auto harness = makeRuntimeHarness(options);
 
   const auto capability_entry = harness.state->rpc_handlers.find(protocol::kCapabilityMethod);
@@ -819,7 +821,8 @@ TEST_F(RuntimeTest, CapabilityAdvertisesConfiguredOtherAudioIds)
   EXPECT_EQ(
     nlohmann::json::parse(*response),
     nlohmann::json::parse(
-      R"({"v":2,"features":{"audio":{"out":{"track_name":"lkros.audio.out"},"other":{"ids":["cab_mic","ambient"]}}}})"));
+      R"({"v":2,"features":{"audio":{"out":{"track_name":"lkros.audio.out"},"other":{"ids":["cab_mic","ambient"]}},)"
+      R"("video":{"other":{"ids":["front_rtsp"]}}}})"));
 }
 
 TEST_F(RuntimeTest, AudioOutputSubscribesOnlyTheOutputTrack)

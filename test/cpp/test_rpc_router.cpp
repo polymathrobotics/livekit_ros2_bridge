@@ -194,7 +194,8 @@ public:
   explicit RpcRouterHarness(
     const AccessPolicy & policy = AccessPolicy(),
     bool audio_output_enabled = false,
-    std::vector<std::string> audio_other_ids = {})
+    std::vector<std::string> audio_other_ids = {},
+    std::vector<std::string> video_other_ids = {})
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
   , queue(RosExecutorQueue::NodeInterfaces(*node), node->get_clock())
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
@@ -214,7 +215,8 @@ public:
       caller,
       lease_manager,
       audio_output_enabled,
-      std::move(audio_other_ids))
+      std::move(audio_other_ids),
+      std::move(video_other_ids))
   {
     router.registerRpcs(connection);
   }
@@ -310,6 +312,14 @@ TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputAndOtherAudioTogether)
   expectCapabilityBody(
     response,
     nlohmann::json::parse(R"({"audio":{"out":{"track_name":"lkros.audio.out"},"other":{"ids":["cab_mic"]}}})"));
+}
+
+TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherVideoIdsInConfiguredOrder)
+{
+  RpcRouterHarness harness(makeServicePolicy(), false, {}, {"front_rtsp", "rear_rtsp"});
+
+  const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
+  expectCapabilityBody(response, nlohmann::json::parse(R"({"video":{"other":{"ids":["front_rtsp","rear_rtsp"]}}})"));
 }
 
 TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)

@@ -795,7 +795,7 @@ Clients that omit `interface_type` should be prepared for ambiguity to fail the 
 
 ### Purpose
 
-`lkros.capability` discloses which optional bridge features are available. It lets a client distinguish a bridge that predates capability discovery (which answers the RPC unknown-method error) from a bridge that knows the RPC and has no features configured (which answers an empty `features` object).
+`lkros.capability` discloses which optional bridge features are available, including the ids of the configured other video and other audio sources. It lets a client distinguish a bridge that predates capability discovery (which answers the RPC unknown-method error) from a bridge that knows the RPC and has no features configured (which answers an empty `features` object).
 
 ### Example Request
 
@@ -831,7 +831,7 @@ A bridge with an audio output sink configured:
 }
 ```
 
-A bridge with an audio output sink and two other audio sources configured:
+A bridge with an audio output sink, two other audio sources and one other video source configured:
 
 ```json
 {
@@ -843,6 +843,11 @@ A bridge with an audio output sink and two other audio sources configured:
       },
       "other": {
         "ids": ["cab_mic", "ambient"]
+      }
+    },
+    "video": {
+      "other": {
+        "ids": ["front_rtsp"]
       }
     }
   }
@@ -859,11 +864,13 @@ A bridge with an audio output sink and two other audio sources configured:
 
 - A successful response MUST be a JSON object with a `features` field.
 - `v` MUST be the protocol version, currently `2`.
-- `features` MUST be a JSON object keyed by feature name. Presence of a key advertises the feature, and its value MUST be a JSON object carrying the feature's details (empty when it has none). Related features MAY be grouped under one key, as `audio.out` and `audio.other` are under `audio`; a group with no available feature MUST be absent.
+- `features` MUST be a JSON object keyed by feature name. Presence of a key advertises the feature, and its value MUST be a JSON object carrying the feature's details (empty when it has none). Related features MAY be grouped under one key, as `audio.out` and `audio.other` are under `audio` and `video.other` is under `video`; a group with no available feature MUST be absent.
 - A feature that is not available on the bridge MUST be absent from the object rather than advertised with `false` or `null`.
 - A feature MUST be advertised if and only if its availability is configuration-derived; a feature absent from `features` means "not available on this bridge".
 - `audio.out` MUST be advertised if and only if the bridge has an output sink configured (`audio.out.sink`); an advertised `audio.out` means the bridge subscribes to the audio output track (see [Remote Media Track: `lkros.audio.out`](#remote-media-track-lkrosaudioout-audio-output)) and plays it.
 - `audio.out.track_name` MUST be the name of that track. A client MUST publish under the advertised `track_name`.
+- `video.other` MUST be advertised if and only if at least one other video source is configured (`video_other_ids`); it MUST NOT be advertised with an empty list.
+- `video.other.ids` MUST be the configured other video source ids, in configured order, each trimmed of surrounding whitespace. Each id is a valid `name` for a `kind: "other_video"` heartbeat entry (see [Other-Video Flow](#other-video-flow)).
 - `audio.other` MUST be advertised if and only if at least one other audio source is configured (`audio_other_ids`); it MUST NOT be advertised with an empty list.
 - `audio.other.ids` MUST be the configured other audio source ids, in configured order, each trimmed of surrounding whitespace. Each id is a valid `name` for a `kind: "other_audio"` heartbeat entry (see [Other-Audio Flow](#other-audio-flow)).
 - The schema is additive: new feature names and new fields MAY appear in later versions, and clients MUST ignore unknown feature names and unknown fields.
@@ -932,9 +939,10 @@ A common data-subscription path:
 
 A common non-ROS video path:
 
-1. Send `lkros.heartbeat` with `kind: "other_video"` and the configured source id as `name`.
-2. Read `lkros.status`.
-3. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
+1. Call `lkros.capability` on join; `features.video.other.ids` lists the configured source ids, and its absence means none are configured.
+2. Send `lkros.heartbeat` with `kind: "other_video"` and a configured source id as `name`.
+3. Read `lkros.status`.
+4. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
 
 ### Other-Audio Flow
 

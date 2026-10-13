@@ -601,6 +601,28 @@ TEST_F(RuntimeConfigTest, OtherAudioSourceNamesKeepConfiguredOrder)
   EXPECT_EQ(config.audio_stream.other_sources.size(), 2U);
 }
 
+TEST_F(RuntimeConfigTest, OtherVideoDefaultsToNoSources)
+{
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_default", makeStaticTokenOptions());
+
+  EXPECT_TRUE(config.video_stream.other_sources.empty());
+  EXPECT_TRUE(config.video_stream.other_source_names.empty());
+}
+
+TEST_F(RuntimeConfigTest, OtherVideoSourceNamesKeepConfiguredOrder)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_other_ids", std::vector<std::string>{"rear", "front", "mast"});
+  options.append_parameter_override("video.other.rear.source", "videotestsrc is-live=true pattern=ball");
+  options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true pattern=smpte");
+  options.append_parameter_override("video.other.mast.source", "videotestsrc is-live=true pattern=snow");
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_order", options);
+
+  EXPECT_EQ(config.video_stream.other_source_names, (std::vector<std::string>{"rear", "front", "mast"}));
+  EXPECT_EQ(config.video_stream.other_sources.size(), 3U);
+}
+
 TEST_F(RuntimeConfigTest, OtherAudioRejectsWhitespaceOnlySourceFragment)
 {
   auto options = makeStaticTokenOptions();

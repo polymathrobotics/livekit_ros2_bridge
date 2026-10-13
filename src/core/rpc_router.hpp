@@ -39,7 +39,8 @@ public:
     RosServiceCaller & caller,
     SubscriptionLeaseManager & lease_manager,
     bool audio_output_enabled = false,
-    std::vector<std::string> audio_other_ids = {});
+    std::vector<std::string> audio_other_ids = {},
+    std::vector<std::string> video_other_ids = {});
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -74,6 +75,8 @@ private:
   bool audio_output_enabled_ = false;
   // Configured other-audio source names, in configured order.
   std::vector<std::string> audio_other_ids_;
+  // Configured other-video source names, in configured order.
+  std::vector<std::string> video_other_ids_;
 };
 
 }  // namespace livekit_ros2_bridge

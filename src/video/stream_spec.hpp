@@ -47,6 +47,8 @@ struct StreamConfig
   std::vector<RosTopicRule> ros_topic_rules;
   // Keyed by the trimmed configured source name.
   std::unordered_map<std::string, OtherSource> other_sources;
+  // The other_sources keys in configured order, for capability advertisement.
+  std::vector<std::string> other_source_names;
   livekit::TrackPublishOptions default_publish_options;
 };
 

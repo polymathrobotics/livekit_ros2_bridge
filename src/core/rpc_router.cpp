@@ -161,7 +161,8 @@ RpcRouter::RpcRouter(
   RosServiceCaller & caller,
   SubscriptionLeaseManager & lease_manager,
   bool audio_output_enabled,
-  std::vector<std::string> audio_other_ids)
+  std::vector<std::string> audio_other_ids,
+  std::vector<std::string> video_other_ids)
 : graph_(std::move(graph))
 , policy_(policy)
 , queue_(queue)
@@ -169,6 +170,7 @@ RpcRouter::RpcRouter(
 , lease_manager_(lease_manager)
 , audio_output_enabled_(audio_output_enabled)
 , audio_other_ids_(std::move(audio_other_ids))
+, video_other_ids_(std::move(video_other_ids))
 {}
 
 RpcRouter::~RpcRouter()
@@ -340,6 +342,9 @@ std::optional<std::string> RpcRouter::capability(const livekit::RpcInvocationDat
   }
   if (!audio_other_ids_.empty()) {
     features["audio"]["other"]["ids"] = audio_other_ids_;
+  }
+  if (!video_other_ids_.empty()) {
+    features["video"]["other"]["ids"] = video_other_ids_;
   }
   const nlohmann::json response = {
     {"features", features},
