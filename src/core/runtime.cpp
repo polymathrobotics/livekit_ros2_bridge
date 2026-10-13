@@ -34,22 +34,22 @@ namespace
 {
 
 template <typename StreamConfig>
-std::vector<std::string> otherSourceNames(const StreamConfig & config)
+std::vector<std::string> otherSourceIds(const StreamConfig & config)
 {
-  std::vector<std::string> names;
-  names.reserve(config.other_sources.size());
+  std::vector<std::string> ids;
+  ids.reserve(config.other_sources.size());
   for (const auto & source : config.other_sources) {
-    names.push_back(source.name);
+    ids.push_back(source.name);
   }
-  return names;
+  return ids;
 }
 
 CapabilityFeatures makeCapabilityFeatures(const RuntimeConfig & config)
 {
   CapabilityFeatures features;
   features.audio_output_enabled = !config.audio_output.sink_fragment.empty();
-  features.audio_other_ids = otherSourceNames(config.audio_stream);
-  features.video_other_ids = otherSourceNames(config.video_stream);
+  features.audio_other_ids = otherSourceIds(config.audio_stream);
+  features.video_other_ids = otherSourceIds(config.video_stream);
   return features;
 }
 
