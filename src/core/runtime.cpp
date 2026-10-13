@@ -44,6 +44,15 @@ std::vector<std::string> otherSourceNames(const StreamConfig & config)
   return names;
 }
 
+CapabilityFeatures makeCapabilityFeatures(const RuntimeConfig & config)
+{
+  CapabilityFeatures features;
+  features.audio_output_enabled = !config.audio_output.sink_fragment.empty();
+  features.audio_other_ids = otherSourceNames(config.audio_stream);
+  features.video_other_ids = otherSourceNames(config.video_stream);
+  return features;
+}
+
 }  // namespace
 
 Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
@@ -74,9 +83,7 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     ros_executor_queue_,
     ros_service_caller_,
     subscription_lease_manager_,
-    !config_.audio_output.sink_fragment.empty(),
-    otherSourceNames(config_.audio_stream),
-    otherSourceNames(config_.video_stream))
+    makeCapabilityFeatures(config_))
 , watchdog_(config_.watchdog, logger_)
 {
   subscription_lease_manager_.startPruneTimer(

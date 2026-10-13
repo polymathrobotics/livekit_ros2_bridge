@@ -29,6 +29,16 @@ class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionLeaseManager;
 
+// What lkros.capability advertises; derived from configuration.
+struct CapabilityFeatures
+{
+  bool audio_output_enabled = false;
+  // Configured other-audio source ids, in configured order.
+  std::vector<std::string> audio_other_ids;
+  // Configured other-video source ids, in configured order.
+  std::vector<std::string> video_other_ids;
+};
+
 class RpcRouter
 {
 public:
@@ -38,9 +48,7 @@ public:
     RosExecutorQueue & queue,
     RosServiceCaller & caller,
     SubscriptionLeaseManager & lease_manager,
-    bool audio_output_enabled = false,
-    std::vector<std::string> audio_other_ids = {},
-    std::vector<std::string> video_other_ids = {});
+    CapabilityFeatures features = {});
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -72,11 +80,7 @@ private:
   std::optional<std::string> requestEchoOnce(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> capability(const livekit::RpcInvocationData & invocation);
 
-  bool audio_output_enabled_ = false;
-  // Configured other-audio source names, in configured order.
-  std::vector<std::string> audio_other_ids_;
-  // Configured other-video source names, in configured order.
-  std::vector<std::string> video_other_ids_;
+  CapabilityFeatures features_;
 };
 
 }  // namespace livekit_ros2_bridge

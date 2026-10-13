@@ -191,11 +191,7 @@ AccessPolicy makeServicePolicy(std::vector<std::string> allow = {}, std::vector<
 class RpcRouterHarness
 {
 public:
-  explicit RpcRouterHarness(
-    const AccessPolicy & policy = AccessPolicy(),
-    bool audio_output_enabled = false,
-    std::vector<std::string> audio_other_ids = {},
-    std::vector<std::string> video_other_ids = {})
+  explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy(), CapabilityFeatures features = {})
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
   , queue(RosExecutorQueue::NodeInterfaces(*node), node->get_clock())
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
@@ -208,15 +204,7 @@ public:
       node->get_clock(),
       connection,
       makeSubscribePolicy({"*"}))
-  , router(
-      node->get_node_graph_interface(),
-      policy,
-      queue,
-      caller,
-      lease_manager,
-      audio_output_enabled,
-      std::move(audio_other_ids),
-      std::move(video_other_ids))
+  , router(node->get_node_graph_interface(), policy, queue, caller, lease_manager, std::move(features))
   {
     router.registerRpcs(connection);
   }
@@ -290,7 +278,9 @@ TEST_F(RpcRouterTest, CapabilityRpcIgnoresJunkPayloadAndAnswersUnderDefaultDenyP
 
 TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputOnlyWhenConfigured)
 {
-  RpcRouterHarness harness(makeServicePolicy(), true);
+  CapabilityFeatures features;
+  features.audio_output_enabled = true;
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
   expectCapabilityBody(response, nlohmann::json::parse(R"({"audio":{"out":{"track_name":"lkros.audio.out"}}})"));
@@ -298,7 +288,9 @@ TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputOnlyWhenConfigured)
 
 TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherAudioIdsInConfiguredOrder)
 {
-  RpcRouterHarness harness(makeServicePolicy(), false, {"cab_mic", "ambient"});
+  CapabilityFeatures features;
+  features.audio_other_ids = {"cab_mic", "ambient"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
   expectCapabilityBody(response, nlohmann::json::parse(R"({"audio":{"other":{"ids":["cab_mic","ambient"]}}})"));
@@ -306,7 +298,10 @@ TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherAudioIdsInConfiguredOrder)
 
 TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputAndOtherAudioTogether)
 {
-  RpcRouterHarness harness(makeServicePolicy(), true, {"cab_mic"});
+  CapabilityFeatures features;
+  features.audio_output_enabled = true;
+  features.audio_other_ids = {"cab_mic"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
   expectCapabilityBody(
@@ -316,7 +311,9 @@ TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputAndOtherAudioTogether)
 
 TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherVideoIdsInConfiguredOrder)
 {
-  RpcRouterHarness harness(makeServicePolicy(), false, {}, {"front_rtsp", "rear_rtsp"});
+  CapabilityFeatures features;
+  features.video_other_ids = {"front_rtsp", "rear_rtsp"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
   expectCapabilityBody(response, nlohmann::json::parse(R"({"video":{"other":{"ids":["front_rtsp","rear_rtsp"]}}})"));
