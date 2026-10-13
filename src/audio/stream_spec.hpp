@@ -17,7 +17,6 @@
 #include <chrono>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 #include "livekit/room_event_types.h"
@@ -27,6 +26,8 @@ namespace livekit_ros2_bridge::audio
 
 struct OtherSource
 {
+  // Trimmed configured source name.
+  std::string name;
   std::string source_fragment;
   std::string transform_fragment;
   livekit::TrackPublishOptions publish_options;
@@ -34,10 +35,8 @@ struct OtherSource
 
 struct StreamConfig
 {
-  // Keyed by the trimmed configured source name.
-  std::unordered_map<std::string, OtherSource> other_sources;
-  // The other_sources keys in configured order, for capability advertisement.
-  std::vector<std::string> other_source_names;
+  // In configured order, with unique names.
+  std::vector<OtherSource> other_sources;
   livekit::TrackPublishOptions default_publish_options;
 };
 

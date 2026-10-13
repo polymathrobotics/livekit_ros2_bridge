@@ -14,6 +14,7 @@
 
 #include "audio/stream_spec.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -41,12 +42,15 @@ StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string
     throw std::invalid_argument("Invalid other audio name.");
   }
 
-  const auto it = config.other_sources.find(name);
+  const auto it =
+    std::find_if(config.other_sources.begin(), config.other_sources.end(), [&name](const OtherSource & source) {
+      return source.name == name;
+    });
   if (it == config.other_sources.end()) {
     throw std::invalid_argument("Unknown other audio source '" + name + "'.");
   }
 
-  const auto & source = it->second;
+  const auto & source = *it;
 
   StreamSpec spec;
   spec.stream_key = std::string{kOtherAudioKeyPrefix} + ":" + name;

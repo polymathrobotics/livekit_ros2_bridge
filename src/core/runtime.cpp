@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "audio/audio_output_manager.hpp"
 #include "livekit/remote_participant.h"
@@ -28,6 +29,22 @@
 
 namespace livekit_ros2_bridge
 {
+
+namespace
+{
+
+template <typename StreamConfig>
+std::vector<std::string> otherSourceNames(const StreamConfig & config)
+{
+  std::vector<std::string> names;
+  names.reserve(config.other_sources.size());
+  for (const auto & source : config.other_sources) {
+    names.push_back(source.name);
+  }
+  return names;
+}
+
+}  // namespace
 
 Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
 : clock_(interfaces.get_node_clock_interface()->get_clock())
@@ -58,8 +75,8 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     ros_service_caller_,
     subscription_lease_manager_,
     !config_.audio_output.sink_fragment.empty(),
-    config_.audio_stream.other_source_names,
-    config_.video_stream.other_source_names)
+    otherSourceNames(config_.audio_stream),
+    otherSourceNames(config_.video_stream))
 , watchdog_(config_.watchdog, logger_)
 {
   subscription_lease_manager_.startPruneTimer(

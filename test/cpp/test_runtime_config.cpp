@@ -130,6 +130,16 @@ void expectSubscriptionQosOverrideEq(
   EXPECT_EQ(actual.durability, durability);
 }
 
+template <typename OtherSource>
+std::vector<std::string> otherSourceNames(const std::vector<OtherSource> & sources)
+{
+  std::vector<std::string> names;
+  for (const auto & source : sources) {
+    names.push_back(source.name);
+  }
+  return names;
+}
+
 }  // namespace
 
 class RuntimeConfigTest : public test_support::RclcppTestSuite
@@ -259,9 +269,10 @@ TEST_F(RuntimeConfigTest, GeneratedVideoEntriesLoadFromSplitParams)
   const auto & fallback_rule = config.video_stream.ros_topic_rules.back();
   EXPECT_EQ(fallback_rule.rule_id, "default_ros");
   ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
-  EXPECT_EQ(
-    config.video_stream.other_sources.at("front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(config.video_stream.other_sources.at("front_rtsp").transform_fragment, "videobalance saturation=0.0");
+  const auto & front_rtsp = config.video_stream.other_sources.front();
+  EXPECT_EQ(front_rtsp.name, "front_rtsp");
+  EXPECT_EQ(front_rtsp.source_fragment, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(front_rtsp.transform_fragment, "videobalance saturation=0.0");
 }
 
 TEST_F(RuntimeConfigTest, TrackPublishOptionsLoadFromUnifiedParams)
@@ -414,8 +425,9 @@ TEST_F(RuntimeConfigTest, VideoPublishOverrideCanSetSingleFieldWithoutTransformF
 
     const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_publish_override", options);
 
+    ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
     expectPublishOptionsEq(
-      config.video_stream.other_sources.at("front").publish_options,
+      config.video_stream.other_sources.front().publish_options,
       makeExpectedPublishOptions(kLivekitVideoCodecH265, 500000U, 30.0, false));
   }
 }
@@ -550,11 +562,12 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
   options.arguments({"--ros-args", "--params-file", params_path.string()});
   const RuntimeConfig config = loadRuntimeConfigForNode(node_name, options);
 
-  ASSERT_EQ(config.video_stream.other_sources.size(), 2U);
-  EXPECT_EQ(
-    config.video_stream.other_sources.at("/front_rtsp").source_fragment, "videotestsrc is-live=true pattern=ball");
-  EXPECT_EQ(
-    config.video_stream.other_sources.at("/front_rtsp/").source_fragment, "videotestsrc is-live=true pattern=smpte");
+  const auto & sources = config.video_stream.other_sources;
+  ASSERT_EQ(sources.size(), 2U);
+  EXPECT_EQ(sources[0].name, "/front_rtsp");
+  EXPECT_EQ(sources[0].source_fragment, "videotestsrc is-live=true pattern=ball");
+  EXPECT_EQ(sources[1].name, "/front_rtsp/");
+  EXPECT_EQ(sources[1].source_fragment, "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);
 }
@@ -572,7 +585,9 @@ TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_publish_override", options);
 
-  const auto & source = config.audio_stream.other_sources.at("cab_mic");
+  ASSERT_EQ(config.audio_stream.other_sources.size(), 1U);
+  const auto & source = config.audio_stream.other_sources.front();
+  EXPECT_EQ(source.name, "cab_mic");
   EXPECT_EQ(source.source_fragment, "audiotestsrc is-live=true wave=sine");
   ASSERT_TRUE(source.publish_options.audio_encoding.has_value());
   EXPECT_EQ(source.publish_options.audio_encoding->max_bitrate, 96000U);
@@ -585,7 +600,6 @@ TEST_F(RuntimeConfigTest, OtherAudioDefaultsToNoSources)
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_default", makeStaticTokenOptions());
 
   EXPECT_TRUE(config.audio_stream.other_sources.empty());
-  EXPECT_TRUE(config.audio_stream.other_source_names.empty());
 }
 
 TEST_F(RuntimeConfigTest, OtherAudioSourceNamesKeepConfiguredOrder)
@@ -597,8 +611,7 @@ TEST_F(RuntimeConfigTest, OtherAudioSourceNamesKeepConfiguredOrder)
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_audio_order", options);
 
-  EXPECT_EQ(config.audio_stream.other_source_names, (std::vector<std::string>{"cab_mic", "ambient"}));
-  EXPECT_EQ(config.audio_stream.other_sources.size(), 2U);
+  EXPECT_EQ(otherSourceNames(config.audio_stream.other_sources), (std::vector<std::string>{"cab_mic", "ambient"}));
 }
 
 TEST_F(RuntimeConfigTest, OtherVideoDefaultsToNoSources)
@@ -606,7 +619,6 @@ TEST_F(RuntimeConfigTest, OtherVideoDefaultsToNoSources)
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_default", makeStaticTokenOptions());
 
   EXPECT_TRUE(config.video_stream.other_sources.empty());
-  EXPECT_TRUE(config.video_stream.other_source_names.empty());
 }
 
 TEST_F(RuntimeConfigTest, OtherVideoSourceNamesKeepConfiguredOrder)
@@ -619,8 +631,7 @@ TEST_F(RuntimeConfigTest, OtherVideoSourceNamesKeepConfiguredOrder)
 
   const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_order", options);
 
-  EXPECT_EQ(config.video_stream.other_source_names, (std::vector<std::string>{"rear", "front", "mast"}));
-  EXPECT_EQ(config.video_stream.other_sources.size(), 3U);
+  EXPECT_EQ(otherSourceNames(config.video_stream.other_sources), (std::vector<std::string>{"rear", "front", "mast"}));
 }
 
 TEST_F(RuntimeConfigTest, OtherAudioRejectsWhitespaceOnlySourceFragment)

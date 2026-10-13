@@ -141,8 +141,9 @@ video::StreamConfig makeOtherSourceConfig()
 {
   video::StreamConfig config = video::makeDefaultConfig();
   video::OtherSource source;
+  source.name = "/sources/front";
   source.source_fragment = "videotestsrc is-live=true pattern=black";
-  config.other_sources.emplace("/sources/front", std::move(source));
+  config.other_sources.push_back(std::move(source));
   return config;
 }
 
@@ -150,8 +151,9 @@ audio::StreamConfig makeOtherAudioSourceConfig()
 {
   audio::StreamConfig config = audio::makeDefaultConfig();
   audio::OtherSource source;
+  source.name = "/sources/cab_mic";
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
-  config.other_sources.emplace("/sources/cab_mic", std::move(source));
+  config.other_sources.push_back(std::move(source));
   return config;
 }
 

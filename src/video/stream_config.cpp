@@ -206,11 +206,11 @@ StreamConfig loadConfig(const Params & params)
     }
 
     OtherSource source;
+    source.name = name;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
     source.publish_options = parsePublishOptions(entry, config.default_publish_options);
-    config.other_sources.emplace(name, std::move(source));
-    config.other_source_names.push_back(name);
+    config.other_sources.push_back(std::move(source));
   }
 
   config.ros_topic_rules.insert(
