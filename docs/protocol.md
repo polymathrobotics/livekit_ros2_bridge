@@ -939,7 +939,7 @@ A common data-subscription path:
 
 A common non-ROS video path:
 
-1. Call `lkros.capability` on join; `features.video.other.ids` lists the configured source ids, and its absence means none are configured.
+1. Call `lkros.capability` on join. `features.video.other.ids` lists the configured source ids, and its absence means none are configured. If the call fails with the unsupported-method error (`1400`), the bridge predates capability discovery: fall back to source ids the client knows from the deployment's configuration.
 2. Send `lkros.heartbeat` with `kind: "other_video"` and a configured source id as `name`.
 3. Read `lkros.status`.
 4. If the status is `active` and `delivery.kind` is `video`, subscribe to the announced LiveKit video publication.
@@ -948,7 +948,7 @@ A common non-ROS video path:
 
 A common non-ROS audio path:
 
-1. Call `lkros.capability` on join; `features.audio.other.ids` lists the configured source ids, and its absence means none are configured.
+1. Call `lkros.capability` on join. `features.audio.other.ids` lists the configured source ids, and its absence means none are configured. If the call fails with the unsupported-method error (`1400`), the bridge predates capability discovery: fall back to source ids the client knows from the deployment's configuration.
 2. Send `lkros.heartbeat` with `kind: "other_audio"` and a configured source id as `name`.
 3. Read `lkros.status`.
 4. If the status is `active` and `delivery.kind` is `audio`, subscribe to the announced LiveKit audio publication.
