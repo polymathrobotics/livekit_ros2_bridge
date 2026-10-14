@@ -170,6 +170,7 @@ Lookup notes:
 - lookup trims only surrounding whitespace from the requested name
 - other video track names percent-encode bytes outside RFC 3986 unreserved characters
 - other video sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `video_other_ids` and `video.other.*`
+- configured ids are advertised in configured order as `video.other.ids` through the [`lkros.capability`](protocol.md#rpc-lkroscapability) RPC, so clients can discover which sources exist
 
 ### Audio
 
@@ -216,6 +217,7 @@ Lookup notes:
 - lookup trims only surrounding whitespace from the requested name
 - other audio track names percent-encode bytes outside RFC 3986 unreserved characters
 - other audio sources are not gated by `access.rules.subscribe.*`; availability is controlled by which ids exist in `audio_other_ids` and `audio.other.*`
+- configured ids are advertised in configured order as `audio.other.ids` through the [`lkros.capability`](protocol.md#rpc-lkroscapability) RPC, so clients can discover which sources exist
 
 #### Audio output
 
@@ -395,7 +397,7 @@ Set `audio.out.sink` when the bridge should play client-published audio through 
 2. Expect the feature to be discoverable.
 
    - `lkros.capability` answers `{"v": 2, "features": {"audio": {"out": {"track_name": "lkros.audio.out"}}}}`
-   - with `audio.out.sink` empty (or absent), `features` is `{}` and no track is ever subscribed
+   - with `audio.out.sink` empty (or absent), `features` has no `audio.out` key and no track is ever subscribed
 
 3. Expect one output track at a time.
 

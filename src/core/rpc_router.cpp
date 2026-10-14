@@ -160,13 +160,13 @@ RpcRouter::RpcRouter(
   RosExecutorQueue & queue,
   RosServiceCaller & caller,
   SubscriptionLeaseManager & lease_manager,
-  bool audio_output_enabled)
+  CapabilityFeatures features)
 : graph_(std::move(graph))
 , policy_(policy)
 , queue_(queue)
 , caller_(caller)
 , lease_manager_(lease_manager)
-, audio_output_enabled_(audio_output_enabled)
+, features_(std::move(features))
 {}
 
 RpcRouter::~RpcRouter()
@@ -333,8 +333,14 @@ std::optional<std::string> RpcRouter::capability(const livekit::RpcInvocationDat
   (void)invocation;
   // Features are configuration-derived: present if and only if configured.
   nlohmann::json features = nlohmann::json::object();
-  if (audio_output_enabled_) {
+  if (features_.audio_output_enabled) {
     features["audio"]["out"]["track_name"] = protocol::kAudioOutTrackName;
+  }
+  if (!features_.audio_other_ids.empty()) {
+    features["audio"]["other"]["ids"] = features_.audio_other_ids;
+  }
+  if (!features_.video_other_ids.empty()) {
+    features["video"]["other"]["ids"] = features_.video_other_ids;
   }
   const nlohmann::json response = {
     {"features", features},

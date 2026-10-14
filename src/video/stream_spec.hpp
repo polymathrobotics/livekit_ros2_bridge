@@ -17,7 +17,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -37,6 +36,8 @@ struct RosTopicRule
 
 struct OtherSource
 {
+  // Trimmed configured source name.
+  std::string name;
   std::string source_fragment;
   std::string transform_fragment;
   livekit::TrackPublishOptions publish_options;
@@ -45,8 +46,8 @@ struct OtherSource
 struct StreamConfig
 {
   std::vector<RosTopicRule> ros_topic_rules;
-  // Keyed by the trimmed configured source name.
-  std::unordered_map<std::string, OtherSource> other_sources;
+  // In configured order, with unique names.
+  std::vector<OtherSource> other_sources;
   livekit::TrackPublishOptions default_publish_options;
 };
 

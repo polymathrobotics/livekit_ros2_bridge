@@ -191,7 +191,7 @@ AccessPolicy makeServicePolicy(std::vector<std::string> allow = {}, std::vector<
 class RpcRouterHarness
 {
 public:
-  explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy(), bool audio_output_enabled = false)
+  explicit RpcRouterHarness(const AccessPolicy & policy = AccessPolicy(), CapabilityFeatures features = {})
   : node(std::make_shared<rclcpp::Node>(nextNodeName("rpc_router_test_node")))
   , queue(RosExecutorQueue::NodeInterfaces(*node), node->get_clock())
   , caller(node->get_node_base_interface(), node->get_node_graph_interface(), node->get_node_waitables_interface())
@@ -204,7 +204,7 @@ public:
       node->get_clock(),
       connection,
       makeSubscribePolicy({"*"}))
-  , router(node->get_node_graph_interface(), policy, queue, caller, lease_manager, audio_output_enabled)
+  , router(node->get_node_graph_interface(), policy, queue, caller, lease_manager, std::move(features))
   {
     router.registerRpcs(connection);
   }
@@ -278,10 +278,45 @@ TEST_F(RpcRouterTest, CapabilityRpcIgnoresJunkPayloadAndAnswersUnderDefaultDenyP
 
 TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputOnlyWhenConfigured)
 {
-  RpcRouterHarness harness(makeServicePolicy(), true);
+  CapabilityFeatures features;
+  features.audio_output_enabled = true;
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
 
   const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
   expectCapabilityBody(response, nlohmann::json::parse(R"({"audio":{"out":{"track_name":"lkros.audio.out"}}})"));
+}
+
+TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherAudioIdsInConfiguredOrder)
+{
+  CapabilityFeatures features;
+  features.audio_other_ids = {"cab_mic", "ambient"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
+
+  const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
+  expectCapabilityBody(response, nlohmann::json::parse(R"({"audio":{"other":{"ids":["cab_mic","ambient"]}}})"));
+}
+
+TEST_F(RpcRouterTest, CapabilityRpcAdvertisesAudioOutputAndOtherAudioTogether)
+{
+  CapabilityFeatures features;
+  features.audio_output_enabled = true;
+  features.audio_other_ids = {"cab_mic"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
+
+  const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
+  expectCapabilityBody(
+    response,
+    nlohmann::json::parse(R"({"audio":{"out":{"track_name":"lkros.audio.out"},"other":{"ids":["cab_mic"]}}})"));
+}
+
+TEST_F(RpcRouterTest, CapabilityRpcAdvertisesOtherVideoIdsInConfiguredOrder)
+{
+  CapabilityFeatures features;
+  features.video_other_ids = {"front_rtsp", "rear_rtsp"};
+  RpcRouterHarness harness(makeServicePolicy(), std::move(features));
+
+  const auto response = harness.invokeRpc(protocol::kCapabilityMethod, makeRpcInvocation("", R"({})"));
+  expectCapabilityBody(response, nlohmann::json::parse(R"({"video":{"other":{"ids":["front_rtsp","rear_rtsp"]}}})"));
 }
 
 TEST_F(RpcRouterTest, ServiceCallRpcMapsInvalidPayloadToInvalidRequest)

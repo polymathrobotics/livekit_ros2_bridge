@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "audio/audio_output_manager.hpp"
 #include "livekit/remote_participant.h"
@@ -28,6 +29,31 @@
 
 namespace livekit_ros2_bridge
 {
+
+namespace
+{
+
+template <typename StreamConfig>
+std::vector<std::string> otherSourceIds(const StreamConfig & config)
+{
+  std::vector<std::string> ids;
+  ids.reserve(config.other_sources.size());
+  for (const auto & source : config.other_sources) {
+    ids.push_back(source.name);
+  }
+  return ids;
+}
+
+CapabilityFeatures makeCapabilityFeatures(const RuntimeConfig & config)
+{
+  CapabilityFeatures features;
+  features.audio_output_enabled = !config.audio_output.sink_fragment.empty();
+  features.audio_other_ids = otherSourceIds(config.audio_stream);
+  features.video_other_ids = otherSourceIds(config.video_stream);
+  return features;
+}
+
+}  // namespace
 
 Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
 : clock_(interfaces.get_node_clock_interface()->get_clock())
@@ -57,7 +83,7 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     ros_executor_queue_,
     ros_service_caller_,
     subscription_lease_manager_,
-    !config_.audio_output.sink_fragment.empty())
+    makeCapabilityFeatures(config_))
 , watchdog_(config_.watchdog, logger_)
 {
   subscription_lease_manager_.startPruneTimer(

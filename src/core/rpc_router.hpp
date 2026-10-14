@@ -16,6 +16,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "core/access_policy.hpp"
 #include "core/room_connection.hpp"
@@ -28,6 +29,16 @@ class RosExecutorQueue;
 class RosServiceCaller;
 class SubscriptionLeaseManager;
 
+// What lkros.capability advertises; derived from configuration.
+struct CapabilityFeatures
+{
+  bool audio_output_enabled = false;
+  // Configured other-audio source ids, in configured order.
+  std::vector<std::string> audio_other_ids;
+  // Configured other-video source ids, in configured order.
+  std::vector<std::string> video_other_ids;
+};
+
 class RpcRouter
 {
 public:
@@ -37,7 +48,7 @@ public:
     RosExecutorQueue & queue,
     RosServiceCaller & caller,
     SubscriptionLeaseManager & lease_manager,
-    bool audio_output_enabled = false);
+    CapabilityFeatures features = {});
   ~RpcRouter();
 
   RpcRouter(const RpcRouter &) = delete;
@@ -69,7 +80,7 @@ private:
   std::optional<std::string> requestEchoOnce(const livekit::RpcInvocationData & invocation);
   std::optional<std::string> capability(const livekit::RpcInvocationData & invocation);
 
-  bool audio_output_enabled_ = false;
+  CapabilityFeatures features_;
 };
 
 }  // namespace livekit_ros2_bridge

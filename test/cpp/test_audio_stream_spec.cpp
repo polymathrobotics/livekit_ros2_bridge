@@ -45,11 +45,12 @@ TEST(AudioStreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   expected_options.audio_encoding = encoding;
 
   OtherSource source;
+  source.name = "cab_mic";
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
   source.transform_fragment = "volume volume=0.5";
   source.publish_options = expected_options;
 
-  config.other_sources.emplace("cab_mic", std::move(source));
+  config.other_sources.push_back(std::move(source));
 
   const auto spec = resolveOtherSourceSpec(config, "  cab_mic  ");
   const auto & input = spec.input;
@@ -70,9 +71,10 @@ TEST(AudioStreamSpecTest, ResolveOtherSourceSpecPercentEncodesTrackNameSuffix)
   StreamConfig config = makeDefaultConfig();
 
   OtherSource source;
+  source.name = "/sources/cab:mic%";
   source.source_fragment = "audiotestsrc is-live=true wave=sine";
 
-  config.other_sources.emplace("/sources/cab:mic%", std::move(source));
+  config.other_sources.push_back(std::move(source));
 
   const auto spec = resolveOtherSourceSpec(config, "/sources/cab:mic%");
 

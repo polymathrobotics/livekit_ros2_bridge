@@ -233,11 +233,12 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
     makeTrackPublishOptions(videoCodec(4), livekit::VideoEncodingOptions{1200000U, 10.0}, false);
 
   OtherSource source;
+  source.name = "front_camera";
   source.source_fragment = "videotestsrc is-live=true pattern=black";
   source.transform_fragment = "videobalance saturation=0.0";
   source.publish_options = expected_publish_options;
 
-  config.other_sources.emplace("front_camera", std::move(source));
+  config.other_sources.push_back(std::move(source));
 
   const auto spec = resolveOtherSourceSpec(config, "  front_camera  ");
   const auto & input = requireOtherInput(spec);
@@ -255,9 +256,10 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecPercentEncodesTrackNameSuffix)
   StreamConfig config = makeDefaultConfig();
 
   OtherSource source;
+  source.name = "/sources/front:rgb%";
   source.source_fragment = "videotestsrc is-live=true pattern=black";
 
-  config.other_sources.emplace("/sources/front:rgb%", std::move(source));
+  config.other_sources.push_back(std::move(source));
 
   const auto spec = resolveOtherSourceSpec(config, "/sources/front:rgb%");
 
