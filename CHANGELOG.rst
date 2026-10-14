@@ -8,9 +8,6 @@ Changelog for package livekit_ros2_bridge
 
 0.3.1 (Unreleased)
 ------------------
-* Advertise configured other video and other audio sources in `lkros.capability` as
-  `video.other` and `audio.other`, whose `ids` list the source ids in configured order. Each
-  feature is absent when no source of that kind is configured.
 * Add audio output: a client-published audio track (`lkros.audio.out`, the only remote
   media track the bridge subscribes to) plays through a bridge-owned GStreamer playback pipeline
   configured with the new `audio.out.sink` parameter, off by default. `lkros.capability` advertises
