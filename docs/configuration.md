@@ -21,6 +21,7 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
   - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
   - [RTSP or device inputs](#rtsp-or-device-inputs)
+  - [Passthrough for cameras that already send H.264](#passthrough-for-cameras-that-already-send-h264)
   - [Cab microphones](#cab-microphones)
   - [Audio output playback](#audio-output-playback)
 
@@ -94,7 +95,7 @@ Pattern notes:
 Publish default notes:
 
 - these defaults expose the same publish controls described in LiveKit's [video track configuration guide](https://docs.livekit.io/transport/media/advanced/) and C++ [`TrackPublishOptions` reference](https://docs.livekit.io/reference/client-sdk-cpp/structlivekit_1_1TrackPublishOptions.html); the bridge forwards them directly when it publishes a video track
-- these defaults apply to ROS video topics, other video sources, and the built-in ROS fallback rule
+- these defaults apply to ROS video topics, other video sources, and the built-in ROS fallback rule; [passthrough](#passthrough-for-cameras-that-already-send-h264) sources ignore them
 - `auto` or `0` means "use LiveKit SDK default behavior" for that field
 - entry-level overrides merge per field with these global defaults
 
@@ -146,6 +147,7 @@ Supported ROS video inputs:
 | `video_other_ids` | `[]` | array of ids | Other video ids defined under `video.other.<id>.*` |
 | `video.other.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
 | `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
+| `video.other.<id>.passthrough` | `false` | `true`, `false` | Forward the source's H.264 to LiveKit without decoding or re-encoding. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
 | `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
 | `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
 | `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
@@ -159,7 +161,7 @@ Other video notes:
 - `source` is required and must be non-empty after trimming
 - `source` should start with a concrete ingress element such as `uridecodebin`, `v4l2src`, or `videotestsrc`
 - `transform` is optional and sits between your ingress and the bridge-owned tail
-- the bridge always appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`
+- the bridge appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`, unless `passthrough` is set (see [Passthrough](#passthrough-for-cameras-that-already-send-h264))
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
@@ -322,6 +324,45 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    - the track name is deterministic, for example `lkros.video.other.front_rtsp`
    - if the source id contains reserved bytes, the track-name suffix is percent-encoded
    - if a client asks for a source that does not exist, the bridge reports `not_found`
+
+### Passthrough for cameras that already send H.264
+
+Some cameras already send H.264. By default the bridge decodes that stream and LiveKit encodes it again, which costs CPU, adds delay, and adds artifacts. Set `passthrough: true` on the source and the bridge forwards the camera's H.264 to LiveKit unchanged. Without it, nothing changes.
+
+1. Give the source a `source` fragment that stops at the depayloader.
+
+   ```yaml
+   livekit_ros2_bridge:
+     ros__parameters:
+       video_other_ids: ["front_cam"]
+
+       video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/cam0_1 protocols=tcp ! rtph264depay request-keyframe=true"
+       video.other.front_cam.passthrough: true
+   ```
+
+   - the bridge appends `h264parse config-interval=-1`, the Annex-B H.264 caps, and its own sink
+   - do not use `uridecodebin`; it decodes the stream
+   - `h264parse` comes from `gstreamer1.0-plugins-bad`, which the package declares as a dependency; startup fails if it is missing
+   - clients request the source and receive the track exactly as for any other video source
+
+2. Know what the bridge can't do with a stream it doesn't re-encode.
+
+   - H.264 only: any other codec fails when the stream starts, and the log says passthrough supports H.264 only
+   - startup rejects `transform`, `publish.codec`, `publish.max_bitrate_bps`, `publish.max_framerate`, and `publish.simulcast` on a passthrough entry: the bridge can't resize, re-rate, or cap a stream it doesn't re-encode, and simulcast needs several encodings
+   - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
+   - bitrate, resolution, frame rate, and keyframe interval all come from the camera; the bridge logs `video_stream_passthrough_over_budget` when the camera sends well above what LiveKit says the connection can carry
+
+3. Expect keyframe behavior to depend on the camera.
+
+   - a new viewer needs a keyframe, so the bridge asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the viewer waits for the camera's next keyframe
+   - if the bridge falls behind, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`
+
+4. Set the camera up for it.
+
+   - use a substream (for example `cam0_1`), not the stream a recorder reads
+   - use a constant bitrate comfortably under the link budget
+   - set the keyframe interval to about 1 s
+   - use Baseline or Main profile with no B-frames; WebRTC can't play B-frames
 
 ### Cab microphones
 
