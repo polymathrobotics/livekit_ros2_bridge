@@ -15,17 +15,23 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdarg>
 #include <cstdint>
+#include <cstdio>
+#include <future>
+#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
 #include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
+#include "rcutils/logging.h"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "support/fake_room_connection.hpp"
@@ -89,9 +95,116 @@ PipelineCallbacks makeNoOpPipelineCallbacks()
   };
 }
 
+StreamSpec makePassthroughSpec(const std::string & source_fragment)
+{
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", source_fragment, "", true};
+  spec.publish_options.video_codec = livekit::VideoCodec::H264;
+  spec.publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  spec.publish_options.simulcast = false;
+  return spec;
+}
+
 // A huge GOP means every keyframe after the first one was requested.
 constexpr char kOpenH264Source[] =
   "videotestsrc is-live=true ! video/x-raw,width=64,height=48,framerate=60/1 ! openh264enc gop-size=100000";
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate)
+{
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!predicate()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return true;
+}
+
+// Records formatted log lines (still forwarding them) so tests can assert on log events.
+class ScopedLogCapture final
+{
+public:
+  ScopedLogCapture()
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    lines().clear();
+    previousHandler() = rcutils_logging_get_output_handler();
+    rcutils_logging_set_output_handler(&ScopedLogCapture::handle);
+  }
+
+  ~ScopedLogCapture()
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    rcutils_logging_set_output_handler(previousHandler());
+  }
+
+  ScopedLogCapture(const ScopedLogCapture &) = delete;
+  ScopedLogCapture & operator=(const ScopedLogCapture &) = delete;
+  ScopedLogCapture(ScopedLogCapture &&) = delete;
+  ScopedLogCapture & operator=(ScopedLogCapture &&) = delete;
+
+  // Returns the first captured line that contains every fragment, or an empty string.
+  std::string findLine(std::initializer_list<const char *> fragments) const
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    for (const auto & line : lines()) {
+      bool matches = true;
+      for (const char * fragment : fragments) {
+        matches = matches && line.find(fragment) != std::string::npos;
+      }
+      if (matches) {
+        return line;
+      }
+    }
+    return "";
+  }
+
+private:
+  static void handle(
+    const rcutils_log_location_t * location,
+    int severity,
+    const char * name,
+    rcutils_time_point_value_t timestamp,
+    const char * format,
+    va_list * args)
+  {
+    va_list arguments;
+    va_copy(arguments, *args);
+    char buffer[4096];
+    std::vsnprintf(buffer, sizeof(buffer), format, arguments);
+    va_end(arguments);
+
+    rcutils_logging_output_handler_t previous_handler = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex());
+      lines().emplace_back(buffer);
+      previous_handler = previousHandler();
+    }
+    if (previous_handler != nullptr) {
+      previous_handler(location, severity, name, timestamp, format, args);
+    }
+  }
+
+  static std::mutex & mutex()
+  {
+    static std::mutex instance;
+    return instance;
+  }
+
+  static std::vector<std::string> & lines()
+  {
+    static std::vector<std::string> instance;
+    return instance;
+  }
+
+  static rcutils_logging_output_handler_t & previousHandler()
+  {
+    static rcutils_logging_output_handler_t instance = nullptr;
+    return instance;
+  }
+};
 
 void expectStartErrorContains(
   GStreamerPipeline & pipeline, const std::string & description, bool require_appsrc, const char * fragment)
@@ -280,6 +393,85 @@ TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameReq
     EXPECT_FALSE(frames[index].is_keyframe) << "frame " << index;
     EXPECT_GT(frames[index].timestamp_us, frames[index - 1U].timestamp_us) << "frame " << index;
   }
+}
+
+TEST_F(StreamTest, PassthroughStreamPublishesEncodedSource)
+{
+  StreamSpec spec = makePassthroughSpec(kOpenH264Source);
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  stream.start();
+  const bool published = waitUntil([&]() { return connection.state->publishedVideoTrackCount() == 1U; });
+  stream.close();
+
+  ASSERT_TRUE(published);
+  ASSERT_EQ(connection.state->published_video_options.size(), 1U);
+  EXPECT_EQ(connection.state->published_video_options.front().video_encoder, livekit::VideoEncoderBackend::PreEncoded);
+  ASSERT_EQ(connection.state->published_video_sources.size(), 1U);
+  EXPECT_NE(
+    std::dynamic_pointer_cast<livekit::EncodedVideoSource>(connection.state->published_video_sources.front()), nullptr);
+}
+
+TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
+{
+  ScopedLogCapture logs;
+  // A static vp8enc ! h264parse link already fails to parse (and config validation
+  // rejects it); the demuxer's dynamic pad fails at runtime like an RTSP camera would.
+  StreamSpec spec =
+    makePassthroughSpec("videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux");
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  stream.start();
+  const bool hint_logged = waitUntil([&]() {
+    return !logs.findLine({"video_stream_pipeline_recovery_scheduled", "passthrough supports H.264 only"}).empty();
+  });
+  stream.close();
+
+  ASSERT_TRUE(hint_logged);
+  const std::string line = logs.findLine({"video_stream_pipeline_recovery_scheduled"});
+  EXPECT_NE(line.find("offered_caps=\"video/x-vp8"), std::string::npos) << line;
+  EXPECT_EQ(connection.state->publishedVideoTrackCount(), 0U);
+}
+
+TEST_F(StreamTest, PassthroughStreamSkipsToRequestedKeyFrameAfterFallingBehind)
+{
+  ScopedLogCapture logs;
+  StreamSpec spec = makePassthroughSpec(kOpenH264Source);
+  FakeRoomConnection connection;
+  bool publish_started = false;
+  std::promise<void> publish_started_promise;
+  std::future<void> publish_started_future = publish_started_promise.get_future();
+  std::promise<void> release_publish_promise;
+  std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
+  // Blocking the first publish stalls the sample thread while the source keeps producing.
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    if (!publish_started) {
+      publish_started = true;
+      publish_started_promise.set_value();
+    }
+    release_publish_future.wait();
+  };
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  stream.start();
+  const bool publish_blocked = publish_started_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  // At 60 fps the bridge queue (8 buffers) overruns well within this stall.
+  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  release_publish_promise.set_value();
+  const bool resumed = waitUntil([&]() { return !logs.findLine({"video_stream_passthrough_resumed"}).empty(); });
+  stream.close();
+
+  ASSERT_TRUE(publish_blocked);
+  EXPECT_FALSE(logs.findLine({"video_stream_passthrough_fell_behind", "stream_key=other_video:test"}).empty());
+  ASSERT_TRUE(resumed);
+  const std::string resumed_line = logs.findLine({"video_stream_passthrough_resumed"});
+  EXPECT_EQ(resumed_line.find("discarded_frames=0"), std::string::npos) << resumed_line;
+  EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(

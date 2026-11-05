@@ -43,8 +43,10 @@ public:
   void close();
 
 private:
-  // Coalesces repeated EOS/error messages while a restart is pending.
-  void onPipelineFailure(const std::string & reason);
+  PipelineCallbacks makePipelineCallbacks();
+  // Coalesces repeated EOS/error messages while a restart is pending. caps_mismatch
+  // adds the passthrough H.264-only hint to the log.
+  void onPipelineFailure(const std::string & reason, bool caps_mismatch = false, const std::string & offered_caps = {});
   void restartPipelineAfterFailure();
   void startPipelineLocked();
 

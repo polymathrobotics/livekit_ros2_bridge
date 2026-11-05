@@ -38,12 +38,7 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(publisher.makePipelineCallbacks(
-    [this]() {
-      std::lock_guard<std::mutex> lock(mutex_);
-      return is_shutdown_;
-    },
-    [this](const std::string & reason) { onPipelineFailure(reason); }))
+, pipeline_(makePipelineCallbacks())
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
@@ -77,7 +72,25 @@ void GStreamerStream::close()
   pipeline_.stop();
 }
 
-void GStreamerStream::onPipelineFailure(const std::string & reason)
+PipelineCallbacks GStreamerStream::makePipelineCallbacks()
+{
+  // Requesting a keyframe must not take mutex_: it runs inside pipeline
+  // callbacks, which pipeline_.stop() waits for.
+  auto callbacks = publisher_.makePipelineCallbacks(
+    [this]() {
+      std::lock_guard<std::mutex> lock(mutex_);
+      return is_shutdown_;
+    },
+    [this](const std::string & reason) { onPipelineFailure(reason); },
+    [this]() { pipeline_.requestKeyFrame(); });
+  callbacks.on_caps_mismatch = [this](const std::string & reason, const std::string & offered_caps) {
+    onPipelineFailure(reason, true, offered_caps);
+  };
+  return callbacks;
+}
+
+void GStreamerStream::onPipelineFailure(
+  const std::string & reason, bool caps_mismatch, const std::string & offered_caps)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_ || !pipeline_.isActive()) {
@@ -87,11 +100,15 @@ void GStreamerStream::onPipelineFailure(const std::string & reason)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
-    .field("stream_key", spec_.stream_key)
-    .field("reason", reason)
-    .field("restart_delay_ms", kRestartDelay.count())
-    .warn();
+  LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
+  event.field("stream_key", spec_.stream_key).field("reason", reason).field("restart_delay_ms", kRestartDelay.count());
+  if (caps_mismatch) {
+    event.fieldQuoted("hint", "passthrough supports H.264 only");
+  }
+  if (!offered_caps.empty()) {
+    event.fieldQuoted("offered_caps", offered_caps);
+  }
+  event.warn();
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
@@ -102,6 +119,8 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
+  // The new pipeline may start mid-stream; viewers need a keyframe first.
+  publisher_.awaitKeyFrame();
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
@@ -112,6 +131,10 @@ void GStreamerStream::restartPipelineAfterFailure()
 void GStreamerStream::startPipelineLocked()
 {
   const auto & input = requireOtherInput(spec_);
+  if (input.passthrough) {
+    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
+    return;
+  }
   pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);
 }
 
