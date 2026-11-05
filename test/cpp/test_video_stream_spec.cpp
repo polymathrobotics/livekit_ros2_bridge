@@ -250,6 +250,32 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   EXPECT_EQ(input.name, "front_camera");
   EXPECT_EQ(input.source_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
+  EXPECT_FALSE(input.passthrough);
+  expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
+}
+
+TEST(StreamSpecTest, ResolveOtherSourceSpecCarriesPassthroughFlag)
+{
+  StreamConfig config = makeDefaultConfig();
+  livekit::TrackPublishOptions expected_publish_options;
+  expected_publish_options.video_codec = livekit::VideoCodec::H264;
+  expected_publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  expected_publish_options.simulcast = false;
+
+  OtherSource source;
+  source.name = "front_camera";
+  source.source_fragment = "rtspsrc location=rtsp://camera/stream ! rtph264depay";
+  source.passthrough = true;
+  source.publish_options = expected_publish_options;
+
+  config.other_sources.push_back(std::move(source));
+
+  const auto spec = resolveOtherSourceSpec(config, "front_camera");
+  const auto & input = requireOtherInput(spec);
+
+  EXPECT_TRUE(input.passthrough);
+  EXPECT_EQ(input.source_fragment, "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  EXPECT_EQ(input.transform_fragment, "");
   expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
 }
 

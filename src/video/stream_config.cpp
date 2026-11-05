@@ -140,6 +140,38 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
+// Passthrough forwards the camera's encoded video unchanged, so only global
+// defaults may be set (and are ignored); per-entry overrides are a config error.
+template <typename EntryT>
+const char * findPassthroughOverride(const EntryT & entry)
+{
+  if (!trim(entry.transform).empty()) {
+    return "transform";
+  }
+  if (!trim(entry.publish.codec).empty()) {
+    return "publish.codec";
+  }
+  if (entry.publish.max_bitrate_bps >= 0) {
+    return "publish.max_bitrate_bps";
+  }
+  if (entry.publish.max_framerate >= 0.0) {
+    return "publish.max_framerate";
+  }
+  if (!trim(entry.publish.simulcast).empty()) {
+    return "publish.simulcast";
+  }
+  return nullptr;
+}
+
+livekit::TrackPublishOptions makePassthroughPublishOptions()
+{
+  livekit::TrackPublishOptions options;
+  options.video_codec = livekit::VideoCodec::H264;
+  options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  options.simulcast = false;
+  return options;
+}
+
 constexpr utils::EndpointLayout kRosTopicRuleLayout{1U, 1U, 1U, 1U, kBridgeAppSrcName, kBridgeAppSinkName};
 constexpr utils::EndpointLayout kOtherSourceLayout = utils::makeOtherSourceLayout(kBridgeAppSinkName);
 
@@ -193,8 +225,16 @@ StreamConfig loadConfig(const Params & params)
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
+    const char * passthrough_override = entry.passthrough ? findPassthroughOverride(entry) : nullptr;
+    if (passthrough_override != nullptr) {
+      throw std::runtime_error(
+        source_context + " sets " + passthrough_override +
+        ", but passthrough forwards the camera's encoded video unchanged and cannot apply it");
+    }
     const std::string transform = trim(entry.transform);
-    validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kOtherSourceLayout);
+    const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)
+                                                      : buildPipelineDescription(source_fragment, transform);
+    validatePipeline(source_context, description, kOtherSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string name = trim(id);
@@ -209,7 +249,9 @@ StreamConfig loadConfig(const Params & params)
     source.name = name;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
-    source.publish_options = parsePublishOptions(entry, config.default_publish_options);
+    source.passthrough = entry.passthrough;
+    source.publish_options =
+      entry.passthrough ? makePassthroughPublishOptions() : parsePublishOptions(entry, config.default_publish_options);
     config.other_sources.push_back(std::move(source));
   }
 

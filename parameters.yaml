@@ -144,6 +144,14 @@ livekit_ros2_bridge:
           type: string
           default_value: ''
           description: Optional GStreamer transform fragment inserted after other video ingress.
+        passthrough:
+          type: bool
+          default_value: false
+          description: >-
+            Forward this source's H.264 to LiveKit unchanged instead of decoding
+            and re-encoding it. The source must output H.264; transform and
+            publish overrides are rejected and global video.publish defaults
+            are ignored.
         publish:
           codec:
             type: string
