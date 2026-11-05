@@ -355,7 +355,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 3. Expect keyframe behavior to depend on the camera.
 
    - a new viewer needs a keyframe, so the bridge asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the viewer waits for the camera's next keyframe
-   - if the bridge falls behind, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`
+   - if the bridge falls behind, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`; once the keyframe arrives it logs `video_stream_passthrough_resumed` with the number of frames it discarded
 
 4. Set the camera up for it.
 
