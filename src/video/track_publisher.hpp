@@ -14,20 +14,25 @@
 
 #pragma once
 
+#include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/room_connection.hpp"
 #include "core/subscription_qos.hpp"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "utils/event_throttle.hpp"
 #include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -36,6 +41,33 @@ namespace livekit_ros2_bridge::video
 class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
+
+// Measures a passthrough source's bitrate in one-second windows against LiveKit's
+// latest target. Passthrough can't re-rate the camera, so this only feeds a warning.
+class PassthroughBitrateMonitor final
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  void setTarget(std::uint64_t target_bitrate_bps)
+  {
+    target_bitrate_bps_ = target_bitrate_bps;
+  }
+
+  std::uint64_t targetBitrateBps() const
+  {
+    return target_bitrate_bps_;
+  }
+
+  // Returns the measured bitrate when it has stayed above 1.5x the target for a few seconds.
+  std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
+
+private:
+  std::uint64_t target_bitrate_bps_ = 0U;
+  Clock::time_point window_started_at_{};
+  std::uint64_t window_bytes_ = 0U;
+  std::optional<Clock::time_point> over_budget_since_;
+};
 
 class TrackPublisher final
 {
@@ -67,6 +99,16 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
+  // Passthrough: the first keyframe publishes an EncodedVideoSource; size changes
+  // don't republish. A viewer can only start decoding at a keyframe, so frames
+  // are discarded (asking the source for a keyframe) until one arrives after
+  // startup, awaitKeyFrame(), or onFellBehind().
+  void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
+  // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
+  void awaitKeyFrame();
+  // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe.
+  void onFellBehind(const std::function<void()> & request_key_frame);
+
 private:
   friend class GStreamerStream;
   friend class RosStream;
@@ -77,10 +119,24 @@ private:
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
+  // request_key_frame is only used by encoded pipelines.
   PipelineCallbacks makePipelineCallbacks(
-    std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
+    std::function<bool()> is_shutdown,
+    std::function<void(const std::string & reason)> on_failed,
+    std::function<void()> request_key_frame = {});
 
   void close();
+
+  // The passthrough *Locked helpers return whether to request a keyframe; callers
+  // do so after releasing mutex_ (see captureEncoded()).
+  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
+  void awaitKeyFrameLocked();
+  bool keyFrameRequestDueLocked();
+  void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
+  bool handleEncodedFeedbackLocked(std::size_t frame_bytes);
+
+  static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
   StreamSpec spec_;
@@ -94,6 +150,16 @@ private:
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<livekit::LocalVideoTrack> track_;
+
+  // Passthrough state.
+  std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
+  bool awaiting_key_frame_ = true;
+  std::size_t discarded_frame_count_ = 0U;
+  EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
+  EventThrottle fell_behind_log_throttle_{kLogThrottle};
+  EventThrottle resumed_log_throttle_{kLogThrottle};
+  EventThrottle over_budget_log_throttle_{kLogThrottle};
+  PassthroughBitrateMonitor bitrate_monitor_;
 };
 
 }  // namespace livekit_ros2_bridge::video
