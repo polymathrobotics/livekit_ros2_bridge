@@ -20,8 +20,11 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -31,6 +34,7 @@
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
 #include "video/gstreamer_stream.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/ros_stream.hpp"
 #include "video/track_publisher.hpp"
 
@@ -79,8 +83,15 @@ PipelineCallbacks makeNoOpPipelineCallbacks()
     [](const std::string &) {},
     [](const std::string &) {},
     [](const std::string &) {},
+    [](livekit::EncodedVideoSource::Frame) {},
+    []() {},
+    {},
   };
 }
+
+// A huge GOP means every keyframe after the first one was requested.
+constexpr char kOpenH264Source[] =
+  "videotestsrc is-live=true ! video/x-raw,width=64,height=48,framerate=60/1 ! openh264enc gop-size=100000";
 
 void expectStartErrorContains(
   GStreamerPipeline & pipeline, const std::string & description, bool require_appsrc, const char * fragment)
@@ -222,6 +233,53 @@ TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
   stream.start();
   stream.close();
   stream.close();
+}
+
+TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameRequests)
+{
+  constexpr std::size_t kRequestAtFrame = 10U;
+  std::mutex mutex;
+  std::condition_variable condition;
+  std::vector<livekit::EncodedVideoSource::Frame> frames;
+  GStreamerPipeline * pipeline_handle = nullptr;
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame) {
+    std::lock_guard<std::mutex> lock(mutex);
+    frames.push_back(std::move(frame));
+    // Requesting from inside the sample callback must not deadlock.
+    if (frames.size() == kRequestAtFrame) {
+      pipeline_handle->requestKeyFrame();
+    }
+    condition.notify_all();
+  };
+  GStreamerPipeline pipeline(callbacks);
+  pipeline_handle = &pipeline;
+
+  pipeline.requestKeyFrame();
+  pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
+  std::unique_lock<std::mutex> lock(mutex);
+  const bool requested_key_frame_arrived = condition.wait_for(lock, std::chrono::seconds(10), [&]() {
+    for (std::size_t index = kRequestAtFrame; index < frames.size(); ++index) {
+      if (frames[index].is_keyframe) {
+        return true;
+      }
+    }
+    return false;
+  });
+  lock.unlock();
+  pipeline.stop();
+  pipeline.requestKeyFrame();
+
+  EXPECT_TRUE(requested_key_frame_arrived);
+  ASSERT_GE(frames.size(), kRequestAtFrame);
+  EXPECT_TRUE(frames.front().is_keyframe);
+  EXPECT_EQ(frames.front().width, 64U);
+  EXPECT_EQ(frames.front().height, 48U);
+  EXPECT_FALSE(frames.front().data.empty());
+  for (std::size_t index = 1U; index < kRequestAtFrame; ++index) {
+    EXPECT_FALSE(frames[index].is_keyframe) << "frame " << index;
+    EXPECT_GT(frames[index].timestamp_us, frames[index - 1U].timestamp_us) << "frame " << index;
+  }
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(

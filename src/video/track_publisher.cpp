@@ -113,6 +113,9 @@ PipelineCallbacks TrackPublisher::makePipelineCallbacks(
     [this](const std::string & error) { onSampleUnpackFailed(error); },
     [this](const std::string & error) { onCaptureFailed(error); },
     std::move(on_failed),
+    {},
+    {},
+    {},
   };
 }
 
