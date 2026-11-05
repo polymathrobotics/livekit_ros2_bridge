@@ -22,6 +22,7 @@ namespace livekit_ros2_bridge::video
 // Reserved names used to recover bridge-owned endpoints from parsed GStreamer bins.
 inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
+inline constexpr char kBridgeVideoQueueName[] = "bridge_video_queue";
 
 inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
 {
@@ -38,6 +39,24 @@ inline std::string buildPipelineDescription(const std::string & source, const st
   description += " ! appsink name=";
   description += kBridgeAppSinkName;
   description += " sync=false drop=true max-buffers=1";
+  return description;
+}
+
+inline std::string buildPassthroughPipelineDescription(const std::string & source)
+{
+  std::string description = source;
+  // Repeat SPS/PPS on every IDR so a new viewer can start from any keyframe, and
+  // emit the Annex-B, one-picture-per-buffer form the LiveKit SDK expects.
+  description += " ! h264parse config-interval=-1";
+  description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
+  // Never drop here: losing an encoded frame corrupts the picture until the next
+  // keyframe. The queue filling up (its overrun) is the "fell behind" signal.
+  description += " ! queue name=";
+  description += kBridgeVideoQueueName;
+  description += " max-size-buffers=8 max-size-bytes=0 max-size-time=0 leaky=no";
+  description += " ! appsink name=";
+  description += kBridgeAppSinkName;
+  description += " sync=false";
   return description;
 }
 

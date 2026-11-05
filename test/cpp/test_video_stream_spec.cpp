@@ -23,6 +23,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "utils/ros_resource_name_utils.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -65,6 +66,7 @@ void expectTrackPublishOptionsEq(
   EXPECT_EQ(actual.video_codec, expected.video_codec);
   expectVideoEncodingEq(actual.video_encoding, expected.video_encoding);
   EXPECT_EQ(actual.simulcast, expected.simulcast);
+  EXPECT_EQ(actual.video_encoder, expected.video_encoder);
 }
 
 RosTopicRule makeRule(const char * id, const char * pattern, const char * transform)
@@ -275,6 +277,35 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+}
+
+TEST(PipelineDescriptionTest, RawFrameEndingIsUnchanged)
+{
+  EXPECT_EQ(
+    buildPipelineDescription("videotestsrc is-live=true", "videoflip method=horizontal-flip"),
+    "videotestsrc is-live=true ! videoflip method=horizontal-flip"
+    " ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420"
+    " ! appsink name=bridge_video_sink sync=false drop=true max-buffers=1");
+  EXPECT_EQ(
+    buildPipelineDescription("videotestsrc is-live=true", ""),
+    "videotestsrc is-live=true"
+    " ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420"
+    " ! appsink name=bridge_video_sink sync=false drop=true max-buffers=1");
+}
+
+TEST(PipelineDescriptionTest, PassthroughEndingParsesH264WithoutDroppingFrames)
+{
+  const std::string description = buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay");
+
+  EXPECT_EQ(
+    description,
+    "rtspsrc location=rtsp://camera ! rtph264depay"
+    " ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au"
+    " ! queue name=bridge_video_queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 leaky=no"
+    " ! appsink name=bridge_video_sink sync=false");
+  EXPECT_EQ(std::string{kBridgeVideoQueueName}, "bridge_video_queue");
+  EXPECT_EQ(description.find("leaky=downstream"), std::string::npos);
+  EXPECT_EQ(description.find("drop=true"), std::string::npos);
 }
 
 }  // namespace
