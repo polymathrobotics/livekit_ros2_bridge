@@ -165,6 +165,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   magic_enum::magic_enum
   rclcpp::rclcpp
   rclcpp_components::component
+  ${diagnostic_msgs_TARGETS}
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE
   livekit_ros2_bridge_parameters

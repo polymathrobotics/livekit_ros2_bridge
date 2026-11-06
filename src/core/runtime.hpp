@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -26,6 +27,8 @@
 #include "core/rpc_router.hpp"
 #include "core/runtime_config.hpp"
 #include "core/subscription_lease_manager.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
+#include "livekit/room_event_types.h"
 #include "rclcpp/clock.hpp"
 #include "rclcpp/logger.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
@@ -37,6 +40,8 @@
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
 #include "rclcpp/node_interfaces/node_waitables_interface.hpp"
+#include "rclcpp/publisher.hpp"
+#include "rclcpp/timer.hpp"
 #include "utils/callback_gate.hpp"
 
 namespace livekit_ros2_bridge
@@ -71,6 +76,8 @@ public:
 private:
   void onUserPacketReceived(const livekit::UserDataPacketEvent & event);
   void submitRosWork(std::function<void()> work);
+  void onConnectionStateChanged(livekit::ConnectionState state);
+  void publishDiagnostics();
   RoomEventCallbacks makeRoomCallbacks();
 
   rclcpp::Clock::SharedPtr clock_;
@@ -85,6 +92,9 @@ private:
   std::unique_ptr<audio::AudioOutputManager> audio_output_manager_;
   RpcRouter rpc_router_;
   ConnectionWatchdog watchdog_;
+  std::atomic<livekit::ConnectionState> connection_state_{livekit::ConnectionState::Disconnected};
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
+  rclcpp::TimerBase::SharedPtr diagnostics_timer_;
 };
 
 }  // namespace livekit_ros2_bridge

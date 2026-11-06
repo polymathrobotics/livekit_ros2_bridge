@@ -10,6 +10,7 @@
 
   <buildtool_depend>ament_cmake_auto</buildtool_depend>
 
+  <depend>diagnostic_msgs</depend>
   <depend>generate_parameter_library</depend>
   <depend>libssl-dev</depend>
   <depend>magic_enum</depend>

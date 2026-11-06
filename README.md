@@ -108,6 +108,7 @@ Supported today:
 - opt-in replay of a `transient_local` topic's last message for late-joining clients
 - feature discovery, so clients can learn which optional bridge features (audio output, other video and audio sources) are available
 - audio output playback (opt-in with `audio.out.sink`), via the fixed-name `lkros.audio.out` track
+- connection state reporting, as `connection_state_changed` log events and a `diagnostic_msgs/DiagnosticArray` on `/diagnostics`
 
 Not supported today:
 
@@ -115,7 +116,7 @@ Not supported today:
 - ROS parameter get and set
 - full audio support beyond audio output playback
 - large topic publish payloads
-- Metric reporting
+- LiveKit RTC statistics and connection quality
 
 ## License
 
