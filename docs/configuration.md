@@ -9,6 +9,7 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
 - [Reference](#reference)
   - [LiveKit auth](#livekit-auth)
   - [Watchdog](#watchdog)
+  - [Diagnostics](#diagnostics)
   - [Access rules](#access-rules)
   - [Video](#video)
     - [Defaults](#defaults)
@@ -53,6 +54,19 @@ Notes:
 
 - when the recovery timeout expires, the bridge logs the failure, shuts down, and exits non-zero
 - the default 75-second timeout keeps recovery bounded while the SDK owns reconnect
+
+### Diagnostics
+
+The bridge publishes its connection state on `/diagnostics` once per second and on every change.
+The status is named `livekit_ros2_bridge: connection` and carries a `connection_state` key.
+
+| State | Level |
+| --- | --- |
+| `Connected` | `OK` |
+| `Reconnecting` | `WARN` |
+| `Disconnected` | `ERROR` |
+
+Each change also logs a `connection_state_changed` event with the new `state`.
 
 ### Access rules
 

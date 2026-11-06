@@ -29,6 +29,7 @@
 #include "core/connection_watchdog.hpp"
 #include "core/runtime.hpp"
 #include "core/runtime_config.hpp"
+#include "diagnostic_msgs/msg/diagnostic_array.hpp"
 #include "gtest/gtest.h"
 #include "nlohmann/json.hpp"
 #include "protocol/cdr.hpp"
@@ -241,6 +242,35 @@ TEST_F(RuntimeTest, WatchdogExitsWhenInitialConnectNeverSucceeds)
     },
     ::testing::ExitedWithCode(EXIT_FAILURE),
     ".*");
+}
+
+TEST_F(RuntimeTest, PublishesConnectionStateDiagnosticsOnStateChange)
+{
+  auto harness = makeRuntimeHarness(makeStaticTokenOptions());
+  std::vector<diagnostic_msgs::msg::DiagnosticArray> received;
+  auto subscription = harness.node->create_subscription<diagnostic_msgs::msg::DiagnosticArray>(
+    "/diagnostics", 10, [&received](diagnostic_msgs::msg::DiagnosticArray::ConstSharedPtr message) {
+      received.push_back(*message);
+    });
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(harness.node);
+
+  harness.fake_room_connection->emitConnected();
+
+  ASSERT_TRUE(spinUntil(executor, [&received]() {
+    return !received.empty() && 1U == received.back().status.size() &&
+           diagnostic_msgs::msg::DiagnosticStatus::OK == received.back().status.front().level;
+  }));
+  const auto & status = received.back().status.front();
+  EXPECT_EQ("livekit_ros2_bridge: connection", status.name);
+  EXPECT_EQ("Connected", status.message);
+
+  harness.fake_room_connection->emitDisconnected();
+
+  ASSERT_TRUE(spinUntil(executor, [&received]() {
+    return diagnostic_msgs::msg::DiagnosticStatus::ERROR == received.back().status.front().level;
+  }));
+  EXPECT_EQ("Disconnected", received.back().status.front().message);
 }
 
 TEST_F(RuntimeTest, WatchdogDoesNotExitAfterInitialConnectSucceeds)

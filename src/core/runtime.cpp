@@ -15,6 +15,7 @@
 #include "core/runtime.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -22,9 +23,12 @@
 #include <vector>
 
 #include "audio/audio_output_manager.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "livekit/remote_participant.h"
 #include "livekit/room_event_types.h"
 #include "protocol/constants.hpp"
+#include "rclcpp/create_publisher.hpp"
+#include "rclcpp/create_timer.hpp"
 #include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge
@@ -32,6 +36,8 @@ namespace livekit_ros2_bridge
 
 namespace
 {
+
+constexpr auto kDiagnosticsPeriod = std::chrono::milliseconds(1000);
 
 template <typename StreamConfig>
 std::vector<std::string> otherSourceIds(const StreamConfig & config)
@@ -51,6 +57,19 @@ CapabilityFeatures makeCapabilityFeatures(const RuntimeConfig & config)
   features.audio_other_ids = otherSourceIds(config.audio_stream);
   features.video_other_ids = otherSourceIds(config.video_stream);
   return features;
+}
+
+uint8_t diagnosticLevel(livekit::ConnectionState state)
+{
+  switch (state) {
+    case livekit::ConnectionState::Connected:
+      return diagnostic_msgs::msg::DiagnosticStatus::OK;
+    case livekit::ConnectionState::Reconnecting:
+      return diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    case livekit::ConnectionState::Disconnected:
+      return diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+  }
+  return diagnostic_msgs::msg::DiagnosticStatus::STALE;
 }
 
 }  // namespace
@@ -98,6 +117,15 @@ Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnect
     LogEvent(logger_, "audio_out_enabled").info();
   }
 
+  diagnostics_publisher_ =
+    rclcpp::create_publisher<diagnostic_msgs::msg::DiagnosticArray>(interfaces, "/diagnostics", rclcpp::QoS(10));
+  diagnostics_timer_ = rclcpp::create_wall_timer(
+    kDiagnosticsPeriod,
+    [this]() { (void)callback_gate_.run([this]() { publishDiagnostics(); }); },
+    nullptr,
+    interfaces.get_node_base_interface().get(),
+    interfaces.get_node_timers_interface().get());
+
   const bool rpcs_registered = rpc_router_.registerRpcs(*room_connection_);
   if (!rpcs_registered) {
     throw std::runtime_error("Failed to register required RPC methods");
@@ -127,7 +155,7 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
 {
   RoomEventCallbacks callbacks;
   callbacks.on_state_changed = [this](livekit::ConnectionState state) {
-    (void)callback_gate_.run([this, state]() { watchdog_.onStateChanged(state); });
+    (void)callback_gate_.run([this, state]() { onConnectionStateChanged(state); });
   };
   callbacks.on_user_packet_received = [this](const livekit::UserDataPacketEvent & event) {
     (void)callback_gate_.run([this, &event]() { onUserPacketReceived(event); });
@@ -202,6 +230,35 @@ void Runtime::onUserPacketReceived(const livekit::UserDataPacketEvent & event)
     .fieldOr("topic", topic)
     .fieldOr("requester_identity", requester)
     .warnThrottle(*clock_, std::chrono::seconds(5));
+}
+
+void Runtime::onConnectionStateChanged(livekit::ConnectionState state)
+{
+  watchdog_.onStateChanged(state);
+  connection_state_ = state;
+  LogEvent(logger_, "connection_state_changed").fieldEnum("state", state).info();
+  publishDiagnostics();
+}
+
+void Runtime::publishDiagnostics()
+{
+  const auto state = connection_state_.load();
+
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.level = diagnosticLevel(state);
+  status.name = "livekit_ros2_bridge: connection";
+  status.message = std::string(magic_enum::enum_name(state));
+  status.hardware_id = "livekit";
+
+  diagnostic_msgs::msg::KeyValue connection_state;
+  connection_state.key = "connection_state";
+  connection_state.value = status.message;
+  status.values.push_back(std::move(connection_state));
+
+  diagnostic_msgs::msg::DiagnosticArray array;
+  array.header.stamp = clock_->now();
+  array.status.push_back(std::move(status));
+  diagnostics_publisher_->publish(array);
 }
 
 void Runtime::submitRosWork(std::function<void()> work)
