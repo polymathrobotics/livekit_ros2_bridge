@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "audio/stream_spec.hpp"
@@ -66,6 +67,9 @@ public:
   // is needed on rate or channel change.
   void capture(const livekit::AudioFrame & frame);
 
+  // Steady-clock time of the last frame handed to LiveKit; empty before the first frame.
+  std::optional<std::chrono::steady_clock::time_point> lastFrameTime() const;
+
 private:
   friend class GStreamerStream;
 
@@ -89,6 +93,7 @@ private:
   mutable std::mutex mutex_;
   bool closed_ = false;
   bool captured_frame_logged_ = false;
+  std::optional<std::chrono::steady_clock::time_point> last_frame_time_;
   // Backoff before the next (re)publish attempt after a LiveKit publish failure. Keeps a
   // dead room from turning a healthy pipeline into a per-frame publish storm.
   std::chrono::milliseconds publish_retry_interval_;

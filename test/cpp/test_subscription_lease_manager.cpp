@@ -52,6 +52,7 @@ using test_support::waitUntil;
 const test_support::ScopedLiveKitInit kLiveKitInit;
 constexpr auto kShortHeartbeatLeaseDuration = std::chrono::milliseconds(120);
 constexpr auto kLeaseWaitBuffer = std::chrono::milliseconds(40);
+constexpr auto kNoTrackTimeout = std::chrono::hours(1);
 
 template <typename MessageT>
 bool waitForTopic(
@@ -588,6 +589,115 @@ TEST(SubscriptionLeaseManagerTest, HeartbeatReturnsDeterministicDataTrackForNonV
     session.state->published_data_track_names,
     (std::vector<std::string>{first["delivery"]["track_name"].get<std::string>()}));
   EXPECT_TRUE(session.state->unpublished_data_track_names.empty());
+}
+
+const diagnostic_msgs::msg::DiagnosticStatus * findDiagnostic(
+  const std::vector<diagnostic_msgs::msg::DiagnosticStatus> & statuses, const std::string & name)
+{
+  for (const auto & status : statuses) {
+    if (name == status.name) {
+      return &status;
+    }
+  }
+  return nullptr;
+}
+
+TEST(SubscriptionLeaseManagerTest, TrackDiagnosticsSummaryIsPresentWithoutTracks)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_track_summary_empty_test");
+  FakeRoomConnection session;
+  auto registry = makeLeaseManager(*node, session);
+
+  const auto statuses = registry.trackDiagnostics(kNoTrackTimeout);
+
+  ASSERT_EQ(1U, statuses.size());
+  EXPECT_EQ("livekit_ros2_bridge: tracks", statuses.front().name);
+  EXPECT_EQ(diagnostic_msgs::msg::DiagnosticStatus::OK, statuses.front().level);
+  EXPECT_TRUE(statuses.front().values.empty());
+}
+
+TEST(SubscriptionLeaseManagerTest, TrackDiagnosticsOmitsDataTracks)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_track_diagnostics_test");
+  FakeRoomConnection session;
+  const std::string topic = "/battery/diagnostics";
+  auto publisher = node->create_publisher<sensor_msgs::msg::BatteryState>(topic, rclcpp::QoS(10));
+  (void)publisher;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::BatteryState>(executor, node, topic));
+
+  auto registry = makeLeaseManager(*node, session);
+  (void)sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic, 0)}));
+
+  const auto statuses = registry.trackDiagnostics(std::chrono::seconds(0));
+
+  ASSERT_EQ(1U, statuses.size());
+  EXPECT_EQ("livekit_ros2_bridge: tracks", statuses.front().name);
+  EXPECT_EQ(diagnostic_msgs::msg::DiagnosticStatus::OK, statuses.front().level);
+  EXPECT_TRUE(statuses.front().values.empty());
+}
+
+TEST(SubscriptionLeaseManagerTest, TrackDiagnosticsOmitsVideoTrackThatHasNotPublished)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_track_unpublished_test");
+  FakeRoomConnection session;
+  const std::string topic = "/camera/unpublished";
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
+  (void)publisher;
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, topic));
+
+  auto registry = makeLeaseManager(*node, session);
+  (void)sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic)}));
+
+  const auto statuses = registry.trackDiagnostics(std::chrono::seconds(0));
+
+  ASSERT_EQ(1U, statuses.size());
+  EXPECT_EQ("livekit_ros2_bridge: tracks", statuses.front().name);
+  EXPECT_EQ(diagnostic_msgs::msg::DiagnosticStatus::OK, statuses.front().level);
+}
+
+TEST(SubscriptionLeaseManagerTest, TrackDiagnosticsReportsFrozenVideoTrack)
+{
+  ScopedRclcppInit init;
+  auto node = std::make_shared<rclcpp::Node>("subscription_registry_track_frozen_test");
+  FakeRoomConnection session;
+  const std::string topic = "/camera/frozen";
+  auto publisher = node->create_publisher<sensor_msgs::msg::Image>(topic, rclcpp::QoS(10));
+
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  ASSERT_TRUE(waitForTopic<sensor_msgs::msg::Image>(executor, node, topic));
+
+  auto registry = makeLeaseManager(*node, session);
+  (void)sendHeartbeatAndExtractStatus(registry, *session.state, "alice", makeHeartbeat({makeTopicDemand(topic)}));
+
+  const std::string track_name = "livekit_ros2_bridge: track " + topic;
+  ASSERT_TRUE(spinUntil(executor, [&]() {
+    publisher->publish(makeRgbImage());
+    const auto statuses = registry.trackDiagnostics(kNoTrackTimeout);
+    const auto * track = findDiagnostic(statuses, track_name);
+    return nullptr != track && "Publishing" == track->message;
+  }));
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  const auto statuses = registry.trackDiagnostics(std::chrono::milliseconds(1));
+  const auto * track = findDiagnostic(statuses, track_name);
+  ASSERT_NE(nullptr, track);
+  EXPECT_EQ("Frozen", track->message);
+  EXPECT_EQ(diagnostic_msgs::msg::DiagnosticStatus::WARN, track->level);
+  const auto * summary = findDiagnostic(statuses, "livekit_ros2_bridge: tracks");
+  ASSERT_NE(nullptr, summary);
+  ASSERT_EQ(1U, summary->values.size());
+  EXPECT_EQ("Track frozen", summary->values.front().key);
+  EXPECT_EQ(topic, summary->values.front().value);
 }
 
 TEST(SubscriptionLeaseManagerTest, PushesRawCdrFramesForDataSubscriptions)

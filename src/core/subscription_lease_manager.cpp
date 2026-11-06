@@ -22,6 +22,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -589,6 +590,73 @@ void SubscriptionLeaseManager::pruneExpiredLeases()
   const auto now = Clock::now();
   pruneSessionLeases(now);
   pruneLeases(now);
+}
+
+std::vector<diagnostic_msgs::msg::DiagnosticStatus> SubscriptionLeaseManager::trackDiagnostics(
+  Clock::duration frozen_timeout) const
+{
+  using diagnostic_msgs::msg::DiagnosticStatus;
+  using diagnostic_msgs::msg::KeyValue;
+
+  const auto now = Clock::now();
+  std::vector<DiagnosticStatus> statuses;
+  statuses.reserve(subscriptions_.size() + 1);
+
+  DiagnosticStatus summary;
+  summary.level = DiagnosticStatus::OK;
+  summary.name = "livekit_ros2_bridge: tracks";
+  summary.hardware_id = "livekit";
+  size_t frozen_count = 0;
+
+  for (const auto & entry : subscriptions_) {
+    const auto & subscription = entry.second;
+    // Data tracks have no frame cadence, and a track that has not captured a frame has not started publishing.
+    const auto last_frame_time = std::visit(
+      [](const auto & publisher) -> std::optional<Clock::time_point> {
+        if constexpr (std::is_same_v<std::decay_t<decltype(*publisher)>, DataTrackPublisher>) {
+          return std::nullopt;
+        } else {
+          return publisher->lastFrameTime();
+        }
+      },
+      subscription.runtime);
+    if (!last_frame_time.has_value()) {
+      continue;
+    }
+
+    const bool frozen = frozen_timeout < now - *last_frame_time;
+
+    DiagnosticStatus status;
+    status.name = "livekit_ros2_bridge: track " + subscription.name;
+    status.hardware_id = "livekit";
+    status.level = frozen ? DiagnosticStatus::WARN : DiagnosticStatus::OK;
+    status.message = frozen ? "Frozen" : "Publishing";
+
+    KeyValue kind;
+    kind.key = "kind";
+    kind.value = std::string(magic_enum::enum_name(subscription.kind));
+    status.values.push_back(std::move(kind));
+
+    KeyValue delivery;
+    delivery.key = "delivery";
+    delivery.value = std::string(magic_enum::enum_name(this->status(subscription).delivery));
+    status.values.push_back(std::move(delivery));
+
+    summary.level = std::max(summary.level, status.level);
+    if (frozen) {
+      ++frozen_count;
+      KeyValue frozen_entry;
+      frozen_entry.key = "Track frozen";
+      frozen_entry.value = subscription.name;
+      summary.values.push_back(std::move(frozen_entry));
+    }
+
+    statuses.push_back(std::move(status));
+  }
+
+  summary.message = std::to_string(statuses.size()) + " publishing, " + std::to_string(frozen_count) + " frozen";
+  statuses.push_back(std::move(summary));
+  return statuses;
 }
 
 SubscriptionStatus SubscriptionLeaseManager::status(const Subscription & subscription) const

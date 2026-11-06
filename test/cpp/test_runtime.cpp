@@ -116,6 +116,16 @@ rclcpp::NodeOptions makeStaticTokenOptions()
   return options;
 }
 
+std::string diagnosticValue(const diagnostic_msgs::msg::DiagnosticStatus & status, const std::string & key)
+{
+  for (const auto & key_value : status.values) {
+    if (key == key_value.key) {
+      return key_value.value;
+    }
+  }
+  return "";
+}
+
 template <typename MessageT>
 std::vector<std::uint8_t> serializeMessage(const MessageT & message)
 {
@@ -258,19 +268,29 @@ TEST_F(RuntimeTest, PublishesConnectionStateDiagnosticsOnStateChange)
   harness.fake_room_connection->emitConnected();
 
   ASSERT_TRUE(spinUntil(executor, [&received]() {
-    return !received.empty() && 1U == received.back().status.size() &&
+    return !received.empty() && !received.back().status.empty() &&
            diagnostic_msgs::msg::DiagnosticStatus::OK == received.back().status.front().level;
   }));
   const auto & status = received.back().status.front();
   EXPECT_EQ("livekit_ros2_bridge: connection", status.name);
   EXPECT_EQ("Connected", status.message);
+  EXPECT_EQ("", diagnosticValue(status, "disconnect_reason"));
 
-  harness.fake_room_connection->emitDisconnected();
+  harness.fake_room_connection->emitDisconnected(livekit::DisconnectReason::ClientInitiated);
 
   ASSERT_TRUE(spinUntil(executor, [&received]() {
     return diagnostic_msgs::msg::DiagnosticStatus::ERROR == received.back().status.front().level;
   }));
-  EXPECT_EQ("Disconnected", received.back().status.front().message);
+  const auto & disconnected = received.back().status.front();
+  EXPECT_EQ("Disconnected", disconnected.message);
+  EXPECT_EQ("ClientInitiated", diagnosticValue(disconnected, "disconnect_reason"));
+
+  harness.fake_room_connection->emitConnected();
+
+  ASSERT_TRUE(spinUntil(executor, [&received]() {
+    return diagnostic_msgs::msg::DiagnosticStatus::OK == received.back().status.front().level;
+  }));
+  EXPECT_EQ("", diagnosticValue(received.back().status.front(), "disconnect_reason"));
 }
 
 TEST_F(RuntimeTest, WatchdogDoesNotExitAfterInitialConnectSucceeds)

@@ -38,6 +38,11 @@ struct RuntimeConfig
     std::chrono::milliseconds recovery_timeout{std::chrono::seconds(75)};
   };
 
+  struct TrackHealth
+  {
+    std::chrono::milliseconds frozen_timeout{std::chrono::seconds(5)};
+  };
+
   // Audio output. The sink fragment is a free-form GStreamer fragment;
   // empty means the feature does not exist on this deployment (no playback
   // pipeline, no track subscription, and no capability advertisement).
@@ -48,6 +53,7 @@ struct RuntimeConfig
 
   LiveKitConfig livekit;
   Watchdog watchdog;
+  TrackHealth track_health;
   AccessPolicy access_policy;
   SubscriptionQosConfig subscription_qos;
   video::StreamConfig video_stream;

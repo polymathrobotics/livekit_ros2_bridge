@@ -1058,6 +1058,10 @@ private:
   void onDisconnected(livekit::Room & room, const livekit::DisconnectedEvent & event) override
   {
     LogEvent(kLogger, "room_disconnected").fieldEnum("disconnect_reason", event.reason).warn();
+    const auto callback = currentCallback(room, &RoomEventCallbacks::on_disconnected, false);
+    if (callback) {
+      callback(event.reason);
+    }
     updateSdkState(room, livekit::ConnectionState::Disconnected);
   }
 

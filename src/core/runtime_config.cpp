@@ -137,6 +137,8 @@ RuntimeConfig loadRuntimeConfig(const rclcpp::node_interfaces::NodeParametersInt
     config.watchdog.enabled = params.health.watchdog.enabled;
     config.watchdog.recovery_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::duration<double>(params.health.watchdog.recovery_timeout_seconds));
+    config.track_health.frozen_timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::duration<double>(params.health.tracks.frozen_timeout_seconds));
 
     stage = "access_policy";
     config.access_policy = AccessPolicy(AccessPolicyConfig{

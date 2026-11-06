@@ -17,6 +17,8 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/connection_watchdog.hpp"
@@ -77,6 +79,8 @@ private:
   void onUserPacketReceived(const livekit::UserDataPacketEvent & event);
   void submitRosWork(std::function<void()> work);
   void onConnectionStateChanged(livekit::ConnectionState state);
+  void onDisconnected(livekit::DisconnectReason reason);
+  // Runs on the ROS executor.
   void publishDiagnostics();
   RoomEventCallbacks makeRoomCallbacks();
 
@@ -93,6 +97,8 @@ private:
   RpcRouter rpc_router_;
   ConnectionWatchdog watchdog_;
   std::atomic<livekit::ConnectionState> connection_state_{livekit::ConnectionState::Disconnected};
+  std::mutex disconnect_reason_mutex_;
+  std::optional<livekit::DisconnectReason> disconnect_reason_;
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_publisher_;
   rclcpp::TimerBase::SharedPtr diagnostics_timer_;
 };

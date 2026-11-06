@@ -28,6 +28,7 @@
 
 #include "audio/stream_spec.hpp"
 #include "core/access_policy.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "protocol/echo_once.hpp"
 #include "protocol/subscriptions.hpp"
 #include "rclcpp/clock.hpp"
@@ -88,6 +89,13 @@ public:
   void handleHeartbeatPayload(const std::string & requester_identity, const std::vector<std::uint8_t> & payload);
   void pruneExpiredLeases();
   void shutdown();
+
+  // One status per video or audio track that has captured a frame, then a "livekit_ros2_bridge: tracks"
+  // summary that is always present. A track is OK until it captures no frame for frozen_timeout, then
+  // WARN. The summary takes the worst track level and has one "Track frozen" entry per frozen track,
+  // valued with the subscription name.
+  // Must run on the ROS executor: it reads the shared subscription map.
+  std::vector<diagnostic_msgs::msg::DiagnosticStatus> trackDiagnostics(Clock::duration frozen_timeout) const;
 
   // Answers a client's "request a topic's last message" by dispatching the cached last
   // message to that one requester via a targeted byte stream. Returns Sent when a cached value

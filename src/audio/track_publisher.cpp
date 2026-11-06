@@ -88,6 +88,12 @@ PipelineCallbacks TrackPublisher::makePipelineCallbacks(
   };
 }
 
+std::optional<std::chrono::steady_clock::time_point> TrackPublisher::lastFrameTime() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return last_frame_time_;
+}
+
 void TrackPublisher::capture(const livekit::AudioFrame & frame)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -135,6 +141,7 @@ void TrackPublisher::capture(const livekit::AudioFrame & frame)
     logTransientFailure("audio_stream_capture_failed_drop", exc.what());
     return;
   }
+  last_frame_time_ = std::chrono::steady_clock::now();
 
   if (!captured_frame_logged_) {
     LogEvent(kLogger, "audio_stream_frame_captured")

@@ -116,6 +116,12 @@ PipelineCallbacks TrackPublisher::makePipelineCallbacks(
   };
 }
 
+std::optional<std::chrono::steady_clock::time_point> TrackPublisher::lastFrameTime() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return last_frame_time_;
+}
+
 void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -149,6 +155,7 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
   }
 
   source_->captureFrame(frame, captureOptions(timestamp_us));
+  last_frame_time_ = std::chrono::steady_clock::now();
   if (!captured_frame_logged_) {
     LogEvent(kLogger, "video_stream_frame_captured")
       .fieldOr("stream_key", spec_.stream_key)

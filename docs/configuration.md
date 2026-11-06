@@ -66,6 +66,19 @@ The status is named `livekit_ros2_bridge: connection` and carries a `connection_
 | `Reconnecting` | `WARN` |
 | `Disconnected` | `ERROR` |
 
+While the bridge is not connected after a disconnect, the status also carries `disconnect_reason`, the SDK's reason for it; the key is absent once the bridge is connected again.
+
+| Parameter | Default | Allowed values | Notes |
+| --- | --- | --- | --- |
+| `health.tracks.frozen_timeout_seconds` | `5.0` | double `> 0.0` | A published video or audio track that captures no frame for this long is `Frozen` |
+
+Each video or audio track that has captured a frame also gets a `livekit_ros2_bridge: track <name>` status with `kind` and `delivery` values.
+It is `OK` and `Publishing` until the track captures no frame for the frozen timeout, then `WARN` and `Frozen`.
+Data tracks and tracks that have not yet captured a frame have no status.
+
+A `livekit_ros2_bridge: tracks` summary is published every cycle, even with no tracks.
+Its level is the worst track level, and it has one `Track frozen` entry per frozen track, valued with the subscription name.
+
 Each change also logs a `connection_state_changed` event with the new `state`.
 
 ### Access rules

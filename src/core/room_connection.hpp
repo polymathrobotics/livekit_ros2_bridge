@@ -53,6 +53,9 @@ struct RoomEventCallbacks
   // registered); each change is reported once, in order.
   std::function<void(livekit::ConnectionState)> on_state_changed;
 
+  // Reason for an SDK disconnect. Fires before on_state_changed reports Disconnected.
+  std::function<void(livekit::DisconnectReason)> on_disconnected;
+
   // Fires inside the SDK's Connected/Reconnected event, before any later remote-track event, so a
   // handler can catch up from remoteTrackSnapshot(). May fire before the bridge reports Connected.
   std::function<void()> on_remote_tracks_ready;

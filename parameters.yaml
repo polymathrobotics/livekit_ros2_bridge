@@ -32,6 +32,14 @@ livekit_ros2_bridge:
         validation:
           gt_eq<>: [0.0]
 
+    tracks:
+      frozen_timeout_seconds:
+        type: double
+        default_value: 5.0
+        description: A published video or audio track that captures no frame for this long is reported as frozen.
+        validation:
+          gt<>: [0.0]
+
   access:
     rules:
       publish:

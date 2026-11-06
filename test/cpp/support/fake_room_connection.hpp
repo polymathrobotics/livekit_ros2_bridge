@@ -526,8 +526,18 @@ public:
     emitConnectionState(livekit::ConnectionState::Connected);
   }
 
-  void emitDisconnected() const
+  void emitDisconnected(livekit::DisconnectReason reason = livekit::DisconnectReason::Unknown) const
   {
+    std::function<void(livekit::DisconnectReason)> callback;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (livekit::ConnectionState::Disconnected != state->connection_state) {
+        callback = state->callbacks.on_disconnected;
+      }
+    }
+    if (callback) {
+      callback(reason);
+    }
     emitConnectionState(livekit::ConnectionState::Disconnected);
   }
 

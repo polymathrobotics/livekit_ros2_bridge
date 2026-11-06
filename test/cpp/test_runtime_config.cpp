@@ -185,6 +185,20 @@ TEST_F(RuntimeConfigTest, DefaultVideoConfigAddsBuiltInCatchAllRosRule)
   expectPublishOptionsEq(rule.publish_options, config.video_stream.default_publish_options);
 }
 
+TEST_F(RuntimeConfigTest, TrackHealthDefaultsAndOverridesLoadFromParameters)
+{
+  const RuntimeConfig default_config =
+    loadRuntimeConfigForNode("startup_config_track_health_defaults", makeStaticTokenOptions());
+  EXPECT_EQ(default_config.track_health.frozen_timeout, std::chrono::seconds(5));
+
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("health.tracks.frozen_timeout_seconds", 2.5);
+
+  const RuntimeConfig overridden_config = loadRuntimeConfigForNode("startup_config_track_health_overrides", options);
+
+  EXPECT_EQ(overridden_config.track_health.frozen_timeout, std::chrono::milliseconds(2500));
+}
+
 TEST_F(RuntimeConfigTest, WatchdogDefaultsAndOverridesLoadFromParameters)
 {
   const RuntimeConfig default_config =

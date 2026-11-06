@@ -14,10 +14,12 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/room_connection.hpp"
@@ -67,6 +69,9 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
+  // Steady-clock time of the last frame handed to LiveKit; empty before the first frame.
+  std::optional<std::chrono::steady_clock::time_point> lastFrameTime() const;
+
 private:
   friend class GStreamerStream;
   friend class RosStream;
@@ -86,10 +91,11 @@ private:
   StreamSpec spec_;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   bool closed_ = false;
   bool published_once_ = false;
   bool captured_frame_logged_ = false;
+  std::optional<std::chrono::steady_clock::time_point> last_frame_time_;
   std::shared_ptr<RosStream> ros_stream_;
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> source_;

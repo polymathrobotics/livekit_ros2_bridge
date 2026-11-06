@@ -72,6 +72,14 @@ uint8_t diagnosticLevel(livekit::ConnectionState state)
   return diagnostic_msgs::msg::DiagnosticStatus::STALE;
 }
 
+diagnostic_msgs::msg::KeyValue makeKeyValue(std::string key, std::string value)
+{
+  diagnostic_msgs::msg::KeyValue key_value;
+  key_value.key = std::move(key);
+  key_value.value = std::move(value);
+  return key_value;
+}
+
 }  // namespace
 
 Runtime::Runtime(Runtime::NodeInterfaces interfaces, std::unique_ptr<RoomConnection> connection, RuntimeConfig config)
@@ -157,6 +165,9 @@ RoomEventCallbacks Runtime::makeRoomCallbacks()
   callbacks.on_state_changed = [this](livekit::ConnectionState state) {
     (void)callback_gate_.run([this, state]() { onConnectionStateChanged(state); });
   };
+  callbacks.on_disconnected = [this](livekit::DisconnectReason reason) {
+    (void)callback_gate_.run([this, reason]() { onDisconnected(reason); });
+  };
   callbacks.on_user_packet_received = [this](const livekit::UserDataPacketEvent & event) {
     (void)callback_gate_.run([this, &event]() { onUserPacketReceived(event); });
   };
@@ -235,9 +246,19 @@ void Runtime::onUserPacketReceived(const livekit::UserDataPacketEvent & event)
 void Runtime::onConnectionStateChanged(livekit::ConnectionState state)
 {
   watchdog_.onStateChanged(state);
+  if (livekit::ConnectionState::Connected == state) {
+    const std::lock_guard<std::mutex> lock(disconnect_reason_mutex_);
+    disconnect_reason_.reset();
+  }
   connection_state_ = state;
   LogEvent(logger_, "connection_state_changed").fieldEnum("state", state).info();
-  publishDiagnostics();
+  submitRosWork([this]() { publishDiagnostics(); });
+}
+
+void Runtime::onDisconnected(livekit::DisconnectReason reason)
+{
+  const std::lock_guard<std::mutex> lock(disconnect_reason_mutex_);
+  disconnect_reason_ = reason;
 }
 
 void Runtime::publishDiagnostics()
@@ -250,14 +271,22 @@ void Runtime::publishDiagnostics()
   status.message = std::string(magic_enum::enum_name(state));
   status.hardware_id = "livekit";
 
-  diagnostic_msgs::msg::KeyValue connection_state;
-  connection_state.key = "connection_state";
-  connection_state.value = status.message;
-  status.values.push_back(std::move(connection_state));
+  status.values.push_back(makeKeyValue("connection_state", status.message));
+
+  {
+    const std::lock_guard<std::mutex> lock(disconnect_reason_mutex_);
+    if (disconnect_reason_.has_value()) {
+      status.values.push_back(
+        makeKeyValue("disconnect_reason", std::string(magic_enum::enum_name(*disconnect_reason_))));
+    }
+  }
 
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = clock_->now();
   array.status.push_back(std::move(status));
+  for (auto & track_status : subscription_lease_manager_.trackDiagnostics(config_.track_health.frozen_timeout)) {
+    array.status.push_back(std::move(track_status));
+  }
   diagnostics_publisher_->publish(array);
 }
 
