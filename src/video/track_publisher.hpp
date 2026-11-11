@@ -104,7 +104,8 @@ public:
   // don't republish. A viewer can only start decoding at a keyframe, so frames
   // are discarded (asking the source for a keyframe) until one arrives after
   // startup, awaitKeyFrame(), onFellBehind(), or a failed publish or send. Those
-  // failures are logged, not thrown, so the pipeline keeps running.
+  // failures are logged, not thrown, so the pipeline keeps running. A failed
+  // publish is retried at the first keyframe after kPublishRetryInterval.
   void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
@@ -146,10 +147,12 @@ private:
   void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
+  bool publishBackoffActiveLocked() const;
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
   bool handleEncodedFeedbackLocked(std::size_t frame_bytes, bool sent_key_frame);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+  static constexpr auto kPublishRetryInterval = std::chrono::seconds(1);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
@@ -171,11 +174,16 @@ private:
   // odd while the first keyframe publishes; read by onFellBehind() without mutex_.
   std::atomic<std::uint64_t> encoded_publish_sequence_{0U};
   bool awaiting_key_frame_ = true;
+  // Set by a failed publish; keyframes before it are discarded so an unreachable
+  // server doesn't get a publish attempt at every keyframe.
+  std::chrono::steady_clock::time_point next_publish_attempt_{};
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
   // LiveKit asked for a keyframe that the throttle has not let through yet.
   bool key_frame_request_pending_ = false;
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
+  // A publish or send can fail at every keyframe.
+  EventThrottle capture_failed_log_throttle_{kLogThrottle};
   // The queue overruns on every frame while it stays full.
   EventThrottle fell_behind_failed_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};

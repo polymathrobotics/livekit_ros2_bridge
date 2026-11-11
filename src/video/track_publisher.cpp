@@ -251,7 +251,8 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return false;
   }
 
-  if (awaiting_key_frame_ && !frame.is_keyframe) {
+  // Keyframes are discarded too until a failed publish may be retried.
+  if (awaiting_key_frame_ && (!frame.is_keyframe || publishBackoffActiveLocked())) {
     ++discarded_frame_count_;
     logWaitingForFirstKeyFrameLocked();
     return keyFrameRequestDueLocked();
@@ -262,8 +263,19 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   try {
     sendEncodedFrameLocked(frame);
   } catch (const std::exception & exc) {
-    awaitKeyFrameLocked();
-    logCaptureFailedLocked(exc.what());
+    if (encoded_source_ == nullptr) {
+      next_publish_attempt_ = std::chrono::steady_clock::now() + kPublishRetryInterval;
+    }
+    // Unlike awaitKeyFrameLocked(), keep the keyframe request throttle running: a
+    // send can fail after every keyframe, and a reset would ask for one every other frame.
+    awaiting_key_frame_ = true;
+    if (const std::size_t pending = capture_failed_log_throttle_.record(); pending > 0U) {
+      LogEvent(kLogger, "video_stream_capture_failed")
+        .fieldOr("stream_key", spec_.stream_key)
+        .fieldOr("error", exc.what())
+        .field("count", pending)
+        .warn();
+    }
     return false;
   }
 
@@ -379,7 +391,16 @@ void TrackPublisher::awaitKeyFrameLocked()
 
 bool TrackPublisher::keyFrameRequestDueLocked()
 {
+  // The keyframe would only be discarded.
+  if (publishBackoffActiveLocked()) {
+    return false;
+  }
   return key_frame_request_throttle_.record() > 0U;
+}
+
+bool TrackPublisher::publishBackoffActiveLocked() const
+{
+  return encoded_source_ == nullptr && std::chrono::steady_clock::now() < next_publish_attempt_;
 }
 
 void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height)
