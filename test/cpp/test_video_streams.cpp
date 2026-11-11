@@ -18,6 +18,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <future>
 #include <initializer_list>
 #include <memory>
@@ -346,6 +347,67 @@ TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
   stream.start();
   stream.close();
   stream.close();
+}
+
+// Owned by the worker in finishesWithin() so a deadlocked worker keeps it alive.
+struct StreamUnderTest
+{
+  explicit StreamUnderTest(const StreamSpec & spec)
+  : publisher(connection, spec)
+  , stream(spec, publisher)
+  {}
+
+  FakeRoomConnection connection;
+  TrackPublisher publisher;
+  GStreamerStream stream;
+};
+
+// Runs body on a detached thread. On a timeout the thread is leaked with what it
+// captured, so a deadlock fails the test instead of hanging the suite.
+bool finishesWithin(std::chrono::seconds timeout, std::function<void()> body)
+{
+  auto finished = std::make_shared<std::promise<void>>();
+  std::future<void> finished_future = finished->get_future();
+  std::thread([body = std::move(body), finished]() mutable {
+    body();
+    // Release the captures first so the caller holds the last reference.
+    body = nullptr;
+    finished->set_value();
+  }).detach();
+  return finished_future.wait_for(timeout) == std::future_status::ready;
+}
+
+// A source that fails while the state change runs (missing file) is delivered
+// through the sync bus handler on the calling thread. The failure path must not
+// take the stream mutex_: start() has to return or throw promptly, and close()
+// has to complete afterwards.
+void expectStartWithUnavailableSourceDoesNotWedge(const StreamSpec & spec)
+{
+  auto under_test = std::make_shared<StreamUnderTest>(spec);
+  const auto start_stream = [under_test]() {
+    try {
+      under_test->stream.start();
+    } catch (const std::exception &) {
+    }
+  };
+  const auto close_stream = [under_test]() { under_test->stream.close(); };
+
+  EXPECT_TRUE(finishesWithin(std::chrono::seconds(10), start_stream)) << "start() did not finish";
+  EXPECT_TRUE(finishesWithin(std::chrono::seconds(10), close_stream)) << "close() did not finish";
+}
+
+TEST_F(StreamTest, StartWithUnavailableSourceDoesNotWedge)
+{
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.raw", ""};
+
+  expectStartWithUnavailableSourceDoesNotWedge(spec);
+}
+
+TEST_F(StreamTest, PassthroughStartWithUnavailableSourceDoesNotWedge)
+{
+  expectStartWithUnavailableSourceDoesNotWedge(
+    makePassthroughSpec("filesrc location=/nonexistent/lkros_missing_source.h264"));
 }
 
 TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameRequests)
