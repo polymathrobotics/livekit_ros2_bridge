@@ -76,8 +76,11 @@ public:
   void start(const std::string & description, bool require_appsrc, PipelineOutput output = PipelineOutput::RawI420);
   void stop();
 
-  // Asks the source for a keyframe with an upstream force-key-unit event. Safe on
-  // any thread, including inside pipeline callbacks; a no-op without an active pipeline.
+  // Asks the source for a keyframe with an upstream force-key-unit event; a no-op
+  // without an active pipeline. The event travels synchronously through the
+  // source's elements on the calling thread. Stock elements don't take their
+  // stream lock for it, so pipeline callbacks may call this; a source element
+  // that does could block the caller.
   void requestKeyFrame();
 
 private:
@@ -86,7 +89,8 @@ private:
   void resumeCallbacks();
   void stopCallbacksAndWait();
 
-  PipelineCallbacks callbacks() const;
+  // Borrowed: callbacks_ lives as long as this pipeline.
+  const PipelineCallbacks & callbacks() const;
 
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);

@@ -483,6 +483,53 @@ TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameReq
   }
 }
 
+TEST_F(StreamTest, PassthroughPipelineReportsFellBehindCallbackFailure)
+{
+  std::promise<std::string> capture_failed_promise;
+  std::shared_future<std::string> capture_failed_future = capture_failed_promise.get_future().share();
+  std::atomic<bool> capture_failed{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  // Holding the sample thread fills the bridge queue until it overruns.
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+    (void)capture_failed_future.wait_for(std::chrono::seconds(10));
+  };
+  callbacks.on_fell_behind = []() { throw std::runtime_error("simulated fell behind failure"); };
+  callbacks.on_capture_failed = [&](const std::string & error) {
+    if (!capture_failed.exchange(true)) {
+      capture_failed_promise.set_value(error);
+    }
+  };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
+  const bool reported = capture_failed_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  pipeline.stop();
+
+  ASSERT_TRUE(reported);
+  EXPECT_EQ(capture_failed_future.get(), "simulated fell behind failure");
+}
+
+TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)
+{
+  std::atomic<bool> frame_held{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  // At 60 fps the bridge queue (8 buffers) overruns well within this hold.
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+    if (!frame_held.exchange(true)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+  };
+  callbacks.on_fell_behind = {};
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
+  const bool held = waitUntil([&]() { return frame_held.load(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  pipeline.stop();
+
+  EXPECT_TRUE(held);
+}
+
 TEST_F(StreamTest, PassthroughStreamPublishesEncodedSource)
 {
   StreamSpec spec = makePassthroughSpec(kOpenH264Source);
@@ -505,6 +552,7 @@ TEST_F(StreamTest, PassthroughStreamPublishesEncodedSource)
 TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
 {
   ScopedLogCapture logs;
+  constexpr char kHint[] = "hint=\"the source may not be H.264; passthrough supports H.264 only\"";
   // A static vp8enc ! h264parse link already fails to parse (and config validation
   // rejects it); the demuxer's dynamic pad fails at runtime like an RTSP camera would.
   StreamSpec spec =
@@ -514,9 +562,8 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
   GStreamerStream stream(spec, publisher);
 
   stream.start();
-  const bool hint_logged = waitUntil([&]() {
-    return !logs.findLine({"video_stream_pipeline_recovery_scheduled", "passthrough supports H.264 only"}).empty();
-  });
+  const bool hint_logged =
+    waitUntil([&]() { return !logs.findLine({"video_stream_pipeline_recovery_scheduled", kHint}).empty(); });
   stream.close();
 
   ASSERT_TRUE(hint_logged);

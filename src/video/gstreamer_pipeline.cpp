@@ -186,7 +186,6 @@ bool isCapsMismatch(GstMessage * message, const GError * error)
 {
   if (
     error != nullptr && (g_error_matches(error, GST_CORE_ERROR, GST_CORE_ERROR_NEGOTIATION) ||
-                         g_error_matches(error, GST_STREAM_ERROR, GST_STREAM_ERROR_FORMAT) ||
                          g_error_matches(error, GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE)))
   {
     return true;
@@ -226,10 +225,15 @@ std::string findUnlinkedSourceCaps(GstBin * bin)
           if (caps_text == nullptr) {
             return TRUE;
           }
-          auto & found_caps = *static_cast<std::string *>(pad_user_data);
-          found_caps += found_caps.empty() ? "" : "; ";
-          found_caps += caps_text.get();
-          return TRUE;
+          // Exceptions must not cross GStreamer's C frames; keep what was found.
+          try {
+            auto & found_caps = *static_cast<std::string *>(pad_user_data);
+            found_caps += found_caps.empty() ? "" : "; ";
+            found_caps += caps_text.get();
+            return TRUE;
+          } catch (const std::exception &) {
+            return FALSE;
+          }
         },
         user_data);
     },
@@ -260,10 +264,11 @@ GstAppSrc * GStreamerPipeline::appsrc() const noexcept
   return appsrc_.get();
 }
 
-PipelineCallbacks GStreamerPipeline::callbacks() const
+const PipelineCallbacks & GStreamerPipeline::callbacks() const
 {
+  static const PipelineCallbacks kNoCallbacks;
   const auto * callbacks = callbacks_ptr_.load(std::memory_order_acquire);
-  return callbacks == nullptr ? PipelineCallbacks{} : *callbacks;
+  return callbacks == nullptr ? kNoCallbacks : *callbacks;
 }
 
 // GStreamer may enter raw C callbacks from streaming/bus threads while stop()
@@ -338,24 +343,33 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
 
   // Encoded frames can't be dropped, so the bridge queue blocks when full; its
   // overrun is the signal that the consumer fell behind.
-  gulong overrun_handler = 0U;
+  GstElementPtr queue;
   if (output == PipelineOutput::EncodedH264) {
-    GstElementPtr queue(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeVideoQueueName));
+    queue = GstElementPtr(gst_bin_get_by_name(GST_BIN(pipeline.get()), kBridgeVideoQueueName));
     if (queue == nullptr) {
       throw std::runtime_error("Video pipeline did not create the expected queue.");
     }
-    overrun_handler = g_signal_connect(
-      queue.get(),
-      "overrun",
-      G_CALLBACK(
-        +[](GstElement *, gpointer user_data) { static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun(); }),
-      this);
-    if (overrun_handler == 0U) {
+    if (g_signal_lookup("overrun", G_OBJECT_TYPE(queue.get())) == 0U) {
       throw std::runtime_error(std::string("Video pipeline named ") + kBridgeVideoQueueName + " must be a queue.");
     }
   }
 
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
+  // Set these before installing the callbacks below, which read them.
+  pipeline_ = std::move(pipeline);
+  appsrc_ = std::move(appsrc);
+  output_ = output;
+  key_frame_pad_.store(gst_element_get_static_pad(GST_ELEMENT(appsink.get()), "sink"), std::memory_order_release);
+
+  if (queue != nullptr) {
+    overrun_handler_ = g_signal_connect(
+      queue.get(),
+      "overrun",
+      G_CALLBACK(
+        +[](GstElement *, gpointer user_data) { static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun(); }),
+      this);
+  }
+
   // stop() clears raw this callbacks before releasing the bin.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
@@ -363,7 +377,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   };
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
-  GstBusPtr bus(gst_element_get_bus(pipeline.get()));
+  GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
   gst_bus_set_sync_handler(
     bus.get(),
     [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
@@ -372,12 +386,6 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
     },
     this,
     nullptr);
-
-  pipeline_ = std::move(pipeline);
-  appsrc_ = std::move(appsrc);
-  output_ = output;
-  overrun_handler_ = overrun_handler;
-  key_frame_pad_.store(gst_element_get_static_pad(GST_ELEMENT(appsink.get()), "sink"), std::memory_order_release);
 
   const GstStateChangeReturn result = gst_element_set_state(pipeline_.get(), GST_STATE_PLAYING);
   if (result == GST_STATE_CHANGE_FAILURE) {
@@ -443,7 +451,7 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     return GST_FLOW_FLUSHING;
   }
   const ScopeExit callback_exit([this]() { endCallback(); });
-  const auto callbacks = this->callbacks();
+  const auto & callbacks = this->callbacks();
   GstSamplePtr sample(gst_app_sink_pull_sample(sink));
   if (sample == nullptr) {
     return GST_FLOW_EOS;
@@ -485,8 +493,16 @@ void GStreamerPipeline::onQueueOverrun()
     return;
   }
   const ScopeExit callback_exit([this]() { endCallback(); });
-  const auto callbacks = this->callbacks();
-  callbacks.on_fell_behind();
+  const auto & callbacks = this->callbacks();
+  if (!callbacks.on_fell_behind) {
+    return;
+  }
+
+  try {
+    callbacks.on_fell_behind();
+  } catch (const std::exception & exc) {
+    callbacks.on_capture_failed(exc.what());
+  }
 }
 
 void GStreamerPipeline::onBusMessage(GstMessage * message)
@@ -495,7 +511,7 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
     return;
   }
   const ScopeExit callback_exit([this]() { endCallback(); });
-  const auto callbacks = this->callbacks();
+  const auto & callbacks = this->callbacks();
   const GstMessageType type = GST_MESSAGE_TYPE(message);
   if (type == GST_MESSAGE_EOS) {
     callbacks.on_failed("eos");

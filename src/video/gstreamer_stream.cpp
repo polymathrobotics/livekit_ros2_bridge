@@ -109,7 +109,7 @@ void GStreamerStream::onPipelineFailure(
   LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
   event.field("stream_key", spec_.stream_key).field("reason", reason).field("restart_delay_ms", kRestartDelay.count());
   if (caps_mismatch) {
-    event.fieldQuoted("hint", "passthrough supports H.264 only");
+    event.fieldQuoted("hint", "the source may not be H.264; passthrough supports H.264 only");
   }
   if (!offered_caps.empty()) {
     event.fieldQuoted("offered_caps", offered_caps);
