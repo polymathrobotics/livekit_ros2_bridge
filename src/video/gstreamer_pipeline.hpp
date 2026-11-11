@@ -79,10 +79,11 @@ public:
   void stop();
 
   // Asks the source for a keyframe with an upstream force-key-unit event; a no-op
-  // without an active pipeline. The event travels synchronously through the
+  // without an active pipeline. Call it only from a pipeline callback: start()
+  // resets the callback gate, which would drop the in-flight count of a call made
+  // concurrently from another thread. The event travels synchronously through the
   // source's elements on the calling thread. Stock elements don't take their
-  // stream lock for it, so pipeline callbacks may call this; a source element
-  // that does could block the caller.
+  // stream lock for it; a source element that does could block the caller.
   void requestKeyFrame();
 
 private:
@@ -112,7 +113,7 @@ private:
   GstElementPtr bridge_queue_;
   gulong overrun_handler_ = 0U;
   // Owned reference to the appsink's sink pad, released by stop(); atomic so
-  // requestKeyFrame() can run on any thread.
+  // requestKeyFrame() can run on a pipeline callback's thread.
   std::atomic<GstPad *> key_frame_pad_{nullptr};
 };
 
