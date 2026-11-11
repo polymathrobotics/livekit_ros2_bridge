@@ -24,6 +24,7 @@ namespace
 {
 
 constexpr std::uint8_t kNalUnitTypeMask = 0x1FU;
+constexpr std::uint8_t kNonIdrSliceNalUnitType = 1U;
 constexpr std::uint8_t kIdrSliceNalUnitType = 5U;
 
 bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
@@ -46,9 +47,12 @@ bool containsIdrSlice(const std::uint8_t * data, std::size_t size)
     if (!isStartCodeAt(data, offset)) {
       continue;
     }
-    const std::uint8_t nal_header = data[offset + kStartCodeSize];
-    if ((nal_header & kNalUnitTypeMask) == kIdrSliceNalUnitType) {
+    const std::uint8_t nal_unit_type = data[offset + kStartCodeSize] & kNalUnitTypeMask;
+    if (nal_unit_type == kIdrSliceNalUnitType) {
       return true;
+    }
+    if (nal_unit_type == kNonIdrSliceNalUnitType) {
+      return false;
     }
   }
   return false;

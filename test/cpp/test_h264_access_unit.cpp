@@ -135,7 +135,16 @@ TEST(H264AccessUnitTest, TreatsUnescapedStartCodeInPayloadAsStartCode)
 {
   // Annex-B guarantees 00 00 01 never occurs inside a NAL unit, so any
   // occurrence starts a new NAL unit.
-  EXPECT_TRUE(containsIdr({0x00U, 0x00U, 0x01U, kNonIdrSlice, 0x9AU, 0x00U, 0x00U, 0x01U, kIdrSlice, 0x88U}));
+  EXPECT_TRUE(containsIdr({0x00U, 0x00U, 0x01U, 0x67U, 0x42U, 0x00U, 0x00U, 0x01U, kIdrSlice, 0x88U}));
+}
+
+TEST(H264AccessUnitTest, DecidesAtTheFirstSlice)
+{
+  // Every slice of one picture has the same NAL type, so the first slice
+  // decides. Bytes after a non-IDR slice that look like an IDR NAL unit cannot
+  // make the access unit an IDR, and the scan does not read them.
+  EXPECT_FALSE(containsIdr(concat({kLongStartCode, kNonIdrSliceNal, kShortStartCode, kIdrSliceNal})));
+  EXPECT_TRUE(containsIdr(concat({kLongStartCode, kIdrSliceNal, kShortStartCode, kNonIdrSliceNal})));
 }
 
 }  // namespace

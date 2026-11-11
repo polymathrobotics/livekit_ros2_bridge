@@ -23,6 +23,8 @@ namespace livekit_ros2_bridge::video
 // Returns true if the Annex-B H.264 access unit holds an IDR slice (NAL type 5).
 // h264parse also marks non-IDR I-frames and recovery points as keyframes, but a
 // WebRTC viewer can only start decoding from an IDR.
+// All slices of one picture share the same NAL type, so the scan stops at the
+// first coded slice (NAL type 1 or 5) and decides from it.
 // Every 00 00 01 is treated as a start code (4-byte start codes end in one);
 // emulation prevention keeps that sequence out of NAL payloads.
 // `data` may be null only when `size == 0`.
