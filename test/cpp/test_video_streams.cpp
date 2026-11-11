@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -19,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <future>
 #include <initializer_list>
@@ -260,6 +263,46 @@ void expectStartErrorContains(
   }
 }
 
+// A uniquely named file in the test temp directory, removed on destruction.
+class ScopedTempFile final
+{
+public:
+  explicit ScopedTempFile(const std::string & prefix)
+  {
+    std::string path = ::testing::TempDir() + prefix + "XXXXXX";
+    const int descriptor = ::mkstemp(path.data());
+    if (descriptor < 0) {
+      throw std::runtime_error("Failed to create a temp file for " + prefix);
+    }
+    ::close(descriptor);
+    path_ = std::move(path);
+  }
+
+  ~ScopedTempFile()
+  {
+    remove();
+  }
+
+  ScopedTempFile(const ScopedTempFile &) = delete;
+  ScopedTempFile & operator=(const ScopedTempFile &) = delete;
+  ScopedTempFile(ScopedTempFile &&) = delete;
+  ScopedTempFile & operator=(ScopedTempFile &&) = delete;
+
+  const std::string & path() const
+  {
+    return path_;
+  }
+
+  // Safe to call more than once.
+  void remove() const
+  {
+    (void)std::remove(path_.c_str());
+  }
+
+private:
+  std::string path_;
+};
+
 class StreamTest : public test_support::RclcppTestSuite
 {
 protected:
@@ -425,9 +468,9 @@ TEST_F(StreamTest, PassthroughStartWithUnavailableSourceDoesNotWedge)
 TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
 {
   // One 64x48 I420 frame: the source plays it, reaches EOS, and restarts.
-  const std::string path = ::testing::TempDir() + "lkros_restart_source.i420";
+  const ScopedTempFile source_file("lkros_restart_source_");
   {
-    std::FILE * file = std::fopen(path.c_str(), "wb");
+    std::FILE * file = std::fopen(source_file.path().c_str(), "wb");
     ASSERT_NE(file, nullptr);
     const std::vector<unsigned char> frame(64U * 48U * 3U / 2U, 0x80U);
     std::fwrite(frame.data(), 1U, frame.size(), file);
@@ -435,7 +478,9 @@ TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
   }
   StreamSpec spec = makeOtherSpec();
   spec.input = OtherInput{
-    "test", "filesrc location=" + path + " ! rawvideoparse width=64 height=48 format=i420 framerate=30/1", ""};
+    "test",
+    "filesrc location=" + source_file.path() + " ! rawvideoparse width=64 height=48 format=i420 framerate=30/1",
+    ""};
 
   ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -445,7 +490,7 @@ TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
   ASSERT_TRUE(waitUntil([&]() { return !logs.findLine({"video_stream_pipeline_recovery_scheduled"}).empty(); }));
 
   // From here every restart fails at once; give it several attempts.
-  std::remove(path.c_str());
+  source_file.remove();
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   stream.close();
 
