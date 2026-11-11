@@ -21,6 +21,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -407,7 +408,8 @@ TEST(TrackPublisherTest, PassthroughPublishFailureWaitsForNextKeyFrame)
   auto publisher =
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:retry", "lkros.video.retry"));
 
-  EXPECT_THROW(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame), std::runtime_error);
+  // Logged, not thrown: a throw would fail the GStreamer pipeline and restart it.
+  EXPECT_NO_THROW(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   EXPECT_EQ(key_frame_requests, 1);
   EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
@@ -419,6 +421,30 @@ TEST(TrackPublisherTest, PassthroughPublishFailureWaitsForNextKeyFrame)
     connection.state->published_video_track_names,
     (std::vector<std::string>{"lkros.video.retry", "lkros.video.retry"}));
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.retry"}));
+}
+
+TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
+{
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send", "lkros.video.send"));
+  // LiveKit rejects an empty frame.
+  livekit::EncodedVideoSource::Frame empty_frame = makeEncodedFrame(false, 64, 48);
+  empty_frame.data.clear();
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  EXPECT_NO_THROW(publisher->captureEncoded(std::move(empty_frame), request_key_frame));
+  // The picture is broken until the next keyframe, so delta frames are discarded.
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
 }
 
 TEST(PassthroughBitrateMonitorTest, ReportsOnlyAfterStayingWellAboveTarget)

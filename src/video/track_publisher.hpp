@@ -103,7 +103,8 @@ public:
   // Passthrough: the first keyframe publishes an EncodedVideoSource; size changes
   // don't republish. A viewer can only start decoding at a keyframe, so frames
   // are discarded (asking the source for a keyframe) until one arrives after
-  // startup, awaitKeyFrame(), or onFellBehind().
+  // startup, awaitKeyFrame(), onFellBehind(), or a failed publish or send. Those
+  // failures are logged, not thrown, so the pipeline keeps running.
   void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
@@ -133,10 +134,13 @@ private:
     std::function<void()> request_key_frame);
 
   void close();
+  void logCaptureFailedLocked(const std::string & error);
 
   // The passthrough *Locked helpers return whether to request a keyframe; callers
   // do so after releasing mutex_ (see captureEncoded()).
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
+  // Publishes the encoded source on first use; throws if the publish or send fails.
+  void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);

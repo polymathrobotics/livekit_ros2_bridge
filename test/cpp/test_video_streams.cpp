@@ -708,6 +708,31 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
   EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
 }
 
+TEST_F(StreamTest, PassthroughStreamPublishFailureKeepsPipelineRunning)
+{
+  ScopedLogCapture logs;
+  StreamSpec spec = makePassthroughSpec(kOpenH264Source);
+  FakeRoomConnection connection;
+  std::atomic<int> publish_attempts{0};
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    if (++publish_attempts == 1) {
+      throw std::runtime_error("simulated video publish failure");
+    }
+  };
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  stream.start();
+  // The source only sends a keyframe when asked, so this one was requested after the failure.
+  const bool captured = waitUntil([&]() { return !logs.findLine({"video_stream_frame_captured"}).empty(); });
+  stream.close();
+
+  ASSERT_TRUE(captured);
+  EXPECT_EQ(publish_attempts.load(), 2);
+  EXPECT_FALSE(logs.findLine({"video_stream_capture_failed", "simulated video publish failure"}).empty());
+  EXPECT_EQ(logs.findLine({"video_stream_pipeline_recovery_scheduled"}), "");
+}
+
 void expectRosTopicStreamLifecycleIsIdempotent(
   const std::string & node_name, const std::string & topic, const char * interface_type)
 {

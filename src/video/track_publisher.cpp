@@ -255,13 +255,14 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return keyFrameRequestDueLocked();
   }
 
-  if (encoded_source_ == nullptr) {
-    publishEncodedSourceLocked(frame.width, frame.height);
-  }
-
-  frame.metadata = userTimestampMetadata(frame.timestamp_us);
-  if (!encoded_source_->captureFrame(frame)) {
-    throw std::runtime_error("LiveKit did not accept the encoded frame.");
+  // A failed publish or send must not fail the GStreamer pipeline: viewers need a
+  // keyframe after it either way, so wait for the next one and try again then.
+  try {
+    sendEncodedFrameLocked(frame);
+  } catch (const std::exception & exc) {
+    awaitKeyFrameLocked();
+    logCaptureFailedLocked(exc.what());
+    return false;
   }
 
   if (!captured_frame_logged_) {
@@ -289,6 +290,18 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
 
   return handleEncodedFeedbackLocked(frame.data.size());
+}
+
+void TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
+{
+  if (encoded_source_ == nullptr) {
+    publishEncodedSourceLocked(frame.width, frame.height);
+  }
+
+  frame.metadata = userTimestampMetadata(frame.timestamp_us);
+  if (!encoded_source_->captureFrame(frame)) {
+    throw std::runtime_error("LiveKit did not accept the encoded frame.");
+  }
 }
 
 void TrackPublisher::awaitKeyFrame()
@@ -455,6 +468,11 @@ void TrackPublisher::onCaptureFailed(const std::string & error)
     return;
   }
 
+  logCaptureFailedLocked(error);
+}
+
+void TrackPublisher::logCaptureFailedLocked(const std::string & error)
+{
   LogEvent(kLogger, "video_stream_capture_failed")
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
