@@ -201,43 +201,47 @@ bool isCapsMismatch(GstMessage * message, const GError * error)
   return flow_return == GST_FLOW_NOT_LINKED || flow_return == GST_FLOW_NOT_NEGOTIATED;
 }
 
+// gst_element_foreach_src_pad() callback: appends an unlinked pad's caps to the
+// std::string in found_caps, separated by "; ".
+gboolean appendUnlinkedPadCaps(GstElement *, GstPad * pad, gpointer found_caps)
+{
+  if (gst_pad_is_linked(pad)) {
+    return TRUE;
+  }
+  utils::GstCapsPtr caps(gst_pad_get_current_caps(pad));
+  if (caps == nullptr) {
+    return TRUE;
+  }
+  GCharPtr caps_text(gst_caps_to_string(caps.get()));
+  if (caps_text == nullptr) {
+    return TRUE;
+  }
+
+  // Exceptions must not cross GStreamer's C frames; keep what was found.
+  try {
+    auto & caps_list = *static_cast<std::string *>(found_caps);
+    caps_list += caps_list.empty() ? "" : "; ";
+    caps_list += caps_text.get();
+    return TRUE;
+  } catch (...) {
+    return FALSE;
+  }
+}
+
+// gst_iterator_foreach() callback over a bin's elements.
+void appendElementUnlinkedCaps(const GValue * item, gpointer found_caps)
+{
+  auto * element = GST_ELEMENT(g_value_get_object(item));
+  (void)gst_element_foreach_src_pad(element, appendUnlinkedPadCaps, found_caps);
+}
+
 // Best effort: caps left on unlinked source pads of top-level elements are what
 // the source offered when it could not link onward. Joined with "; ".
 std::string findUnlinkedSourceCaps(GstBin * bin)
 {
   std::string offered_caps;
   GstIteratorPtr iterator(gst_bin_iterate_elements(bin));
-  (void)gst_iterator_foreach(
-    iterator.get(),
-    [](const GValue * item, gpointer user_data) {
-      auto * element = GST_ELEMENT(g_value_get_object(item));
-      (void)gst_element_foreach_src_pad(
-        element,
-        [](GstElement *, GstPad * pad, gpointer pad_user_data) -> gboolean {
-          if (gst_pad_is_linked(pad)) {
-            return TRUE;
-          }
-          utils::GstCapsPtr caps(gst_pad_get_current_caps(pad));
-          if (caps == nullptr) {
-            return TRUE;
-          }
-          GCharPtr caps_text(gst_caps_to_string(caps.get()));
-          if (caps_text == nullptr) {
-            return TRUE;
-          }
-          // Exceptions must not cross GStreamer's C frames; keep what was found.
-          try {
-            auto & found_caps = *static_cast<std::string *>(pad_user_data);
-            found_caps += found_caps.empty() ? "" : "; ";
-            found_caps += caps_text.get();
-            return TRUE;
-          } catch (const std::exception &) {
-            return FALSE;
-          }
-        },
-        user_data);
-    },
-    &offered_caps);
+  (void)gst_iterator_foreach(iterator.get(), appendElementUnlinkedCaps, &offered_caps);
   return offered_caps;
 }
 
