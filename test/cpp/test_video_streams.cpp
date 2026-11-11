@@ -109,6 +109,12 @@ StreamSpec makePassthroughSpec(const std::string & source_fragment)
 // A huge GOP means every keyframe after the first one was requested.
 constexpr char kOpenH264Source[] =
   "videotestsrc is-live=true ! video/x-raw,width=64,height=48,framerate=60/1 ! openh264enc gop-size=100000";
+// One frame more than the sample thread (1) and the bridge queue (8) hold: a stall
+// on the first frame overruns the queue exactly once, and no frame can overrun it
+// again after the stall.
+constexpr char kTenFrameOpenH264Source[] =
+  "videotestsrc is-live=true num-buffers=10 ! video/x-raw,width=64,height=48,framerate=60/1"
+  " ! openh264enc gop-size=100000";
 
 template <typename Predicate>
 bool waitUntil(Predicate predicate)
@@ -139,12 +145,21 @@ public:
   {
     std::lock_guard<std::mutex> lock(mutex());
     rcutils_logging_set_output_handler(previousHandler());
+    lineHook() = nullptr;
   }
 
   ScopedLogCapture(const ScopedLogCapture &) = delete;
   ScopedLogCapture & operator=(const ScopedLogCapture &) = delete;
   ScopedLogCapture(ScopedLogCapture &&) = delete;
   ScopedLogCapture & operator=(ScopedLogCapture &&) = delete;
+
+  // Runs on the logging thread for each line, outside the capture lock; it can
+  // block to stall that thread.
+  void setLineHook(std::function<void(const std::string & line)> hook)
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    lineHook() = std::move(hook);
+  }
 
   // Returns the first captured line that contains every fragment, or an empty string.
   std::string findLine(std::initializer_list<const char *> fragments) const
@@ -178,10 +193,15 @@ private:
     va_end(arguments);
 
     rcutils_logging_output_handler_t previous_handler = nullptr;
+    std::function<void(const std::string & line)> line_hook;
     {
       std::lock_guard<std::mutex> lock(mutex());
       lines().emplace_back(buffer);
       previous_handler = previousHandler();
+      line_hook = lineHook();
+    }
+    if (line_hook) {
+      line_hook(buffer);
     }
     if (previous_handler != nullptr) {
       previous_handler(location, severity, name, timestamp, format, args);
@@ -203,6 +223,12 @@ private:
   static rcutils_logging_output_handler_t & previousHandler()
   {
     static rcutils_logging_output_handler_t instance = nullptr;
+    return instance;
+  }
+
+  static std::function<void(const std::string & line)> & lineHook()
+  {
+    static std::function<void(const std::string & line)> instance;
     return instance;
   }
 };
@@ -501,38 +527,77 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
 
 TEST_F(StreamTest, PassthroughStreamSkipsToRequestedKeyFrameAfterFallingBehind)
 {
+  std::atomic<bool> capture_stalled{false};
+  std::promise<void> capture_stalled_promise;
+  std::future<void> capture_stalled_future = capture_stalled_promise.get_future();
+  std::promise<void> release_capture_promise;
+  std::shared_future<void> release_capture_future = release_capture_promise.get_future().share();
   ScopedLogCapture logs;
+  // The publisher logs the first captured frame while it holds its lock, after the
+  // publish; blocking there stalls the sample thread while the source keeps producing.
+  logs.setLineHook([&](const std::string & line) {
+    if (line.find("video_stream_frame_captured") == std::string::npos || capture_stalled.exchange(true)) {
+      return;
+    }
+    capture_stalled_promise.set_value();
+    (void)release_capture_future.wait_for(std::chrono::seconds(10));
+  });
   StreamSpec spec = makePassthroughSpec(kOpenH264Source);
   FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  stream.start();
+  const bool stalled = capture_stalled_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  // At 60 fps the bridge queue (8 buffers) overruns well within this stall.
+  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  release_capture_promise.set_value();
+  const bool resumed = waitUntil([&]() { return !logs.findLine({"video_stream_passthrough_resumed"}).empty(); });
+  stream.close();
+
+  ASSERT_TRUE(stalled);
+  EXPECT_FALSE(logs.findLine({"video_stream_passthrough_fell_behind", "stream_key=other_video:test"}).empty());
+  ASSERT_TRUE(resumed);
+  const std::string resumed_line = logs.findLine({"video_stream_passthrough_resumed"});
+  EXPECT_EQ(resumed_line.find("discarded_frames=0"), std::string::npos) << resumed_line;
+  EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
+}
+
+TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
+{
   bool publish_started = false;
   std::promise<void> publish_started_promise;
   std::future<void> publish_started_future = publish_started_promise.get_future();
   std::promise<void> release_publish_promise;
   std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
-  // Blocking the first publish stalls the sample thread while the source keeps producing.
+  ScopedLogCapture logs;
+  StreamSpec spec = makePassthroughSpec(kTenFrameOpenH264Source);
+  FakeRoomConnection connection;
+  // Publishing on the first keyframe waits on the server; the source keeps producing.
   connection.state->publish_video_track_hook = [&](const std::string &) {
     if (!publish_started) {
       publish_started = true;
       publish_started_promise.set_value();
     }
-    release_publish_future.wait();
+    (void)release_publish_future.wait_for(std::chrono::seconds(10));
   };
   TrackPublisher publisher(connection, spec);
   GStreamerStream stream(spec, publisher);
 
   stream.start();
   const bool publish_blocked = publish_started_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
-  // At 60 fps the bridge queue (8 buffers) overruns well within this stall.
+  // All ten frames arrive well within this stall.
   std::this_thread::sleep_for(std::chrono::milliseconds(750));
   release_publish_promise.set_value();
-  const bool resumed = waitUntil([&]() { return !logs.findLine({"video_stream_passthrough_resumed"}).empty(); });
+  const bool captured = waitUntil([&]() { return !logs.findLine({"video_stream_frame_captured"}).empty(); });
+  // An overrun counted against the publish would be handled as soon as it ends.
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
   stream.close();
 
   ASSERT_TRUE(publish_blocked);
-  EXPECT_FALSE(logs.findLine({"video_stream_passthrough_fell_behind", "stream_key=other_video:test"}).empty());
-  ASSERT_TRUE(resumed);
-  const std::string resumed_line = logs.findLine({"video_stream_passthrough_resumed"});
-  EXPECT_EQ(resumed_line.find("discarded_frames=0"), std::string::npos) << resumed_line;
+  ASSERT_TRUE(captured);
+  EXPECT_EQ(logs.findLine({"video_stream_passthrough_fell_behind"}), "");
+  EXPECT_EQ(logs.findLine({"video_stream_passthrough_resumed"}), "");
   EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
 }
 

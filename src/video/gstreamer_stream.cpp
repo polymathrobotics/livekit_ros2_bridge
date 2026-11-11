@@ -74,16 +74,21 @@ void GStreamerStream::close()
 
 PipelineCallbacks GStreamerStream::makePipelineCallbacks()
 {
+  auto is_shutdown = [this]() { return is_shutdown_.load(std::memory_order_acquire); };
+  auto on_failed = [this](const std::string & reason) { onPipelineFailure(reason); };
+  if (!requireOtherInput(spec_).passthrough) {
+    return publisher_.makePipelineCallbacks(is_shutdown, on_failed);
+  }
+
   // Requesting a keyframe must not take mutex_: it runs inside pipeline
   // callbacks, which pipeline_.stop() waits for.
-  auto callbacks = publisher_.makePipelineCallbacks(
-    [this]() { return is_shutdown_.load(std::memory_order_acquire); },
-    [this](const std::string & reason) { onPipelineFailure(reason); },
+  return publisher_.makeEncodedPipelineCallbacks(
+    is_shutdown,
+    on_failed,
+    [this](const std::string & reason, const std::string & offered_caps) {
+      onPipelineFailure(reason, true, offered_caps);
+    },
     [this]() { pipeline_.requestKeyFrame(); });
-  callbacks.on_caps_mismatch = [this](const std::string & reason, const std::string & offered_caps) {
-    onPipelineFailure(reason, true, offered_caps);
-  };
-  return callbacks;
 }
 
 // This path must stay lock-free: the sync bus handler can deliver a failure
@@ -120,8 +125,10 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
-  // The new pipeline may start mid-stream; viewers need a keyframe first.
-  publisher_.awaitKeyFrame();
+  // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
+  if (requireOtherInput(spec_).passthrough) {
+    publisher_.awaitKeyFrame();
+  }
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {

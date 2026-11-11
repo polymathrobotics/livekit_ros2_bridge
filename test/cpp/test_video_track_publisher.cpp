@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -332,6 +333,63 @@ TEST(TrackPublisherTest, PassthroughFellBehindRequestsKeyFrameAndDiscardsUntilIt
 
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.behind"}));
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.behind"}));
+}
+
+TEST(TrackPublisherTest, PassthroughRepeatedFellBehindKeepsKeyFrameRequestsThrottled)
+{
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:overruns", "lkros.video.overruns"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  // Once the keyframe arrives, the next fall behind asks again right away.
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 2);
+}
+
+TEST(TrackPublisherTest, PassthroughIgnoresFellBehindWhileFirstKeyFramePublishes)
+{
+  FakeRoomConnection connection;
+  std::promise<void> publish_started_promise;
+  std::future<void> publish_started_future = publish_started_promise.get_future();
+  std::promise<void> release_publish_promise;
+  std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    publish_started_promise.set_value();
+    (void)release_publish_future.wait_for(std::chrono::seconds(10));
+  };
+  std::atomic<int> key_frame_requests{0};
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:slow_publish", "lkros.video.slow_publish"));
+
+  auto capture_future = std::async(
+    std::launch::async, [&]() { publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame); });
+  const bool publish_started = publish_started_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  // Must not wait for the publish to finish.
+  auto fell_behind_future = std::async(std::launch::async, [&]() { publisher->onFellBehind(request_key_frame); });
+  const bool fell_behind_returned = fell_behind_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  release_publish_promise.set_value();
+  capture_future.get();
+  fell_behind_future.get();
+  // Still live: the delta frame is sent, not discarded while waiting for a keyframe.
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_TRUE(publish_started);
+  EXPECT_TRUE(fell_behind_returned);
+  EXPECT_EQ(key_frame_requests.load(), 0);
 }
 
 TEST(TrackPublisherTest, PassthroughPublishFailureWaitsForNextKeyFrame)

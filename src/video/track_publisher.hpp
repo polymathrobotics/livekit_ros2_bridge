@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -107,6 +108,7 @@ public:
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
   // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe.
+  // Ignored while the first keyframe publishes, which stalls the queue by itself.
   void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:
@@ -119,11 +121,16 @@ private:
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
-  // request_key_frame is only used by encoded pipelines.
+  // Callbacks for RawI420 pipelines.
   PipelineCallbacks makePipelineCallbacks(
+    std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
+  // Callbacks for EncodedH264 (passthrough) pipelines; request_key_frame asks the
+  // source for a keyframe.
+  PipelineCallbacks makeEncodedPipelineCallbacks(
     std::function<bool()> is_shutdown,
     std::function<void(const std::string & reason)> on_failed,
-    std::function<void()> request_key_frame = {});
+    std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch,
+    std::function<void()> request_key_frame);
 
   void close();
 
@@ -153,12 +160,15 @@ private:
 
   // Passthrough state.
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
+  // Set while the first keyframe publishes; read by onFellBehind() without mutex_.
+  std::atomic<bool> publishing_encoded_source_{false};
   bool awaiting_key_frame_ = true;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle over_budget_log_throttle_{kLogThrottle};
+  EventThrottle feedback_failed_log_throttle_{kLogThrottle};
   PassthroughBitrateMonitor bitrate_monitor_;
 };
 

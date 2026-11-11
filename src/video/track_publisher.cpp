@@ -29,6 +29,7 @@
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
+#include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_stream.hpp"
 #include "video/ros_stream.hpp"
@@ -150,22 +151,36 @@ TrackPublisher::~TrackPublisher()
 }
 
 PipelineCallbacks TrackPublisher::makePipelineCallbacks(
+  std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed)
+{
+  PipelineCallbacks callbacks;
+  callbacks.is_shutdown = std::move(is_shutdown);
+  callbacks.on_frame = [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
+    capture(frame, timestamp_us);
+  };
+  callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
+  callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
+  callbacks.on_failed = std::move(on_failed);
+  return callbacks;
+}
+
+PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
   std::function<bool()> is_shutdown,
   std::function<void(const std::string & reason)> on_failed,
+  std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch,
   std::function<void()> request_key_frame)
 {
-  return PipelineCallbacks{
-    std::move(is_shutdown),
-    [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) { capture(frame, timestamp_us); },
-    [this](const std::string & error) { onSampleUnpackFailed(error); },
-    [this](const std::string & error) { onCaptureFailed(error); },
-    std::move(on_failed),
-    [this, request_key_frame](livekit::EncodedVideoSource::Frame frame) {
-      captureEncoded(std::move(frame), request_key_frame);
-    },
-    [this, request_key_frame]() { onFellBehind(request_key_frame); },
-    {},
+  PipelineCallbacks callbacks;
+  callbacks.is_shutdown = std::move(is_shutdown);
+  callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
+  callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
+  callbacks.on_failed = std::move(on_failed);
+  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame) {
+    captureEncoded(std::move(frame), request_key_frame);
   };
+  callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
+  callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
+  return callbacks;
 }
 
 void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
@@ -261,6 +276,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
   if (awaiting_key_frame_) {
     awaiting_key_frame_ = false;
+    // While the log is throttled, keep counting so the next one includes these frames.
     const std::size_t pending = discarded_frame_count_ > 0U ? resumed_log_throttle_.record() : 0U;
     if (pending > 0U) {
       LogEvent(kLogger, "video_stream_passthrough_resumed")
@@ -268,8 +284,8 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
         .field("discarded_frames", discarded_frame_count_)
         .field("count", pending)
         .info();
+      discarded_frame_count_ = 0U;
     }
-    discarded_frame_count_ = 0U;
   }
 
   return handleEncodedFeedbackLocked(frame.data.size());
@@ -287,6 +303,13 @@ void TrackPublisher::awaitKeyFrame()
 
 void TrackPublisher::onFellBehind(const std::function<void()> & request_key_frame)
 {
+  // The first publish blocks the sample thread on the server while the source
+  // keeps producing, so overruns then don't mean the consumer fell behind.
+  // Checked before mutex_, which the publish holds.
+  if (publishing_encoded_source_.load(std::memory_order_acquire)) {
+    return;
+  }
+
   bool key_frame_needed = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -313,8 +336,13 @@ void TrackPublisher::onFellBehind(const std::function<void()> & request_key_fram
 
 void TrackPublisher::awaitKeyFrameLocked()
 {
+  if (awaiting_key_frame_) {
+    return;
+  }
+
   awaiting_key_frame_ = true;
-  // Let the first discarded frame ask for a keyframe right away.
+  // Let the first discarded frame ask for a keyframe right away; requests while
+  // still waiting stay throttled.
   key_frame_request_throttle_ = EventThrottle(kKeyFrameRequestInterval);
 }
 
@@ -327,6 +355,8 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
 {
   auto source = std::make_shared<livekit::EncodedVideoSource>(
     livekit::VideoCodec::H264, static_cast<int>(width), static_cast<int>(height));
+  publishing_encoded_source_.store(true, std::memory_order_release);
+  const ScopeExit publishing_exit([this]() { publishing_encoded_source_.store(false, std::memory_order_release); });
   auto track =
     connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
   encoded_source_ = std::move(source);
@@ -337,8 +367,20 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
 
 bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
 {
-  // Feedback only updates as frames are pushed, so poll it after each one.
-  const auto feedback = encoded_source_->takeFeedback();
+  // Feedback only updates as frames are pushed, so poll it after each one. It is
+  // advisory: failing to read it doesn't fail the frame that was just sent.
+  livekit::EncodedVideoSource::Feedback feedback;
+  try {
+    feedback = encoded_source_->takeFeedback();
+  } catch (const std::exception & exc) {
+    if (const std::size_t pending = feedback_failed_log_throttle_.record(); pending > 0U) {
+      LogEvent(kLogger, "video_stream_passthrough_feedback_failed")
+        .fieldOr("stream_key", spec_.stream_key)
+        .fieldOr("error", exc.what())
+        .field("count", pending)
+        .warn();
+    }
+  }
   if (feedback.rate_control.has_value()) {
     bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
   }
@@ -353,7 +395,8 @@ bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
       .field("count", pending)
       .warn();
   }
-  return feedback.keyframe_requested;
+  // Shares the throttle with discarded frames so the source is asked at most once per interval.
+  return feedback.keyframe_requested && keyFrameRequestDueLocked();
 }
 
 void TrackPublisher::close()
