@@ -168,7 +168,7 @@ livekit_ros2_bridge:
               Optional LiveKit max video bitrate override for this other video
               source in bps. -1 inherits from
               video.publish.max_bitrate_bps. With passthrough, set it to the
-              camera's configured bitrate; -1 leaves LiveKit's default.
+              camera's configured bitrate; -1 or 0 leaves LiveKit's default.
             validation:
               gt_eq<>: [-1]
           max_framerate:
