@@ -141,21 +141,25 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
 }
 
 // Passthrough forwards the camera's encoded video unchanged, so global defaults
-// are ignored and per-entry overrides are a config error. The one exception is
-// publish.max_bitrate_bps, which describes the camera instead of changing it.
+// are ignored and per-entry overrides that would change the stream are a config
+// error. Values that already describe what passthrough sends (one H.264
+// encoding at the camera's own frame rate) are accepted. publish.max_bitrate_bps
+// is always accepted: it describes the camera instead of changing it.
 template <typename EntryT>
 const char * findPassthroughOverride(const EntryT & entry)
 {
   if (!trim(entry.transform).empty()) {
     return "transform";
   }
-  if (!trim(entry.publish.codec).empty()) {
+  const std::string codec = trim(entry.publish.codec);
+  if (!codec.empty() && codec != "h264" && codec != "auto") {
     return "publish.codec";
   }
-  if (entry.publish.max_framerate >= 0.0) {
+  if (entry.publish.max_framerate > 0.0) {
     return "publish.max_framerate";
   }
-  if (!trim(entry.publish.simulcast).empty()) {
+  const std::string simulcast = trim(entry.publish.simulcast);
+  if (!simulcast.empty() && simulcast != "disabled" && simulcast != "auto") {
     return "publish.simulcast";
   }
   return nullptr;

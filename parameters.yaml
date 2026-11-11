@@ -150,10 +150,10 @@ livekit_ros2_bridge:
           description: >-
             Forward this source's H.264 to LiveKit unchanged instead of decoding
             and re-encoding it. The source must output H.264; transform,
-            publish.codec, publish.max_framerate, and publish.simulcast are
-            rejected and global video.publish defaults are ignored.
-            publish.max_bitrate_bps tells LiveKit the most this camera sends
-            and does not change the camera.
+            publish.codec other than h264 or auto, publish.max_framerate above
+            0, and publish.simulcast enabled are rejected, and global
+            video.publish defaults are ignored. publish.max_bitrate_bps tells
+            LiveKit the most this camera sends and does not change the camera.
         publish:
           codec:
             type: string

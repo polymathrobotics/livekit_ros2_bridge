@@ -693,6 +693,39 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoWithoutPerEntryMaxBitrateLeavesEn
   }
 }
 
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoAcceptsPerEntrySettingsThatChangeNothing)
+{
+  struct NoOpOverride
+  {
+    const char * key;
+    rclcpp::ParameterValue value;
+    const char * node_name;
+  };
+
+  // The camera already sends one H.264 encoding at its own frame rate, so these
+  // describe what passthrough does anyway.
+  const std::vector<NoOpOverride> no_op_overrides{
+    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_accepts_codec_h264"},
+    {"publish.codec", rclcpp::ParameterValue("auto"), "startup_config_passthrough_accepts_codec_auto"},
+    {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_accepts_simulcast_disabled"},
+    {"publish.simulcast", rclcpp::ParameterValue("auto"), "startup_config_passthrough_accepts_simulcast_auto"},
+    {"publish.max_framerate", rclcpp::ParameterValue(0.0), "startup_config_passthrough_accepts_max_framerate_zero"},
+  };
+
+  for (const auto & no_op_override : no_op_overrides) {
+    SCOPED_TRACE(no_op_override.node_name);
+    auto options = makePassthroughSourceOptions();
+    options.append_parameter_override(std::string{"video.other.front."} + no_op_override.key, no_op_override.value);
+
+    const RuntimeConfig config = loadRuntimeConfigForNode(no_op_override.node_name, options);
+
+    ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+    const auto & source = config.video_stream.other_sources.front();
+    EXPECT_TRUE(source.passthrough);
+    expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions());
+  }
+}
+
 TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
 {
   struct RejectedOverride
@@ -704,9 +737,9 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
 
   const std::vector<RejectedOverride> rejected_overrides{
     {"transform", rclcpp::ParameterValue("videoflip"), "startup_config_passthrough_rejects_transform"},
-    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_rejects_codec"},
+    {"publish.codec", rclcpp::ParameterValue("vp8"), "startup_config_passthrough_rejects_codec"},
     {"publish.max_framerate", rclcpp::ParameterValue(15.0), "startup_config_passthrough_rejects_max_framerate"},
-    {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_rejects_simulcast"},
+    {"publish.simulcast", rclcpp::ParameterValue("enabled"), "startup_config_passthrough_rejects_simulcast"},
   };
 
   for (const auto & rejected_override : rejected_overrides) {
