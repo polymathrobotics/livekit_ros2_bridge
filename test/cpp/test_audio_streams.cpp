@@ -12,17 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <unistd.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <future>
-#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -36,10 +32,11 @@
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
-#include "rcutils/logging.h"
 #include "support/error_on_start_element.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
+#include "support/scoped_temp_file.hpp"
 #include "utils/gstreamer_resources.hpp"
 
 namespace livekit_ros2_bridge::audio
@@ -93,115 +90,6 @@ bool waitUntil(Predicate predicate)
   }
   return true;
 }
-
-// Records formatted log lines (still forwarding them) so tests can assert on log events.
-class ScopedLogCapture final
-{
-public:
-  ScopedLogCapture()
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    lines().clear();
-    previousHandler() = rcutils_logging_get_output_handler();
-    rcutils_logging_set_output_handler(&ScopedLogCapture::handle);
-  }
-
-  ~ScopedLogCapture()
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    rcutils_logging_set_output_handler(previousHandler());
-  }
-
-  ScopedLogCapture(const ScopedLogCapture &) = delete;
-  ScopedLogCapture & operator=(const ScopedLogCapture &) = delete;
-  ScopedLogCapture(ScopedLogCapture &&) = delete;
-  ScopedLogCapture & operator=(ScopedLogCapture &&) = delete;
-
-  // Returns how many captured lines contain the fragment.
-  std::size_t countLines(const char * fragment) const
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    std::size_t count = 0U;
-    for (const auto & line : lines()) {
-      if (line.find(fragment) != std::string::npos) {
-        ++count;
-      }
-    }
-    return count;
-  }
-
-private:
-  static void handle(
-    const rcutils_log_location_t * location,
-    int severity,
-    const char * name,
-    rcutils_time_point_value_t timestamp,
-    const char * format,
-    va_list * args)
-  {
-    va_list arguments;
-    va_copy(arguments, *args);
-    char buffer[4096];
-    std::vsnprintf(buffer, sizeof(buffer), format, arguments);
-    va_end(arguments);
-
-    rcutils_logging_output_handler_t previous_handler = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(mutex());
-      lines().emplace_back(buffer);
-      previous_handler = previousHandler();
-    }
-    if (previous_handler != nullptr) {
-      previous_handler(location, severity, name, timestamp, format, args);
-    }
-  }
-
-  static std::mutex & mutex()
-  {
-    static std::mutex instance;
-    return instance;
-  }
-
-  static std::vector<std::string> & lines()
-  {
-    static std::vector<std::string> instance;
-    return instance;
-  }
-
-  static rcutils_logging_output_handler_t & previousHandler()
-  {
-    static rcutils_logging_output_handler_t instance = nullptr;
-    return instance;
-  }
-};
-
-// A file under the test temp dir, named per process so parallel runs do not
-// collide, and removed when the test ends (also when it fails early).
-class ScopedTempFile final
-{
-public:
-  explicit ScopedTempFile(const std::string & name)
-  : path_(::testing::TempDir() + "lkros_" + std::to_string(::getpid()) + "_" + name)
-  {}
-
-  ~ScopedTempFile()
-  {
-    std::remove(path_.c_str());
-  }
-
-  ScopedTempFile(const ScopedTempFile &) = delete;
-  ScopedTempFile & operator=(const ScopedTempFile &) = delete;
-  ScopedTempFile(ScopedTempFile &&) = delete;
-  ScopedTempFile & operator=(ScopedTempFile &&) = delete;
-
-  const std::string & path() const
-  {
-    return path_;
-  }
-
-private:
-  std::string path_;
-};
 
 class AudioStreamTest : public test_support::RclcppTestSuite
 {
@@ -265,7 +153,7 @@ TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
 TEST_F(AudioStreamTest, RepeatedRestartFailuresAreLoggedOnce)
 {
   // 10 ms of mono S16LE silence: the source plays it, reaches EOS, and restarts.
-  ScopedTempFile source_file("audio_restart_source.raw");
+  const test_support::ScopedTempFile source_file("lkros_audio_restart_source_");
   {
     std::FILE * file = std::fopen(source_file.path().c_str(), "wb");
     ASSERT_NE(file, nullptr);
@@ -280,20 +168,20 @@ TEST_F(AudioStreamTest, RepeatedRestartFailuresAreLoggedOnce)
       " ! rawaudioparse format=pcm pcm-format=s16le sample-rate=48000 num-channels=1",
     ""};
 
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, spec);
   GStreamerStream stream(spec, publisher);
   stream.start();
-  ASSERT_TRUE(waitUntil([&]() { return logs.countLines("audio_stream_pipeline_recovery_scheduled") > 0U; }));
+  ASSERT_TRUE(waitUntil([&]() { return logs.countLines({"audio_stream_pipeline_recovery_scheduled"}) > 0U; }));
 
   // From here every restart fails at once; give it several attempts.
-  std::remove(source_file.path().c_str());
+  source_file.remove();
   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
   stream.close();
 
-  EXPECT_EQ(logs.countLines("audio_stream_pipeline_recovery_scheduled"), 1U);
-  EXPECT_EQ(logs.countLines("audio_stream_restart_failed"), 1U);
+  EXPECT_EQ(logs.countLines({"audio_stream_pipeline_recovery_scheduled"}), 1U);
+  EXPECT_EQ(logs.countLines({"audio_stream_restart_failed"}), 1U);
 }
 
 // A failure that arrives while a restart's start() runs, without making it throw,

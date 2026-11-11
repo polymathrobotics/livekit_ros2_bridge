@@ -12,19 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <unistd.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <functional>
 #include <future>
-#include <initializer_list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -36,12 +31,13 @@
 #include "gtest/gtest.h"
 #include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
-#include "rcutils/logging.h"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "support/error_on_start_element.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
+#include "support/scoped_temp_file.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
@@ -146,127 +142,6 @@ bool waitUntil(Predicate predicate)
   return true;
 }
 
-// Records formatted log lines (still forwarding them) so tests can assert on log events.
-class ScopedLogCapture final
-{
-public:
-  ScopedLogCapture()
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    lines().clear();
-    previousHandler() = rcutils_logging_get_output_handler();
-    rcutils_logging_set_output_handler(&ScopedLogCapture::handle);
-  }
-
-  ~ScopedLogCapture()
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    rcutils_logging_set_output_handler(previousHandler());
-    lineHook() = nullptr;
-  }
-
-  ScopedLogCapture(const ScopedLogCapture &) = delete;
-  ScopedLogCapture & operator=(const ScopedLogCapture &) = delete;
-  ScopedLogCapture(ScopedLogCapture &&) = delete;
-  ScopedLogCapture & operator=(ScopedLogCapture &&) = delete;
-
-  // Runs on the logging thread for each line, outside the capture lock; it can
-  // block to stall that thread.
-  void setLineHook(std::function<void(const std::string & line)> hook)
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    lineHook() = std::move(hook);
-  }
-
-  // Returns the first captured line that contains every fragment, or an empty string.
-  std::string findLine(std::initializer_list<const char *> fragments) const
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    for (const auto & line : lines()) {
-      bool matches = true;
-      for (const char * fragment : fragments) {
-        matches = matches && line.find(fragment) != std::string::npos;
-      }
-      if (matches) {
-        return line;
-      }
-    }
-    return "";
-  }
-
-  // Returns how many captured lines contain every fragment.
-  std::size_t countLines(std::initializer_list<const char *> fragments) const
-  {
-    std::lock_guard<std::mutex> lock(mutex());
-    std::size_t count = 0U;
-    for (const auto & line : lines()) {
-      bool matches = true;
-      for (const char * fragment : fragments) {
-        matches = matches && line.find(fragment) != std::string::npos;
-      }
-      if (matches) {
-        ++count;
-      }
-    }
-    return count;
-  }
-
-private:
-  static void handle(
-    const rcutils_log_location_t * location,
-    int severity,
-    const char * name,
-    rcutils_time_point_value_t timestamp,
-    const char * format,
-    va_list * args)
-  {
-    va_list arguments;
-    va_copy(arguments, *args);
-    char buffer[4096];
-    std::vsnprintf(buffer, sizeof(buffer), format, arguments);
-    va_end(arguments);
-
-    rcutils_logging_output_handler_t previous_handler = nullptr;
-    std::function<void(const std::string & line)> line_hook;
-    {
-      std::lock_guard<std::mutex> lock(mutex());
-      lines().emplace_back(buffer);
-      previous_handler = previousHandler();
-      line_hook = lineHook();
-    }
-    if (line_hook) {
-      line_hook(buffer);
-    }
-    if (previous_handler != nullptr) {
-      previous_handler(location, severity, name, timestamp, format, args);
-    }
-  }
-
-  static std::mutex & mutex()
-  {
-    static std::mutex instance;
-    return instance;
-  }
-
-  static std::vector<std::string> & lines()
-  {
-    static std::vector<std::string> instance;
-    return instance;
-  }
-
-  static rcutils_logging_output_handler_t & previousHandler()
-  {
-    static rcutils_logging_output_handler_t instance = nullptr;
-    return instance;
-  }
-
-  static std::function<void(const std::string & line)> & lineHook()
-  {
-    static std::function<void(const std::string & line)> instance;
-    return instance;
-  }
-};
-
 void expectStartErrorContains(
   GStreamerPipeline & pipeline, const std::string & description, bool require_appsrc, const char * fragment)
 {
@@ -277,46 +152,6 @@ void expectStartErrorContains(
     EXPECT_NE(std::string(error.what()).find(fragment), std::string::npos) << "actual error: " << error.what();
   }
 }
-
-// A uniquely named file in the test temp directory, removed on destruction.
-class ScopedTempFile final
-{
-public:
-  explicit ScopedTempFile(const std::string & prefix)
-  {
-    std::string path = ::testing::TempDir() + prefix + "XXXXXX";
-    const int descriptor = ::mkstemp(path.data());
-    if (descriptor < 0) {
-      throw std::runtime_error("Failed to create a temp file for " + prefix);
-    }
-    ::close(descriptor);
-    path_ = std::move(path);
-  }
-
-  ~ScopedTempFile()
-  {
-    remove();
-  }
-
-  ScopedTempFile(const ScopedTempFile &) = delete;
-  ScopedTempFile & operator=(const ScopedTempFile &) = delete;
-  ScopedTempFile(ScopedTempFile &&) = delete;
-  ScopedTempFile & operator=(ScopedTempFile &&) = delete;
-
-  const std::string & path() const
-  {
-    return path_;
-  }
-
-  // Safe to call more than once.
-  void remove() const
-  {
-    (void)std::remove(path_.c_str());
-  }
-
-private:
-  std::string path_;
-};
 
 class StreamTest : public test_support::RclcppTestSuite
 {
@@ -483,7 +318,7 @@ TEST_F(StreamTest, PassthroughStartWithUnavailableSourceDoesNotWedge)
 TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
 {
   // One 64x48 I420 frame: the source plays it, reaches EOS, and restarts.
-  const ScopedTempFile source_file("lkros_restart_source_");
+  const test_support::ScopedTempFile source_file("lkros_restart_source_");
   {
     std::FILE * file = std::fopen(source_file.path().c_str(), "wb");
     ASSERT_NE(file, nullptr);
@@ -497,7 +332,7 @@ TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
     "filesrc location=" + source_file.path() + " ! rawvideoparse width=64 height=48 format=i420 framerate=30/1",
     ""};
 
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, spec);
   GStreamerStream stream(spec, publisher);
@@ -693,7 +528,7 @@ TEST_F(StreamTest, PassthroughStreamPublishesEncodedSource)
 
 TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
 {
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   constexpr char kHint[] = "hint=\"the source may not be H.264; passthrough supports H.264 only\"";
   // A static vp8enc ! h264parse link already fails to parse (and config validation
   // rejects it); the demuxer's dynamic pad fails at runtime like an RTSP camera would.
@@ -721,7 +556,7 @@ TEST_F(StreamTest, PassthroughStreamSkipsToRequestedKeyFrameAfterFallingBehind)
   std::future<void> capture_stalled_future = capture_stalled_promise.get_future();
   std::promise<void> release_capture_promise;
   std::shared_future<void> release_capture_future = release_capture_promise.get_future().share();
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   // The publisher logs the first captured frame while it holds its lock, after the
   // publish; blocking there stalls the sample thread while the source keeps producing.
   logs.setLineHook([&](const std::string & line) {
@@ -758,7 +593,7 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
   std::future<void> publish_started_future = publish_started_promise.get_future();
   std::promise<void> release_publish_promise;
   std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   StreamSpec spec = makePassthroughSpec(kOpenH264Source);
   FakeRoomConnection connection;
   // Publishing on the first keyframe waits on the server while the live source keeps
@@ -791,7 +626,7 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
 
 TEST_F(StreamTest, PassthroughLogsWhileWaitingForFirstKeyFrame)
 {
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
   TrackPublisher publisher(connection, makePassthroughSpec(kOpenH264Source));
   const std::function<void()> request_key_frame = []() {};
@@ -813,7 +648,7 @@ TEST_F(StreamTest, PassthroughLogsWhileWaitingForFirstKeyFrame)
 
 TEST_F(StreamTest, PassthroughStreamPublishFailureKeepsPipelineRunning)
 {
-  ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
   StreamSpec spec = makePassthroughSpec(kOpenH264Source);
   FakeRoomConnection connection;
   std::atomic<int> publish_attempts{0};
