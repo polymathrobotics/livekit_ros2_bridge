@@ -52,10 +52,11 @@ inline std::string buildPassthroughPipelineDescription(const std::string & sourc
   // Never drop here: losing an encoded frame corrupts the picture until the next
   // keyframe. The queue filling up (its overrun) is the "fell behind" signal. It
   // holds one second of video, so a network burst fits and falling behind means
-  // about a second behind the (live) source.
+  // about a second behind the (live) source. The 32 MiB cap is a backstop for
+  // buffers without timestamps, which never fill the time limit.
   description += " ! queue name=";
   description += kBridgeVideoQueueName;
-  description += " max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 leaky=no";
+  description += " max-size-buffers=0 max-size-bytes=33554432 max-size-time=1000000000 leaky=no";
   description += " ! appsink name=";
   description += kBridgeAppSinkName;
   description += " sync=false";
