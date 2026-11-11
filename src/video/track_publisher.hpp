@@ -144,7 +144,7 @@ private:
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
-  bool handleEncodedFeedbackLocked(std::size_t frame_bytes);
+  bool handleEncodedFeedbackLocked(std::size_t frame_bytes, bool sent_key_frame);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
@@ -169,6 +169,8 @@ private:
   bool awaiting_key_frame_ = true;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
+  // LiveKit asked for a keyframe that the throttle has not let through yet.
+  bool key_frame_request_pending_ = false;
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle over_budget_log_throttle_{kLogThrottle};

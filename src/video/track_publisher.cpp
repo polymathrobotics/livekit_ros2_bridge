@@ -289,7 +289,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     }
   }
 
-  return handleEncodedFeedbackLocked(frame.data.size());
+  return handleEncodedFeedbackLocked(frame.data.size(), frame.is_keyframe);
 }
 
 void TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
@@ -378,8 +378,13 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
   published_once_ = true;
 }
 
-bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
+bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes, bool sent_key_frame)
 {
+  // A keyframe answers any request LiveKit made before it was sent.
+  if (sent_key_frame) {
+    key_frame_request_pending_ = false;
+  }
+
   // Feedback only updates as frames are pushed, so poll it after each one. It is
   // advisory: failing to read it doesn't fail the frame that was just sent.
   livekit::EncodedVideoSource::Feedback feedback;
@@ -393,6 +398,9 @@ bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
         .field("count", pending)
         .warn();
     }
+  }
+  if (feedback.keyframe_requested) {
+    key_frame_request_pending_ = true;
   }
   if (feedback.rate_control.has_value()) {
     bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
@@ -408,8 +416,13 @@ bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
       .field("count", pending)
       .warn();
   }
-  // Shares the throttle with discarded frames so the source is asked at most once per interval.
-  return feedback.keyframe_requested && keyFrameRequestDueLocked();
+  // Shares the throttle with discarded frames so the source is asked at most once
+  // per interval; a request that comes too soon is sent with a later frame.
+  if (!key_frame_request_pending_ || !keyFrameRequestDueLocked()) {
+    return false;
+  }
+  key_frame_request_pending_ = false;
+  return true;
 }
 
 void TrackPublisher::close()
