@@ -367,7 +367,8 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 4. Expect keyframe behavior to depend on the camera.
 
    - a new viewer needs a keyframe, so the bridge asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the viewer waits for the camera's next keyframe
-   - after startup or a pipeline restart, the bridge discards frames until the first keyframe; while it waits it logs `video_stream_passthrough_waiting_for_key_frame` at most once per 5 s with the number of frames discarded so far, and if that keeps repeating the camera may never send IDR frames
+   - after startup or a pipeline restart, the bridge discards frames until the first keyframe; until the track is first published it logs `video_stream_passthrough_waiting_for_key_frame` at most once per 5 s with the number of frames discarded so far, and if that keeps repeating the camera may never send IDR frames
+   - if publishing the track or sending a frame fails, the bridge logs `video_stream_capture_failed` and tries again at the next keyframe without restarting the pipeline
    - the bridge queues up to about 1 s of video; if it falls further behind than that, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`
    - once the keyframe arrives, it logs `video_stream_passthrough_resumed` with the number of frames it discarded; it also logs this at startup and after a restart if any frames were discarded
 
