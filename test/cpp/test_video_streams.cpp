@@ -110,6 +110,19 @@ StreamSpec makePassthroughSpec(const std::string & source_fragment)
   return spec;
 }
 
+livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
+{
+  livekit::EncodedVideoSource::Frame frame;
+  frame.is_keyframe = is_keyframe;
+  frame.width = 64U;
+  frame.height = 48U;
+  frame.timestamp_us = 1000;
+  // Annex-B start code and an IDR (type 5) or non-IDR (type 1) slice header.
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
+  return frame;
+}
+
 // A huge GOP means every keyframe after the first one was requested.
 constexpr char kOpenH264Source[] =
   "videotestsrc is-live=true ! video/x-raw,width=64,height=48,framerate=60/1 ! openh264enc gop-size=100000";
@@ -706,6 +719,28 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
   EXPECT_EQ(logs.findLine({"video_stream_passthrough_fell_behind"}), "");
   EXPECT_EQ(logs.findLine({"video_stream_passthrough_resumed"}), "");
   EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
+}
+
+TEST_F(StreamTest, PassthroughLogsWhileWaitingForFirstKeyFrame)
+{
+  ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, makePassthroughSpec(kOpenH264Source));
+  const std::function<void()> request_key_frame = []() {};
+
+  publisher.captureEncoded(makeEncodedFrame(false), request_key_frame);
+  publisher.captureEncoded(makeEncodedFrame(false), request_key_frame);
+  publisher.captureEncoded(makeEncodedFrame(true), request_key_frame);
+  // Later waits follow a logged fall behind or restart and end with the resumed log.
+  publisher.awaitKeyFrame();
+  publisher.captureEncoded(makeEncodedFrame(false), request_key_frame);
+
+  // Throttled: one line for the two frames discarded before the first keyframe.
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 1U);
+  EXPECT_FALSE(
+    logs
+      .findLine({"video_stream_passthrough_waiting_for_key_frame", "stream_key=other_video:test", "discarded_frames=1"})
+      .empty());
 }
 
 TEST_F(StreamTest, PassthroughStreamPublishFailureKeepsPipelineRunning)

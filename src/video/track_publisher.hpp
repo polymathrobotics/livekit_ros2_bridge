@@ -139,6 +139,7 @@ private:
   // The passthrough *Locked helpers return whether to request a keyframe; callers
   // do so after releasing mutex_ (see captureEncoded()).
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
+  void logWaitingForFirstKeyFrameLocked();
   // Publishes the encoded source on first use; throws if the publish or send fails.
   void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
@@ -173,6 +174,7 @@ private:
   bool key_frame_request_pending_ = false;
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
+  EventThrottle waiting_log_throttle_{kLogThrottle};
   EventThrottle over_budget_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
   // A source that stays broken fails every restart; log it once per interval.
