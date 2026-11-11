@@ -19,7 +19,7 @@
 #include "gtest/gtest.h"
 #include "video/h264_access_unit.hpp"
 
-namespace livekit_ros2_bridge
+namespace livekit_ros2_bridge::video
 {
 namespace
 {
@@ -52,7 +52,7 @@ Bytes concat(std::initializer_list<Bytes> parts)
 
 bool containsIdr(const Bytes & bytes)
 {
-  return video::containsIdrSlice(bytes.data(), bytes.size());
+  return containsIdrSlice(bytes.data(), bytes.size());
 }
 
 TEST(H264AccessUnitTest, DetectsIdrAfterParameterSetsWithFourByteStartCodes)
@@ -111,7 +111,7 @@ TEST(H264AccessUnitTest, RejectsRecoveryPointIntraSliceThatIsNotIdr)
 
 TEST(H264AccessUnitTest, RejectsEmptyAndTruncatedInput)
 {
-  EXPECT_FALSE(video::containsIdrSlice(nullptr, 0U));
+  EXPECT_FALSE(containsIdrSlice(nullptr, 0U));
   EXPECT_FALSE(containsIdr({}));
   EXPECT_FALSE(containsIdr(kShortStartCode));
   EXPECT_FALSE(containsIdr(kLongStartCode));
@@ -148,4 +148,4 @@ TEST(H264AccessUnitTest, DecidesAtTheFirstSlice)
 }
 
 }  // namespace
-}  // namespace livekit_ros2_bridge
+}  // namespace livekit_ros2_bridge::video
