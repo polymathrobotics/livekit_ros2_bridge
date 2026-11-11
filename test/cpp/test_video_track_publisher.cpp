@@ -48,6 +48,7 @@ const test_support::ScopedLiveKitInit kLiveKitInit;
 // Mirror TrackPublisher's private intervals.
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
 constexpr auto kPublishRetryInterval = std::chrono::seconds(1);
+constexpr auto kBridgeQueueDuration = std::chrono::seconds(1);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
 
 // Records formatted log lines (still forwarding them) so tests can assert on log events.
@@ -423,6 +424,8 @@ TEST(TrackPublisherTest, PassthroughFellBehindRequestsKeyFrameAndDiscardsUntilIt
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:behind", "lkros.video.behind"));
 
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  // Overruns right after the publish are its backlog draining.
+  std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
   publisher->onFellBehind(request_key_frame);
   EXPECT_EQ(key_frame_requests, 1);
 
@@ -444,6 +447,8 @@ TEST(TrackPublisherTest, PassthroughRepeatedFellBehindKeepsKeyFrameRequestsThrot
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:overruns", "lkros.video.overruns"));
 
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  // Overruns right after the publish are its backlog draining.
+  std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
   publisher->onFellBehind(request_key_frame);
   publisher->onFellBehind(request_key_frame);
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
@@ -490,6 +495,29 @@ TEST(TrackPublisherTest, PassthroughIgnoresFellBehindWhileFirstKeyFramePublishes
   EXPECT_TRUE(publish_started);
   EXPECT_TRUE(fell_behind_returned);
   EXPECT_EQ(key_frame_requests.load(), 0);
+}
+
+TEST(TrackPublisherTest, PassthroughIgnoresFellBehindForOneQueueLengthAfterSlowPublish)
+{
+  FakeRoomConnection connection;
+  // Longer than the bridge queue holds, so the backlog overruns it as it drains.
+  connection.state->publish_video_track_hook = [](const std::string &) {
+    std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
+  };
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:stalled_publish", "lkros.video.stalled_publish"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 0);
+
+  std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
+  publisher->onFellBehind(request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
 }
 
 TEST(TrackPublisherTest, PassthroughPublishFailureRetriesAtFirstKeyFrameAfterBackoff)

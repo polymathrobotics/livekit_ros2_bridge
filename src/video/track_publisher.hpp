@@ -111,7 +111,8 @@ public:
   void awaitKeyFrame();
   // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe.
   // Ignored while the first keyframe publishes, which stalls the queue by itself,
-  // and when such a publish started while this call waited for the publisher.
+  // when such a publish started while this call waited for the publisher, and for
+  // kBridgeQueueDuration after it ends, while its backlog drains.
   void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:
@@ -153,6 +154,8 @@ private:
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kPublishRetryInterval = std::chrono::seconds(1);
+  // How much video the passthrough pipeline's bridge queue holds.
+  static constexpr auto kBridgeQueueDuration = std::chrono::seconds(1);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
@@ -173,6 +176,8 @@ private:
   // Incremented under mutex_ when a publish starts and again when it ends, so it is
   // odd while the first keyframe publishes; read by onFellBehind() without mutex_.
   std::atomic<std::uint64_t> encoded_publish_sequence_{0U};
+  // When the last publish ended, successful or not; min() before the first one.
+  std::chrono::steady_clock::time_point encoded_publish_ended_at_ = std::chrono::steady_clock::time_point::min();
   bool awaiting_key_frame_ = true;
   // Set by a failed publish; keyframes before it are discarded so an unreachable
   // server doesn't get a publish attempt at every keyframe.

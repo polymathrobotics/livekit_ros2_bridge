@@ -359,6 +359,10 @@ void TrackPublisher::onFellBehind(const std::function<void()> & request_key_fram
     if (closed_ || encoded_publish_sequence_.load(std::memory_order_relaxed) != publish_sequence) {
       return;
     }
+    // A publish slower than the queue leaves a backlog that overruns it again as it drains.
+    if (std::chrono::steady_clock::now() < encoded_publish_ended_at_ + kBridgeQueueDuration) {
+      return;
+    }
 
     // Frames are discarded quickly while waiting, so the queue drains and the
     // feed resumes live at the requested keyframe.
@@ -408,8 +412,10 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
   auto source = std::make_shared<livekit::EncodedVideoSource>(
     livekit::VideoCodec::H264, static_cast<int>(width), static_cast<int>(height));
   (void)encoded_publish_sequence_.fetch_add(1U, std::memory_order_acq_rel);
-  const ScopeExit publishing_exit(
-    [this]() { (void)encoded_publish_sequence_.fetch_add(1U, std::memory_order_acq_rel); });
+  const ScopeExit publishing_exit([this]() {
+    encoded_publish_ended_at_ = std::chrono::steady_clock::now();
+    (void)encoded_publish_sequence_.fetch_add(1U, std::memory_order_acq_rel);
+  });
   auto track =
     connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
   encoded_source_ = std::move(source);
