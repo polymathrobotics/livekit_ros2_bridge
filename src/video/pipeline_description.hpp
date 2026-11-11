@@ -50,10 +50,12 @@ inline std::string buildPassthroughPipelineDescription(const std::string & sourc
   description += " ! h264parse config-interval=-1";
   description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
   // Never drop here: losing an encoded frame corrupts the picture until the next
-  // keyframe. The queue filling up (its overrun) is the "fell behind" signal.
+  // keyframe. The queue filling up (its overrun) is the "fell behind" signal. It
+  // holds one second of video, so a network burst fits and falling behind means
+  // about a second behind the (live) source.
   description += " ! queue name=";
   description += kBridgeVideoQueueName;
-  description += " max-size-buffers=8 max-size-bytes=0 max-size-time=0 leaky=no";
+  description += " max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 leaky=no";
   description += " ! appsink name=";
   description += kBridgeAppSinkName;
   description += " sync=false";

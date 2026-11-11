@@ -327,7 +327,7 @@ TEST(PipelineDescriptionTest, PassthroughEndingParsesH264WithoutDroppingFrames)
     description,
     "rtspsrc location=rtsp://camera ! rtph264depay"
     " ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au"
-    " ! queue name=bridge_video_queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 leaky=no"
+    " ! queue name=bridge_video_queue max-size-buffers=0 max-size-bytes=0 max-size-time=1000000000 leaky=no"
     " ! appsink name=bridge_video_sink sync=false");
   EXPECT_EQ(description.find("leaky=downstream"), std::string::npos);
   EXPECT_EQ(description.find("drop=true"), std::string::npos);

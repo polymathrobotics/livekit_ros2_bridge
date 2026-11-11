@@ -110,12 +110,10 @@ StreamSpec makePassthroughSpec(const std::string & source_fragment)
 // A huge GOP means every keyframe after the first one was requested.
 constexpr char kOpenH264Source[] =
   "videotestsrc is-live=true ! video/x-raw,width=64,height=48,framerate=60/1 ! openh264enc gop-size=100000";
-// One frame more than the sample thread (1) and the bridge queue (8) hold: a stall
-// on the first frame overruns the queue exactly once, and no frame can overrun it
-// again after the stall.
-constexpr char kTenFrameOpenH264Source[] =
-  "videotestsrc is-live=true num-buffers=10 ! video/x-raw,width=64,height=48,framerate=60/1"
-  " ! openh264enc gop-size=100000";
+// The bridge queue holds one second of video. Holding the sample thread twice as
+// long overruns it; holding it half as long does not.
+constexpr auto kQueueOverrunningStall = std::chrono::milliseconds(2000);
+constexpr auto kQueueFittingStall = std::chrono::milliseconds(500);
 
 template <typename Predicate>
 bool waitUntil(Predicate predicate)
@@ -532,10 +530,9 @@ TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)
 {
   std::atomic<bool> frame_held{false};
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
-  // At 60 fps the bridge queue (8 buffers) overruns well within this hold.
   callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
     if (!frame_held.exchange(true)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      std::this_thread::sleep_for(kQueueOverrunningStall);
     }
   };
   callbacks.on_fell_behind = {};
@@ -543,7 +540,7 @@ TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)
 
   pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
   const bool held = waitUntil([&]() { return frame_held.load(); });
-  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  std::this_thread::sleep_for(kQueueOverrunningStall + std::chrono::milliseconds(250));
   pipeline.stop();
 
   EXPECT_TRUE(held);
@@ -615,8 +612,7 @@ TEST_F(StreamTest, PassthroughStreamSkipsToRequestedKeyFrameAfterFallingBehind)
 
   stream.start();
   const bool stalled = capture_stalled_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
-  // At 60 fps the bridge queue (8 buffers) overruns well within this stall.
-  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  std::this_thread::sleep_for(kQueueOverrunningStall);
   release_capture_promise.set_value();
   const bool resumed = waitUntil([&]() { return !logs.findLine({"video_stream_passthrough_resumed"}).empty(); });
   stream.close();
@@ -637,9 +633,10 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
   std::promise<void> release_publish_promise;
   std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
   ScopedLogCapture logs;
-  StreamSpec spec = makePassthroughSpec(kTenFrameOpenH264Source);
+  StreamSpec spec = makePassthroughSpec(kOpenH264Source);
   FakeRoomConnection connection;
-  // Publishing on the first keyframe waits on the server; the source keeps producing.
+  // Publishing on the first keyframe waits on the server while the live source keeps
+  // producing; a publish shorter than the bridge queue fits the backlog.
   connection.state->publish_video_track_hook = [&](const std::string &) {
     if (!publish_started) {
       publish_started = true;
@@ -652,11 +649,10 @@ TEST_F(StreamTest, PassthroughStreamSlowFirstPublishIsNotFallingBehind)
 
   stream.start();
   const bool publish_blocked = publish_started_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
-  // All ten frames arrive well within this stall.
-  std::this_thread::sleep_for(std::chrono::milliseconds(750));
+  std::this_thread::sleep_for(kQueueFittingStall);
   release_publish_promise.set_value();
   const bool captured = waitUntil([&]() { return !logs.findLine({"video_stream_frame_captured"}).empty(); });
-  // An overrun counted against the publish would be handled as soon as it ends.
+  // Let the backlog from the publish drain while the source stays live.
   std::this_thread::sleep_for(std::chrono::milliseconds(250));
   stream.close();
 
