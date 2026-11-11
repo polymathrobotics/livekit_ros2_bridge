@@ -348,7 +348,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 
 2. Know what the bridge can't do with a stream it doesn't re-encode.
 
-   - H.264 only: any other codec fails when the stream starts, and the log says passthrough supports H.264 only
+   - H.264 only: a source whose output caps are fixed when the pipeline is built (for example an encoder linked directly) is rejected at startup with a `could not link` error; a source with dynamic pads (RTSP, demuxers) fails when the stream starts, and `video_stream_pipeline_recovery_scheduled` carries the hint `the source may not be H.264; passthrough supports H.264 only`
    - startup rejects `transform`, `publish.codec`, `publish.max_framerate`, and `publish.simulcast` on a passthrough entry: the bridge can't resize, re-rate, or re-encode a stream it only forwards, and simulcast needs several encodings
    - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
    - bitrate, resolution, frame rate, and keyframe interval all come from the camera
