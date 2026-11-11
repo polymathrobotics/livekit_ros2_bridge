@@ -163,7 +163,7 @@ Other video notes:
 - `transform` is optional and sits between your ingress and the bridge-owned tail
 - the bridge appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`, unless `passthrough` is set (see [Passthrough](#passthrough-for-cameras-that-already-send-h264))
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
-- neither `source` nor `transform` may name an element `bridge_video_queue`; the bridge reserves that name
+- with `passthrough`, `source` may not name an element `bridge_video_queue`; the bridge reserves that name for its queue
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
 
@@ -296,7 +296,6 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    - `source` should start with the ingress stage such as `uridecodebin` or `v4l2src`
    - `transform` is optional and should contain only middle-of-pipeline processing stages
    - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own queue/convert/I420/appsink tail
-   - do not name an element `bridge_video_queue`; the bridge reserves that name
    - leave `video.publish.*` and per-source `publish.*` unset unless you need to force codec, bitrate, framerate, or simulcast behavior
    - other video sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_other_ids`
 
@@ -338,12 +337,13 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
      ros__parameters:
        video_other_ids: ["front_cam"]
 
-       video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/cam0_1 protocols=tcp ! rtph264depay request-keyframe=true"
+       video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/cam0_1 protocols=tcp latency=200 ! rtph264depay request-keyframe=true"
        video.other.front_cam.passthrough: true
        video.other.front_cam.publish.max_bitrate_bps: 2000000  # the camera's configured bitrate
    ```
 
-   - the bridge appends `h264parse config-interval=-1`, the Annex-B H.264 caps, a queue named `bridge_video_queue` that holds up to about 1 s of video, and its own sink
+   - the bridge appends `h264parse config-interval=-1`, the Annex-B H.264 caps, a queue named `bridge_video_queue` that holds up to about 1 s of video or 32 MiB, whichever fills first, and its own sink; don't give an element in `source` that name
+   - `latency=200` keeps `rtspsrc`'s jitterbuffer short; its 2000 ms default adds two seconds of delay
    - do not use `uridecodebin`; it decodes the stream
    - the source must be live, such as a camera or `rtspsrc`; a file source reads faster than real time, so the bridge keeps falling behind and skipping frames
    - `h264parse` comes from `gstreamer1.0-plugins-bad`, which the package declares as a dependency; startup fails if it is missing
@@ -352,7 +352,8 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 2. Know what the bridge can't do with a stream it doesn't re-encode.
 
    - H.264 only: a source whose output caps are fixed when the pipeline is built (for example an encoder linked directly) is rejected at startup with a `could not link` error; a source with dynamic pads (RTSP, demuxers) fails when the stream starts, and `video_stream_pipeline_recovery_scheduled` carries the hint `the source may not be H.264; passthrough supports H.264 only`
-   - startup rejects `transform`, `publish.codec`, `publish.max_framerate`, and `publish.simulcast` on a passthrough entry: the bridge can't resize, re-rate, or re-encode a stream it only forwards, and simulcast needs several encodings
+   - startup rejects a non-empty `transform`, a `publish.codec` other than `h264` or `auto`, a `publish.max_framerate` above `0`, and `publish.simulcast: enabled` on a passthrough entry: the bridge can't resize, re-rate, or re-encode a stream it only forwards, and simulcast needs several encodings
+   - `publish.codec: h264` or `auto`, `publish.max_framerate: 0`, and `publish.simulcast: disabled` or `auto` describe what passthrough sends anyway, so they are accepted and change nothing
    - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
    - bitrate, resolution, frame rate, and keyframe interval all come from the camera
 
@@ -368,9 +369,11 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 
    - a new viewer needs a keyframe, so the bridge asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the viewer waits for the camera's next keyframe
    - after startup or a pipeline restart, the bridge discards frames until the first keyframe; until the track is first published it logs `video_stream_passthrough_waiting_for_key_frame` at most once per 5 s with the number of frames discarded so far, and if that keeps repeating the camera may never send IDR frames
-   - if publishing the track or sending a frame fails, the bridge logs `video_stream_capture_failed` and tries again at the next keyframe without restarting the pipeline
-   - the bridge queues up to about 1 s of video; if it falls further behind than that, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`
-   - once the keyframe arrives, it logs `video_stream_passthrough_resumed` with the number of frames it discarded; it also logs this at startup and after a restart if any frames were discarded
+   - if publishing the track or sending a frame fails, the bridge logs `video_stream_capture_failed` at most once per 5 s with a `count`, and tries again at the next keyframe without restarting the pipeline; it tries to publish the track at most once per second
+   - the bridge queues up to about 1 s of video; if it falls further behind than that, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind` at most once per 5 s with a `count`
+   - the backlog that builds up while the track is being published doesn't count: for 1 s after a publish completes, a full queue is not treated as falling behind
+   - if handling a fall behind fails, the bridge logs `video_stream_passthrough_fell_behind_failed`, also at most once per 5 s with a `count`
+   - once the keyframe arrives, it logs `video_stream_passthrough_resumed` with the number of frames it discarded, also at startup and after a restart if any frames were discarded; it logs this at most once per 5 s, and frames discarded meanwhile count toward the next one
 
 5. Set the camera up for it.
 
