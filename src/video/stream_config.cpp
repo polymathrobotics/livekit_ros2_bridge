@@ -236,6 +236,10 @@ StreamConfig loadConfig(const Params & params)
         source_context + " sets " + passthrough_override +
         ", but passthrough forwards the camera's encoded video unchanged and cannot apply it");
     }
+    if (entry.passthrough) {
+      // Only passthrough adds the bridge's queue, so only it reserves the name.
+      utils::rejectReservedElementName(source_context, source_fragment, kBridgeVideoQueueName);
+    }
     const std::string transform = trim(entry.transform);
     const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)
                                                       : buildPipelineDescription(source_fragment, transform);

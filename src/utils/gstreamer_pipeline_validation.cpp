@@ -26,16 +26,16 @@ namespace livekit_ros2_bridge::utils
 namespace
 {
 
-EndpointCounts countEndpoints(const std::string & context, GstElement * pipeline, const EndpointLayout & layout)
+// Calls `visit` with every element inside `bin`, including those in nested bins.
+template <typename Visitor>
+void forEachElement(const std::string & context, GstElement * bin, Visitor && visit)
 {
-  EndpointCounts counts;
-
-  GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(pipeline)));
+  GstIteratorPtr iterator(gst_bin_iterate_recurse(GST_BIN(bin)));
   GValueSlot item;
   while (true) {
     const GstIteratorResult result = gst_iterator_next(iterator.get(), item.get());
     if (result == GST_ITERATOR_DONE) {
-      break;
+      return;
     }
     if (result == GST_ITERATOR_RESYNC) {
       gst_iterator_resync(iterator.get());
@@ -45,7 +45,16 @@ EndpointCounts countEndpoints(const std::string & context, GstElement * pipeline
       throw std::runtime_error(context + " could not inspect parsed GStreamer elements");
     }
 
-    auto * element = GST_ELEMENT(g_value_get_object(item.get()));
+    visit(GST_ELEMENT(g_value_get_object(item.get())));
+    item.reset();
+  }
+}
+
+EndpointCounts countEndpoints(const std::string & context, GstElement * pipeline, const EndpointLayout & layout)
+{
+  EndpointCounts counts;
+
+  forEachElement(context, pipeline, [&context, &layout, &counts](GstElement * element) {
     const GstElementFactory * factory = gst_element_get_factory(element);
     const std::string_view factory_name = factory == nullptr ? "" : GST_OBJECT_NAME(factory);
     const std::string_view element_name = GST_ELEMENT_NAME(element);
@@ -72,9 +81,7 @@ EndpointCounts countEndpoints(const std::string & context, GstElement * pipeline
       }
       ++counts.bridge_appsink;
     }
-
-    item.reset();
-  }
+  });
 
   return counts;
 }
@@ -128,6 +135,31 @@ void validatePipeline(const std::string & context, const std::string & descripti
   if (!layout.matches(counts)) {
     throw std::runtime_error(context + " must not define appsrc/appsink endpoints; the bridge owns them");
   }
+}
+
+void rejectReservedElementName(const std::string & context, const std::string & fragment, const char * reserved_name)
+{
+  ensureGStreamerInitialized();
+
+  GError * raw_error = nullptr;
+  GstElementPtr parsed(gst_parse_launch(fragment.c_str(), &raw_error));
+  GErrorPtr error(raw_error);
+  // Syntax errors are left to validatePipeline, which reports them in context.
+  if (parsed == nullptr) {
+    return;
+  }
+
+  const auto reject_if_reserved = [&context, reserved_name](GstElement * element) {
+    if (std::string_view{GST_ELEMENT_NAME(element)} == reserved_name) {
+      throw std::runtime_error(context + " must not reuse reserved element name '" + reserved_name + "'");
+    }
+  };
+  // A single-element fragment parses to that element rather than a bin.
+  if (!GST_IS_BIN(parsed.get())) {
+    reject_if_reserved(parsed.get());
+    return;
+  }
+  forEachElement(context, parsed.get(), reject_if_reserved);
 }
 
 }  // namespace livekit_ros2_bridge::utils

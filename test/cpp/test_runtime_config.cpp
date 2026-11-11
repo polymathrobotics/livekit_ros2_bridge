@@ -736,16 +736,46 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps
 
 TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsReservedQueueName)
 {
+  struct ReservedNameSource
+  {
+    const char * source;
+    const char * node_name;
+  };
+
+  const std::vector<ReservedNameSource> reserved_name_sources{
+    {"videotestsrc is-live=true ! openh264enc ! queue name=bridge_video_queue",
+     "startup_config_passthrough_rejects_reserved_queue_name"},
+    {"videotestsrc is-live=true name=bridge_video_queue ! openh264enc",
+     "startup_config_passthrough_rejects_reserved_queue_name_on_source"},
+    {"bin. ( videotestsrc is-live=true ! openh264enc ! queue name=bridge_video_queue )",
+     "startup_config_passthrough_rejects_reserved_queue_name_in_bin"},
+  };
+
+  for (const auto & reserved_name_source : reserved_name_sources) {
+    SCOPED_TRACE(reserved_name_source.source);
+    auto options = makeStaticTokenOptions();
+    options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
+    options.append_parameter_override("video.other.front.source", reserved_name_source.source);
+    options.append_parameter_override("video.other.front.passthrough", true);
+
+    expectConfigError(
+      reserved_name_source.node_name,
+      options,
+      "other video source 'front' must not reuse reserved element name 'bridge_video_queue'");
+  }
+}
+
+TEST_F(RuntimeConfigTest, OtherVideoWithoutPassthroughMayNameAnElementBridgeVideoQueue)
+{
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override(
-    "video.other.front.source", "videotestsrc is-live=true ! openh264enc ! queue name=bridge_video_queue");
-  options.append_parameter_override("video.other.front.passthrough", true);
+  options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true");
+  options.append_parameter_override("video.other.front.transform", "queue name=bridge_video_queue");
 
-  expectConfigErrorContains(
-    "startup_config_passthrough_rejects_reserved_queue_name",
-    options,
-    "other video source 'front' has invalid GStreamer syntax");
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_other_video_may_name_bridge_queue", options);
+
+  ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+  EXPECT_EQ(config.video_stream.other_sources.front().transform_fragment, "queue name=bridge_video_queue");
 }
 
 TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
