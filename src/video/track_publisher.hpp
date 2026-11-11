@@ -109,7 +109,8 @@ public:
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
   // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe.
-  // Ignored while the first keyframe publishes, which stalls the queue by itself.
+  // Ignored while the first keyframe publishes, which stalls the queue by itself,
+  // and when such a publish started while this call waited for the publisher.
   void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:
@@ -165,8 +166,9 @@ private:
 
   // Passthrough state.
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
-  // Set while the first keyframe publishes; read by onFellBehind() without mutex_.
-  std::atomic<bool> publishing_encoded_source_{false};
+  // Incremented under mutex_ when a publish starts and again when it ends, so it is
+  // odd while the first keyframe publishes; read by onFellBehind() without mutex_.
+  std::atomic<std::uint64_t> encoded_publish_sequence_{0U};
   bool awaiting_key_frame_ = true;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};

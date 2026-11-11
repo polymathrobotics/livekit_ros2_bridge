@@ -333,15 +333,17 @@ void TrackPublisher::onFellBehind(const std::function<void()> & request_key_fram
 {
   // The first publish blocks the sample thread on the server while the source
   // keeps producing, so overruns then don't mean the consumer fell behind.
-  // Checked before mutex_, which the publish holds.
-  if (publishing_encoded_source_.load(std::memory_order_acquire)) {
+  // Checked before mutex_, which the publish holds, and again under it: an
+  // overrun that began before a publish must not re-arm the wait after it.
+  const std::uint64_t publish_sequence = encoded_publish_sequence_.load(std::memory_order_acquire);
+  if (publish_sequence % 2U != 0U) {
     return;
   }
 
   bool key_frame_needed = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_) {
+    if (closed_ || encoded_publish_sequence_.load(std::memory_order_relaxed) != publish_sequence) {
       return;
     }
 
@@ -383,8 +385,9 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
 {
   auto source = std::make_shared<livekit::EncodedVideoSource>(
     livekit::VideoCodec::H264, static_cast<int>(width), static_cast<int>(height));
-  publishing_encoded_source_.store(true, std::memory_order_release);
-  const ScopeExit publishing_exit([this]() { publishing_encoded_source_.store(false, std::memory_order_release); });
+  (void)encoded_publish_sequence_.fetch_add(1U, std::memory_order_acq_rel);
+  const ScopeExit publishing_exit(
+    [this]() { (void)encoded_publish_sequence_.fetch_add(1U, std::memory_order_acq_rel); });
   auto track =
     connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
   encoded_source_ = std::move(source);
