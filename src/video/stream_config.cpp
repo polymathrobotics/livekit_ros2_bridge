@@ -140,8 +140,9 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
-// Passthrough forwards the camera's encoded video unchanged, so only global
-// defaults may be set (and are ignored); per-entry overrides are a config error.
+// Passthrough forwards the camera's encoded video unchanged, so global defaults
+// are ignored and per-entry overrides are a config error. The one exception is
+// publish.max_bitrate_bps, which describes the camera instead of changing it.
 template <typename EntryT>
 const char * findPassthroughOverride(const EntryT & entry)
 {
@@ -150,9 +151,6 @@ const char * findPassthroughOverride(const EntryT & entry)
   }
   if (!trim(entry.publish.codec).empty()) {
     return "publish.codec";
-  }
-  if (entry.publish.max_bitrate_bps >= 0) {
-    return "publish.max_bitrate_bps";
   }
   if (entry.publish.max_framerate >= 0.0) {
     return "publish.max_framerate";
@@ -163,12 +161,19 @@ const char * findPassthroughOverride(const EntryT & entry)
   return nullptr;
 }
 
-livekit::TrackPublishOptions makePassthroughPublishOptions()
+// publish.max_bitrate_bps tells LiveKit the most this camera sends, which
+// bounds its rate target and pacing; without it LiveKit assumes a default for
+// the resolution. -1 (unset) and 0 leave that default in place.
+template <typename EntryT>
+livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
 {
   livekit::TrackPublishOptions options;
   options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
+  if (entry.publish.max_bitrate_bps >= 0) {
+    setEncoding(options, static_cast<std::uint64_t>(entry.publish.max_bitrate_bps), 0.0);
+  }
   return options;
 }
 
@@ -250,8 +255,8 @@ StreamConfig loadConfig(const Params & params)
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
     source.passthrough = entry.passthrough;
-    source.publish_options =
-      entry.passthrough ? makePassthroughPublishOptions() : parsePublishOptions(entry, config.default_publish_options);
+    source.publish_options = entry.passthrough ? makePassthroughPublishOptions(entry)
+                                               : parsePublishOptions(entry, config.default_publish_options);
     config.other_sources.push_back(std::move(source));
   }
 

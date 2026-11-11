@@ -7,8 +7,10 @@ Changelog for package livekit_ros2_bridge
 * Upgrade the LiveKit C++ SDK to 1.12.2 and use official Ubuntu builds, including for Humble.
 * Add H.264 passthrough for other video sources: with `video.other.<id>.passthrough: true`, the
   bridge forwards a camera's already-encoded H.264 to LiveKit without decoding or re-encoding it.
-  Passthrough entries reject `transform` and per-entry `publish.*` overrides and ignore the global
-  `video.publish.*` defaults. Adds an exec dependency on `gstreamer1.0-plugins-bad` for `h264parse`.
+  Passthrough entries reject `transform`, `publish.codec`, `publish.max_framerate`, and
+  `publish.simulcast` and ignore the global `video.publish.*` defaults; `publish.max_bitrate_bps`
+  tells LiveKit the camera's bitrate. Adds an exec dependency on `gstreamer1.0-plugins-bad` for
+  `h264parse`.
 
 0.3.1 (Unreleased)
 ------------------

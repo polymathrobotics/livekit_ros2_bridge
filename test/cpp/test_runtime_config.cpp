@@ -119,12 +119,18 @@ void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const l
   EXPECT_EQ(actual.video_encoder, expected.video_encoder);
 }
 
-livekit::TrackPublishOptions makePassthroughPublishOptions()
+livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bitrate_bps = 0)
 {
   livekit::TrackPublishOptions options;
   options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
+  if (max_bitrate_bps > 0) {
+    livekit::VideoEncodingOptions encoding;
+    encoding.max_bitrate = max_bitrate_bps;
+    encoding.max_framerate = 0.0;
+    options.video_encoding = encoding;
+  }
   return options;
 }
 
@@ -641,6 +647,52 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoIgnoresInheritedGlobalPublishDefa
   expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions());
 }
 
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoPassesPerEntryMaxBitrateToLivekit)
+{
+  auto options = makePassthroughSourceOptions();
+  appendVideoPublishOverrides(options, "h264", 900000, 15.0, "disabled");
+  options.append_parameter_override("video.other.front.publish.max_bitrate_bps", 2500000);
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_passthrough_max_bitrate", options);
+
+  ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+  const auto & source = config.video_stream.other_sources.front();
+  ASSERT_TRUE(source.publish_options.video_encoding.has_value());
+  EXPECT_EQ(source.publish_options.video_encoding->max_bitrate, 2500000U);
+  // The global max_framerate stays ignored; the camera sets the frame rate.
+  EXPECT_DOUBLE_EQ(source.publish_options.video_encoding->max_framerate, 0.0);
+  expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions(2500000U));
+}
+
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoWithoutPerEntryMaxBitrateLeavesEncodingUnset)
+{
+  struct UnsetMaxBitrate
+  {
+    int max_bitrate_bps;
+    const char * node_name;
+  };
+
+  // -1 is the unset default; 0 means LiveKit's default here as everywhere else.
+  const std::vector<UnsetMaxBitrate> unset_max_bitrates{
+    {-1, "startup_config_passthrough_max_bitrate_unset"},
+    {0, "startup_config_passthrough_max_bitrate_zero"},
+  };
+
+  for (const auto & unset_max_bitrate : unset_max_bitrates) {
+    SCOPED_TRACE(unset_max_bitrate.max_bitrate_bps);
+    auto options = makePassthroughSourceOptions();
+    appendVideoPublishOverrides(options, "h264", 900000, 15.0, "disabled");
+    options.append_parameter_override("video.other.front.publish.max_bitrate_bps", unset_max_bitrate.max_bitrate_bps);
+
+    const RuntimeConfig config = loadRuntimeConfigForNode(unset_max_bitrate.node_name, options);
+
+    ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+    const auto & source = config.video_stream.other_sources.front();
+    EXPECT_FALSE(source.publish_options.video_encoding.has_value());
+    expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions());
+  }
+}
+
 TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
 {
   struct RejectedOverride
@@ -653,7 +705,6 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
   const std::vector<RejectedOverride> rejected_overrides{
     {"transform", rclcpp::ParameterValue("videoflip"), "startup_config_passthrough_rejects_transform"},
     {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_rejects_codec"},
-    {"publish.max_bitrate_bps", rclcpp::ParameterValue(0), "startup_config_passthrough_rejects_max_bitrate"},
     {"publish.max_framerate", rclcpp::ParameterValue(15.0), "startup_config_passthrough_rejects_max_framerate"},
     {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_rejects_simulcast"},
   };

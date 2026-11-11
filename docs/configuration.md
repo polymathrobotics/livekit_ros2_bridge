@@ -149,7 +149,7 @@ Supported ROS video inputs:
 | `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
 | `video.other.<id>.passthrough` | `false` | `true`, `false` | Forward the source's H.264 to LiveKit without decoding or re-encoding. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
 | `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
-| `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
+| `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps`. With `passthrough`, the most the camera sends; `-1` leaves LiveKit's default. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
 | `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
 | `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
 
@@ -338,6 +338,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 
        video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/cam0_1 protocols=tcp ! rtph264depay request-keyframe=true"
        video.other.front_cam.passthrough: true
+       video.other.front_cam.publish.max_bitrate_bps: 2000000  # the camera's configured bitrate
    ```
 
    - the bridge appends `h264parse config-interval=-1`, the Annex-B H.264 caps, and its own sink
@@ -348,16 +349,23 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 2. Know what the bridge can't do with a stream it doesn't re-encode.
 
    - H.264 only: any other codec fails when the stream starts, and the log says passthrough supports H.264 only
-   - startup rejects `transform`, `publish.codec`, `publish.max_bitrate_bps`, `publish.max_framerate`, and `publish.simulcast` on a passthrough entry: the bridge can't resize, re-rate, or cap a stream it doesn't re-encode, and simulcast needs several encodings
+   - startup rejects `transform`, `publish.codec`, `publish.max_framerate`, and `publish.simulcast` on a passthrough entry: the bridge can't resize, re-rate, or re-encode a stream it only forwards, and simulcast needs several encodings
    - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
-   - bitrate, resolution, frame rate, and keyframe interval all come from the camera; the bridge logs `video_stream_passthrough_over_budget` when the camera sends well above what LiveKit says the connection can carry
+   - bitrate, resolution, frame rate, and keyframe interval all come from the camera
 
-3. Expect keyframe behavior to depend on the camera.
+3. Tell LiveKit the camera's bitrate.
+
+   - set `publish.max_bitrate_bps` to the bitrate configured on the camera; it is passed to LiveKit as the track's maximum bitrate and does not change what the camera sends
+   - LiveKit's rate target for the track is the lower of its bandwidth estimate and `publish.max_bitrate_bps`; when the key is unset (`-1`), LiveKit uses its default for the resolution instead, about 1.7 Mbps at 720p and 3 Mbps at 1080p
+   - the bridge logs `video_stream_passthrough_over_budget` when the camera's measured bitrate stays well above that target; with the key unset, a camera sending well above LiveKit's default triggers it even on a fast link
+   - global `video.publish.max_bitrate_bps` does not apply to passthrough sources
+
+4. Expect keyframe behavior to depend on the camera.
 
    - a new viewer needs a keyframe, so the bridge asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the viewer waits for the camera's next keyframe
    - if the bridge falls behind, it skips ahead to the next keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind`; once the keyframe arrives it logs `video_stream_passthrough_resumed` with the number of frames it discarded
 
-4. Set the camera up for it.
+5. Set the camera up for it.
 
    - use a substream (for example `cam0_1`), not the stream a recorder reads
    - use a constant bitrate comfortably under the link budget
