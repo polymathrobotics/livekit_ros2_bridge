@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "livekit/room_event_types.h"
+#include "livekit/video_codec.h"
 #include "utils/gstreamer_pipeline_validation.hpp"
 #include "utils/param_entries.hpp"
 #include "utils/ros_resource_name_utils.hpp"
@@ -52,21 +53,20 @@ RosResourcePattern requireRosResourcePattern(std::string_view raw, const char * 
 std::optional<livekit::VideoCodec> parseVideoCodec(const std::string & value)
 {
   const std::string codec = trim(value);
-  // This SDK version lacks stable named constants; values match its wire mapping.
   if (codec == "vp8") {
-    return static_cast<livekit::VideoCodec>(0);
+    return livekit::VideoCodec::VP8;
   }
   if (codec == "h264") {
-    return static_cast<livekit::VideoCodec>(1);
+    return livekit::VideoCodec::H264;
   }
   if (codec == "av1") {
-    return static_cast<livekit::VideoCodec>(2);
+    return livekit::VideoCodec::AV1;
   }
   if (codec == "vp9") {
-    return static_cast<livekit::VideoCodec>(3);
+    return livekit::VideoCodec::VP9;
   }
   if (codec == "h265") {
-    return static_cast<livekit::VideoCodec>(4);
+    return livekit::VideoCodec::H265;
   }
   return std::nullopt;
 }
