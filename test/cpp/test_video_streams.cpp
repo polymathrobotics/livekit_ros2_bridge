@@ -83,19 +83,19 @@ const char * compressedImageInterfaceType()
   return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
 }
 
+// on_caps_mismatch stays unset, so caps failures reach on_failed.
 PipelineCallbacks makeNoOpPipelineCallbacks()
 {
-  return PipelineCallbacks{
-    []() { return false; },
-    [](const livekit::VideoFrame &, std::int64_t) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-    [](livekit::EncodedVideoSource::Frame) {},
-    []() {},
-    [](const std::string &) {},
-    {},
-  };
+  PipelineCallbacks callbacks;
+  callbacks.is_shutdown = []() { return false; };
+  callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) {};
+  callbacks.on_unpack_failed = [](const std::string &) {};
+  callbacks.on_capture_failed = [](const std::string &) {};
+  callbacks.on_failed = [](const std::string &) {};
+  callbacks.on_encoded_frame = [](livekit::EncodedVideoSource::Frame) {};
+  callbacks.on_fell_behind = []() {};
+  callbacks.on_fell_behind_failed = [](const std::string &) {};
+  return callbacks;
 }
 
 StreamSpec makePassthroughSpec(const std::string & source_fragment)
@@ -487,8 +487,65 @@ TEST_F(StreamTest, PipelineContainsNonStandardFrameCallbackException)
   EXPECT_TRUE(reported);
 }
 
+// Counts overruns of any pipeline's bridge queue through a GLib emission hook on
+// the queue's "overrun" signal, independent of the pipeline's own handler.
+class BridgeQueueOverrunCounter final
+{
+public:
+  BridgeQueueOverrunCounter()
+  {
+    const GstObjectPtr<GstElementFactory> queue_factory(gst_element_factory_find("queue"));
+    if (queue_factory == nullptr) {
+      throw std::runtime_error("The queue element is unavailable.");
+    }
+    const GstObjectPtr<GstPluginFeature> loaded_feature(
+      gst_plugin_feature_load(GST_PLUGIN_FEATURE(queue_factory.get())));
+    if (loaded_feature == nullptr) {
+      throw std::runtime_error("Failed to load the queue element.");
+    }
+
+    // The signal exists once the queue class is initialized; keep it referenced.
+    queue_class_ = g_type_class_ref(gst_element_factory_get_element_type(GST_ELEMENT_FACTORY(loaded_feature.get())));
+    signal_id_ = g_signal_lookup("overrun", G_TYPE_FROM_CLASS(queue_class_));
+    hook_id_ = g_signal_add_emission_hook(signal_id_, 0U, &BridgeQueueOverrunCounter::onOverrun, &count_, nullptr);
+  }
+
+  ~BridgeQueueOverrunCounter()
+  {
+    g_signal_remove_emission_hook(signal_id_, hook_id_);
+    g_type_class_unref(queue_class_);
+  }
+
+  BridgeQueueOverrunCounter(const BridgeQueueOverrunCounter &) = delete;
+  BridgeQueueOverrunCounter & operator=(const BridgeQueueOverrunCounter &) = delete;
+  BridgeQueueOverrunCounter(BridgeQueueOverrunCounter &&) = delete;
+  BridgeQueueOverrunCounter & operator=(BridgeQueueOverrunCounter &&) = delete;
+
+  std::size_t count() const
+  {
+    return count_.load();
+  }
+
+private:
+  static gboolean onOverrun(GSignalInvocationHint *, guint, const GValue * param_values, gpointer count)
+  {
+    const GCharPtr name(gst_object_get_name(GST_OBJECT(g_value_get_object(&param_values[0]))));
+    if (name != nullptr && std::string(name.get()) == kBridgeVideoQueueName) {
+      static_cast<std::atomic<std::size_t> *>(count)->fetch_add(1U);
+    }
+    // Keep the hook installed.
+    return TRUE;
+  }
+
+  gpointer queue_class_ = nullptr;
+  guint signal_id_ = 0U;
+  gulong hook_id_ = 0U;
+  std::atomic<std::size_t> count_{0U};
+};
+
 TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)
 {
+  const BridgeQueueOverrunCounter overruns;
   std::atomic<bool> frame_held{false};
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
   callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
@@ -505,6 +562,7 @@ TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)
   pipeline.stop();
 
   EXPECT_TRUE(held);
+  EXPECT_GT(overruns.count(), 0U);
 }
 
 TEST_F(StreamTest, PassthroughStreamPublishesEncodedSource)
