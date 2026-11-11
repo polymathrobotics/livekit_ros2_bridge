@@ -53,6 +53,8 @@ private:
   void restartPipelineAfterFailure();
   void startPipelineLocked();
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
@@ -62,7 +64,7 @@ private:
   // A source that stays broken is retried every restart delay; log it once per interval.
   // recovery_log_mutex_ guards only the throttle and is never held across GStreamer calls.
   std::mutex recovery_log_mutex_;
-  EventThrottle recovery_log_throttle_{std::chrono::seconds(5)};
+  EventThrottle recovery_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::video
