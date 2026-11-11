@@ -105,6 +105,9 @@ private:
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
   PipelineOutput output_ = PipelineOutput::RawI420;
+  // EncodedH264 only: the bridge queue, held from start() so stop() disconnects
+  // overrun_handler_ from the element it was connected to.
+  GstElementPtr bridge_queue_;
   gulong overrun_handler_ = 0U;
   // Owned reference to the appsink's sink pad, released by stop(); atomic so
   // requestKeyFrame() can run on any thread.

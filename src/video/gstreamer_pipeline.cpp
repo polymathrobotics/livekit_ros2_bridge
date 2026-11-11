@@ -362,8 +362,9 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   key_frame_pad_.store(gst_element_get_static_pad(GST_ELEMENT(appsink.get()), "sink"), std::memory_order_release);
 
   if (queue != nullptr) {
+    bridge_queue_ = std::move(queue);
     overrun_handler_ = g_signal_connect(
-      queue.get(),
+      bridge_queue_.get(),
       "overrun",
       G_CALLBACK(
         +[](GstElement *, gpointer user_data) { static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun(); }),
@@ -411,12 +412,10 @@ void GStreamerPipeline::stop()
     gst_app_sink_set_callbacks(GST_APP_SINK(appsink.get()), &callbacks, nullptr, nullptr);
   }
 
-  if (overrun_handler_ != 0U) {
-    GstElementPtr queue(gst_bin_get_by_name(GST_BIN(pipeline_.get()), kBridgeVideoQueueName));
-    if (queue != nullptr) {
-      g_signal_handler_disconnect(queue.get(), overrun_handler_);
-    }
+  if (bridge_queue_ != nullptr) {
+    g_signal_handler_disconnect(bridge_queue_.get(), overrun_handler_);
     overrun_handler_ = 0U;
+    bridge_queue_.reset();
   }
 
   GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
