@@ -358,6 +358,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
    - set `publish.max_bitrate_bps` to the bitrate configured on the camera; it is passed to LiveKit as the track's maximum bitrate and does not change what the camera sends
    - LiveKit's rate target for the track is the lower of its bandwidth estimate and `publish.max_bitrate_bps`; when the key is unset (`-1`), LiveKit uses its default for the resolution instead, about 1.7 Mbps at 720p and 3 Mbps at 1080p
    - the bridge logs `video_stream_passthrough_over_budget` when the camera's measured bitrate stays well above that target; with the key unset, a camera sending well above LiveKit's default triggers it even on a fast link
+   - if the bridge can't read LiveKit's rate and keyframe feedback, it logs `video_stream_passthrough_feedback_failed` and keeps forwarding frames
    - global `video.publish.max_bitrate_bps` does not apply to passthrough sources
 
 4. Expect keyframe behavior to depend on the camera.
