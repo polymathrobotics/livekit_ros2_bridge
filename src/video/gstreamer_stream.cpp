@@ -107,6 +107,10 @@ void GStreamerStream::onPipelineFailure(
 
   try {
     if (!failure_handler_.schedule()) {
+      // schedule() refuses while a restart runs, but a failure from the pipeline
+      // that restart started still needs another one. Does nothing when the
+      // failure joined a pending restart instead.
+      failure_handler_.rerunAfterCurrentRun();
       return;
     }
     std::size_t pending = 0U;
@@ -144,6 +148,8 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
+  // A failure the old pipeline reported during this run must not restart the new one.
+  failure_handler_.discardRerunRequest();
   // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
   if (requireOtherInput(spec_).passthrough) {
     publisher_.awaitKeyFrame();
@@ -151,8 +157,8 @@ void GStreamerStream::restartPipelineAfterFailure()
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
-    // A failure the new pipeline posted during start() was folded into this run,
-    // so ask for the next attempt explicitly.
+    // start() can throw without the pipeline reporting a failure (e.g. a
+    // description that does not parse), so ask for the next attempt here too.
     failure_handler_.rerunAfterCurrentRun();
     publisher_.onRestartFailed(exc.what());
   }

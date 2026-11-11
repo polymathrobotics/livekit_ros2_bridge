@@ -54,6 +54,12 @@ void PipelineFailureHandler::rerunAfterCurrentRun()
   rerun_requested_ = true;
 }
 
+void PipelineFailureHandler::discardRerunRequest()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  rerun_requested_ = false;
+}
+
 void PipelineFailureHandler::cancelPending()
 {
   std::lock_guard<std::mutex> lock(mutex_);

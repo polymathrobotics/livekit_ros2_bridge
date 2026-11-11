@@ -47,6 +47,9 @@ public:
   // Repeated requests coalesce into one run. Does nothing when the callback is
   // not running or the handler is closed; close() and cancelPending() drop it.
   void rerunAfterCurrentRun();
+  // Drops a rerun requested so far in the current run, e.g. by a failure from a
+  // pipeline the callback has since stopped. A scheduled run is left alone.
+  void discardRerunRequest();
   // Drops a scheduled run that has not started, including a requested rerun.
   void cancelPending();
   void close();

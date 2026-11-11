@@ -39,6 +39,7 @@
 #include "rcutils/logging.h"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "support/error_on_start_element.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "utils/pipeline_failure_handler.hpp"
@@ -510,6 +511,29 @@ TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
 
   EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_scheduled"}), 1U);
   EXPECT_EQ(logs.countLines({"video_stream_restart_failed"}), 1U);
+}
+
+// A failure that arrives while a restart's start() runs, without making it throw,
+// lands while the restart callback runs. It must still lead to another restart.
+TEST_F(StreamTest, FailureDuringRestartLeadsToAnotherRestart)
+{
+  test_support::ErrorOnStartElement::registerFactory();
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{
+    "test", std::string("videotestsrc is-live=true ! ") + test_support::ErrorOnStartElement::kFactoryName, ""};
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+  const std::size_t starts_before = test_support::ErrorOnStartElement::startCount();
+  const auto starts = [&]() { return test_support::ErrorOnStartElement::startCount() - starts_before; };
+
+  // The first start's failure schedules a restart; that restart's failure is the
+  // one that lands during the callback.
+  stream.start();
+  const bool restarted_after_failed_restart = waitUntil([&]() { return starts() >= 3U; });
+  stream.close();
+
+  EXPECT_TRUE(restarted_after_failed_restart) << "starts: " << starts();
 }
 
 TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameRequests)

@@ -275,6 +275,66 @@ TEST(PipelineFailureHandlerTest, RepeatedRerunRequestsCoalesceIntoOneRun)
   EXPECT_FALSE(reschedule_accepted);
 }
 
+TEST(PipelineFailureHandlerTest, DiscardRerunRequestDropsARerunRequestedEarlierInTheRun)
+{
+  RecordingCallback callback;
+  std::unique_ptr<PipelineFailureHandler> handler;
+  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds(20), [&]() {
+    callback([&]() {
+      handler->rerunAfterCurrentRun();
+      handler->discardRerunRequest();
+    });
+  });
+
+  EXPECT_TRUE(handler->schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1U));
+
+  // Give a rerun that was not dropped a chance to surface before declaring success.
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  handler->close();
+
+  EXPECT_EQ(callback.runTimes().size(), 1U);
+}
+
+TEST(PipelineFailureHandlerTest, RerunRequestedAfterDiscardRunsOnceMore)
+{
+  // A stream discards what its old pipeline asked for, then its new pipeline asks again.
+  RecordingCallback callback;
+  std::unique_ptr<PipelineFailureHandler> handler;
+  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds(20), [&]() {
+    callback([&]() {
+      handler->rerunAfterCurrentRun();
+      handler->discardRerunRequest();
+      handler->rerunAfterCurrentRun();
+    });
+  });
+
+  EXPECT_TRUE(handler->schedule());
+  ASSERT_TRUE(callback.waitForRunCount(2U));
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  handler->close();
+
+  EXPECT_EQ(callback.runTimes().size(), 2U);
+}
+
+TEST(PipelineFailureHandlerTest, DiscardRerunRequestLeavesAScheduledRunAlone)
+{
+  std::atomic<int> callback_count{0};
+  PipelineFailureHandler handler(std::chrono::milliseconds(50), [&]() { callback_count.fetch_add(1); });
+
+  // Nothing to discard: the next failure still schedules a run.
+  handler.discardRerunRequest();
+  EXPECT_TRUE(handler.schedule());
+  // A run waiting out its delay is not a requested rerun.
+  handler.discardRerunRequest();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  EXPECT_EQ(callback_count.load(), 1);
+
+  handler.close();
+}
+
 TEST(PipelineFailureHandlerTest, ScheduleFoldsIntoARequestedRerun)
 {
   BlockingCallback callback;
