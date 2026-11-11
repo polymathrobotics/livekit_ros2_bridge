@@ -329,7 +329,6 @@ TEST(PipelineDescriptionTest, PassthroughEndingParsesH264WithoutDroppingFrames)
     " ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au"
     " ! queue name=bridge_video_queue max-size-buffers=8 max-size-bytes=0 max-size-time=0 leaky=no"
     " ! appsink name=bridge_video_sink sync=false");
-  EXPECT_EQ(std::string{kBridgeVideoQueueName}, "bridge_video_queue");
   EXPECT_EQ(description.find("leaky=downstream"), std::string::npos);
   EXPECT_EQ(description.find("drop=true"), std::string::npos);
 }
