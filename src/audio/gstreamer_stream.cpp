@@ -80,29 +80,36 @@ void GStreamerStream::close()
 // GStreamer performs the state change. Locking here would deadlock against the
 // calling thread itself. schedule() coalesces duplicate failures, and close()
 // marks the handler closed before teardown, so no stream mutex_ is needed.
+// It runs on GStreamer threads, so no exception may escape into C.
 void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
-  if (!failure_handler_.schedule()) {
-    return;
-  }
-  std::size_t pending = 0U;
-  {
-    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
-    pending = recovery_log_throttle_.record();
-  }
-  if (pending == 0U) {
-    return;
-  }
 
-  LogEvent(kLogger, "audio_stream_pipeline_recovery_scheduled")
-    .field("stream_key", spec_.stream_key)
-    .field("reason", reason)
-    .field("restart_delay_ms", kRestartDelay.count())
-    .field("count", pending)
-    .warn();
+  try {
+    if (!failure_handler_.schedule()) {
+      return;
+    }
+    std::size_t pending = 0U;
+    {
+      std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+      pending = recovery_log_throttle_.record();
+    }
+    if (pending == 0U) {
+      return;
+    }
+
+    LogEvent(kLogger, "audio_stream_pipeline_recovery_scheduled")
+      .field("stream_key", spec_.stream_key)
+      .field("reason", reason)
+      .field("restart_delay_ms", kRestartDelay.count())
+      .field("count", pending)
+      .warn();
+  } catch (...) {
+    // Only resource exhaustion (the worker thread, the log line) can throw here;
+    // a recovery that was scheduled still runs.
+  }
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
@@ -116,6 +123,9 @@ void GStreamerStream::restartPipelineAfterFailure()
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // A failure the new pipeline posted during start() was folded into this run,
+    // so ask for the next attempt explicitly.
+    failure_handler_.rerunAfterCurrentRun();
     publisher_.onRestartFailed(exc.what());
   }
 }

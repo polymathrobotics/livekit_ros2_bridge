@@ -24,8 +24,6 @@ namespace livekit_ros2_bridge::utils
 {
 
 // Coalesces repeated GStreamer EOS/error callbacks into one stream-owned callback.
-// A failure scheduled while the callback runs (e.g. the restarted pipeline fails
-// at once) is kept and runs the callback once more, after the same delay.
 class PipelineFailureHandler final
 {
 public:
@@ -40,11 +38,16 @@ public:
   PipelineFailureHandler & operator=(PipelineFailureHandler &&) = delete;
 
   // Returns true only when this call newly schedules a run, so the caller logs
-  // each recovery once. While the callback runs, the first call schedules the
-  // follow-up run and returns true; later calls fold into it and return false.
+  // each recovery once. Returns false and does nothing while a run is pending,
+  // while the callback runs (a failure posted by the restart itself is folded
+  // into it), and once closed.
   bool schedule();
-  // Drops a scheduled run that has not started, including a follow-up run
-  // requested while the callback runs.
+  // Asks for one more run after the usual delay, once the running callback
+  // returns. Meant for the callback itself, e.g. after a restart that threw.
+  // Repeated requests coalesce into one run. Does nothing when the callback is
+  // not running or the handler is closed; close() and cancelPending() drop it.
+  void rerunAfterCurrentRun();
+  // Drops a scheduled run that has not started, including a requested rerun.
   void cancelPending();
   void close();
 
@@ -56,9 +59,10 @@ private:
   std::mutex mutex_;
   std::condition_variable condition_;
   bool closed_ = false;
-  // Set by schedule(), cleared when the callback starts, so a schedule() during
-  // the callback queues the next run.
   bool pending_ = false;
+  bool callback_running_ = false;
+  // Set by rerunAfterCurrentRun() while the callback runs; becomes pending_ when it returns.
+  bool rerun_requested_ = false;
   std::thread worker_;
 };
 

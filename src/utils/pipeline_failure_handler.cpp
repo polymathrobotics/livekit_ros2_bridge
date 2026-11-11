@@ -32,7 +32,7 @@ PipelineFailureHandler::~PipelineFailureHandler()
 bool PipelineFailureHandler::schedule()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_ || pending_) {
+  if (closed_ || pending_ || callback_running_) {
     return false;
   }
 
@@ -44,10 +44,21 @@ bool PipelineFailureHandler::schedule()
   return true;
 }
 
+void PipelineFailureHandler::rerunAfterCurrentRun()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (closed_ || !callback_running_) {
+    return;
+  }
+
+  rerun_requested_ = true;
+}
+
 void PipelineFailureHandler::cancelPending()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   pending_ = false;
+  rerun_requested_ = false;
   condition_.notify_all();
 }
 
@@ -92,13 +103,15 @@ void PipelineFailureHandler::run()
       continue;
     }
 
-    // Clear before running so a failure posted during the callback (the
-    // restarted pipeline can fail at once) schedules one more run instead of
-    // being folded into this one; the loop then waits the delay and reruns.
-    pending_ = false;
+    callback_running_ = true;
     lock.unlock();
     callback_();
     lock.lock();
+    callback_running_ = false;
+    // A requested rerun waits the usual delay at the top of the loop, where
+    // close() and cancelPending() can still drop it.
+    pending_ = rerun_requested_;
+    rerun_requested_ = false;
   }
 }
 

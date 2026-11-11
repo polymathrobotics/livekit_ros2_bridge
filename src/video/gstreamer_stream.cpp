@@ -97,36 +97,43 @@ PipelineCallbacks GStreamerStream::makePipelineCallbacks()
 // GStreamer performs the state change. Locking here would deadlock against the
 // calling thread itself. schedule() coalesces duplicate failures, and close()
 // marks the handler closed before teardown, so no stream mutex_ is needed.
+// It runs on GStreamer threads, so no exception may escape into C.
 void GStreamerStream::onPipelineFailure(
   const std::string & reason, bool caps_mismatch, const std::string & offered_caps)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
-  if (!failure_handler_.schedule()) {
-    return;
-  }
-  std::size_t pending = 0U;
-  {
-    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
-    pending = recovery_log_throttle_.record();
-  }
-  if (pending == 0U) {
-    return;
-  }
 
-  LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
-  event.field("stream_key", spec_.stream_key)
-    .field("reason", reason)
-    .field("restart_delay_ms", kRestartDelay.count())
-    .field("count", pending);
-  if (caps_mismatch) {
-    event.fieldQuoted("hint", "the source may not be H.264; passthrough supports H.264 only");
+  try {
+    if (!failure_handler_.schedule()) {
+      return;
+    }
+    std::size_t pending = 0U;
+    {
+      std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+      pending = recovery_log_throttle_.record();
+    }
+    if (pending == 0U) {
+      return;
+    }
+
+    LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
+    event.field("stream_key", spec_.stream_key)
+      .field("reason", reason)
+      .field("restart_delay_ms", kRestartDelay.count())
+      .field("count", pending);
+    if (caps_mismatch) {
+      event.fieldQuoted("hint", "the source may not be H.264; passthrough supports H.264 only");
+    }
+    if (!offered_caps.empty()) {
+      event.fieldQuoted("offered_caps", offered_caps);
+    }
+    event.warn();
+  } catch (...) {
+    // Only resource exhaustion (the worker thread, the log line) can throw here;
+    // a recovery that was scheduled still runs.
   }
-  if (!offered_caps.empty()) {
-    event.fieldQuoted("offered_caps", offered_caps);
-  }
-  event.warn();
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
@@ -144,6 +151,9 @@ void GStreamerStream::restartPipelineAfterFailure()
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // A failure the new pipeline posted during start() was folded into this run,
+    // so ask for the next attempt explicitly.
+    failure_handler_.rerunAfterCurrentRun();
     publisher_.onRestartFailed(exc.what());
   }
 }

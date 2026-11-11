@@ -15,9 +15,12 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "utils/pipeline_failure_handler.hpp"
@@ -130,97 +133,217 @@ TEST(PipelineFailureHandlerTest, CancelPendingPreventsCallback)
   handler.close();
 }
 
-TEST(PipelineFailureHandlerTest, ScheduleWhileCallbackRunsRunsCallbackOnceMore)
+TEST(PipelineFailureHandlerTest, ScheduleFromInsideCallbackIsIgnored)
 {
-  BlockingCallback callback;
-  PipelineFailureHandler handler(std::chrono::milliseconds(20), [&]() { callback(); });
-
-  EXPECT_TRUE(handler.schedule());
-  ASSERT_TRUE(callback.waitForRunCount(1));
-
-  // A failure posted while the restart runs (e.g. the restarted pipeline fails
-  // at once) must not be dropped; the first such request is reported as newly
-  // scheduled so the caller logs the follow-up recovery.
-  EXPECT_TRUE(handler.schedule());
-  callback.releaseFirstRun();
-
-  ASSERT_TRUE(callback.waitForRunCount(2));
-  // Give an unexpected third run a chance to surface before declaring success.
-  std::this_thread::sleep_for(std::chrono::milliseconds(120));
-  EXPECT_EQ(callback.runCount(), 2);
-
-  handler.close();
-}
-
-TEST(PipelineFailureHandlerTest, RepeatedScheduleWhileCallbackRunsCoalescesIntoOneRerun)
-{
-  BlockingCallback callback;
-  PipelineFailureHandler handler(std::chrono::milliseconds(20), [&]() { callback(); });
-
-  EXPECT_TRUE(handler.schedule());
-  ASSERT_TRUE(callback.waitForRunCount(1));
-
-  EXPECT_TRUE(handler.schedule());
-  EXPECT_FALSE(handler.schedule());
-  EXPECT_FALSE(handler.schedule());
-  callback.releaseFirstRun();
-
-  ASSERT_TRUE(callback.waitForRunCount(2));
-  std::this_thread::sleep_for(std::chrono::milliseconds(120));
-  EXPECT_EQ(callback.runCount(), 2);
-
-  handler.close();
-}
-
-TEST(PipelineFailureHandlerTest, ScheduleFromInsideCallbackRunsCallbackOnceMore)
-{
-  // GStreamer can deliver a failure synchronously while the restart callback
-  // starts the new pipeline, so schedule() is called on the worker thread itself.
+  // A failure delivered while the callback runs (the restart's own state change)
+  // must not queue another run; callers that want a retry ask for it explicitly.
   std::mutex mutex;
   std::condition_variable condition;
-  int callback_count = 0;
-  bool first_reschedule_accepted = false;
   std::unique_ptr<PipelineFailureHandler> handler;
-  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds(20), [&]() {
-    int run_number = 0;
+  int callback_count = 0;
+  bool reschedule_checked = false;
+  bool reschedule_accepted = true;
+  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
     {
       std::lock_guard<std::mutex> lock(mutex);
-      run_number = ++callback_count;
+      ++callback_count;
     }
-    if (run_number == 1) {
-      const bool accepted = handler->schedule();
+    const bool accepted = handler->schedule();
+    {
       std::lock_guard<std::mutex> lock(mutex);
-      first_reschedule_accepted = accepted;
+      reschedule_accepted = accepted;
+      reschedule_checked = true;
+      condition.notify_all();
     }
-    std::lock_guard<std::mutex> lock(mutex);
-    condition.notify_all();
   });
 
   EXPECT_TRUE(handler->schedule());
   {
     std::unique_lock<std::mutex> lock(mutex);
-    ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return callback_count == 2; }));
+    ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return reschedule_checked; }));
   }
 
+  // Give an unexpected rerun a chance to surface before declaring success.
   std::this_thread::sleep_for(std::chrono::milliseconds(120));
   handler->close();
 
   std::lock_guard<std::mutex> lock(mutex);
-  EXPECT_EQ(callback_count, 2);
-  EXPECT_TRUE(first_reschedule_accepted);
+  EXPECT_EQ(callback_count, 1);
+  EXPECT_FALSE(reschedule_accepted);
 }
 
-TEST(PipelineFailureHandlerTest, CloseWhileCallbackRunsDropsPendingRerun)
+TEST(PipelineFailureHandlerTest, ScheduleFromAnotherThreadWhileCallbackRunsIsIgnored)
+{
+  BlockingCallback callback;
+  PipelineFailureHandler handler(std::chrono::milliseconds(20), [&]() { callback(); });
+
+  EXPECT_TRUE(handler.schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1));
+
+  EXPECT_FALSE(handler.schedule());
+  callback.releaseFirstRun();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  EXPECT_EQ(callback.runCount(), 1);
+
+  // Once the callback has returned, a new failure schedules a run again.
+  EXPECT_TRUE(handler.schedule());
+  EXPECT_TRUE(callback.waitForRunCount(2));
+
+  handler.close();
+}
+
+// Records each run's start time; on the first run the callback calls request
+// (e.g. rerunAfterCurrentRun()) through the handler under test.
+class RecordingCallback
+{
+public:
+  void operator()(const std::function<void()> & request_on_first_run)
+  {
+    bool first_run = false;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      run_times_.push_back(std::chrono::steady_clock::now());
+      first_run = run_times_.size() == 1U;
+    }
+    if (first_run) {
+      request_on_first_run();
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    condition_.notify_all();
+  }
+
+  bool waitForRunCount(std::size_t expected_count)
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return condition_.wait_for(lock, std::chrono::seconds(2), [&]() { return run_times_.size() >= expected_count; });
+  }
+
+  std::vector<std::chrono::steady_clock::time_point> runTimes()
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return run_times_;
+  }
+
+private:
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  std::vector<std::chrono::steady_clock::time_point> run_times_;
+};
+
+TEST(PipelineFailureHandlerTest, RerunAfterCurrentRunRunsCallbackOnceMoreAfterTheDelay)
+{
+  constexpr auto kDelay = std::chrono::milliseconds(100);
+  RecordingCallback callback;
+  std::unique_ptr<PipelineFailureHandler> handler;
+  handler =
+    std::make_unique<PipelineFailureHandler>(kDelay, [&]() { callback([&]() { handler->rerunAfterCurrentRun(); }); });
+
+  EXPECT_TRUE(handler->schedule());
+  ASSERT_TRUE(callback.waitForRunCount(2U));
+
+  // Give an unexpected third run a chance to surface before declaring success.
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  handler->close();
+
+  const auto run_times = callback.runTimes();
+  ASSERT_EQ(run_times.size(), 2U);
+  EXPECT_GE(run_times[1] - run_times[0], kDelay);
+}
+
+TEST(PipelineFailureHandlerTest, RepeatedRerunRequestsCoalesceIntoOneRun)
+{
+  RecordingCallback callback;
+  bool reschedule_accepted = true;
+  std::unique_ptr<PipelineFailureHandler> handler;
+  handler = std::make_unique<PipelineFailureHandler>(std::chrono::milliseconds(20), [&]() {
+    callback([&]() {
+      handler->rerunAfterCurrentRun();
+      handler->rerunAfterCurrentRun();
+      reschedule_accepted = handler->schedule();
+      handler->rerunAfterCurrentRun();
+    });
+  });
+
+  EXPECT_TRUE(handler->schedule());
+  ASSERT_TRUE(callback.waitForRunCount(2U));
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  handler->close();
+
+  EXPECT_EQ(callback.runTimes().size(), 2U);
+  EXPECT_FALSE(reschedule_accepted);
+}
+
+TEST(PipelineFailureHandlerTest, ScheduleFoldsIntoARequestedRerun)
+{
+  BlockingCallback callback;
+  PipelineFailureHandler handler(std::chrono::milliseconds(300), [&]() { callback(); });
+
+  EXPECT_TRUE(handler.schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1));
+  handler.rerunAfterCurrentRun();
+  callback.releaseFirstRun();
+
+  // Lets the callback return; the rerun now waits out the delay.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  EXPECT_FALSE(handler.schedule());
+
+  ASSERT_TRUE(callback.waitForRunCount(2));
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  EXPECT_EQ(callback.runCount(), 2);
+
+  handler.close();
+}
+
+TEST(PipelineFailureHandlerTest, CancelPendingWhileCallbackRunsDropsRequestedRerun)
+{
+  BlockingCallback callback;
+  PipelineFailureHandler handler(std::chrono::milliseconds(20), [&]() { callback(); });
+
+  EXPECT_TRUE(handler.schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1));
+  handler.rerunAfterCurrentRun();
+  handler.cancelPending();
+  callback.releaseFirstRun();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  EXPECT_EQ(callback.runCount(), 1);
+
+  handler.close();
+}
+
+TEST(PipelineFailureHandlerTest, CancelPendingDuringTheDelayDropsRequestedRerun)
+{
+  BlockingCallback callback;
+  PipelineFailureHandler handler(std::chrono::milliseconds(300), [&]() { callback(); });
+
+  EXPECT_TRUE(handler.schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1));
+  handler.rerunAfterCurrentRun();
+  callback.releaseFirstRun();
+
+  // Lets the callback return; the rerun now waits out the delay.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  handler.cancelPending();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(450));
+  EXPECT_EQ(callback.runCount(), 1);
+
+  handler.close();
+}
+
+TEST(PipelineFailureHandlerTest, CloseWhileCallbackRunsDropsRequestedRerun)
 {
   BlockingCallback callback;
   // The rerun waits out the delay after the running callback returns, so close()
   // has that long to land even if the closer thread starts late; either way the
-  // pending rerun must be cancelled and close() must return.
+  // requested rerun must be dropped and close() must return.
   PipelineFailureHandler handler(std::chrono::milliseconds(500), [&]() { callback(); });
 
   EXPECT_TRUE(handler.schedule());
   ASSERT_TRUE(callback.waitForRunCount(1));
-  EXPECT_TRUE(handler.schedule());
+  handler.rerunAfterCurrentRun();
 
   std::mutex mutex;
   std::condition_variable condition;
@@ -243,7 +366,47 @@ TEST(PipelineFailureHandlerTest, CloseWhileCallbackRunsDropsPendingRerun)
   closer.join();
 
   EXPECT_EQ(callback.runCount(), 1);
-  EXPECT_FALSE(handler.schedule());
+}
+
+TEST(PipelineFailureHandlerTest, RerunAfterCurrentRunIsIgnoredOnceClosed)
+{
+  BlockingCallback callback;
+  PipelineFailureHandler handler(std::chrono::milliseconds(20), [&]() { callback(); });
+
+  EXPECT_TRUE(handler.schedule());
+  ASSERT_TRUE(callback.waitForRunCount(1));
+
+  std::thread closer([&]() { handler.close(); });
+  // Usually lets close() mark the handler closed while the callback still runs.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  handler.rerunAfterCurrentRun();
+  callback.releaseFirstRun();
+  closer.join();
+
+  handler.rerunAfterCurrentRun();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  EXPECT_EQ(callback.runCount(), 1);
+}
+
+TEST(PipelineFailureHandlerTest, RerunAfterCurrentRunOutsideTheCallbackDoesNothing)
+{
+  std::atomic<int> callback_count{0};
+  PipelineFailureHandler handler(std::chrono::milliseconds(200), [&]() { callback_count.fetch_add(1); });
+
+  // Before any run (no worker thread yet): no run starts, and nothing is left
+  // pending that would swallow the next schedule().
+  handler.rerunAfterCurrentRun();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  EXPECT_EQ(callback_count.load(), 0);
+
+  // While a run waits out its delay: the request does not add a second run.
+  EXPECT_TRUE(handler.schedule());
+  handler.rerunAfterCurrentRun();
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  EXPECT_EQ(callback_count.load(), 1);
+
+  handler.close();
 }
 
 }  // namespace
