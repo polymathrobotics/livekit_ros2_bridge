@@ -317,38 +317,6 @@ TEST_F(StreamTest, PipelineFailureHandlerRunsScheduledFailure)
   EXPECT_EQ(callback_count, 1);
 }
 
-TEST_F(StreamTest, PipelineFailureHandlerCoalescesWhileCallbackRuns)
-{
-  std::mutex mutex;
-  std::condition_variable condition;
-  std::unique_ptr<utils::PipelineFailureHandler> handler;
-  int callback_count = 0;
-  bool reschedule_checked = false;
-  bool reschedule_accepted = true;
-  handler = std::make_unique<utils::PipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      ++callback_count;
-    }
-    const bool accepted = handler->schedule();
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      reschedule_accepted = accepted;
-      reschedule_checked = true;
-      condition.notify_all();
-    }
-  });
-
-  EXPECT_TRUE(handler->schedule());
-  std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return reschedule_checked; }));
-  lock.unlock();
-  handler->close();
-
-  EXPECT_EQ(callback_count, 1);
-  EXPECT_FALSE(reschedule_accepted);
-}
-
 TEST_F(StreamTest, PipelineFailureHandlerCloseCancelsDelayedFailure)
 {
   std::atomic<int> callback_count{0};

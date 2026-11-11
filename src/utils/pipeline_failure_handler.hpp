@@ -24,6 +24,8 @@ namespace livekit_ros2_bridge::utils
 {
 
 // Coalesces repeated GStreamer EOS/error callbacks into one stream-owned callback.
+// A failure scheduled while the callback runs (e.g. the restarted pipeline fails
+// at once) is kept and runs the callback once more, after the same delay.
 class PipelineFailureHandler final
 {
 public:
@@ -37,7 +39,12 @@ public:
   PipelineFailureHandler(PipelineFailureHandler &&) = delete;
   PipelineFailureHandler & operator=(PipelineFailureHandler &&) = delete;
 
+  // Returns true only when this call newly schedules a run, so the caller logs
+  // each recovery once. While the callback runs, the first call schedules the
+  // follow-up run and returns true; later calls fold into it and return false.
   bool schedule();
+  // Drops a scheduled run that has not started, including a follow-up run
+  // requested while the callback runs.
   void cancelPending();
   void close();
 
@@ -49,8 +56,9 @@ private:
   std::mutex mutex_;
   std::condition_variable condition_;
   bool closed_ = false;
+  // Set by schedule(), cleared when the callback starts, so a schedule() during
+  // the callback queues the next run.
   bool pending_ = false;
-  bool callback_running_ = false;
   std::thread worker_;
 };
 
