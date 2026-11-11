@@ -169,6 +169,8 @@ private:
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle over_budget_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
+  // A source that stays broken fails every restart; log it once per interval.
+  EventThrottle restart_failed_log_throttle_{kLogThrottle};
   PassthroughBitrateMonitor bitrate_monitor_;
 };
 

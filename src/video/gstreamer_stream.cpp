@@ -15,6 +15,7 @@
 #include "video/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -105,9 +106,20 @@ void GStreamerStream::onPipelineFailure(
   if (!failure_handler_.schedule()) {
     return;
   }
+  std::size_t pending = 0U;
+  {
+    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+    pending = recovery_log_throttle_.record();
+  }
+  if (pending == 0U) {
+    return;
+  }
 
   LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
-  event.field("stream_key", spec_.stream_key).field("reason", reason).field("restart_delay_ms", kRestartDelay.count());
+  event.field("stream_key", spec_.stream_key)
+    .field("reason", reason)
+    .field("restart_delay_ms", kRestartDelay.count())
+    .field("count", pending);
   if (caps_mismatch) {
     event.fieldQuoted("hint", "the source may not be H.264; passthrough supports H.264 only");
   }

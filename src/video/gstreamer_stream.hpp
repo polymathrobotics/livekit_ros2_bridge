@@ -15,9 +15,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/stream_spec.hpp"
@@ -57,6 +59,10 @@ private:
   mutable std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
+  // A source that stays broken is retried every restart delay; log it once per interval.
+  // recovery_log_mutex_ guards only the throttle and is never held across GStreamer calls.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{std::chrono::seconds(5)};
 };
 
 }  // namespace livekit_ros2_bridge::video

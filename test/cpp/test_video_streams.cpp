@@ -16,6 +16,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -175,6 +176,23 @@ public:
       }
     }
     return "";
+  }
+
+  // Returns how many captured lines contain every fragment.
+  std::size_t countLines(std::initializer_list<const char *> fragments) const
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    std::size_t count = 0U;
+    for (const auto & line : lines()) {
+      bool matches = true;
+      for (const char * fragment : fragments) {
+        matches = matches && line.find(fragment) != std::string::npos;
+      }
+      if (matches) {
+        ++count;
+      }
+    }
+    return count;
   }
 
 private:
@@ -402,6 +420,39 @@ TEST_F(StreamTest, PassthroughStartWithUnavailableSourceDoesNotWedge)
 {
   expectStartWithUnavailableSourceDoesNotWedge(
     makePassthroughSpec("filesrc location=/nonexistent/lkros_missing_source.h264"));
+}
+
+// A source that keeps failing is retried every restart delay; its warnings are
+// throttled instead of logged on every attempt.
+TEST_F(StreamTest, RepeatedRestartFailuresAreLoggedOnce)
+{
+  // One 64x48 I420 frame: the source plays it, reaches EOS, and restarts.
+  const std::string path = ::testing::TempDir() + "lkros_restart_source.i420";
+  {
+    std::FILE * file = std::fopen(path.c_str(), "wb");
+    ASSERT_NE(file, nullptr);
+    const std::vector<unsigned char> frame(64U * 48U * 3U / 2U, 0x80U);
+    std::fwrite(frame.data(), 1U, frame.size(), file);
+    std::fclose(file);
+  }
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{
+    "test", "filesrc location=" + path + " ! rawvideoparse width=64 height=48 format=i420 framerate=30/1", ""};
+
+  ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+  stream.start();
+  ASSERT_TRUE(waitUntil([&]() { return !logs.findLine({"video_stream_pipeline_recovery_scheduled"}).empty(); }));
+
+  // From here every restart fails at once; give it several attempts.
+  std::remove(path.c_str());
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  stream.close();
+
+  EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_scheduled"}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_restart_failed"}), 1U);
 }
 
 TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameRequests)
