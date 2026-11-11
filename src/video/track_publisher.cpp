@@ -179,6 +179,7 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
     captureEncoded(std::move(frame), request_key_frame);
   };
   callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
+  callbacks.on_fell_behind_failed = [this](const std::string & error) { onFellBehindFailed(error); };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
   return callbacks;
 }
@@ -507,6 +508,25 @@ void TrackPublisher::logCaptureFailedLocked(const std::string & error)
   LogEvent(kLogger, "video_stream_capture_failed")
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
+    .warn();
+}
+
+void TrackPublisher::onFellBehindFailed(const std::string & error)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (closed_) {
+    return;
+  }
+
+  const std::size_t pending = fell_behind_failed_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_fell_behind_failed")
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
+    .field("count", pending)
     .warn();
 }
 

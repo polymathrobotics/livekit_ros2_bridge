@@ -96,6 +96,7 @@ PipelineCallbacks makeNoOpPipelineCallbacks()
     [](const std::string &) {},
     [](livekit::EncodedVideoSource::Frame) {},
     []() {},
+    [](const std::string &) {},
     {},
   };
 }
@@ -560,28 +561,71 @@ TEST_F(StreamTest, PassthroughPipelineDeliversEncodedFramesAndHonoursKeyFrameReq
 
 TEST_F(StreamTest, PassthroughPipelineReportsFellBehindCallbackFailure)
 {
-  std::promise<std::string> capture_failed_promise;
-  std::shared_future<std::string> capture_failed_future = capture_failed_promise.get_future().share();
+  std::promise<std::string> fell_behind_failed_promise;
+  std::shared_future<std::string> fell_behind_failed_future = fell_behind_failed_promise.get_future().share();
+  std::atomic<bool> fell_behind_failed{false};
   std::atomic<bool> capture_failed{false};
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
   // Holding the sample thread fills the bridge queue until it overruns.
   callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
-    (void)capture_failed_future.wait_for(std::chrono::seconds(10));
+    (void)fell_behind_failed_future.wait_for(std::chrono::seconds(10));
   };
   callbacks.on_fell_behind = []() { throw std::runtime_error("simulated fell behind failure"); };
-  callbacks.on_capture_failed = [&](const std::string & error) {
-    if (!capture_failed.exchange(true)) {
-      capture_failed_promise.set_value(error);
+  callbacks.on_fell_behind_failed = [&](const std::string & error) {
+    if (!fell_behind_failed.exchange(true)) {
+      fell_behind_failed_promise.set_value(error);
     }
+  };
+  callbacks.on_capture_failed = [&](const std::string &) { capture_failed = true; };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
+  const bool reported = fell_behind_failed_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  pipeline.stop();
+
+  ASSERT_TRUE(reported);
+  EXPECT_EQ(fell_behind_failed_future.get(), "simulated fell behind failure");
+  EXPECT_FALSE(capture_failed.load());
+}
+
+// Anything thrown into GStreamer's C frames would terminate the process.
+TEST_F(StreamTest, PassthroughPipelineContainsNonStandardFellBehindException)
+{
+  std::atomic<bool> frame_held{false};
+  std::atomic<bool> fell_behind{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+    if (!frame_held.exchange(true)) {
+      std::this_thread::sleep_for(kQueueOverrunningStall);
+    }
+  };
+  callbacks.on_fell_behind = [&]() {
+    fell_behind = true;
+    throw 42;
   };
   GStreamerPipeline pipeline(callbacks);
 
   pipeline.start(buildPassthroughPipelineDescription(kOpenH264Source), false, PipelineOutput::EncodedH264);
-  const bool reported = capture_failed_future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+  const bool overran = waitUntil([&]() { return fell_behind.load(); });
   pipeline.stop();
 
-  ASSERT_TRUE(reported);
-  EXPECT_EQ(capture_failed_future.get(), "simulated fell behind failure");
+  EXPECT_TRUE(overran);
+}
+
+TEST_F(StreamTest, PipelineContainsNonStandardFrameCallbackException)
+{
+  std::atomic<bool> failed{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) { throw 42; };
+  // The sample callback fails the frame, so the pipeline posts an error.
+  callbacks.on_failed = [&](const std::string &) { failed = true; };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPipelineDescription("videotestsrc is-live=true ! video/x-raw,width=64,height=48", ""), false);
+  const bool reported = waitUntil([&]() { return failed.load(); });
+  pipeline.stop();
+
+  EXPECT_TRUE(reported);
 }
 
 TEST_F(StreamTest, PassthroughPipelineToleratesMissingFellBehindCallback)

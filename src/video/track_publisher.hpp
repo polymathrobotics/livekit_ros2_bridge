@@ -120,6 +120,7 @@ private:
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
+  void onFellBehindFailed(const std::string & error);
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
@@ -175,6 +176,8 @@ private:
   // LiveKit asked for a keyframe that the throttle has not let through yet.
   bool key_frame_request_pending_ = false;
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
+  // The queue overruns on every frame while it stays full.
+  EventThrottle fell_behind_failed_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle waiting_log_throttle_{kLogThrottle};
   EventThrottle over_budget_log_throttle_{kLogThrottle};

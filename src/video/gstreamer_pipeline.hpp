@@ -53,6 +53,8 @@ struct PipelineCallbacks
   std::function<void(livekit::EncodedVideoSource::Frame frame)> on_encoded_frame;
   // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
   std::function<void()> on_fell_behind;
+  // EncodedH264 only: on_fell_behind threw.
+  std::function<void(const std::string & error)> on_fell_behind_failed;
   // EncodedH264 only, instead of on_failed when set: the source's output did not
   // link or negotiate with the H.264 parser. offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;

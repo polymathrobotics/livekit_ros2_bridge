@@ -361,20 +361,30 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   output_ = output;
   key_frame_pad_.store(gst_element_get_static_pad(GST_ELEMENT(appsink.get()), "sink"), std::memory_order_release);
 
+  // The C callbacks below catch everything: an exception must not unwind through
+  // GStreamer's C frames. The handlers report std::exception failures themselves.
   if (queue != nullptr) {
     bridge_queue_ = std::move(queue);
     overrun_handler_ = g_signal_connect(
       bridge_queue_.get(),
       "overrun",
-      G_CALLBACK(
-        +[](GstElement *, gpointer user_data) { static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun(); }),
+      G_CALLBACK(+[](GstElement *, gpointer user_data) {
+        try {
+          static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun();
+        } catch (...) {
+        }
+      }),
       this);
   }
 
   // stop() clears raw this callbacks before releasing the bin.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
-    return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    try {
+      return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    } catch (...) {
+      return GST_FLOW_ERROR;
+    }
   };
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
@@ -384,7 +394,10 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   gst_bus_set_sync_handler(
     bus.get(),
     [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
-      static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
+      try {
+        static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
+      } catch (...) {
+      }
       return GST_BUS_DROP;
     },
     this,
@@ -502,7 +515,9 @@ void GStreamerPipeline::onQueueOverrun()
   try {
     callbacks.on_fell_behind();
   } catch (const std::exception & exc) {
-    callbacks.on_capture_failed(exc.what());
+    if (callbacks.on_fell_behind_failed) {
+      callbacks.on_fell_behind_failed(exc.what());
+    }
   }
 }
 
