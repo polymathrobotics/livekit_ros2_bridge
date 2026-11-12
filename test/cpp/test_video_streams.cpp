@@ -135,21 +135,36 @@ TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 
 TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
 {
-  std::atomic<bool> failed{false};
+  std::atomic<bool> frame_ran{false};
+  std::mutex reason_mutex;
+  std::string failure_reason;
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
   // The frame exception fails the sample, so the pipeline posts an error to the bus.
-  callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) { throw 42; };
-  callbacks.on_failed = [&](const std::string &) {
-    failed = true;
+  callbacks.on_frame = [&](const livekit::VideoFrame &, std::int64_t) {
+    frame_ran = true;
+    throw 42;
+  };
+  callbacks.on_failed = [&](const std::string & reason) {
+    const std::lock_guard<std::mutex> lock(reason_mutex);
+    if (failure_reason.empty()) {
+      failure_reason = reason;
+    }
     throw 42;
   };
   GStreamerPipeline pipeline(callbacks);
 
   pipeline.start(buildPipelineDescription("videotestsrc is-live=true ! video/x-raw,width=64,height=48", ""), false);
-  const bool reported = test_support::waitUntil([&]() { return failed.load(); }, std::chrono::seconds(10));
+  const bool reported = test_support::waitUntil(
+    [&]() {
+      const std::lock_guard<std::mutex> lock(reason_mutex);
+      return !failure_reason.empty();
+    },
+    std::chrono::seconds(10));
   pipeline.stop();
 
+  EXPECT_TRUE(frame_ran.load());
   EXPECT_TRUE(reported);
+  EXPECT_NE(failure_reason, "eos");
 }
 
 TEST_F(StreamTest, PipelineFailureHandlerCoalescesPendingFailures)
