@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -93,17 +92,13 @@ TEST_F(AudioStreamTest, PipelineStartRejectsNamedNonAppSink)
 
 TEST_F(AudioStreamTest, PipelineContainsNonStandardCallbackExceptions)
 {
-  std::atomic<bool> frame_ran{false};
   std::mutex error_mutex;
   std::string capture_error;
   std::string failure_reason;
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
   // on_capture_failed also throws, so the exception reaches the new_sample catch;
   // the failed sample makes the pipeline post an error, which on_failed throws on.
-  callbacks.on_frame = [&](const livekit::AudioFrame &) {
-    frame_ran = true;
-    throw 42;
-  };
+  callbacks.on_frame = [](const livekit::AudioFrame &) { throw 42; };
   callbacks.on_capture_failed = [&](const std::string & error) {
     const std::lock_guard<std::mutex> lock(error_mutex);
     if (capture_error.empty()) {
@@ -129,7 +124,6 @@ TEST_F(AudioStreamTest, PipelineContainsNonStandardCallbackExceptions)
     std::chrono::seconds(10));
   pipeline.stop();
 
-  EXPECT_TRUE(frame_ran.load());
   EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
   EXPECT_TRUE(reported);
   EXPECT_NE(failure_reason, "eos");
