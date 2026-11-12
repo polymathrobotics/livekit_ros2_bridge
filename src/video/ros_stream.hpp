@@ -108,9 +108,10 @@ private:
   // never take it and touch only the atomics below.
   std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
-  // Each pipeline start bumps the generation under mutex_; a failure records the one it
-  // saw, so handling that runs after a replacement can tell the failure is stale.
-  std::atomic<std::uint64_t> pipeline_generation_{0};
+  // Each pipeline start bumps the generation under mutex_; a failure records the generation
+  // current when it is reported, so handling that runs after a replacement can tell it is stale.
+  // The generation starts above failed_generation_, so no pipeline counts as failed before one starts.
+  std::atomic<std::uint64_t> pipeline_generation_{1};
   std::atomic<std::uint64_t> failed_generation_{0};
   utils::PipelineFailureHandler failure_handler_;
 };
