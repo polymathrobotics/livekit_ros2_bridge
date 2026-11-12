@@ -31,6 +31,7 @@
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
 #include "video/gstreamer_stream.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/ros_stream.hpp"
 #include "video/track_publisher.hpp"
 
@@ -130,6 +131,25 @@ TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 
   EXPECT_NE(pipeline.appsrc(), nullptr);
   pipeline.stop();
+}
+
+TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
+{
+  std::atomic<bool> failed{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  // The frame exception fails the sample, so the pipeline posts an error to the bus.
+  callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) { throw 42; };
+  callbacks.on_failed = [&](const std::string &) {
+    failed = true;
+    throw 42;
+  };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPipelineDescription("videotestsrc is-live=true ! video/x-raw,width=64,height=48", ""), false);
+  const bool reported = test_support::waitUntil([&]() { return failed.load(); }, std::chrono::seconds(10));
+  pipeline.stop();
+
+  EXPECT_TRUE(reported);
 }
 
 TEST_F(StreamTest, PipelineFailureHandlerCoalescesPendingFailures)
