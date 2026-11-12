@@ -56,18 +56,46 @@ public:
     std::lock_guard<std::mutex> lock(mutex());
     std::size_t count = 0U;
     for (const auto & line : lines()) {
-      bool matches = true;
-      for (const char * fragment : fragments) {
-        matches = matches && line.find(fragment) != std::string::npos;
-      }
-      if (matches) {
+      if (containsAll(line, fragments)) {
         ++count;
       }
     }
     return count;
   }
 
+  // Returns, in logged order, the value of the last ` key=` field in each captured line that
+  // contains every fragment: the text up to the next space, or empty when the line lacks it.
+  std::vector<std::string> fieldValues(std::initializer_list<const char *> fragments, const std::string & key) const
+  {
+    std::lock_guard<std::mutex> lock(mutex());
+    const std::string field_prefix = " " + key + "=";
+    std::vector<std::string> values;
+    for (const auto & line : lines()) {
+      if (!containsAll(line, fragments)) {
+        continue;
+      }
+      const std::size_t field_start = line.rfind(field_prefix);
+      if (field_start == std::string::npos) {
+        values.emplace_back();
+        continue;
+      }
+      const std::size_t value_start = field_start + field_prefix.size();
+      values.push_back(line.substr(value_start, line.find(' ', value_start) - value_start));
+    }
+    return values;
+  }
+
 private:
+  static bool containsAll(const std::string & line, std::initializer_list<const char *> fragments)
+  {
+    for (const char * fragment : fragments) {
+      if (line.find(fragment) == std::string::npos) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   static void handle(
     const rcutils_log_location_t * location,
     int severity,

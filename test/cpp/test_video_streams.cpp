@@ -22,6 +22,7 @@
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "livekit/video_frame.h"
@@ -441,7 +442,9 @@ TEST_F(StreamTest, RosImageWithFailingTransformThrottlesItsWarning)
   ASSERT_EQ(ControlledStartElement::startAttempts() - attempts_before, kFrameCount);
   const std::string stream_key_field = "stream_key=" + spec.stream_key;
   EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str()}), 1U);
-  EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str(), " count=1"}), 1U);
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str()}, "count"),
+    std::vector<std::string>{"1"});
 }
 
 }  // namespace

@@ -117,12 +117,12 @@ private:
   // The generation starts above failed_generation_, so no pipeline counts as failed before one starts.
   std::atomic<std::uint64_t> pipeline_generation_{1};
   std::atomic<std::uint64_t> failed_generation_{0};
-  utils::PipelineFailureHandler failure_handler_;
   // Each frame rebuilds a failed pipeline, so a transform that fails on every start would warn
-  // on every frame; warn once per interval instead. recovery_log_mutex_ guards only the
-  // throttle and is never held across GStreamer calls.
+  // on every frame; warn once per interval instead. Declared before failure_handler_ so they
+  // outlive its worker; the mutex guards only the throttle, never across GStreamer calls.
   std::mutex recovery_log_mutex_;
   EventThrottle recovery_log_throttle_{kLogThrottle};
+  utils::PipelineFailureHandler failure_handler_;
 };
 
 }  // namespace livekit_ros2_bridge::video
