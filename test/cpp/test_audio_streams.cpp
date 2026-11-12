@@ -25,6 +25,7 @@
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/gstreamer_stream.hpp"
+#include "audio/pipeline_description.hpp"
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
@@ -87,6 +88,25 @@ TEST_F(AudioStreamTest, PipelineStartRejectsNamedNonAppSink)
 
   expectStartErrorContains(
     pipeline, "audiotestsrc is-live=true ! fakesink name=bridge_audio_sink", "must be a GstAppSink");
+}
+
+TEST_F(AudioStreamTest, PipelineContainsNonStandardCallbackExceptions)
+{
+  std::atomic<bool> failed{false};
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  // The frame exception fails the sample, so the pipeline posts an error to the bus.
+  callbacks.on_frame = [](const livekit::AudioFrame &) { throw 42; };
+  callbacks.on_failed = [&](const std::string &) {
+    failed = true;
+    throw 42;
+  };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPipelineDescription("audiotestsrc is-live=true", ""));
+  const bool reported = test_support::waitUntil([&]() { return failed.load(); }, std::chrono::seconds(10));
+  pipeline.stop();
+
+  EXPECT_TRUE(reported);
 }
 
 TEST_F(AudioStreamTest, OtherAudioLifecycleIsIdempotent)

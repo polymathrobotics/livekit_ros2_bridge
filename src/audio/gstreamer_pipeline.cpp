@@ -156,19 +156,30 @@ void GStreamerPipeline::start(const std::string & description)
   }
 
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
-  // stop() clears raw pipeline callbacks before releasing the bin.
+  // stop() clears these C callbacks before releasing the bin. Both catch
+  // everything, since an exception unwinding through GStreamer's C frames
+  // would terminate the process.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
-    return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    try {
+      return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    } catch (...) {
+      return GST_FLOW_ERROR;
+    }
   };
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
+  // Nothing pops the bus, so every message is dropped once handled; passing them
+  // on would queue them for the pipeline's lifetime.
   utils::GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
     [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
-      static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
-      return GST_BUS_PASS;
+      try {
+        static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
+      } catch (...) {
+      }
+      return GST_BUS_DROP;
     },
     this,
     nullptr);

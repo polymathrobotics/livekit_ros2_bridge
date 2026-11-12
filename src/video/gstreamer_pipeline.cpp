@@ -222,8 +222,8 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   }
 
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
-  // stop() clears raw this callbacks before releasing the bin. Both C callbacks
-  // catch everything, since an exception unwinding through GStreamer's C frames
+  // stop() clears these C callbacks before releasing the bin. Both catch
+  // everything, since an exception unwinding through GStreamer's C frames
   // would terminate the process.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
