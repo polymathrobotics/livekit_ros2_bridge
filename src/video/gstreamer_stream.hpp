@@ -44,7 +44,8 @@ public:
   void close();
 
 private:
-  // Coalesces repeated EOS/error messages while a restart is pending.
+  // Coalesces repeated failures (EOS/error messages, a restart that throws) while a restart
+  // is pending.
   void onPipelineFailure(const std::string & reason);
   void restartPipelineAfterFailure();
   void startPipelineLocked();
