@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,6 +46,19 @@ void disableSyncIfSink(GstElement * element)
 void onDeepElementAdded(GstBin *, GstBin *, GstElement * element, gpointer)
 {
   disableSyncIfSink(element);
+}
+
+// Runs inside the bus handler's catch block, so a failure to log is dropped
+// rather than thrown back into GStreamer.
+void logContainedException(const char * callback) noexcept
+{
+  try {
+    LogEvent(kLogger, "audio_out_sink_callback_failed")
+      .field("callback", callback)
+      .fieldException("error", std::current_exception())
+      .error();
+  } catch (...) {
+  }
 }
 
 }  // namespace
@@ -341,6 +355,7 @@ void AudioOutputSink::startPipelineLocked()
       try {
         static_cast<AudioOutputSink *>(user_data)->onBusMessage(message);
       } catch (...) {
+        logContainedException("bus_sync_handler");
       }
       gst_message_unref(message);
       return GST_BUS_DROP;

@@ -18,12 +18,15 @@
 
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
 
 #include "livekit/video_source.h"
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 #include "video/pipeline_description.hpp"
 
@@ -32,6 +35,21 @@ namespace livekit_ros2_bridge::video
 
 namespace
 {
+
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.gstreamer_video_pipeline");
+
+// Runs inside the C callbacks' catch blocks, so a failure to log is dropped
+// rather than thrown back into GStreamer.
+void logContainedException(const char * callback) noexcept
+{
+  try {
+    LogEvent(kLogger, "video_pipeline_callback_failed")
+      .field("callback", callback)
+      .fieldException("error", std::current_exception())
+      .error();
+  } catch (...) {
+  }
+}
 
 void validateI420Plane(const GstVideoFrame * frame, guint component, const livekit::VideoPlaneInfo & plane)
 {
@@ -213,22 +231,23 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   }
 
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
-  // stop() clears these C callbacks before releasing the bin. Both catch
-  // everything, since an exception unwinding through GStreamer's C frames
-  // would terminate the process.
+  // stop() clears this C callback before releasing the bin. It catches
+  // everything: an exception unwinding through GStreamer's C frames would
+  // terminate the process.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
     try {
       return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
     } catch (...) {
+      logContainedException("new_sample");
       return GST_FLOW_ERROR;
     }
   };
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
   // Nothing pops the bus, so every message is dropped once handled; passing them
-  // on would queue them for the pipeline's lifetime. A handler that drops a
-  // message owns it, so it also unrefs it.
+  // on would queue them for the pipeline's lifetime. The handler owns what it
+  // drops, so it unrefs it, and it catches everything, like new_sample.
   GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
@@ -236,6 +255,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
       try {
         static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
       } catch (...) {
+        logContainedException("bus_sync_handler");
       }
       gst_message_unref(message);
       return GST_BUS_DROP;
