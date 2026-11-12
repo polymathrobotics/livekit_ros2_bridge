@@ -25,6 +25,7 @@
 #include "core/room_connection.hpp"
 #include "livekit/audio_frame.h"
 #include "livekit/audio_source.h"
+#include "utils/event_throttle.hpp"
 
 namespace livekit_ros2_bridge::audio
 {
@@ -82,6 +83,8 @@ private:
 
   void close();
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   RoomConnection & connection_;
   StreamSpec spec_;
 
@@ -95,6 +98,8 @@ private:
   std::chrono::steady_clock::time_point next_publish_attempt_{};
   // Throttle for transient-failure logging so a persistent hiccup cannot flood the log.
   std::chrono::steady_clock::time_point next_failure_log_{};
+  // A source that stays broken fails every restart; log it once per interval.
+  EventThrottle restart_failed_log_throttle_{kLogThrottle};
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::AudioSource> source_;
   std::shared_ptr<livekit::LocalAudioTrack> track_;

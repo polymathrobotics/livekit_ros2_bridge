@@ -37,11 +37,19 @@ public:
   PipelineFailureHandler(PipelineFailureHandler &&) = delete;
   PipelineFailureHandler & operator=(PipelineFailureHandler &&) = delete;
 
+  // Returns true only when this call newly schedules a run, so the caller logs each recovery once.
+  // Returns false and does nothing while a run is pending or the callback runs, and once closed.
   bool schedule();
+  // Like schedule(), but while the callback runs it asks for one more run after the usual delay.
+  // Returns true when this call newly asks for a run, false when one is pending or once closed.
+  bool requestRun();
+  // Drops a run that has not started, including one requested while the callback runs.
   void cancelPending();
+  // Drops any pending run, waits for a running callback to return, and refuses later requests.
   void close();
 
 private:
+  bool requestRunLocked();
   void run();
 
   std::chrono::milliseconds delay_;

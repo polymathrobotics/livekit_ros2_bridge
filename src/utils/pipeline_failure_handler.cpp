@@ -32,7 +32,22 @@ PipelineFailureHandler::~PipelineFailureHandler()
 bool PipelineFailureHandler::schedule()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_ || pending_ || callback_running_) {
+  if (callback_running_) {
+    return false;
+  }
+
+  return requestRunLocked();
+}
+
+bool PipelineFailureHandler::requestRun()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return requestRunLocked();
+}
+
+bool PipelineFailureHandler::requestRunLocked()
+{
+  if (closed_ || pending_) {
     return false;
   }
 
@@ -92,12 +107,14 @@ void PipelineFailureHandler::run()
       continue;
     }
 
+    // Cleared as the run starts, so a request while the callback runs becomes the next run;
+    // it waits the usual delay at the top of the loop, where close() or cancelPending() drop it.
+    pending_ = false;
     callback_running_ = true;
     lock.unlock();
     callback_();
     lock.lock();
     callback_running_ = false;
-    pending_ = false;
   }
 }
 

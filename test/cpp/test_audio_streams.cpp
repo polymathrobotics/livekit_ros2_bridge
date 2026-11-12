@@ -14,12 +14,14 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/gstreamer_stream.hpp"
@@ -27,11 +29,14 @@
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
+#include "support/controlled_start_element.hpp"
 #include "support/detached_task.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
 #include "utils/gstreamer_resources.hpp"
 #include "utils/log_event.hpp"
+#include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge::audio
 {
@@ -44,6 +49,23 @@ const test_support::ScopedLiveKitInit kLiveKitInit;
 
 // How long a call that could deadlock gets before the test gives up on it.
 constexpr auto kHangTimeout = std::chrono::seconds(10);
+
+// The interval the stream throttles its restart warnings to.
+constexpr auto kLogThrottle = std::chrono::seconds(5);
+
+// Expects `event` logged at least once, first with count=1, and at most once per throttle
+// interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
+void expectThrottledEvent(
+  const test_support::ScopedLogCapture & logs, const char * event, std::chrono::steady_clock::time_point started_at)
+{
+  const std::vector<std::string> counts = logs.fieldValues({event}, "count");
+  const auto elapsed =
+    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at);
+  const std::size_t max_lines = 1U + static_cast<std::size_t>(elapsed / kLogThrottle);
+  ASSERT_FALSE(counts.empty()) << event << " was not logged.";
+  EXPECT_EQ(counts.front(), "1") << event;
+  EXPECT_LE(counts.size(), max_lines) << event << " after " << elapsed.count() << " ms";
+}
 
 StreamSpec makeOtherSpec()
 {
@@ -180,6 +202,75 @@ TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
 
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+}
+
+// A source that fails again after every restart, first by reaching EOS and then by
+// failing to start at all, keeps being restarted, and its warnings are throttled.
+TEST_F(AudioStreamTest, SourceThatStaysBrokenKeepsBeingRestarted)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  // The mode is process-wide, so put it back for later tests.
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
+  StreamSpec spec = makeOtherSpec();
+  // About 100 ms of audio, then EOS: well after the restart that started it has returned.
+  spec.input = OtherInput{
+    "test",
+    std::string("audiotestsrc is-live=true num-buffers=4 samplesperbuffer=1600 ! audio/x-raw,rate=48000 ! ") +
+      ControlledStartElement::kFactoryName,
+    ""};
+  test_support::ScopedLogCapture logs;
+  const auto harness = std::make_shared<OtherStreamHarness>(spec);
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  const auto attempts = [attempts_before]() { return ControlledStartElement::startAttempts() - attempts_before; };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  const auto started_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  // The initial start and two restarts after EOS.
+  const bool restarted_after_eos = test_support::waitUntil([&]() { return attempts() >= 3U; }, std::chrono::seconds(5));
+  // From the next restart on, every start() throws.
+  ControlledStartElement::setMode(ControlledStartElement::Mode::FailStart);
+  const bool retried_failed_restart =
+    restarted_after_eos && test_support::waitUntil([&]() { return attempts() >= 6U; }, std::chrono::seconds(5));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  EXPECT_TRUE(restarted_after_eos) << "start attempts: " << attempts();
+  EXPECT_TRUE(retried_failed_restart) << "start attempts: " << attempts();
+  // Three EOS failures and at least two failed restarts, logged as one line each unless
+  // the run took longer than a throttle interval.
+  expectThrottledEvent(logs, "audio_stream_pipeline_recovery_scheduled", started_at);
+  expectThrottledEvent(logs, "audio_stream_restart_failed", started_at);
+}
+
+// A failure that arrives while a restart's start() runs, without making it throw,
+// lands while the restart callback runs. It must still lead to another restart.
+TEST_F(AudioStreamTest, FailureDuringRestartLeadsToAnotherRestart)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  // The mode is process-wide, so put it back for later tests.
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
+  StreamSpec spec = makeOtherSpec();
+  spec.input =
+    OtherInput{"test", std::string("audiotestsrc is-live=true ! ") + ControlledStartElement::kFactoryName, ""};
+  const auto harness = std::make_shared<OtherStreamHarness>(spec);
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  const auto attempts = [attempts_before]() { return ControlledStartElement::startAttempts() - attempts_before; };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  // The first start's failure schedules a restart; that restart's failure is the
+  // one that lands during the callback.
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool restarted_after_failed_restart =
+    test_support::waitUntil([&]() { return attempts() >= 3U; }, std::chrono::seconds(5));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  EXPECT_TRUE(restarted_after_failed_restart) << "start attempts: " << attempts();
 }
 
 TEST_F(AudioStreamTest, RealPipelineProducesMono48kFrames)

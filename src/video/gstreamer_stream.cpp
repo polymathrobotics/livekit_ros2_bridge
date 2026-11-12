@@ -15,6 +15,7 @@
 #include "video/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -72,14 +73,22 @@ void GStreamerStream::close()
   pipeline_.stop();
 }
 
-// Lock-free: the sync bus handler can call this from inside start() or a restart, which hold
-// mutex_ across the state change, so taking it here would deadlock the calling thread.
+// Lock-free: the sync bus handler and a restart whose start() threw call this while start()
+// or the restart holds mutex_, so taking it here would deadlock the calling thread.
 void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
-  if (!failure_handler_.schedule()) {
+  if (!failure_handler_.requestRun()) {
+    return;
+  }
+  std::size_t pending = 0U;
+  {
+    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+    pending = recovery_log_throttle_.record();
+  }
+  if (pending == 0U) {
     return;
   }
 
@@ -87,6 +96,7 @@ void GStreamerStream::onPipelineFailure(const std::string & reason)
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
+    .field("count", pending)
     .warn();
 }
 
@@ -98,9 +108,15 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
+  // Failures the old pipeline reported during this run must not restart the new one.
+  failure_handler_.cancelPending();
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // start() can throw without the pipeline reporting a failure, so ask for the next attempt
+    // through the failure path (requestRun() coalesces the two), and before logging, so a
+    // logging error cannot lose it.
+    onPipelineFailure(exc.what());
     publisher_.onRestartFailed(exc.what());
   }
 }

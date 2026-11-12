@@ -15,9 +15,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/stream_spec.hpp"
@@ -28,7 +30,7 @@ namespace livekit_ros2_bridge::video
 class TrackPublisher;
 
 // Pipeline callbacks can run on GStreamer threads; mutex_ serialises start, close and
-// restart, and the failure path reads only the atomic is_shutdown_.
+// restart, and the failure path never takes it.
 class GStreamerStream final
 {
 public:
@@ -44,16 +46,24 @@ public:
   void close();
 
 private:
-  // Coalesces repeated EOS/error messages while a restart is pending.
+  // Coalesces repeated failures (EOS/error messages, a restart that throws) while a restart
+  // is pending.
   void onPipelineFailure(const std::string & reason);
   void restartPipelineAfterFailure();
   void startPipelineLocked();
+
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
+  // A source that stays broken fails every restart delay; log it once per interval. The mutex
+  // guards only the throttle and is never held across GStreamer calls. Both are declared before
+  // failure_handler_, so they outlive its worker, which uses them.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{kLogThrottle};
   utils::PipelineFailureHandler failure_handler_;
 };
 

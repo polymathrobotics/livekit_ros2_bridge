@@ -15,6 +15,7 @@
 #include "audio/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -63,28 +64,31 @@ void GStreamerStream::close()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_.load(std::memory_order_acquire)) {
+    if (is_shutdown_.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-
-    is_shutdown_.store(true, std::memory_order_release);
   }
 
   failure_handler_.close();
   pipeline_.stop();
 }
 
-// This path must stay lock-free: the sync bus handler can deliver a failure
-// from inside start() or restartPipelineAfterFailure(), which hold mutex_ while
-// GStreamer performs the state change. Locking here would deadlock against the
-// calling thread itself. schedule() coalesces duplicate failures, and close()
-// marks the handler closed before teardown, so no stream mutex_ is needed.
+// Lock-free: the sync bus handler and a restart whose start() threw call this while start()
+// or the restart holds mutex_, so taking it here would deadlock the calling thread.
 void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
-  if (!failure_handler_.schedule()) {
+  if (!failure_handler_.requestRun()) {
+    return;
+  }
+  std::size_t pending = 0U;
+  {
+    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+    pending = recovery_log_throttle_.record();
+  }
+  if (pending == 0U) {
     return;
   }
 
@@ -92,6 +96,7 @@ void GStreamerStream::onPipelineFailure(const std::string & reason)
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
+    .field("count", pending)
     .warn();
 }
 
@@ -103,9 +108,15 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
+  // Failures the old pipeline reported during this run must not restart the new one.
+  failure_handler_.cancelPending();
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // start() can throw without the pipeline reporting a failure, so ask for the next attempt
+    // through the failure path (requestRun() coalesces the two), and before logging, so a
+    // logging error cannot lose it.
+    onPipelineFailure(exc.what());
     publisher_.onRestartFailed(exc.what());
   }
 }
