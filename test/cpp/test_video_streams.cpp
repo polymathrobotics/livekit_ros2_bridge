@@ -34,6 +34,7 @@
 #include "support/ros_test_support.hpp"
 #include "utils/log_event.hpp"
 #include "utils/pipeline_failure_handler.hpp"
+#include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
 #include "video/gstreamer_stream.hpp"
@@ -370,6 +371,8 @@ TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
   using test_support::ControlledStartElement;
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  // The mode is process-wide, so put it back for later tests.
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
   const std::string topic = "/video_pipeline/failing_transform_image";
   StreamSpec spec = makeRosTopicSpec(topic, imageInterfaceType());
   std::get<RosInput>(spec.input).transform_fragment = ControlledStartElement::kFactoryName;
