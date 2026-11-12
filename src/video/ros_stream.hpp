@@ -82,6 +82,8 @@ private:
 
   void startRawPipelineLocked(const RawLayout & layout);
   void startCompressedPipelineLocked(const std::string & codec);
+  void startPipelineLocked(const std::string & appsrc);
+  bool currentPipelineFailedLocked() const;
   void pushRawLocked(const sensor_msgs::msg::Image & image);
   // Stops the pipeline and forgets its appsrc caps. It stops first, so a failure the
   // old pipeline reports until then is cancelled instead of acting on the next one.
@@ -103,9 +105,13 @@ private:
   std::optional<RawLayout> raw_layout_;
   std::optional<std::string> codec_;
   // Serialises ROS callbacks, failure handling and close(); the GStreamer callbacks
-  // never take it and read only the atomic is_shutdown_.
+  // never take it and touch only the atomics below.
   std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
+  // Each pipeline start bumps the generation under mutex_; a failure records the one it
+  // saw, so handling that runs after a replacement can tell the failure is stale.
+  std::atomic<std::uint64_t> pipeline_generation_{0};
+  std::atomic<std::uint64_t> failed_generation_{0};
   utils::PipelineFailureHandler failure_handler_;
 };
 

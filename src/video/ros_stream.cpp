@@ -240,6 +240,9 @@ void RosStream::onPipelineFailure(const std::string & reason)
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
+  // Recorded before schedule(), and even when it refuses, so a run that is already
+  // pending or waiting for mutex_ handles the newest failure.
+  failed_generation_.store(pipeline_generation_.load(std::memory_order_acquire), std::memory_order_release);
   if (!failure_handler_.schedule()) {
     return;
   }
@@ -254,6 +257,10 @@ void RosStream::stopPipelineAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (is_shutdown_.load(std::memory_order_acquire)) {
+    return;
+  }
+  // An image callback may have replaced the failed pipeline while this waited for mutex_.
+  if (!currentPipelineFailedLocked()) {
     return;
   }
 
@@ -285,7 +292,7 @@ void RosStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image
         previous.stride != layout.stride)
       {
         logRawLayoutChange(spec_, previous, layout);
-      } else if (pipeline_.isActive()) {
+      } else if (pipeline_.isActive() && !currentPipelineFailedLocked()) {
         pushRawLocked(*image);
         return;
       }
@@ -314,7 +321,7 @@ void RosStream::startRawPipelineLocked(const RawLayout & layout)
   appsrc += ",height=";
   appsrc += std::to_string(layout.height);
   appsrc += ",framerate=0/1";
-  pipeline_.start(buildPipelineDescription(appsrc, requireRosInput(spec_).transform_fragment), true);
+  startPipelineLocked(appsrc);
   raw_layout_ = layout;
 }
 
@@ -363,7 +370,7 @@ void RosStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::Const
           .field("previous_codec", *codec_)
           .field("codec", codec)
           .info();
-      } else if (pipeline_.isActive()) {
+      } else if (pipeline_.isActive() && !currentPipelineFailedLocked()) {
         should_start = false;
       }
     }
@@ -389,8 +396,22 @@ void RosStream::startCompressedPipelineLocked(const std::string & codec)
   appsrc += kBridgeAppSrcName;
   appsrc += " is-live=true block=false format=time do-timestamp=true";
   appsrc += codec == "jpeg" ? " caps=image/jpeg ! jpegdec" : " caps=image/png ! pngdec";
-  pipeline_.start(buildPipelineDescription(appsrc, requireRosInput(spec_).transform_fragment), true);
+  startPipelineLocked(appsrc);
   codec_ = codec;
+}
+
+void RosStream::startPipelineLocked(const std::string & appsrc)
+{
+  // Bumped first, so failures the new pipeline reports from inside start() carry its generation.
+  pipeline_generation_.fetch_add(1U, std::memory_order_acq_rel);
+  pipeline_.start(buildPipelineDescription(appsrc, requireRosInput(spec_).transform_fragment), true);
+}
+
+// Image callbacks check this too: a failure that lands while a stale handler run is
+// skipping is coalesced away, and the next frame must still rebuild the pipeline.
+bool RosStream::currentPipelineFailedLocked() const
+{
+  return failed_generation_.load(std::memory_order_acquire) == pipeline_generation_.load(std::memory_order_acquire);
 }
 
 void RosStream::stopPipelineLocked()
