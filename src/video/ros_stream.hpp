@@ -83,7 +83,9 @@ private:
   void startRawPipelineLocked(const RawLayout & layout);
   void startCompressedPipelineLocked(const std::string & codec);
   void pushRawLocked(const sensor_msgs::msg::Image & image);
-  void resetPipelineStateLocked();
+  // Stops the pipeline and forgets its appsrc caps. It stops first, so a failure the
+  // old pipeline reports until then is cancelled instead of acting on the next one.
+  void stopPipelineLocked();
 
   StreamSpec spec_;
   TrackPublisher & publisher_;

@@ -258,8 +258,7 @@ void RosStream::stopPipelineAfterFailure()
     return;
   }
 
-  resetPipelineStateLocked();
-  pipeline_.stop();
+  stopPipelineLocked();
 }
 
 void RosStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
@@ -293,14 +292,12 @@ void RosStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image
       }
     }
 
-    resetPipelineStateLocked();
-    pipeline_.stop();
+    stopPipelineLocked();
     startRawPipelineLocked(layout);
     pushRawLocked(*image);
   } catch (const std::exception & exc) {
     publisher_.onAppsrcPushFailed(exc.what());
-    resetPipelineStateLocked();
-    pipeline_.stop();
+    stopPipelineLocked();
   }
 }
 
@@ -373,8 +370,7 @@ void RosStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::Const
     }
 
     if (should_start) {
-      resetPipelineStateLocked();
-      pipeline_.stop();
+      stopPipelineLocked();
       startCompressedPipelineLocked(codec);
     }
 
@@ -384,8 +380,7 @@ void RosStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::Const
     }
   } catch (const std::exception & exc) {
     publisher_.onAppsrcPushFailed(exc.what());
-    resetPipelineStateLocked();
-    pipeline_.stop();
+    stopPipelineLocked();
   }
 }
 
@@ -399,8 +394,9 @@ void RosStream::startCompressedPipelineLocked(const std::string & codec)
   codec_ = codec;
 }
 
-void RosStream::resetPipelineStateLocked()
+void RosStream::stopPipelineLocked()
 {
+  pipeline_.stop();
   raw_layout_.reset();
   codec_.reset();
   failure_handler_.cancelPending();
