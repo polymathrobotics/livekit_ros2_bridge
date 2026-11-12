@@ -17,6 +17,7 @@
 #include <gst/video/video.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -31,6 +32,7 @@
 #include "rclcpp/subscription.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/stream_spec.hpp"
@@ -89,6 +91,8 @@ private:
   // old pipeline reports until then is cancelled instead of acting on the next one.
   void stopPipelineLocked();
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
@@ -104,8 +108,8 @@ private:
   // next accepted frame.
   std::optional<RawLayout> raw_layout_;
   std::optional<std::string> codec_;
-  // Serialises ROS callbacks, failure handling and close(); the GStreamer callbacks
-  // never take it and touch only the atomics below.
+  // Serialises ROS callbacks, failure handling and close(). GStreamer callbacks never take it,
+  // since pipeline start and stop run under it and can call or wait for them.
   std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   // Each pipeline start bumps the generation under mutex_; a failure records the generation
@@ -114,6 +118,11 @@ private:
   std::atomic<std::uint64_t> pipeline_generation_{1};
   std::atomic<std::uint64_t> failed_generation_{0};
   utils::PipelineFailureHandler failure_handler_;
+  // Each frame rebuilds a failed pipeline, so a transform that fails on every start would warn
+  // on every frame; warn once per interval instead. recovery_log_mutex_ guards only the
+  // throttle and is never held across GStreamer calls.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::video

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -246,10 +247,18 @@ void RosStream::onPipelineFailure(const std::string & reason)
   if (!failure_handler_.schedule()) {
     return;
   }
+  const std::size_t pending = [this]() {
+    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+    return recovery_log_throttle_.record();
+  }();
+  if (pending == 0U) {
+    return;
+  }
 
   LogEvent(kLogger, "video_stream_pipeline_recovery_disabled")
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
+    .field("count", pending)
     .warn();
 }
 

@@ -32,6 +32,7 @@
 #include "support/detached_task.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
 #include "utils/log_event.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "utils/scope_exit.hpp"
@@ -364,6 +365,17 @@ struct RosImageStreamHarness
   std::shared_ptr<RosStream> stream;
 };
 
+sensor_msgs::msg::Image makeRgbImage()
+{
+  sensor_msgs::msg::Image image;
+  image.encoding = sensor_msgs::image_encodings::RGB8;
+  image.width = 64U;
+  image.height = 48U;
+  image.step = 192U;
+  image.data.resize(image.step * image.height);
+  return image;
+}
+
 // A transform that reports an error while the pipeline starts delivers it on the ROS
 // callback's thread, which holds the stream mutex_. The callback must still return.
 TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
@@ -382,14 +394,8 @@ TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
   ASSERT_TRUE(
     test_support::spinUntil(harness->executor, [&]() { return image_publisher->get_subscription_count() == 1U; }));
 
-  sensor_msgs::msg::Image image;
-  image.encoding = sensor_msgs::image_encodings::RGB8;
-  image.width = 64U;
-  image.height = 48U;
-  image.step = 192U;
-  image.data.resize(image.step * image.height);
   const std::size_t attempts_before = ControlledStartElement::startAttempts();
-  image_publisher->publish(image);
+  image_publisher->publish(makeRgbImage());
 
   const auto spin_until_pipeline_starts = [harness, attempts_before]() {
     test_support::spinUntil(
@@ -399,6 +405,43 @@ TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, spin_until_pipeline_starts))
     << "The ROS image callback did not return.";
   EXPECT_GT(ControlledStartElement::startAttempts(), attempts_before);
+}
+
+// A transform that fails on every start makes each ROS frame rebuild the pipeline, but the
+// stream logs that its pipeline failed once per throttle interval, not once per frame.
+TEST_F(StreamTest, RosImageWithFailingTransformThrottlesItsWarning)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
+  test_support::ScopedLogCapture logs;
+  const std::string topic = "/video_pipeline/throttled_failing_transform_image";
+  StreamSpec spec = makeRosTopicSpec(topic, imageInterfaceType());
+  std::get<RosInput>(spec.input).transform_fragment = ControlledStartElement::kFactoryName;
+  auto harness = std::make_shared<RosImageStreamHarness>("video_pipeline_ros_throttled_transform_test", spec);
+  const auto image_publisher = harness->node->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+  harness->stream->start();
+  ASSERT_TRUE(
+    test_support::spinUntil(harness->executor, [&]() { return image_publisher->get_subscription_count() == 1U; }));
+
+  // One frame at a time, so the subscription's depth of one never drops a frame.
+  constexpr std::size_t kFrameCount = 3U;
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  const auto publish_frames = [harness, image_publisher]() {
+    for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+      const std::size_t attempts_before_frame = ControlledStartElement::startAttempts();
+      image_publisher->publish(makeRgbImage());
+      test_support::spinUntil(
+        harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before_frame; });
+    }
+  };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, publish_frames)) << "A ROS image callback did not return.";
+  ASSERT_EQ(ControlledStartElement::startAttempts() - attempts_before, kFrameCount);
+  const std::string stream_key_field = "stream_key=" + spec.stream_key;
+  EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str()}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str(), " count=1"}), 1U);
 }
 
 }  // namespace
