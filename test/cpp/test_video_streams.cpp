@@ -53,6 +53,23 @@ const test_support::ScopedLiveKitInit kLiveKitInit;
 // How long a call that could deadlock gets before the test gives up on it.
 constexpr auto kHangTimeout = std::chrono::seconds(10);
 
+// The interval the stream throttles its restart warnings to.
+constexpr auto kLogThrottle = std::chrono::seconds(5);
+
+// Expects `event` logged at least once, first with count=1, and at most once per throttle
+// interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
+void expectThrottledEvent(
+  const test_support::ScopedLogCapture & logs, const char * event, std::chrono::steady_clock::time_point started_at)
+{
+  const std::vector<std::string> counts = logs.fieldValues({event}, "count");
+  const auto elapsed =
+    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at);
+  const std::size_t max_lines = 1U + static_cast<std::size_t>(elapsed / kLogThrottle);
+  ASSERT_FALSE(counts.empty()) << event << " was not logged.";
+  EXPECT_EQ(counts.front(), "1") << event;
+  EXPECT_LE(counts.size(), max_lines) << event << " after " << elapsed.count() << " ms";
+}
+
 StreamSpec makeOtherSpec()
 {
   StreamSpec spec;
@@ -232,7 +249,7 @@ TEST_F(StreamTest, StartWithUnavailableSourceDoesNotWedge)
 }
 
 // A source that fails again after every restart, first by reaching EOS and then by
-// failing to start at all, keeps being restarted.
+// failing to start at all, keeps being restarted, and its warnings are throttled.
 TEST_F(StreamTest, SourceThatStaysBrokenKeepsBeingRestarted)
 {
   using test_support::ControlledStartElement;
@@ -247,12 +264,14 @@ TEST_F(StreamTest, SourceThatStaysBrokenKeepsBeingRestarted)
     std::string("videotestsrc is-live=true num-buffers=4 ! video/x-raw,width=64,height=48,framerate=30/1 ! ") +
       ControlledStartElement::kFactoryName,
     ""};
+  test_support::ScopedLogCapture logs;
   const auto harness = std::make_shared<OtherStreamHarness>(spec);
   const std::size_t attempts_before = ControlledStartElement::startAttempts();
   const auto attempts = [attempts_before]() { return ControlledStartElement::startAttempts() - attempts_before; };
   const auto start_stream = [harness]() { harness->stream.start(); };
   const auto close_stream = [harness]() { harness->stream.close(); };
 
+  const auto started_at = std::chrono::steady_clock::now();
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
   // The initial start and two restarts after EOS.
   const bool restarted_after_eos = test_support::waitUntil([&]() { return attempts() >= 3U; }, std::chrono::seconds(5));
@@ -264,6 +283,10 @@ TEST_F(StreamTest, SourceThatStaysBrokenKeepsBeingRestarted)
 
   EXPECT_TRUE(restarted_after_eos) << "start attempts: " << attempts();
   EXPECT_TRUE(retried_failed_restart) << "start attempts: " << attempts();
+  // Three EOS failures and at least two failed restarts, logged as one line each unless
+  // the run took longer than a throttle interval.
+  expectThrottledEvent(logs, "video_stream_pipeline_recovery_scheduled", started_at);
+  expectThrottledEvent(logs, "video_stream_restart_failed", started_at);
 }
 
 // A failure that arrives while a restart's start() runs, without making it throw,

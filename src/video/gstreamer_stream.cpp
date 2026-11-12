@@ -15,6 +15,7 @@
 #include "video/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -82,11 +83,20 @@ void GStreamerStream::onPipelineFailure(const std::string & reason)
   if (!failure_handler_.requestRun()) {
     return;
   }
+  std::size_t pending = 0U;
+  {
+    std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+    pending = recovery_log_throttle_.record();
+  }
+  if (pending == 0U) {
+    return;
+  }
 
   LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
     .field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
+    .field("count", pending)
     .warn();
 }
 

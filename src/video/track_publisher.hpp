@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -28,6 +29,7 @@
 #include "rclcpp/node_interfaces/node_interfaces.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "utils/event_throttle.hpp"
 #include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -82,6 +84,8 @@ private:
 
   void close();
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   RoomConnection & connection_;
   StreamSpec spec_;
 
@@ -91,6 +95,8 @@ private:
   bool published_once_ = false;
   bool captured_frame_logged_ = false;
   std::shared_ptr<RosStream> ros_stream_;
+  // A source that stays broken fails every restart; log it once per interval.
+  EventThrottle restart_failed_log_throttle_{kLogThrottle};
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<livekit::LocalVideoTrack> track_;
