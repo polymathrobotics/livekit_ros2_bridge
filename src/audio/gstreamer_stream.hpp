@@ -15,11 +15,13 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/stream_spec.hpp"
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 
 namespace livekit_ros2_bridge::audio
@@ -49,12 +51,18 @@ private:
   void restartPipelineAfterFailure();
   void startPipelineLocked();
 
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
+
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   mutable std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
+  // A source that stays broken is retried every restart delay; log it once per interval.
+  // recovery_log_mutex_ guards only the throttle and is never held across GStreamer calls.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::audio

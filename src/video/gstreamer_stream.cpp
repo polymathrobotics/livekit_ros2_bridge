@@ -15,6 +15,7 @@
 #include "video/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -38,12 +39,7 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(publisher.makePipelineCallbacks(
-    [this]() {
-      std::lock_guard<std::mutex> lock(mutex_);
-      return is_shutdown_;
-    },
-    [this](const std::string & reason) { onPipelineFailure(reason); }))
+, pipeline_(makePipelineCallbacks())
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
@@ -55,7 +51,7 @@ GStreamerStream::~GStreamerStream()
 void GStreamerStream::start()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     throw std::runtime_error("Video stream is shut down.");
   }
 
@@ -66,45 +62,101 @@ void GStreamerStream::close()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
+    if (is_shutdown_.load(std::memory_order_acquire)) {
       return;
     }
 
-    is_shutdown_ = true;
+    is_shutdown_.store(true, std::memory_order_release);
   }
 
   failure_handler_.close();
   pipeline_.stop();
 }
 
-void GStreamerStream::onPipelineFailure(const std::string & reason)
+PipelineCallbacks GStreamerStream::makePipelineCallbacks()
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_ || !pipeline_.isActive()) {
-    return;
+  auto is_shutdown = [this]() { return is_shutdown_.load(std::memory_order_acquire); };
+  auto on_failed = [this](const std::string & reason) { onPipelineFailure(reason); };
+  if (!requireOtherInput(spec_).passthrough) {
+    return publisher_.makePipelineCallbacks(is_shutdown, on_failed);
   }
-  if (!failure_handler_.schedule()) {
+
+  // Requesting a keyframe must not take mutex_: it runs inside pipeline
+  // callbacks, which pipeline_.stop() waits for.
+  return publisher_.makeEncodedPipelineCallbacks(
+    is_shutdown,
+    on_failed,
+    [this](const std::string & reason, const std::string & offered_caps) {
+      onPipelineFailure(reason, true, offered_caps);
+    },
+    [this]() { pipeline_.requestKeyFrame(); });
+}
+
+// Lock-free: the sync bus handler can call this from inside start() or a restart, which hold
+// mutex_ across the state change, so taking it here would deadlock the calling thread.
+// It runs on GStreamer threads, so no exception may escape into C.
+void GStreamerStream::onPipelineFailure(
+  const std::string & reason, bool caps_mismatch, const std::string & offered_caps)
+{
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
 
-  LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
-    .field("stream_key", spec_.stream_key)
-    .field("reason", reason)
-    .field("restart_delay_ms", kRestartDelay.count())
-    .warn();
+  try {
+    if (!failure_handler_.schedule()) {
+      // schedule() refuses while a restart runs, but a failure from the pipeline
+      // that restart started still needs another one. Does nothing when the
+      // failure joined a pending restart instead.
+      failure_handler_.rerunAfterCurrentRun();
+      return;
+    }
+    std::size_t pending = 0U;
+    {
+      std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+      pending = recovery_log_throttle_.record();
+    }
+    if (pending == 0U) {
+      return;
+    }
+
+    LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
+    event.field("stream_key", spec_.stream_key)
+      .field("reason", reason)
+      .field("restart_delay_ms", kRestartDelay.count())
+      .field("count", pending);
+    if (caps_mismatch) {
+      event.fieldQuoted("hint", "the source may not be H.264; passthrough supports H.264 only");
+    }
+    if (!offered_caps.empty()) {
+      event.fieldQuoted("offered_caps", offered_caps);
+    }
+    event.warn();
+  } catch (...) {
+    // Only resource exhaustion (the worker thread, the log line) can throw here;
+    // a recovery that was scheduled still runs.
+  }
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
 
   pipeline_.stop();
+  // A failure the old pipeline reported during this run must not restart the new one.
+  failure_handler_.discardRerunRequest();
+  // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
+  if (requireOtherInput(spec_).passthrough) {
+    publisher_.awaitKeyFrame();
+  }
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // start() can throw without the pipeline reporting a failure (e.g. a
+    // description that does not parse), so ask for the next attempt here too.
+    failure_handler_.rerunAfterCurrentRun();
     publisher_.onRestartFailed(exc.what());
   }
 }
@@ -112,6 +164,10 @@ void GStreamerStream::restartPipelineAfterFailure()
 void GStreamerStream::startPipelineLocked()
 {
   const auto & input = requireOtherInput(spec_);
+  if (input.passthrough) {
+    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
+    return;
+  }
   pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);
 }
 

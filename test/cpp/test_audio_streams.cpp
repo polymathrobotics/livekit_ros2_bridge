@@ -15,21 +15,28 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
+#include <vector>
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/gstreamer_stream.hpp"
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
+#include "support/error_on_start_element.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
+#include "support/scoped_temp_file.hpp"
 #include "utils/gstreamer_resources.hpp"
 
 namespace livekit_ros2_bridge::audio
@@ -69,6 +76,19 @@ void expectStartErrorContains(GStreamerPipeline & pipeline, const std::string & 
   } catch (const std::runtime_error & error) {
     EXPECT_NE(std::string(error.what()).find(fragment), std::string::npos) << "actual error: " << error.what();
   }
+}
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate)
+{
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (!predicate()) {
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return true;
 }
 
 class AudioStreamTest : public test_support::RclcppTestSuite
@@ -126,6 +146,65 @@ TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
 
   auto closed = std::async(std::launch::async, [&stream]() { stream.close(); });
   EXPECT_EQ(closed.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+}
+
+// A source that keeps failing is retried every restart delay; its warnings are
+// throttled instead of logged on every attempt.
+TEST_F(AudioStreamTest, RepeatedRestartFailuresAreLoggedOnce)
+{
+  // 10 ms of mono S16LE silence: the source plays it, reaches EOS, and restarts.
+  const test_support::ScopedTempFile source_file("lkros_audio_restart_source_");
+  {
+    std::FILE * file = std::fopen(source_file.path().c_str(), "wb");
+    ASSERT_NE(file, nullptr);
+    const std::vector<std::int16_t> samples(480U, 0);
+    std::fwrite(samples.data(), sizeof(std::int16_t), samples.size(), file);
+    std::fclose(file);
+  }
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{
+    "test",
+    "filesrc location=" + source_file.path() +
+      " ! rawaudioparse format=pcm pcm-format=s16le sample-rate=48000 num-channels=1",
+    ""};
+
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+  stream.start();
+  ASSERT_TRUE(waitUntil([&]() { return logs.countLines({"audio_stream_pipeline_recovery_scheduled"}) > 0U; }));
+
+  // From here every restart fails at once; give it several attempts.
+  source_file.remove();
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  stream.close();
+
+  EXPECT_EQ(logs.countLines({"audio_stream_pipeline_recovery_scheduled"}), 1U);
+  EXPECT_EQ(logs.countLines({"audio_stream_restart_failed"}), 1U);
+}
+
+// A failure that arrives while a restart's start() runs, without making it throw,
+// lands while the restart callback runs. It must still lead to another restart.
+TEST_F(AudioStreamTest, FailureDuringRestartLeadsToAnotherRestart)
+{
+  test_support::ErrorOnStartElement::registerFactory();
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{
+    "test", std::string("audiotestsrc is-live=true ! ") + test_support::ErrorOnStartElement::kFactoryName, ""};
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+  const std::size_t starts_before = test_support::ErrorOnStartElement::startCount();
+  const auto starts = [&]() { return test_support::ErrorOnStartElement::startCount() - starts_before; };
+
+  // The first start's failure schedules a restart; that restart's failure is the
+  // one that lands during the callback.
+  stream.start();
+  const bool restarted_after_failed_restart = waitUntil([&]() { return starts() >= 3U; });
+  stream.close();
+
+  EXPECT_TRUE(restarted_after_failed_restart) << "starts: " << starts();
 }
 
 TEST_F(AudioStreamTest, RealPipelineProducesMono48kFrames)

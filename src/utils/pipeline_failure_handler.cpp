@@ -44,10 +44,27 @@ bool PipelineFailureHandler::schedule()
   return true;
 }
 
+void PipelineFailureHandler::rerunAfterCurrentRun()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (closed_ || !callback_running_) {
+    return;
+  }
+
+  rerun_requested_ = true;
+}
+
+void PipelineFailureHandler::discardRerunRequest()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  rerun_requested_ = false;
+}
+
 void PipelineFailureHandler::cancelPending()
 {
   std::lock_guard<std::mutex> lock(mutex_);
   pending_ = false;
+  rerun_requested_ = false;
   condition_.notify_all();
 }
 
@@ -97,7 +114,10 @@ void PipelineFailureHandler::run()
     callback_();
     lock.lock();
     callback_running_ = false;
-    pending_ = false;
+    // A requested rerun waits the usual delay at the top of the loop, where
+    // close() and cancelPending() can still drop it.
+    pending_ = rerun_requested_;
+    rerun_requested_ = false;
   }
 }
 

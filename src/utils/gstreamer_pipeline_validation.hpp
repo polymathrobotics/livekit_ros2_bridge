@@ -48,6 +48,11 @@ struct EndpointLayout
 // validate fragments identically at startup.
 void validatePipeline(const std::string & context, const std::string & description, const EndpointLayout & layout);
 
+// Rejects a user fragment that names any element, even one inside a nested bin, `reserved_name`.
+// Check the fragment alone: combined with the bridge's own element of that name, gst_parse_launch
+// reports only a link error or, inside a bin, accepts the duplicate.
+void rejectReservedElementName(const std::string & context, const std::string & fragment, const char * reserved_name);
+
 // Other-source fragments must provide exactly one appsink, which the bridge
 // recovers by the reserved name passed here (per media kind).
 constexpr EndpointLayout makeOtherSourceLayout(const char * bridge_appsink_name)

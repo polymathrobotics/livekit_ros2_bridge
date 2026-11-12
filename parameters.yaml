@@ -144,6 +144,16 @@ livekit_ros2_bridge:
           type: string
           default_value: ''
           description: Optional GStreamer transform fragment inserted after other video ingress.
+        passthrough:
+          type: bool
+          default_value: false
+          description: >-
+            Forward this source's H.264 to LiveKit unchanged instead of decoding
+            and re-encoding it. The source must output H.264; transform,
+            publish.codec other than h264 or auto, publish.max_framerate above
+            0, and publish.simulcast enabled are rejected, and global
+            video.publish defaults are ignored. publish.max_bitrate_bps tells
+            LiveKit the most this camera sends and does not change the camera.
         publish:
           codec:
             type: string
@@ -157,7 +167,8 @@ livekit_ros2_bridge:
             description: >-
               Optional LiveKit max video bitrate override for this other video
               source in bps. -1 inherits from
-              video.publish.max_bitrate_bps.
+              video.publish.max_bitrate_bps. With passthrough, set it to the
+              camera's configured bitrate; -1 or 0 leaves LiveKit's default.
             validation:
               gt_eq<>: [-1]
           max_framerate:

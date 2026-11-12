@@ -5,6 +5,20 @@ Changelog for package livekit_ros2_bridge
 0.4.0 (Unreleased)
 ------------------
 * Upgrade the LiveKit C++ SDK to 1.12.2 and use official Ubuntu builds, including for Humble.
+* Add H.264 passthrough for other video sources: with `video.other.<id>.passthrough: true`, the
+  bridge forwards a camera's already-encoded H.264 to LiveKit without decoding or re-encoding it.
+  Passthrough entries reject `transform` and any `publish.codec`, `publish.max_framerate`, or
+  `publish.simulcast` value that would change the stream, and ignore the global `video.publish.*`
+  defaults; `publish.max_bitrate_bps` tells LiveKit the camera's bitrate. The source must be live:
+  the bridge queues up to about 1 s of video and, once it falls that far behind, skips ahead to
+  the next keyframe.
+* Require `gstreamer1.0-plugins-bad` (for `h264parse`) on every install, whether or not it uses
+  passthrough; the package now declares it as an exec dependency.
+* Retry a failed pipeline restart of an other video or audio source instead of leaving the
+  stream dead. While a source stays broken, `video_stream_pipeline_recovery_scheduled`,
+  `audio_stream_pipeline_recovery_scheduled`, `video_stream_restart_failed`, and
+  `audio_stream_restart_failed` log at most once per 5 s per stream, with a `count` field giving
+  how many times the event occurred since it last logged.
 
 0.3.1 (Unreleased)
 ------------------

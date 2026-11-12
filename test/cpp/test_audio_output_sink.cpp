@@ -214,6 +214,20 @@ TEST_F(AudioOutputSinkTest, IdleSinkDoesNotRestartWhilePipelineIsDown)
   EXPECT_EQ(sink.pipelineStartAttempts(), attempts_after_bind);
 }
 
+TEST_F(AudioOutputSinkTest, SinkThatFailsWhileStartingIsNotRetriedWithoutFrames)
+{
+  // filesink cannot open its file while the pipeline goes to PLAYING, and posts
+  // an error from inside the start. That schedules one restart, which fails the
+  // same way; with no frames arriving, nothing may schedule another.
+  AudioOutputSink sink("filesink location=/nonexistent/lkros_audio_out_sink/out.raw");
+
+  ASSERT_TRUE(sink.bind(1, 48000, 1));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+  EXPECT_LE(sink.pipelineStartAttempts(), 2U);
+  EXPECT_FALSE(sink.hasActivePipeline());
+}
+
 TEST_F(AudioOutputSinkTest, LiveFramesReArmBoundedRestarts)
 {
   // With a dead device, each live frame re-arms the restart loop (bounded by the

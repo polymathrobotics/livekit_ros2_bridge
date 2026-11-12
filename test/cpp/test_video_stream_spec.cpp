@@ -23,6 +23,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "utils/ros_resource_name_utils.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -65,6 +66,7 @@ void expectTrackPublishOptionsEq(
   EXPECT_EQ(actual.video_codec, expected.video_codec);
   expectVideoEncodingEq(actual.video_encoding, expected.video_encoding);
   EXPECT_EQ(actual.simulcast, expected.simulcast);
+  EXPECT_EQ(actual.video_encoder, expected.video_encoder);
 }
 
 RosTopicRule makeRule(const char * id, const char * pattern, const char * transform)
@@ -248,6 +250,32 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   EXPECT_EQ(input.name, "front_camera");
   EXPECT_EQ(input.source_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
+  EXPECT_FALSE(input.passthrough);
+  expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
+}
+
+TEST(StreamSpecTest, ResolveOtherSourceSpecCarriesPassthroughFlag)
+{
+  StreamConfig config = makeDefaultConfig();
+  livekit::TrackPublishOptions expected_publish_options;
+  expected_publish_options.video_codec = livekit::VideoCodec::H264;
+  expected_publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  expected_publish_options.simulcast = false;
+
+  OtherSource source;
+  source.name = "front_camera";
+  source.source_fragment = "rtspsrc location=rtsp://camera/stream ! rtph264depay";
+  source.passthrough = true;
+  source.publish_options = expected_publish_options;
+
+  config.other_sources.push_back(std::move(source));
+
+  const auto spec = resolveOtherSourceSpec(config, "front_camera");
+  const auto & input = requireOtherInput(spec);
+
+  EXPECT_TRUE(input.passthrough);
+  EXPECT_EQ(input.source_fragment, "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  EXPECT_EQ(input.transform_fragment, "");
   expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
 }
 
@@ -275,6 +303,34 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+}
+
+TEST(PipelineDescriptionTest, RawFrameEndingIsUnchanged)
+{
+  EXPECT_EQ(
+    buildPipelineDescription("videotestsrc is-live=true", "videoflip method=horizontal-flip"),
+    "videotestsrc is-live=true ! videoflip method=horizontal-flip"
+    " ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420"
+    " ! appsink name=bridge_video_sink sync=false drop=true max-buffers=1");
+  EXPECT_EQ(
+    buildPipelineDescription("videotestsrc is-live=true", ""),
+    "videotestsrc is-live=true"
+    " ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420"
+    " ! appsink name=bridge_video_sink sync=false drop=true max-buffers=1");
+}
+
+TEST(PipelineDescriptionTest, PassthroughEndingParsesH264WithoutDroppingFrames)
+{
+  const std::string description = buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay");
+
+  EXPECT_EQ(
+    description,
+    "rtspsrc location=rtsp://camera ! rtph264depay"
+    " ! h264parse config-interval=-1 ! video/x-h264,stream-format=byte-stream,alignment=au"
+    " ! queue name=bridge_video_queue max-size-buffers=0 max-size-bytes=33554432 max-size-time=1000000000 leaky=no"
+    " ! appsink name=bridge_video_sink sync=false");
+  EXPECT_EQ(description.find("leaky=downstream"), std::string::npos);
+  EXPECT_EQ(description.find("drop=true"), std::string::npos);
 }
 
 }  // namespace

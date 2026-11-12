@@ -14,9 +14,12 @@
 
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/stream_spec.hpp"
@@ -43,17 +46,25 @@ public:
   void close();
 
 private:
-  // Coalesces repeated EOS/error messages while a restart is pending.
-  void onPipelineFailure(const std::string & reason);
+  PipelineCallbacks makePipelineCallbacks();
+  // Coalesces repeated EOS/error messages while a restart is pending. caps_mismatch
+  // adds the passthrough H.264-only hint to the log.
+  void onPipelineFailure(const std::string & reason, bool caps_mismatch = false, const std::string & offered_caps = {});
   void restartPipelineAfterFailure();
   void startPipelineLocked();
+
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
   mutable std::mutex mutex_;
-  bool is_shutdown_ = false;
+  std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
+  // A source that stays broken is retried every restart delay; log it once per interval.
+  // recovery_log_mutex_ guards only the throttle and is never held across GStreamer calls.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::video

@@ -222,9 +222,15 @@ void TrackPublisher::onRestartFailed(const std::string & error)
     return;
   }
 
+  const std::size_t pending = restart_failed_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
   LogEvent(kLogger, "audio_stream_restart_failed")
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
+    .field("count", pending)
     .warn();
 }
 

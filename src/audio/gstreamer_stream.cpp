@@ -15,6 +15,7 @@
 #include "audio/gstreamer_stream.hpp"
 
 #include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -74,25 +75,42 @@ void GStreamerStream::close()
   pipeline_.stop();
 }
 
-// This path must stay lock-free: the sync bus handler can deliver a failure
-// from inside start() or restartPipelineAfterFailure(), which hold mutex_ while
-// GStreamer performs the state change. Locking here would deadlock against the
-// calling thread itself. schedule() coalesces duplicate failures, and close()
-// marks the handler closed before teardown, so no stream mutex_ is needed.
+// Lock-free: the sync bus handler can call this from inside start() or a restart, which hold
+// mutex_ across the state change, so taking it here would deadlock the calling thread.
+// It runs on GStreamer threads, so no exception may escape into C.
 void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
-  if (!failure_handler_.schedule()) {
-    return;
-  }
 
-  LogEvent(kLogger, "audio_stream_pipeline_recovery_scheduled")
-    .field("stream_key", spec_.stream_key)
-    .field("reason", reason)
-    .field("restart_delay_ms", kRestartDelay.count())
-    .warn();
+  try {
+    if (!failure_handler_.schedule()) {
+      // schedule() refuses while a restart runs, but a failure from the pipeline
+      // that restart started still needs another one. Does nothing when the
+      // failure joined a pending restart instead.
+      failure_handler_.rerunAfterCurrentRun();
+      return;
+    }
+    std::size_t pending = 0U;
+    {
+      std::lock_guard<std::mutex> lock(recovery_log_mutex_);
+      pending = recovery_log_throttle_.record();
+    }
+    if (pending == 0U) {
+      return;
+    }
+
+    LogEvent(kLogger, "audio_stream_pipeline_recovery_scheduled")
+      .field("stream_key", spec_.stream_key)
+      .field("reason", reason)
+      .field("restart_delay_ms", kRestartDelay.count())
+      .field("count", pending)
+      .warn();
+  } catch (...) {
+    // Only resource exhaustion (the worker thread, the log line) can throw here;
+    // a recovery that was scheduled still runs.
+  }
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
@@ -103,9 +121,14 @@ void GStreamerStream::restartPipelineAfterFailure()
   }
 
   pipeline_.stop();
+  // A failure the old pipeline reported during this run must not restart the new one.
+  failure_handler_.discardRerunRequest();
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
+    // start() can throw without the pipeline reporting a failure (e.g. a
+    // description that does not parse), so ask for the next attempt here too.
+    failure_handler_.rerunAfterCurrentRun();
     publisher_.onRestartFailed(exc.what());
   }
 }
