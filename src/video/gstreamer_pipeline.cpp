@@ -227,7 +227,8 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
   // Nothing pops the bus, so every message is dropped once handled; passing them
-  // on would queue them for the pipeline's lifetime.
+  // on would queue them for the pipeline's lifetime. A handler that drops a
+  // message owns it, so it also unrefs it.
   GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
@@ -236,6 +237,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
         static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
       } catch (...) {
       }
+      gst_message_unref(message);
       return GST_BUS_DROP;
     },
     this,

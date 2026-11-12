@@ -331,9 +331,9 @@ void AudioOutputSink::startPipelineLocked()
   gst_app_src_set_stream_type(GST_APP_SRC(appsrc_element.get()), GST_APP_STREAM_TYPE_STREAM);
   disableAudioOutputSinkSync(pipeline.get());
 
-  // Nothing pops the bus, so every message is dropped once handled. The handler
-  // catches everything, since an exception unwinding through GStreamer's C
-  // frames would terminate the process.
+  // Nothing pops the bus, so every message is dropped and unreffed once handled.
+  // The handler catches everything, since an exception unwinding through
+  // GStreamer's C frames would terminate the process.
   utils::GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
@@ -342,6 +342,7 @@ void AudioOutputSink::startPipelineLocked()
         static_cast<AudioOutputSink *>(user_data)->onBusMessage(message);
       } catch (...) {
       }
+      gst_message_unref(message);
       return GST_BUS_DROP;
     },
     this,
