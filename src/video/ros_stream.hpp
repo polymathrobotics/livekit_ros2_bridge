@@ -16,6 +16,7 @@
 
 #include <gst/video/video.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -71,7 +72,6 @@ public:
   void close();
 
 private:
-  bool isShutdown() const;
   // A failure stops the current pipeline; the next accepted ROS frame rebuilds
   // appsrc state.
   void onPipelineFailure(const std::string & reason);
@@ -100,9 +100,10 @@ private:
   // next accepted frame.
   std::optional<RawLayout> raw_layout_;
   std::optional<std::string> codec_;
-  // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
+  // Serialises ROS callbacks, failure handling and close(); the GStreamer callbacks
+  // never take it and read only the atomic is_shutdown_.
   mutable std::mutex mutex_;
-  bool is_shutdown_ = false;
+  std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
 };
 

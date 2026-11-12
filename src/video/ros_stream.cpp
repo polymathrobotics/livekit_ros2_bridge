@@ -162,7 +162,8 @@ RosStream::RosStream(
 : spec_(std::move(spec))
 , publisher_(publisher)
 , pipeline_(publisher.makePipelineCallbacks(
-    [this]() { return isShutdown(); }, [this](const std::string & reason) { onPipelineFailure(reason); }))
+    [this]() { return is_shutdown_.load(std::memory_order_acquire); },
+    [this](const std::string & reason) { onPipelineFailure(reason); }))
 , node_interfaces_(std::move(node_interfaces))
 , qos_config_(qos_config)
 , failure_handler_(std::chrono::milliseconds::zero(), [this]() { stopPipelineAfterFailure(); })
@@ -176,7 +177,7 @@ RosStream::~RosStream()
 void RosStream::start()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     throw std::runtime_error("Video stream is shut down.");
   }
   if (raw_subscription_ || compressed_subscription_) {
@@ -216,11 +217,11 @@ void RosStream::close()
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_) {
+    if (is_shutdown_.load(std::memory_order_acquire)) {
       return;
     }
 
-    is_shutdown_ = true;
+    is_shutdown_.store(true, std::memory_order_release);
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
   }
@@ -233,16 +234,11 @@ void RosStream::close()
   pipeline_.stop();
 }
 
-bool RosStream::isShutdown() const
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  return is_shutdown_;
-}
-
+// Lock-free: the sync bus handler can call this from inside a ROS callback's start(),
+// which holds mutex_ across the state change, so taking it here would deadlock that thread.
 void RosStream::onPipelineFailure(const std::string & reason)
 {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_ || !pipeline_.isActive()) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
   if (!failure_handler_.schedule()) {
@@ -258,7 +254,7 @@ void RosStream::onPipelineFailure(const std::string & reason)
 void RosStream::stopPipelineAfterFailure()
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
 
@@ -269,7 +265,7 @@ void RosStream::stopPipelineAfterFailure()
 void RosStream::onRawImage(const sensor_msgs::msg::Image::ConstSharedPtr & image)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
 
@@ -351,7 +347,7 @@ void RosStream::pushRawLocked(const sensor_msgs::msg::Image & image)
 void RosStream::onCompressedImage(const sensor_msgs::msg::CompressedImage::ConstSharedPtr & image)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (is_shutdown_) {
+  if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
   }
 

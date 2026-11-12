@@ -15,17 +15,23 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
+#include <variant>
 
 #include "gtest/gtest.h"
 #include "livekit/video_frame.h"
+#include "sensor_msgs/image_encodings.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "support/controlled_start_element.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "utils/log_event.hpp"
@@ -324,6 +330,67 @@ TEST_F(StreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
     "video_pipeline_ros_topic_compressed_source_test",
     "/video_pipeline/compressed_image",
     compressedImageInterfaceType());
+}
+
+// Owns a ROS image stream and everything it borrows, so a test can hand all of it to a
+// thread that may never return.
+struct RosImageStreamHarness
+{
+  RosImageStreamHarness(const std::string & node_name, const StreamSpec & spec)
+  : node(std::make_shared<rclcpp::Node>(node_name))
+  , track_publisher(connection, spec)
+  , stream(std::make_shared<RosStream>(*node, spec, nullptr, track_publisher))
+  {
+    executor.add_node(node);
+  }
+
+  std::shared_ptr<rclcpp::Node> node;
+  rclcpp::executors::SingleThreadedExecutor executor;
+  FakeRoomConnection connection;
+  TrackPublisher track_publisher;
+  std::shared_ptr<RosStream> stream;
+};
+
+// A transform that reports an error while the pipeline starts delivers it on the ROS
+// callback's thread, which holds the stream mutex_. The callback must still return.
+TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  const std::string topic = "/video_pipeline/failing_transform_image";
+  StreamSpec spec = makeRosTopicSpec(topic, imageInterfaceType());
+  std::get<RosInput>(spec.input).transform_fragment = ControlledStartElement::kFactoryName;
+  auto harness = std::make_shared<RosImageStreamHarness>("video_pipeline_ros_failing_transform_test", spec);
+  const auto image_publisher = harness->node->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+  harness->stream->start();
+  ASSERT_TRUE(
+    test_support::spinUntil(harness->executor, [&]() { return image_publisher->get_subscription_count() == 1U; }));
+
+  sensor_msgs::msg::Image image;
+  image.encoding = sensor_msgs::image_encodings::RGB8;
+  image.width = 64U;
+  image.height = 48U;
+  image.step = 192U;
+  image.data.resize(image.step * image.height);
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  image_publisher->publish(image);
+
+  // Spin on a thread of its own so a wedged callback fails the test instead of hanging it.
+  std::promise<bool> pipeline_started;
+  auto pipeline_started_future = pipeline_started.get_future();
+  std::thread spinner([harness, attempts_before, pipeline_started = std::move(pipeline_started)]() mutable {
+    pipeline_started.set_value(test_support::spinUntil(
+      harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before; }));
+  });
+  if (pipeline_started_future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+    // The stuck thread can never be joined; it keeps the harness alive.
+    spinner.detach();
+    FAIL() << "The ROS image callback did not return.";
+  }
+  spinner.join();
+
+  EXPECT_TRUE(pipeline_started_future.get());
 }
 
 }  // namespace
