@@ -63,22 +63,17 @@ void GStreamerStream::close()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_.load(std::memory_order_acquire)) {
+    if (is_shutdown_.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-
-    is_shutdown_.store(true, std::memory_order_release);
   }
 
   failure_handler_.close();
   pipeline_.stop();
 }
 
-// This path must stay lock-free: the sync bus handler can deliver a failure
-// from inside start() or restartPipelineAfterFailure(), which hold mutex_ while
-// GStreamer performs the state change. Locking here would deadlock against the
-// calling thread itself. schedule() coalesces duplicate failures, and close()
-// marks the handler closed before teardown, so no stream mutex_ is needed.
+// Lock-free: the sync bus handler can call this from inside start() or a restart, which hold
+// mutex_ across the state change, so taking it here would deadlock the calling thread.
 void GStreamerStream::onPipelineFailure(const std::string & reason)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {

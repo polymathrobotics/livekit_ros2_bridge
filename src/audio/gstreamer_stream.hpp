@@ -27,8 +27,8 @@ namespace livekit_ros2_bridge::audio
 
 class TrackPublisher;
 
-// Pipeline callbacks can run on GStreamer threads; mutex_ guards shutdown and
-// restart state.
+// Pipeline callbacks can run on GStreamer threads; mutex_ serialises start, close and
+// restart, and the failure path reads only the atomic is_shutdown_.
 class GStreamerStream final
 {
 public:
@@ -52,7 +52,7 @@ private:
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
-  mutable std::mutex mutex_;
+  std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
 };
