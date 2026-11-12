@@ -307,6 +307,19 @@ if(BUILD_TESTING)
   livekit_ros2_bridge_add_test(test_audio_output_sink test/cpp/test_audio_output_sink.cpp PkgConfig::gstreamer-app)
   livekit_ros2_bridge_add_test(test_audio_output_manager test/cpp/test_audio_output_manager.cpp)
   livekit_ros2_bridge_add_test(test_pipeline_failure_handler test/cpp/test_pipeline_failure_handler.cpp)
+  # A separate binary, because the leaks tracer must be enabled before gst_init
+  # and the test deinitializes GStreamer to collect its report.
+  livekit_ros2_bridge_add_test(
+    test_gstreamer_leaks
+    test/cpp/test_gstreamer_leaks.cpp
+    PkgConfig::gstreamer
+    PkgConfig::gstreamer-app
+    PkgConfig::gstreamer-video
+    PkgConfig::gstreamer-audio
+  )
+  set_tests_properties(test_gstreamer_leaks PROPERTIES
+    ENVIRONMENT "GST_TRACERS=leaks;GST_DEBUG=GST_TRACER:7"
+  )
 endif()
 
 ament_package()
