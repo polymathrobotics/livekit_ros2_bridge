@@ -20,7 +20,6 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <string>
 
 #include "livekit/audio_frame.h"
@@ -62,16 +61,13 @@ private:
   void resumeCallbacks();
   void stopCallbacksAndWait();
 
-  PipelineCallbacks callbacks() const;
-
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
 
   static constexpr std::size_t kCallbacksStopped = ~(~std::size_t{0} >> 1U);
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
 
-  std::unique_ptr<PipelineCallbacks> callbacks_;
-  std::atomic<const PipelineCallbacks *> callbacks_ptr_{nullptr};
+  const PipelineCallbacks callbacks_;
   std::atomic<std::size_t> callback_state_{0};
   utils::GstElementPtr pipeline_;
 };

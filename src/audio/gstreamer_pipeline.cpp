@@ -18,7 +18,7 @@
 
 #include <cstdint>
 #include <cstring>
-#include <memory>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -26,6 +26,8 @@
 #include <vector>
 
 #include "audio/pipeline_description.hpp"
+#include "rclcpp/logging.hpp"
+#include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 
 namespace livekit_ros2_bridge::audio
@@ -33,6 +35,21 @@ namespace livekit_ros2_bridge::audio
 
 namespace
 {
+
+const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.gstreamer_audio_pipeline");
+
+// Runs inside the C callbacks' catch blocks, so a failure to log is dropped
+// rather than thrown back into GStreamer.
+void logContainedException(const char * callback) noexcept
+{
+  try {
+    LogEvent(kLogger, "audio_pipeline_callback_failed")
+      .field("callback", callback)
+      .fieldException("error", std::current_exception())
+      .error();
+  } catch (...) {
+  }
+}
 
 livekit::AudioFrame unpackAudioFrame(GstSample * sample)
 {
@@ -76,10 +93,8 @@ livekit::AudioFrame unpackAudioFrame(GstSample * sample)
 }  // namespace
 
 GStreamerPipeline::GStreamerPipeline(PipelineCallbacks callbacks)
-{
-  callbacks_ = std::make_unique<PipelineCallbacks>(std::move(callbacks));
-  callbacks_ptr_.store(callbacks_.get(), std::memory_order_release);
-}
+: callbacks_(std::move(callbacks))
+{}
 
 GStreamerPipeline::~GStreamerPipeline()
 {
@@ -89,12 +104,6 @@ GStreamerPipeline::~GStreamerPipeline()
 bool GStreamerPipeline::isActive() const noexcept
 {
   return pipeline_ != nullptr;
-}
-
-PipelineCallbacks GStreamerPipeline::callbacks() const
-{
-  const auto * callbacks = callbacks_ptr_.load(std::memory_order_acquire);
-  return callbacks == nullptr ? PipelineCallbacks{} : *callbacks;
 }
 
 // GStreamer may enter raw C callbacks from streaming/bus threads while stop()
@@ -156,19 +165,34 @@ void GStreamerPipeline::start(const std::string & description)
   }
 
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
-  // stop() clears raw pipeline callbacks before releasing the bin.
+  // stop() clears this C callback before releasing the bin. It catches
+  // everything: an exception unwinding through GStreamer's C frames would
+  // terminate the process.
   GstAppSinkCallbacks callbacks{};
   callbacks.new_sample = [](GstAppSink * sink, gpointer user_data) -> GstFlowReturn {
-    return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    try {
+      return static_cast<GStreamerPipeline *>(user_data)->onSample(sink);
+    } catch (...) {
+      logContainedException("new_sample");
+      return GST_FLOW_ERROR;
+    }
   };
   gst_app_sink_set_callbacks(appsink.get(), &callbacks, this, nullptr);
 
+  // Nothing pops the bus, so every message is dropped once handled; passing them
+  // on would queue them for the pipeline's lifetime. The handler owns what it
+  // drops, so it unrefs it, and it catches everything, like new_sample.
   utils::GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
     [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
-      static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
-      return GST_BUS_PASS;
+      try {
+        static_cast<GStreamerPipeline *>(user_data)->onBusMessage(message);
+      } catch (...) {
+        logContainedException("bus_sync_handler");
+      }
+      gst_message_unref(message);
+      return GST_BUS_DROP;
     },
     this,
     nullptr);
@@ -211,7 +235,6 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     return GST_FLOW_FLUSHING;
   }
   const ScopeExit callback_exit([this]() { endCallback(); });
-  const auto callbacks = this->callbacks();
   utils::GstSamplePtr sample(gst_app_sink_pull_sample(sink));
   if (sample == nullptr) {
     return GST_FLOW_EOS;
@@ -221,19 +244,25 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
   try {
     frame = unpackAudioFrame(sample.get());
   } catch (const std::exception & exc) {
-    callbacks.on_unpack_failed(exc.what());
+    callbacks_.on_unpack_failed(exc.what());
+    return GST_FLOW_ERROR;
+  } catch (...) {
+    callbacks_.on_unpack_failed(std::string(kUnknownExceptionValue));
     return GST_FLOW_ERROR;
   }
 
-  if (callbacks.is_shutdown()) {
+  if (callbacks_.is_shutdown()) {
     return GST_FLOW_FLUSHING;
   }
 
   try {
-    callbacks.on_frame(frame);
+    callbacks_.on_frame(frame);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
-    callbacks.on_capture_failed(exc.what());
+    callbacks_.on_capture_failed(exc.what());
+    return GST_FLOW_ERROR;
+  } catch (...) {
+    callbacks_.on_capture_failed(std::string(kUnknownExceptionValue));
     return GST_FLOW_ERROR;
   }
 }
@@ -244,10 +273,9 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
     return;
   }
   const ScopeExit callback_exit([this]() { endCallback(); });
-  const auto callbacks = this->callbacks();
   const GstMessageType type = GST_MESSAGE_TYPE(message);
   if (type == GST_MESSAGE_EOS) {
-    callbacks.on_failed("eos");
+    callbacks_.on_failed("eos");
     return;
   }
   if (type != GST_MESSAGE_ERROR) {
@@ -258,7 +286,7 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   gst_message_parse_error(message, &raw_error, nullptr);
   utils::GErrorPtr error(raw_error);
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-  callbacks.on_failed(reason);
+  callbacks_.on_failed(reason);
 }
 
 }  // namespace livekit_ros2_bridge::audio

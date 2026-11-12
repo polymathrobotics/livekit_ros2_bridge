@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -45,6 +46,19 @@ void disableSyncIfSink(GstElement * element)
 void onDeepElementAdded(GstBin *, GstBin *, GstElement * element, gpointer)
 {
   disableSyncIfSink(element);
+}
+
+// Runs inside the bus handler's catch block, so a failure to log is dropped
+// rather than thrown back into GStreamer.
+void logContainedException(const char * callback) noexcept
+{
+  try {
+    LogEvent(kLogger, "audio_out_sink_callback_failed")
+      .field("callback", callback)
+      .fieldException("error", std::current_exception())
+      .error();
+  } catch (...) {
+  }
 }
 
 }  // namespace
@@ -331,12 +345,20 @@ void AudioOutputSink::startPipelineLocked()
   gst_app_src_set_stream_type(GST_APP_SRC(appsrc_element.get()), GST_APP_STREAM_TYPE_STREAM);
   disableAudioOutputSinkSync(pipeline.get());
 
+  // Nothing pops the bus, so every message is dropped and unreffed once handled.
+  // The handler catches everything, since an exception unwinding through
+  // GStreamer's C frames would terminate the process.
   utils::GstBusPtr bus(gst_element_get_bus(pipeline.get()));
   gst_bus_set_sync_handler(
     bus.get(),
     [](GstBus *, GstMessage * message, gpointer user_data) -> GstBusSyncReply {
-      static_cast<AudioOutputSink *>(user_data)->onBusMessage(message);
-      return GST_BUS_PASS;
+      try {
+        static_cast<AudioOutputSink *>(user_data)->onBusMessage(message);
+      } catch (...) {
+        logContainedException("bus_sync_handler");
+      }
+      gst_message_unref(message);
+      return GST_BUS_DROP;
     },
     this,
     nullptr);

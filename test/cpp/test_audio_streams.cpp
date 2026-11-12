@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -25,12 +24,14 @@
 
 #include "audio/gstreamer_pipeline.hpp"
 #include "audio/gstreamer_stream.hpp"
+#include "audio/pipeline_description.hpp"
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "utils/gstreamer_resources.hpp"
+#include "utils/log_event.hpp"
 
 namespace livekit_ros2_bridge::audio
 {
@@ -87,6 +88,45 @@ TEST_F(AudioStreamTest, PipelineStartRejectsNamedNonAppSink)
 
   expectStartErrorContains(
     pipeline, "audiotestsrc is-live=true ! fakesink name=bridge_audio_sink", "must be a GstAppSink");
+}
+
+TEST_F(AudioStreamTest, PipelineContainsNonStandardCallbackExceptions)
+{
+  std::mutex error_mutex;
+  std::string capture_error;
+  std::string failure_reason;
+  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  // on_capture_failed also throws, so the exception reaches the new_sample catch;
+  // the failed sample makes the pipeline post an error, which on_failed throws on.
+  callbacks.on_frame = [](const livekit::AudioFrame &) { throw 42; };
+  callbacks.on_capture_failed = [&](const std::string & error) {
+    const std::lock_guard<std::mutex> lock(error_mutex);
+    if (capture_error.empty()) {
+      capture_error = error;
+    }
+    throw 42;
+  };
+  callbacks.on_failed = [&](const std::string & reason) {
+    const std::lock_guard<std::mutex> lock(error_mutex);
+    if (failure_reason.empty()) {
+      failure_reason = reason;
+    }
+    throw 42;
+  };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(buildPipelineDescription("audiotestsrc is-live=true", ""));
+  const bool reported = test_support::waitUntil(
+    [&]() {
+      const std::lock_guard<std::mutex> lock(error_mutex);
+      return !failure_reason.empty();
+    },
+    std::chrono::seconds(10));
+  pipeline.stop();
+
+  EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
+  EXPECT_TRUE(reported);
+  EXPECT_NE(failure_reason, "eos");
 }
 
 TEST_F(AudioStreamTest, OtherAudioLifecycleIsIdempotent)
