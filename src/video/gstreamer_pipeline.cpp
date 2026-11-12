@@ -319,6 +319,9 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
   } catch (const std::exception & exc) {
     callbacks_.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
+  } catch (...) {
+    callbacks_.on_unpack_failed(std::string(kUnknownExceptionValue));
+    return GST_FLOW_ERROR;
   }
 
   if (callbacks_.is_shutdown()) {
@@ -330,6 +333,9 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks_.on_capture_failed(exc.what());
+    return GST_FLOW_ERROR;
+  } catch (...) {
+    callbacks_.on_capture_failed(std::string(kUnknownExceptionValue));
     return GST_FLOW_ERROR;
   }
 }

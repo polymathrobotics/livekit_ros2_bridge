@@ -27,6 +27,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "utils/log_event.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
@@ -136,16 +137,25 @@ TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
 {
   std::atomic<bool> frame_ran{false};
-  std::mutex reason_mutex;
+  std::mutex error_mutex;
+  std::string capture_error;
   std::string failure_reason;
   PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
-  // The frame exception fails the sample, so the pipeline posts an error to the bus.
+  // on_capture_failed also throws, so the exception reaches the new_sample catch;
+  // the failed sample makes the pipeline post an error, which on_failed throws on.
   callbacks.on_frame = [&](const livekit::VideoFrame &, std::int64_t) {
     frame_ran = true;
     throw 42;
   };
+  callbacks.on_capture_failed = [&](const std::string & error) {
+    const std::lock_guard<std::mutex> lock(error_mutex);
+    if (capture_error.empty()) {
+      capture_error = error;
+    }
+    throw 42;
+  };
   callbacks.on_failed = [&](const std::string & reason) {
-    const std::lock_guard<std::mutex> lock(reason_mutex);
+    const std::lock_guard<std::mutex> lock(error_mutex);
     if (failure_reason.empty()) {
       failure_reason = reason;
     }
@@ -156,13 +166,14 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   pipeline.start(buildPipelineDescription("videotestsrc is-live=true ! video/x-raw,width=64,height=48", ""), false);
   const bool reported = test_support::waitUntil(
     [&]() {
-      const std::lock_guard<std::mutex> lock(reason_mutex);
+      const std::lock_guard<std::mutex> lock(error_mutex);
       return !failure_reason.empty();
     },
     std::chrono::seconds(10));
   pipeline.stop();
 
   EXPECT_TRUE(frame_ran.load());
+  EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
   EXPECT_TRUE(reported);
   EXPECT_NE(failure_reason, "eos");
 }
