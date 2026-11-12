@@ -16,6 +16,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -263,6 +264,31 @@ TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
   stream.start();
   stream.close();
   stream.close();
+}
+
+// A source that fails while the state change runs (missing file) is delivered
+// through the sync bus handler on the calling thread. The failure path must not
+// take the stream mutex_: start() has to return or throw promptly, and close()
+// has to complete afterwards.
+TEST_F(StreamTest, StartWithUnavailableSourceDoesNotWedge)
+{
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.raw", ""};
+
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, spec);
+  GStreamerStream stream(spec, publisher);
+
+  auto started = std::async(std::launch::async, [&stream]() {
+    try {
+      stream.start();
+    } catch (const std::exception &) {
+    }
+  });
+  EXPECT_EQ(started.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+
+  auto closed = std::async(std::launch::async, [&stream]() { stream.close(); });
+  EXPECT_EQ(closed.wait_for(std::chrono::seconds(10)), std::future_status::ready);
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(
