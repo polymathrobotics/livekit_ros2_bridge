@@ -17,13 +17,10 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
-#include <utility>
 #include <variant>
 
 #include "gtest/gtest.h"
@@ -32,6 +29,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "support/controlled_start_element.hpp"
+#include "support/detached_task.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "utils/log_event.hpp"
@@ -51,6 +49,9 @@ namespace
 
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
+
+// How long a call that could deadlock gets before the test gives up on it.
+constexpr auto kHangTimeout = std::chrono::seconds(10);
 
 StreamSpec makeOtherSpec()
 {
@@ -272,6 +273,20 @@ TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
   stream.close();
 }
 
+// Owns an other-source stream and what it borrows, so a call that never returns can keep
+// all of it alive on its abandoned thread.
+struct OtherStreamHarness
+{
+  explicit OtherStreamHarness(const StreamSpec & spec)
+  : track_publisher(connection, spec)
+  , stream(spec, track_publisher)
+  {}
+
+  FakeRoomConnection connection;
+  TrackPublisher track_publisher;
+  GStreamerStream stream;
+};
+
 // A source that fails while the state change runs (missing file) is delivered
 // through the sync bus handler on the calling thread. The failure path must not
 // take the stream mutex_: start() has to return or throw promptly, and close()
@@ -280,21 +295,18 @@ TEST_F(StreamTest, StartWithUnavailableSourceDoesNotWedge)
 {
   StreamSpec spec = makeOtherSpec();
   spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.raw", ""};
+  const auto harness = std::make_shared<OtherStreamHarness>(spec);
 
-  FakeRoomConnection connection;
-  TrackPublisher publisher(connection, spec);
-  GStreamerStream stream(spec, publisher);
-
-  auto started = std::async(std::launch::async, [&stream]() {
+  const auto start_stream = [harness]() {
     try {
-      stream.start();
+      harness->stream.start();
     } catch (const std::exception &) {
     }
-  });
-  EXPECT_EQ(started.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  };
+  const auto close_stream = [harness]() { harness->stream.close(); };
 
-  auto closed = std::async(std::launch::async, [&stream]() { stream.close(); });
-  EXPECT_EQ(closed.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(
@@ -332,8 +344,8 @@ TEST_F(StreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
     compressedImageInterfaceType());
 }
 
-// Owns a ROS image stream and everything it borrows, so a test can hand all of it to a
-// thread that may never return.
+// Owns a ROS image stream and everything it borrows, so a call that never returns can keep
+// all of it alive on its abandoned thread.
 struct RosImageStreamHarness
 {
   RosImageStreamHarness(const std::string & node_name, const StreamSpec & spec)
@@ -376,21 +388,14 @@ TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
   const std::size_t attempts_before = ControlledStartElement::startAttempts();
   image_publisher->publish(image);
 
-  // Spin on a thread of its own so a wedged callback fails the test instead of hanging it.
-  std::promise<bool> pipeline_started;
-  auto pipeline_started_future = pipeline_started.get_future();
-  std::thread spinner([harness, attempts_before, pipeline_started = std::move(pipeline_started)]() mutable {
-    pipeline_started.set_value(test_support::spinUntil(
-      harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before; }));
-  });
-  if (pipeline_started_future.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
-    // The stuck thread can never be joined; it keeps the harness alive.
-    spinner.detach();
-    FAIL() << "The ROS image callback did not return.";
-  }
-  spinner.join();
+  const auto spin_until_pipeline_starts = [harness, attempts_before]() {
+    test_support::spinUntil(
+      harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before; });
+  };
 
-  EXPECT_TRUE(pipeline_started_future.get());
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, spin_until_pipeline_starts))
+    << "The ROS image callback did not return.";
+  EXPECT_GT(ControlledStartElement::startAttempts(), attempts_before);
 }
 
 }  // namespace
