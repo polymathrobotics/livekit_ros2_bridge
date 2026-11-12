@@ -25,11 +25,9 @@
 namespace livekit_ros2_bridge::test_support
 {
 
-// A test-only element, "lkroserroronstart": an identity that posts an error each
-// time it goes to PAUSED, on the thread changing the pipeline's state, yet lets
-// that state change succeed. It stands in for a source whose failure arrives
-// while a stream's start() runs without making it throw, like rtspsrc reporting
-// a refused connection from its own thread.
+// Test-only "lkroserroronstart": an identity that posts an error whenever it goes to PAUSED yet
+// lets the state change succeed, like a source whose failure arrives while a stream's start() runs
+// without making it throw (e.g. rtspsrc reporting a refused connection from its own thread).
 class ErrorOnStartElement final
 {
 public:

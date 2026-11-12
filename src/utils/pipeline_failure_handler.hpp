@@ -37,15 +37,12 @@ public:
   PipelineFailureHandler(PipelineFailureHandler &&) = delete;
   PipelineFailureHandler & operator=(PipelineFailureHandler &&) = delete;
 
-  // Returns true only when this call newly schedules a run, so the caller logs
-  // each recovery once. Returns false and does nothing while a run is pending,
-  // while the callback runs (a failure posted by the restart itself is folded
-  // into it), and once closed.
+  // Returns true only when this call newly schedules a run, so the caller logs each recovery once.
+  // Returns false and does nothing while a run is pending or the callback runs, and once closed.
   bool schedule();
-  // Asks for one more run after the usual delay, once the running callback
-  // returns. Meant for the callback itself, e.g. after a restart that threw.
-  // Repeated requests coalesce into one run. Does nothing when the callback is
-  // not running or the handler is closed; close() and cancelPending() drop it.
+  // Asks for one more run, after the usual delay, once the running callback returns. Requests
+  // coalesce; a no-op unless the callback runs and the handler is open. close() and
+  // cancelPending() drop it.
   void rerunAfterCurrentRun();
   // Drops a rerun requested so far in the current run, e.g. by a failure from a
   // pipeline the callback has since stopped. A scheduled run is left alone.

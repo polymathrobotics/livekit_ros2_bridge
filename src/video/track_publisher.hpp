@@ -100,19 +100,14 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: the first keyframe publishes an EncodedVideoSource; size changes
-  // don't republish. A viewer can only start decoding at a keyframe, so frames
-  // are discarded (asking the source for a keyframe) until one arrives after
-  // startup, awaitKeyFrame(), onFellBehind(), or a failed publish or send. Those
-  // failures are logged, not thrown, so the pipeline keeps running. A failed
-  // publish is retried at the first keyframe after kPublishRetryInterval.
+  // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking
+  // for a keyframe) whenever it waits for one. Publish and send failures are logged, not thrown; a
+  // failed publish is retried at the first keyframe after kPublishRetryInterval.
   void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
-  // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe.
-  // Ignored while the first keyframe publishes, which stalls the queue by itself,
-  // when such a publish started while this call waited for the publisher, and for
-  // kBridgeQueueDuration after it ends, while its backlog drains.
+  // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe. Ignored during
+  // the first publish, which stalls the queue itself, and for kBridgeQueueDuration after it ends.
   void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:

@@ -92,11 +92,8 @@ PipelineCallbacks GStreamerStream::makePipelineCallbacks()
     [this]() { pipeline_.requestKeyFrame(); });
 }
 
-// This path must stay lock-free: the sync bus handler can deliver a failure
-// from inside start() or restartPipelineAfterFailure(), which hold mutex_ while
-// GStreamer performs the state change. Locking here would deadlock against the
-// calling thread itself. schedule() coalesces duplicate failures, and close()
-// marks the handler closed before teardown, so no stream mutex_ is needed.
+// Lock-free: the sync bus handler can call this from inside start() or a restart, which hold
+// mutex_ across the state change, so taking it here would deadlock the calling thread.
 // It runs on GStreamer threads, so no exception may escape into C.
 void GStreamerStream::onPipelineFailure(
   const std::string & reason, bool caps_mismatch, const std::string & offered_caps)

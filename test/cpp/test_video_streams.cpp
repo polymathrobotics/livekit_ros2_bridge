@@ -280,10 +280,9 @@ bool finishesWithin(std::chrono::seconds timeout, std::function<void()> body)
   return finished_future.wait_for(timeout) == std::future_status::ready;
 }
 
-// A source that fails while the state change runs (missing file) is delivered
-// through the sync bus handler on the calling thread. The failure path must not
-// take the stream mutex_: start() has to return or throw promptly, and close()
-// has to complete afterwards.
+// A source that fails during the state change (missing file) reports through the sync bus handler
+// on the calling thread. The failure path must not take the stream mutex_, so start() must return
+// or throw promptly and close() must complete afterwards.
 void expectStartWithUnavailableSourceDoesNotWedge(const StreamSpec & spec)
 {
   auto under_test = std::make_shared<StreamUnderTest>(spec);

@@ -78,12 +78,9 @@ public:
   void start(const std::string & description, bool require_appsrc, PipelineOutput output = PipelineOutput::RawI420);
   void stop();
 
-  // Asks the source for a keyframe with an upstream force-key-unit event; a no-op
-  // without an active pipeline. Call it only from a pipeline callback: start()
-  // resets the callback gate, which would drop the in-flight count of a call made
-  // concurrently from another thread. The event travels synchronously through the
-  // source's elements on the calling thread. Stock elements don't take their
-  // stream lock for it; a source element that does could block the caller.
+  // Asks the source for a keyframe (upstream force-key-unit); a no-op without a pipeline. Call it
+  // only from a pipeline callback, since start() resets the callback gate. The event runs through
+  // the source's elements on the calling thread, so one that takes its stream lock could block.
   void requestKeyFrame();
 
 private:

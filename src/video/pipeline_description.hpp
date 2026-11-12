@@ -49,11 +49,9 @@ inline std::string buildPassthroughPipelineDescription(const std::string & sourc
   // emit the Annex-B, one-picture-per-buffer form the LiveKit SDK expects.
   description += " ! h264parse config-interval=-1";
   description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
-  // Never drop here: losing an encoded frame corrupts the picture until the next
-  // keyframe. The queue filling up (its overrun) is the "fell behind" signal. It
-  // holds one second of video, so a network burst fits and falling behind means
-  // about a second behind the (live) source. The 32 MiB cap is a backstop for
-  // buffers without timestamps, which never fill the time limit.
+  // Never drop: a lost encoded frame corrupts the picture until the next keyframe. An overrun of
+  // this ~1 s queue is the "fell behind" signal; the 32 MiB cap backstops buffers without
+  // timestamps, which never reach the time limit.
   description += " ! queue name=";
   description += kBridgeVideoQueueName;
   description += " max-size-buffers=0 max-size-bytes=33554432 max-size-time=1000000000 leaky=no";

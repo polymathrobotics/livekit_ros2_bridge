@@ -344,10 +344,9 @@ void TrackPublisher::awaitKeyFrame()
 
 void TrackPublisher::onFellBehind(const std::function<void()> & request_key_frame)
 {
-  // The first publish blocks the sample thread on the server while the source
-  // keeps producing, so overruns then don't mean the consumer fell behind.
-  // Checked before mutex_, which the publish holds, and again under it: an
-  // overrun that began before a publish must not re-arm the wait after it.
+  // The first publish stalls the sample thread on the server, so overruns during it aren't falling
+  // behind. Checked before mutex_ (held by the publish) and again under it, so an overrun that
+  // began before a publish can't re-arm the wait after it.
   const std::uint64_t publish_sequence = encoded_publish_sequence_.load(std::memory_order_acquire);
   if (publish_sequence % 2U != 0U) {
     return;
