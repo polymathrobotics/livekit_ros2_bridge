@@ -63,11 +63,9 @@ void GStreamerStream::close()
 {
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_.load(std::memory_order_acquire)) {
+    if (is_shutdown_.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-
-    is_shutdown_.store(true, std::memory_order_release);
   }
 
   failure_handler_.close();

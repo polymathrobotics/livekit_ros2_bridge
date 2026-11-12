@@ -217,11 +217,10 @@ void RosStream::close()
   rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr compressed_subscription;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (is_shutdown_.load(std::memory_order_acquire)) {
+    if (is_shutdown_.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
 
-    is_shutdown_.store(true, std::memory_order_release);
     raw_subscription = std::move(raw_subscription_);
     compressed_subscription = std::move(compressed_subscription_);
   }

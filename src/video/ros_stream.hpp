@@ -104,7 +104,7 @@ private:
   std::optional<std::string> codec_;
   // Serialises ROS callbacks, failure handling and close(); the GStreamer callbacks
   // never take it and read only the atomic is_shutdown_.
-  mutable std::mutex mutex_;
+  std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
 };

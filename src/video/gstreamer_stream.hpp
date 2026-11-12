@@ -52,7 +52,7 @@ private:
   StreamSpec spec_;
   TrackPublisher & publisher_;
   GStreamerPipeline pipeline_;
-  mutable std::mutex mutex_;
+  std::mutex mutex_;
   std::atomic<bool> is_shutdown_{false};
   utils::PipelineFailureHandler failure_handler_;
 };
