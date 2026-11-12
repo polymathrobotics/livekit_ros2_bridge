@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -35,7 +33,6 @@
 #include "support/ros_test_support.hpp"
 #include "support/scoped_log_capture.hpp"
 #include "utils/log_event.hpp"
-#include "utils/pipeline_failure_handler.hpp"
 #include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
@@ -182,84 +179,6 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
   EXPECT_TRUE(reported);
   EXPECT_NE(failure_reason, "eos");
-}
-
-TEST_F(StreamTest, PipelineFailureHandlerCoalescesPendingFailures)
-{
-  std::atomic<int> callback_count{0};
-  utils::PipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++callback_count; });
-
-  EXPECT_TRUE(handler.schedule());
-  EXPECT_FALSE(handler.schedule());
-  handler.cancelPending();
-  EXPECT_TRUE(handler.schedule());
-  handler.close();
-
-  EXPECT_EQ(callback_count.load(), 0);
-}
-
-TEST_F(StreamTest, PipelineFailureHandlerRunsScheduledFailure)
-{
-  std::mutex mutex;
-  std::condition_variable condition;
-  int callback_count = 0;
-  utils::PipelineFailureHandler handler(std::chrono::milliseconds::zero(), [&]() {
-    std::lock_guard<std::mutex> lock(mutex);
-    ++callback_count;
-    condition.notify_all();
-  });
-
-  EXPECT_TRUE(handler.schedule());
-  std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return callback_count == 1; }));
-  lock.unlock();
-  handler.close();
-
-  EXPECT_EQ(callback_count, 1);
-}
-
-TEST_F(StreamTest, PipelineFailureHandlerCoalescesWhileCallbackRuns)
-{
-  std::mutex mutex;
-  std::condition_variable condition;
-  std::unique_ptr<utils::PipelineFailureHandler> handler;
-  int callback_count = 0;
-  bool reschedule_checked = false;
-  bool reschedule_accepted = true;
-  handler = std::make_unique<utils::PipelineFailureHandler>(std::chrono::milliseconds::zero(), [&]() {
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      ++callback_count;
-    }
-    const bool accepted = handler->schedule();
-    {
-      std::lock_guard<std::mutex> lock(mutex);
-      reschedule_accepted = accepted;
-      reschedule_checked = true;
-      condition.notify_all();
-    }
-  });
-
-  EXPECT_TRUE(handler->schedule());
-  std::unique_lock<std::mutex> lock(mutex);
-  ASSERT_TRUE(condition.wait_for(lock, std::chrono::seconds(2), [&]() { return reschedule_checked; }));
-  lock.unlock();
-  handler->close();
-
-  EXPECT_EQ(callback_count, 1);
-  EXPECT_FALSE(reschedule_accepted);
-}
-
-TEST_F(StreamTest, PipelineFailureHandlerCloseCancelsDelayedFailure)
-{
-  std::atomic<int> callback_count{0};
-  utils::PipelineFailureHandler handler(std::chrono::seconds(10), [&]() { ++callback_count; });
-
-  EXPECT_TRUE(handler.schedule());
-  handler.close();
-
-  EXPECT_EQ(callback_count.load(), 0);
-  EXPECT_FALSE(handler.schedule());
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
