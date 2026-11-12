@@ -16,6 +16,8 @@
 
 #include <gst/video/video.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -30,6 +32,7 @@
 #include "rclcpp/subscription.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "utils/event_throttle.hpp"
 #include "utils/pipeline_failure_handler.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/stream_spec.hpp"
@@ -71,7 +74,6 @@ public:
   void close();
 
 private:
-  bool isShutdown() const;
   // A failure stops the current pipeline; the next accepted ROS frame rebuilds
   // appsrc state.
   void onPipelineFailure(const std::string & reason);
@@ -82,8 +84,14 @@ private:
 
   void startRawPipelineLocked(const RawLayout & layout);
   void startCompressedPipelineLocked(const std::string & codec);
+  void startPipelineLocked(const std::string & appsrc);
+  bool currentPipelineFailedLocked() const;
   void pushRawLocked(const sensor_msgs::msg::Image & image);
-  void resetPipelineStateLocked();
+  // Stops the pipeline and forgets its appsrc caps. It stops first, so a failure the
+  // old pipeline reports until then is cancelled instead of acting on the next one.
+  void stopPipelineLocked();
+
+  static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   StreamSpec spec_;
   TrackPublisher & publisher_;
@@ -100,9 +108,20 @@ private:
   // next accepted frame.
   std::optional<RawLayout> raw_layout_;
   std::optional<std::string> codec_;
-  // Protects state shared by ROS callbacks, GStreamer callbacks, and close().
-  mutable std::mutex mutex_;
-  bool is_shutdown_ = false;
+  // Serialises ROS callbacks, failure handling and close(). GStreamer callbacks never take it,
+  // since pipeline start and stop run under it and can call or wait for them.
+  std::mutex mutex_;
+  std::atomic<bool> is_shutdown_{false};
+  // Each pipeline start bumps the generation under mutex_; a failure records the generation
+  // current when it is reported, so handling that runs after a replacement can tell it is stale.
+  // The generation starts above failed_generation_, so no pipeline counts as failed before one starts.
+  std::atomic<std::uint64_t> pipeline_generation_{1};
+  std::atomic<std::uint64_t> failed_generation_{0};
+  // Each frame rebuilds a failed pipeline, so a transform that fails on every start would warn
+  // on every frame; warn once per interval instead. Declared before failure_handler_ so they
+  // outlive its worker; the mutex guards only the throttle, never across GStreamer calls.
+  std::mutex recovery_log_mutex_;
+  EventThrottle recovery_log_throttle_{kLogThrottle};
   utils::PipelineFailureHandler failure_handler_;
 };
 

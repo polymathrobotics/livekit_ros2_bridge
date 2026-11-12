@@ -15,20 +15,28 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "livekit/video_frame.h"
+#include "sensor_msgs/image_encodings.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "support/controlled_start_element.hpp"
+#include "support/detached_task.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
 #include "utils/log_event.hpp"
 #include "utils/pipeline_failure_handler.hpp"
+#include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_resources.hpp"
 #include "video/gstreamer_stream.hpp"
@@ -44,6 +52,9 @@ namespace
 
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
+
+// How long a call that could deadlock gets before the test gives up on it.
+constexpr auto kHangTimeout = std::chrono::seconds(10);
 
 StreamSpec makeOtherSpec()
 {
@@ -265,6 +276,42 @@ TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
   stream.close();
 }
 
+// Owns an other-source stream and what it borrows, so a call that never returns can keep
+// all of it alive on its abandoned thread.
+struct OtherStreamHarness
+{
+  explicit OtherStreamHarness(const StreamSpec & spec)
+  : track_publisher(connection, spec)
+  , stream(spec, track_publisher)
+  {}
+
+  FakeRoomConnection connection;
+  TrackPublisher track_publisher;
+  GStreamerStream stream;
+};
+
+// A source that fails while the state change runs (missing file) is delivered
+// through the sync bus handler on the calling thread. The failure path must not
+// take the stream mutex_: start() has to return or throw promptly, and close()
+// has to complete afterwards.
+TEST_F(StreamTest, StartWithUnavailableSourceDoesNotWedge)
+{
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.raw", ""};
+  const auto harness = std::make_shared<OtherStreamHarness>(spec);
+
+  const auto start_stream = [harness]() {
+    try {
+      harness->stream.start();
+    } catch (const std::exception &) {
+    }
+  };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+}
+
 void expectRosTopicStreamLifecycleIsIdempotent(
   const std::string & node_name, const std::string & topic, const char * interface_type)
 {
@@ -298,6 +345,106 @@ TEST_F(StreamTest, CompressedRosTopicStreamLifecycleIsIdempotent)
     "video_pipeline_ros_topic_compressed_source_test",
     "/video_pipeline/compressed_image",
     compressedImageInterfaceType());
+}
+
+// Owns a ROS image stream and everything it borrows, so a call that never returns can keep
+// all of it alive on its abandoned thread.
+struct RosImageStreamHarness
+{
+  RosImageStreamHarness(const std::string & node_name, const StreamSpec & spec)
+  : node(std::make_shared<rclcpp::Node>(node_name))
+  , track_publisher(connection, spec)
+  , stream(std::make_shared<RosStream>(*node, spec, nullptr, track_publisher))
+  {
+    executor.add_node(node);
+  }
+
+  std::shared_ptr<rclcpp::Node> node;
+  rclcpp::executors::SingleThreadedExecutor executor;
+  FakeRoomConnection connection;
+  TrackPublisher track_publisher;
+  std::shared_ptr<RosStream> stream;
+};
+
+sensor_msgs::msg::Image makeRgbImage()
+{
+  sensor_msgs::msg::Image image;
+  image.encoding = sensor_msgs::image_encodings::RGB8;
+  image.width = 64U;
+  image.height = 48U;
+  image.step = 192U;
+  image.data.resize(image.step * image.height);
+  return image;
+}
+
+// A transform that reports an error while the pipeline starts delivers it on the ROS
+// callback's thread, which holds the stream mutex_. The callback must still return.
+TEST_F(StreamTest, RosImageWithFailingTransformDoesNotWedge)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  // The mode is process-wide, so put it back for later tests.
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
+  const std::string topic = "/video_pipeline/failing_transform_image";
+  StreamSpec spec = makeRosTopicSpec(topic, imageInterfaceType());
+  std::get<RosInput>(spec.input).transform_fragment = ControlledStartElement::kFactoryName;
+  auto harness = std::make_shared<RosImageStreamHarness>("video_pipeline_ros_failing_transform_test", spec);
+  const auto image_publisher = harness->node->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+  harness->stream->start();
+  ASSERT_TRUE(
+    test_support::spinUntil(harness->executor, [&]() { return image_publisher->get_subscription_count() == 1U; }));
+
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  image_publisher->publish(makeRgbImage());
+
+  const auto spin_until_pipeline_starts = [harness, attempts_before]() {
+    test_support::spinUntil(
+      harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before; });
+  };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, spin_until_pipeline_starts))
+    << "The ROS image callback did not return.";
+  EXPECT_GT(ControlledStartElement::startAttempts(), attempts_before);
+}
+
+// A transform that fails on every start makes each ROS frame rebuild the pipeline, but the
+// stream logs that its pipeline failed once per throttle interval, not once per frame.
+TEST_F(StreamTest, RosImageWithFailingTransformThrottlesItsWarning)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::PostErrorOnStart);
+  const ScopeExit restore_mode([]() { ControlledStartElement::setMode(ControlledStartElement::Mode::Normal); });
+  test_support::ScopedLogCapture logs;
+  const std::string topic = "/video_pipeline/throttled_failing_transform_image";
+  StreamSpec spec = makeRosTopicSpec(topic, imageInterfaceType());
+  std::get<RosInput>(spec.input).transform_fragment = ControlledStartElement::kFactoryName;
+  auto harness = std::make_shared<RosImageStreamHarness>("video_pipeline_ros_throttled_transform_test", spec);
+  const auto image_publisher = harness->node->create_publisher<sensor_msgs::msg::Image>(topic, 10);
+  harness->stream->start();
+  ASSERT_TRUE(
+    test_support::spinUntil(harness->executor, [&]() { return image_publisher->get_subscription_count() == 1U; }));
+
+  // One frame at a time, so the subscription's depth of one never drops a frame.
+  constexpr std::size_t kFrameCount = 3U;
+  const std::size_t attempts_before = ControlledStartElement::startAttempts();
+  const auto publish_frames = [harness, image_publisher]() {
+    for (std::size_t frame = 0U; frame < kFrameCount; ++frame) {
+      const std::size_t attempts_before_frame = ControlledStartElement::startAttempts();
+      image_publisher->publish(makeRgbImage());
+      test_support::spinUntil(
+        harness->executor, [&]() { return ControlledStartElement::startAttempts() > attempts_before_frame; });
+    }
+  };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, publish_frames)) << "A ROS image callback did not return.";
+  ASSERT_EQ(ControlledStartElement::startAttempts() - attempts_before, kFrameCount);
+  const std::string stream_key_field = "stream_key=" + spec.stream_key;
+  EXPECT_EQ(logs.countLines({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str()}), 1U);
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_pipeline_recovery_disabled", stream_key_field.c_str()}, "count"),
+    std::vector<std::string>{"1"});
 }
 
 }  // namespace

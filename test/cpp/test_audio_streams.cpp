@@ -15,7 +15,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -28,6 +27,7 @@
 #include "audio/track_publisher.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
+#include "support/detached_task.hpp"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "utils/gstreamer_resources.hpp"
@@ -41,6 +41,9 @@ namespace
 
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::AudioSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
+
+// How long a call that could deadlock gets before the test gives up on it.
+constexpr auto kHangTimeout = std::chrono::seconds(10);
 
 StreamSpec makeOtherSpec()
 {
@@ -143,6 +146,20 @@ TEST_F(AudioStreamTest, OtherAudioLifecycleIsIdempotent)
   stream.close();
 }
 
+// Owns an other-source stream and what it borrows, so a call that never returns can keep
+// all of it alive on its abandoned thread.
+struct OtherStreamHarness
+{
+  explicit OtherStreamHarness(const StreamSpec & spec)
+  : track_publisher(connection, spec)
+  , stream(spec, track_publisher)
+  {}
+
+  FakeRoomConnection connection;
+  TrackPublisher track_publisher;
+  GStreamerStream stream;
+};
+
 // A source that fails while the state change runs (missing file) is delivered
 // through the sync bus handler on the calling thread. The failure path must not
 // take the stream mutex_: start() has to return or throw promptly, and close()
@@ -151,21 +168,18 @@ TEST_F(AudioStreamTest, StartWithUnavailableSourceDoesNotWedge)
 {
   StreamSpec spec = makeOtherSpec();
   spec.input = OtherInput{"test", "filesrc location=/nonexistent/lkros_missing_source.mp3", ""};
+  const auto harness = std::make_shared<OtherStreamHarness>(spec);
 
-  FakeRoomConnection connection;
-  TrackPublisher publisher(connection, spec);
-  GStreamerStream stream(spec, publisher);
-
-  auto started = std::async(std::launch::async, [&stream]() {
+  const auto start_stream = [harness]() {
     try {
-      stream.start();
+      harness->stream.start();
     } catch (const std::exception &) {
     }
-  });
-  EXPECT_EQ(started.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  };
+  const auto close_stream = [harness]() { harness->stream.close(); };
 
-  auto closed = std::async(std::launch::async, [&stream]() { stream.close(); });
-  EXPECT_EQ(closed.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 }
 
 TEST_F(AudioStreamTest, RealPipelineProducesMono48kFrames)
