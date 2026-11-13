@@ -23,11 +23,15 @@ namespace livekit_ros2_bridge::video
 struct AccessUnitSummary
 {
   bool is_key_frame = false;
-  // SPS and PPS both precede the first slice; a viewer starting here cannot decode without them.
+  // The parameter sets (AV1: sequence header) a viewer starting here cannot decode without.
   bool has_parameter_sets = false;
 };
 
 // Stops at the first coded slice: its type decides, and the parameter sets precede it.
 AccessUnitSummary summarizeH264AccessUnit(const std::uint8_t * data, std::size_t size);
+AccessUnitSummary summarizeH265AccessUnit(const std::uint8_t * data, std::size_t size);
+
+// A malformed OBU ends the walk.
+bool hasAv1SequenceHeader(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

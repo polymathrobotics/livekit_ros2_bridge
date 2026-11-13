@@ -150,5 +150,153 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 
+// H.265 NAL header: two bytes, (type << 1) then 0x01.
+const Bytes kH265AccessUnitDelimiterNal{0x46U, 0x01U, 0x50U};
+const Bytes kH265VideoParameterSetNal{0x40U, 0x01U, 0x0CU, 0x01U};
+const Bytes kH265SequenceParameterSetNal{0x42U, 0x01U, 0x01U, 0x01U};
+const Bytes kH265PictureParameterSetNal{0x44U, 0x01U, 0xC1U, 0x72U};
+const Bytes kH265IdrWithLeadingPicturesNal{0x26U, 0x01U, 0xAFU, 0x08U};
+const Bytes kH265IdrWithoutLeadingPicturesNal{0x28U, 0x01U, 0xAFU, 0x08U};
+const Bytes kH265CleanRandomAccessNal{0x2AU, 0x01U, 0xAFU, 0x08U};
+const Bytes kH265TrailingPictureNal{0x02U, 0x01U, 0xD0U, 0x08U};
+
+AccessUnitSummary summarizeH265(const Bytes & bytes)
+{
+  return summarizeH265AccessUnit(bytes.data(), bytes.size());
+}
+
+Bytes h265AccessUnitWithParameterSets(const Bytes & slice)
+{
+  return concat(
+    {kLongStartCode,
+     kH265AccessUnitDelimiterNal,
+     kLongStartCode,
+     kH265VideoParameterSetNal,
+     kShortStartCode,
+     kH265SequenceParameterSetNal,
+     kShortStartCode,
+     kH265PictureParameterSetNal,
+     kShortStartCode,
+     slice});
+}
+
+TEST(H265AccessUnitTest, DetectsBothIdrTypesWithTheirParameterSets)
+{
+  for (const Bytes & idr_slice : {kH265IdrWithLeadingPicturesNal, kH265IdrWithoutLeadingPicturesNal}) {
+    SCOPED_TRACE(static_cast<int>(idr_slice.front()));
+    const AccessUnitSummary summary = summarizeH265(h265AccessUnitWithParameterSets(idr_slice));
+    EXPECT_TRUE(summary.is_key_frame);
+    EXPECT_TRUE(summary.has_parameter_sets);
+  }
+}
+
+TEST(H265AccessUnitTest, ReportsParameterSetsOnlyWhenVpsSpsAndPpsAllPrecedeTheIdrSlice)
+{
+  const AccessUnitSummary without_vps = summarizeH265(concat(
+    {kLongStartCode,
+     kH265SequenceParameterSetNal,
+     kLongStartCode,
+     kH265PictureParameterSetNal,
+     kLongStartCode,
+     kH265IdrWithLeadingPicturesNal}));
+  EXPECT_TRUE(without_vps.is_key_frame);
+  EXPECT_FALSE(without_vps.has_parameter_sets);
+
+  const AccessUnitSummary without_sps = summarizeH265(concat(
+    {kLongStartCode,
+     kH265VideoParameterSetNal,
+     kLongStartCode,
+     kH265PictureParameterSetNal,
+     kLongStartCode,
+     kH265IdrWithLeadingPicturesNal}));
+  EXPECT_TRUE(without_sps.is_key_frame);
+  EXPECT_FALSE(without_sps.has_parameter_sets);
+
+  const AccessUnitSummary without_pps = summarizeH265(concat(
+    {kLongStartCode,
+     kH265VideoParameterSetNal,
+     kLongStartCode,
+     kH265SequenceParameterSetNal,
+     kLongStartCode,
+     kH265IdrWithLeadingPicturesNal}));
+  EXPECT_TRUE(without_pps.is_key_frame);
+  EXPECT_FALSE(without_pps.has_parameter_sets);
+
+  const AccessUnitSummary after_slice = summarizeH265(concat(
+    {kLongStartCode,
+     kH265IdrWithLeadingPicturesNal,
+     kLongStartCode,
+     kH265VideoParameterSetNal,
+     kLongStartCode,
+     kH265SequenceParameterSetNal,
+     kLongStartCode,
+     kH265PictureParameterSetNal}));
+  EXPECT_TRUE(after_slice.is_key_frame);
+  EXPECT_FALSE(after_slice.has_parameter_sets);
+}
+
+TEST(H265AccessUnitTest, RejectsCleanRandomAccessAndTrailingPictures)
+{
+  // A CRA's leading pictures can't be decoded from a fresh start, so it isn't a keyframe.
+  EXPECT_FALSE(summarizeH265(h265AccessUnitWithParameterSets(kH265CleanRandomAccessNal)).is_key_frame);
+  EXPECT_FALSE(summarizeH265(h265AccessUnitWithParameterSets(kH265TrailingPictureNal)).is_key_frame);
+  EXPECT_FALSE(
+    summarizeH265(concat({kLongStartCode, kH265TrailingPictureNal, kShortStartCode, kH265IdrWithLeadingPicturesNal}))
+      .is_key_frame);
+}
+
+TEST(H265AccessUnitTest, ReadsTheTypeFromItsOwnHeaderLayout)
+{
+  const Bytes idr_header_at_end{0x00U, 0x00U, 0x01U, 0x26U};
+  EXPECT_TRUE(summarizeH265(idr_header_at_end).is_key_frame);
+  // H.264 reads 0x26 as an SEI, and H.265 reads H.264's IDR header byte as type 50.
+  EXPECT_FALSE(containsIdr(idr_header_at_end));
+  EXPECT_FALSE(summarizeH265({0x00U, 0x00U, 0x01U, kIdrSlice}).is_key_frame);
+  EXPECT_FALSE(summarizeH265AccessUnit(nullptr, 0U).is_key_frame);
+}
+
+// OBU header: (type << 3) | 0x02 when it has a size field, then a leb128 size.
+constexpr std::uint8_t kSequenceHeaderObu = 0x0AU;
+constexpr std::uint8_t kFrameObu = 0x32U;
+constexpr std::uint8_t kHasExtensionBit = 0x04U;
+const Bytes kTemporalDelimiterObu{0x12U, 0x00U};
+const Bytes kSequenceHeaderObuWithPayload{kSequenceHeaderObu, 0x03U, 0x00U, 0x00U, 0x00U};
+const Bytes kFrameObuWithPayload{kFrameObu, 0x02U, 0x10U, 0x00U};
+
+bool hasSequenceHeader(const Bytes & bytes)
+{
+  return hasAv1SequenceHeader(bytes.data(), bytes.size());
+}
+
+TEST(Av1TemporalUnitTest, FindsTheSequenceHeaderAfterTheTemporalDelimiter)
+{
+  EXPECT_TRUE(hasSequenceHeader(concat({kTemporalDelimiterObu, kSequenceHeaderObuWithPayload, kFrameObuWithPayload})));
+  EXPECT_FALSE(hasSequenceHeader(concat({kTemporalDelimiterObu, kFrameObuWithPayload})));
+}
+
+TEST(Av1TemporalUnitTest, SkipsExtensionBytesAndMultiByteSizes)
+{
+  // A 128-byte frame OBU with an extension byte; its size is the two-byte leb128 80 01.
+  Bytes frame_with_extension{kFrameObu | kHasExtensionBit, 0x08U, 0x80U, 0x01U};
+  frame_with_extension.resize(frame_with_extension.size() + 128U, 0x00U);
+
+  EXPECT_TRUE(hasSequenceHeader(concat({frame_with_extension, kSequenceHeaderObuWithPayload})));
+}
+
+TEST(Av1TemporalUnitTest, StopsSafelyAtTruncatedOrMalformedObus)
+{
+  EXPECT_FALSE(hasAv1SequenceHeader(nullptr, 0U));
+  // The sequence header claims more bytes than the buffer holds.
+  EXPECT_FALSE(hasSequenceHeader({kSequenceHeaderObu, 0x05U, 0x00U}));
+  // The frame's size runs past the sequence header that follows it.
+  EXPECT_FALSE(hasSequenceHeader(concat({{kFrameObu, 0x09U, 0x00U}, kSequenceHeaderObuWithPayload})));
+  // A size that never ends, an extension byte missing, and a size field missing at the end.
+  EXPECT_FALSE(hasSequenceHeader({kFrameObu, 0x80U, 0x80U}));
+  EXPECT_FALSE(hasSequenceHeader({kFrameObu | kHasExtensionBit}));
+  EXPECT_FALSE(hasSequenceHeader({kFrameObu}));
+  // With no size field the OBU runs to the end, so the sequence header bytes are its payload.
+  EXPECT_FALSE(hasSequenceHeader(concat({{0x30U}, kSequenceHeaderObuWithPayload})));
+}
+
 }  // namespace
 }  // namespace livekit_ros2_bridge::video
