@@ -7,6 +7,8 @@ Changelog for package livekit_ros2_bridge
 * Upgrade the LiveKit C++ SDK to 1.12.2 and use official Ubuntu builds, including for Humble.
 * Add `video.other.<id>.passthrough`, which forwards a camera's H.264 to LiveKit without decoding or
   re-encoding it. See "Passthrough for cameras that already send H.264" in `docs/configuration.md`.
+* Passthrough sources pass viewers' keyframe requests to the camera, can warn when it sends well over
+  LiveKit's target bitrate, and recover from a failed send without restarting the pipeline.
 * Retry a failed pipeline restart of an other video or audio source instead of leaving the
   stream dead. `video_stream_pipeline_recovery_scheduled`,
   `audio_stream_pipeline_recovery_scheduled`, `video_stream_restart_failed`, and

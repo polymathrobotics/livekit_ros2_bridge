@@ -376,16 +376,19 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 
    - set `publish.max_bitrate_bps` to the bitrate configured on the camera; it is passed to LiveKit as the track's maximum bitrate and does not change what the camera sends
    - when the key is unset (`-1`) or `0`, LiveKit assumes its default for the resolution instead, about 1.7 Mbps at 720p and 3 Mbps at 1080p
+   - with the key set, the bridge logs `video_stream_passthrough_over_budget` at most once per 5 s with a `count` when the camera stays well above LiveKit's target bitrate (the lower of its bandwidth estimate and `publish.max_bitrate_bps`); with it unset, the bridge doesn't check, since LiveKit's default says nothing about the camera
+   - if the bridge can't read LiveKit's bitrate and keyframe feedback, it logs `video_stream_passthrough_feedback_failed` at most once per 5 s with a `count` and keeps forwarding frames
    - global `video.publish.max_bitrate_bps` does not apply to passthrough sources
 
 4. Expect keyframe behavior to depend on the camera.
 
    - while the bridge waits for a keyframe, it asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the bridge waits for the camera's next keyframe
-   - a new viewer also waits for the camera's next keyframe
+   - a new viewer needs a keyframe too; when LiveKit asks for one, the bridge asks the source the same way, and if the camera ignores it, the viewer waits for the camera's next keyframe
    - after startup or a pipeline restart, the bridge discards frames until the first keyframe; until the track is first published it logs `video_stream_passthrough_waiting_for_key_frame` at most once per 5 s with the frames discarded so far, and if that keeps repeating, the camera may never send IDR frames
    - if the bridge falls more than about 1 s behind, it skips ahead to the next keyframe instead of showing a corrupted picture and logs `video_stream_passthrough_fell_behind` at most once per 5 s with a `count`
    - once a keyframe arrives after frames were discarded, it logs `video_stream_passthrough_resumed` with the frames it discarded, at most once per 5 s with a `count`
-   - if publishing the track or sending a frame fails, the bridge logs `video_stream_capture_failed`, restarts the pipeline, and then waits for a keyframe
+   - if sending a frame fails, the bridge logs `video_stream_capture_failed` at most once per 5 s with a `count` and waits for the next keyframe without restarting the pipeline
+   - if publishing the track fails, the bridge logs `video_stream_capture_failed`, restarts the pipeline, and then waits for a keyframe
 
 5. Set the camera up for it.
 

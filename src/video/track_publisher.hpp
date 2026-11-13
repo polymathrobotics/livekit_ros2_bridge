@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/room_connection.hpp"
@@ -40,6 +41,33 @@ namespace livekit_ros2_bridge::video
 class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
+
+// Measures a passthrough source's bitrate in one-second windows against LiveKit's
+// latest target. Passthrough can't re-rate the camera, so this only feeds a warning.
+class PassthroughBitrateMonitor final
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  void setTarget(std::uint64_t target_bitrate_bps)
+  {
+    target_bitrate_bps_ = target_bitrate_bps;
+  }
+
+  std::uint64_t targetBitrateBps() const
+  {
+    return target_bitrate_bps_;
+  }
+
+  // Returns the measured bitrate when it has stayed above 1.5x the target for a few seconds.
+  std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
+
+private:
+  std::uint64_t target_bitrate_bps_ = 0U;
+  Clock::time_point window_started_at_{};
+  std::uint64_t window_bytes_ = 0U;
+  std::optional<Clock::time_point> over_budget_since_;
+};
 
 class TrackPublisher final
 {
@@ -72,8 +100,8 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking
-  // for a keyframe) whenever it waits for one. A failed publish or send throws, and frames are then
-  // discarded until the next keyframe.
+  // for a keyframe) whenever it waits for one. A failed publish throws; a failed send is logged and
+  // frames are discarded until the next keyframe.
   void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
@@ -105,17 +133,20 @@ private:
 
   void close();
 
-  // The passthrough *Locked helpers return whether to request a keyframe; callers
-  // do so after releasing mutex_ (see captureEncoded()).
+  // Passthrough helpers returning bool, except sendEncodedFrameLocked(), return whether to request
+  // a keyframe; callers do so after releasing mutex_ (see captureEncoded()).
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
   void logWaitingForFirstKeyFrameLocked();
-  // Publishes the encoded source on first use; throws if the publish or send fails.
-  void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
+  // Returns whether the frame was sent; a failure is logged and waits for the next keyframe.
+  bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
+  bool handleEncodedFeedbackLocked(std::size_t frame_bytes);
+  void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
   void logResumedLocked();
   void logFellBehindLocked();
+  void logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
@@ -149,6 +180,11 @@ private:
   EventThrottle fell_behind_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle waiting_log_throttle_{kLogThrottle};
+  // A send can keep failing, frame after frame.
+  EventThrottle capture_failed_log_throttle_{kLogThrottle};
+  EventThrottle feedback_failed_log_throttle_{kLogThrottle};
+  EventThrottle over_budget_log_throttle_{kLogThrottle};
+  PassthroughBitrateMonitor bitrate_monitor_;
 };
 
 }  // namespace livekit_ros2_bridge::video

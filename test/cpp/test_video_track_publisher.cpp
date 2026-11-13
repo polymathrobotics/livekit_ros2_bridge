@@ -19,6 +19,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -41,6 +42,9 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
+// Mirror TrackPublisher's private intervals.
+constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 // Slack for waits that must clearly outlast an interval or let another thread block.
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
 
@@ -459,7 +463,7 @@ TEST(TrackPublisherTest, PassthroughPublishFailureThrowsAndRetriesAtNextKeyFrame
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.retry"}));
 }
 
-TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
+TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
 {
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -468,9 +472,9 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
   auto publisher = std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send", "lkros.video.send"));
 
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-  EXPECT_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame), std::invalid_argument);
-  // The picture is broken until the next keyframe, so delta frames are discarded
-  // even before the pipeline restart lands.
+  // Logged, not thrown: a throw would fail the GStreamer pipeline and restart it.
+  EXPECT_NO_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  // The picture is broken until the next keyframe, so delta frames are discarded.
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   EXPECT_EQ(key_frame_requests, 1);
 
@@ -484,6 +488,81 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
     std::vector<std::string>{"1"});
+}
+
+TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send_storm", "lkros.video.send_storm"));
+  constexpr int kFailedSends = 20;
+
+  const auto started_at = std::chrono::steady_clock::now();
+  // Each keyframe is sent, the next frame fails, and the one after is discarded while waiting.
+  for (int failed_send = 0; failed_send < kFailedSends; ++failed_send) {
+    publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+    publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame);
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  }
+  const auto elapsed = std::chrono::steady_clock::now() - started_at;
+  publisher.reset();
+
+  // The throttles bound the requests and warnings however long the loop took.
+  EXPECT_GE(key_frame_requests, 1);
+  EXPECT_LE(key_frame_requests, 1 + elapsed / kKeyFrameRequestInterval);
+  const std::vector<std::string> counts =
+    logs.fieldValues({"video_stream_capture_failed", "stream_key=stream:send_storm"}, "count");
+  ASSERT_FALSE(counts.empty());
+  EXPECT_EQ(counts.front(), "1");
+  EXPECT_LE(counts.size(), 1U + static_cast<std::size_t>(elapsed / kLogThrottle));
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send_storm"}));
+}
+
+TEST(PassthroughBitrateMonitorTest, ReportsOnlyAfterStayingWellAboveTarget)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  monitor.setTarget(1'000'000U);
+  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+
+  // 25 kB every 100 ms is 2 Mbit/s, twice the target.
+  std::optional<int> first_report_index;
+  std::optional<std::uint64_t> first_report_bps;
+  for (int frame_index = 0; frame_index <= 50; ++frame_index) {
+    const auto reported = monitor.record(25'000U, start + milliseconds(100 * frame_index));
+    if (reported.has_value() && !first_report_index.has_value()) {
+      first_report_index = frame_index;
+      first_report_bps = reported;
+    }
+  }
+
+  ASSERT_TRUE(first_report_index.has_value());
+  EXPECT_EQ(*first_report_index, 30);
+  EXPECT_EQ(*first_report_bps, 2'000'000U);
+}
+
+TEST(PassthroughBitrateMonitorTest, StaysQuietWithinBudgetWithoutTargetOrWhenOverrunIsBrief)
+{
+  using std::chrono::milliseconds;
+  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+
+  PassthroughBitrateMonitor without_target;
+  PassthroughBitrateMonitor within_budget;
+  within_budget.setTarget(1'000'000U);
+  PassthroughBitrateMonitor brief_overrun;
+  brief_overrun.setTarget(1'000'000U);
+  for (int frame_index = 0; frame_index <= 100; ++frame_index) {
+    const auto now = start + milliseconds(100 * frame_index);
+    EXPECT_FALSE(without_target.record(25'000U, now).has_value());
+    // 18.75 kB every 100 ms is 1.5 Mbit/s: exactly 1.5x the target is not well above it.
+    EXPECT_FALSE(within_budget.record(18'750U, now).has_value());
+    // Two seconds over budget, then one second under, repeated.
+    const bool under_budget_second = (frame_index / 10) % 3 == 2;
+    EXPECT_FALSE(brief_overrun.record(under_budget_second ? 5'000U : 25'000U, now).has_value());
+  }
 }
 
 }  // namespace
