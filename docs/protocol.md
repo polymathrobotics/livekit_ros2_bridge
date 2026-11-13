@@ -162,7 +162,7 @@ When a heartbeat target fails individually, the corresponding [`lkros.status`](#
 | `not_found` | lookup or subscription creation failed for another reason |
 | `unsupported_kind` | the bridge does not support the entry's subscription kind |
 
-New reasons MAY be added in later versions of this specification; clients SHOULD treat unrecognized reasons as equivalent to `not_found`. This document describes the unreleased protocol version 2, and `unsupported_kind` is part of it: version 2 has never shipped, so adding the reason does not break a released contract.
+New reasons MAY be added in later versions of this specification; clients SHOULD treat unrecognized reasons as equivalent to `not_found`, so adding a reason such as `unsupported_kind` does not change the protocol version.
 
 ### Example
 
