@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "sensor_msgs/image_encodings.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
@@ -32,6 +34,7 @@
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "support/scoped_log_capture.hpp"
+#include "support/video_pipeline_callbacks.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
@@ -98,17 +101,6 @@ const char * compressedImageInterfaceType()
   return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
 }
 
-PipelineCallbacks makeNoOpPipelineCallbacks()
-{
-  return PipelineCallbacks{
-    []() { return false; },
-    [](const livekit::VideoFrame &, std::int64_t) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-  };
-}
-
 void expectStartErrorContains(
   GStreamerPipeline & pipeline, const std::string & description, bool require_appsrc, const char * fragment)
 {
@@ -132,7 +124,7 @@ protected:
 
 TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSink)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline, "videotestsrc is-live=true ! fakesink name=bridge_video_sink", false, "must be a GstAppSink");
@@ -140,7 +132,7 @@ TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSink)
 
 TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline,
@@ -151,7 +143,7 @@ TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 
 TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   pipeline.start("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 
@@ -164,7 +156,7 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   std::mutex error_mutex;
   std::string capture_error;
   std::string failure_reason;
-  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   // on_capture_failed also throws, so the exception reaches the new_sample catch;
   // the failed sample makes the pipeline post an error, which on_failed throws on.
   callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) { throw 42; };
@@ -196,6 +188,71 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
   EXPECT_TRUE(reported);
   EXPECT_NE(failure_reason, "eos");
+}
+
+// A static vp8enc link already fails to parse (and config validation rejects it); the
+// demuxer's dynamic pad fails at runtime like an RTSP camera would.
+TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
+{
+  std::mutex mismatch_mutex;
+  std::string offered_caps;
+  std::atomic<bool> mismatch_reported{false};
+  std::atomic<bool> failure_reported{false};
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_caps_mismatch = [&](const std::string &, const std::string & caps) {
+    const std::lock_guard<std::mutex> lock(mismatch_mutex);
+    if (!mismatch_reported.exchange(true)) {
+      offered_caps = caps;
+    }
+  };
+  callbacks.on_failed = [&](const std::string &) { failure_reported = true; };
+  GStreamerPipeline pipeline(callbacks);
+
+  pipeline.start(
+    buildPassthroughPipelineDescription(
+      "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"),
+    false,
+    PipelineOutput::EncodedH264);
+  const bool reported = test_support::waitUntil([&]() { return mismatch_reported.load(); }, std::chrono::seconds(10));
+  pipeline.stop();
+
+  ASSERT_TRUE(reported);
+  EXPECT_EQ(offered_caps.rfind("video/x-vp8", 0U), 0U) << offered_caps;
+  EXPECT_FALSE(failure_reported.load());
+}
+
+// Holds the first frame, as a stalled consumer would, until the bridge queue overruns. The
+// pipeline must contain and log what on_fell_behind throws.
+TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
+{
+  test_support::ScopedLogCapture logs;
+  std::atomic<bool> fell_behind{false};
+  const auto reported_fell_behind = [&]() { return fell_behind.load(); };
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+    (void)test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
+  };
+  callbacks.on_fell_behind = [&]() {
+    fell_behind = true;
+    throw std::runtime_error("simulated fell behind failure");
+  };
+  GStreamerPipeline pipeline(callbacks);
+
+  // datarate stamps each 16-byte buffer 0.1 s after the last, so ten of them fill the queue.
+  pipeline.start(
+    buildPassthroughPipelineDescription(
+      "fakesrc format=time datarate=160 sizetype=fixed sizemax=16 filltype=zero"
+      " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
+    false,
+    PipelineOutput::EncodedH264);
+  const bool reported = test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
+  pipeline.stop();
+
+  EXPECT_TRUE(reported);
+  EXPECT_GE(
+    logs.countLines(
+      {"video_pipeline_callback_failed", "callback=queue_overrun", "error=simulated fell behind failure"}),
+    1U);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)

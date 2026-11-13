@@ -23,6 +23,7 @@
 #include "sensor_msgs/msg/compressed_image.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "utils/ros_resource_name_utils.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/stream_spec.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -275,6 +276,18 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     "Unknown other video source 'sources/missing'.");
   expectThrowsWithMessage<std::invalid_argument>(
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
+}
+
+// The source parses its own H.264; the bridge only checks its format and never drops a frame,
+// since a lost encoded frame corrupts the picture until the next keyframe.
+TEST(PipelineDescriptionTest, PassthroughEndingChecksH264FormatWithoutDroppingFrames)
+{
+  EXPECT_EQ(
+    buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"),
+    "rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"
+    " ! video/x-h264,stream-format=byte-stream,alignment=au"
+    " ! queue max-size-buffers=0 max-size-bytes=33554432 max-size-time=1000000000 leaky=no"
+    " ! appsink name=bridge_video_sink sync=false");
 }
 
 }  // namespace

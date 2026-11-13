@@ -108,13 +108,15 @@ TrackPublisher::~TrackPublisher()
 PipelineCallbacks TrackPublisher::makePipelineCallbacks(
   std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed)
 {
-  return PipelineCallbacks{
-    std::move(is_shutdown),
-    [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) { capture(frame, timestamp_us); },
-    [this](const std::string & error) { onSampleUnpackFailed(error); },
-    [this](const std::string & error) { onCaptureFailed(error); },
-    std::move(on_failed),
+  PipelineCallbacks callbacks;
+  callbacks.is_shutdown = std::move(is_shutdown);
+  callbacks.on_frame = [this](const livekit::VideoFrame & frame, std::int64_t timestamp_us) {
+    capture(frame, timestamp_us);
   };
+  callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
+  callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
+  callbacks.on_failed = std::move(on_failed);
+  return callbacks;
 }
 
 void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us)
