@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "livekit/room_event_types.h"
+#include "livekit/video_codec.h"
 #include "utils/gstreamer_pipeline_validation.hpp"
 #include "utils/param_entries.hpp"
 #include "utils/ros_resource_name_utils.hpp"
@@ -52,21 +53,20 @@ RosResourcePattern requireRosResourcePattern(std::string_view raw, const char * 
 std::optional<livekit::VideoCodec> parseVideoCodec(const std::string & value)
 {
   const std::string codec = trim(value);
-  // This SDK version lacks stable named constants; values match its wire mapping.
   if (codec == "vp8") {
-    return static_cast<livekit::VideoCodec>(0);
+    return livekit::VideoCodec::VP8;
   }
   if (codec == "h264") {
-    return static_cast<livekit::VideoCodec>(1);
+    return livekit::VideoCodec::H264;
   }
   if (codec == "av1") {
-    return static_cast<livekit::VideoCodec>(2);
+    return livekit::VideoCodec::AV1;
   }
   if (codec == "vp9") {
-    return static_cast<livekit::VideoCodec>(3);
+    return livekit::VideoCodec::VP9;
   }
   if (codec == "h265") {
-    return static_cast<livekit::VideoCodec>(4);
+    return livekit::VideoCodec::H265;
   }
   return std::nullopt;
 }
@@ -140,6 +140,46 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
+// Passthrough forwards the camera's H.264 unchanged and ignores global defaults. Returns the first
+// per-entry setting that is set, or null, also for entries without passthrough. Only
+// publish.max_bitrate_bps may be set, because it describes the camera.
+template <typename EntryT>
+const char * findPassthroughOverride(const EntryT & entry)
+{
+  if (!entry.passthrough) {
+    return nullptr;
+  }
+  if (!trim(entry.transform).empty()) {
+    return "transform";
+  }
+  if (!trim(entry.publish.codec).empty()) {
+    return "publish.codec";
+  }
+  if (entry.publish.max_framerate >= 0.0) {
+    return "publish.max_framerate";
+  }
+  if (!trim(entry.publish.simulcast).empty()) {
+    return "publish.simulcast";
+  }
+  return nullptr;
+}
+
+// publish.max_bitrate_bps tells LiveKit the most this camera sends, which
+// bounds its rate target and pacing; without it LiveKit assumes a default for
+// the resolution. -1 (unset) and 0 leave that default in place.
+template <typename EntryT>
+livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
+{
+  livekit::TrackPublishOptions options;
+  options.video_codec = livekit::VideoCodec::H264;
+  options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  options.simulcast = false;
+  if (entry.publish.max_bitrate_bps >= 0) {
+    setEncoding(options, static_cast<std::uint64_t>(entry.publish.max_bitrate_bps), 0.0);
+  }
+  return options;
+}
+
 constexpr utils::EndpointLayout kRosTopicRuleLayout{1U, 1U, 1U, 1U, kBridgeAppSrcName, kBridgeAppSinkName};
 constexpr utils::EndpointLayout kOtherSourceLayout = utils::makeOtherSourceLayout(kBridgeAppSinkName);
 
@@ -193,8 +233,15 @@ StreamConfig loadConfig(const Params & params)
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
+    if (const char * setting = findPassthroughOverride(entry)) {
+      throw std::runtime_error(
+        source_context + " sets " + setting +
+        ", but passthrough forwards the camera's H.264 unchanged; leave it unset");
+    }
     const std::string transform = trim(entry.transform);
-    validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kOtherSourceLayout);
+    const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)
+                                                      : buildPipelineDescription(source_fragment, transform);
+    validatePipeline(source_context, description, kOtherSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string name = trim(id);
@@ -209,7 +256,9 @@ StreamConfig loadConfig(const Params & params)
     source.name = name;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
-    source.publish_options = parsePublishOptions(entry, config.default_publish_options);
+    source.passthrough = entry.passthrough;
+    source.publish_options = entry.passthrough ? makePassthroughPublishOptions(entry)
+                                               : parsePublishOptions(entry, config.default_publish_options);
     config.other_sources.push_back(std::move(source));
   }
 

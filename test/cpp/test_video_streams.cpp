@@ -16,6 +16,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -99,6 +102,29 @@ const char * imageInterfaceType()
 const char * compressedImageInterfaceType()
 {
   return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
+}
+
+StreamSpec makePassthroughSpec(const std::string & source_fragment)
+{
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", source_fragment, "", true};
+  spec.publish_options.video_codec = livekit::VideoCodec::H264;
+  spec.publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  spec.publish_options.simulcast = false;
+  return spec;
+}
+
+livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
+{
+  livekit::EncodedVideoSource::Frame frame;
+  frame.is_keyframe = is_keyframe;
+  frame.width = 64U;
+  frame.height = 48U;
+  frame.timestamp_us = 1000;
+  // Annex-B start code and an IDR (type 5) or non-IDR (type 1) slice header.
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
+  return frame;
 }
 
 void expectStartErrorContains(
@@ -372,6 +398,99 @@ TEST_F(StreamTest, FailureDuringRestartLeadsToAnotherRestart)
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   EXPECT_TRUE(restarted_after_failed_restart) << "start attempts: " << attempts();
+}
+
+TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
+{
+  test_support::ScopedLogCapture logs;
+  // The demuxer's dynamic pad fails at runtime, like an RTSP camera that sends VP8 would.
+  const auto harness = std::make_shared<OtherStreamHarness>(
+    makePassthroughSpec("videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"));
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+  const auto explained = [&]() {
+    return logs.countLines(
+             {"video_stream_pipeline_recovery_scheduled",
+              "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it "
+              "with h264parse config-interval=-1\"",
+              "offered_caps=\"video/x-vp8"}) > 0U;
+  };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool hint_logged = test_support::waitUntil(explained, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  EXPECT_TRUE(hint_logged);
+  EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
+}
+
+// A viewer that starts at an IDR without SPS and PPS cannot decode it. The source sends
+// three such frames and ends, and is restarted; the stream warns about them once.
+TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  const std::filesystem::path access_unit_path =
+    std::filesystem::temp_directory_path() / "lkros_idr_without_parameter_sets.h264";
+  {
+    // An Annex-B IDR slice alone, as a source without h264parse config-interval=-1 can send it.
+    const char idr_without_parameter_sets[] = {0x00, 0x00, 0x00, 0x01, 0x65, static_cast<char>(0x88), 0x00};
+    std::ofstream file(access_unit_path, std::ios::binary);
+    file.write(idr_without_parameter_sets, sizeof(idr_without_parameter_sets));
+  }
+  const ScopeExit remove_access_unit([&]() { std::filesystem::remove(access_unit_path); });
+  test_support::ScopedLogCapture logs;
+  // multifilesrc sends the whole file as each buffer.
+  const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
+    "multifilesrc location=" + access_unit_path.string() +
+    " num-buffers=3 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
+    ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  // The third start follows the end of the second run, so its frames have arrived too.
+  const auto second_run_ended = [attempts_before]() {
+    return ControlledStartElement::startAttempts() - attempts_before >= 3U;
+  };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool restarted = test_support::waitUntil(second_run_ended, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
+}
+
+// A restarted source can start mid-stream, so after each restart the publisher
+// discards frames, asking for a keyframe, until one arrives.
+TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  // A source that sends nothing and ends at once, so the stream keeps restarting
+  // and every frame comes from the test.
+  const auto harness = std::make_shared<OtherStreamHarness>(
+    makePassthroughSpec(std::string("fakesrc num-buffers=0 ! ") + ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  const auto attempts = [attempts_before]() { return ControlledStartElement::startAttempts() - attempts_before; };
+  const auto key_frame_requests = std::make_shared<std::atomic<int>>(0);
+  const std::function<void()> request_key_frame = [key_frame_requests]() { ++*key_frame_requests; };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  harness->track_publisher.captureEncoded(makeEncodedFrame(true), request_key_frame);
+  // A restart that had already begun may have waited before the keyframe; the second did not.
+  const std::size_t attempts_after_key_frame = attempts();
+  const bool restarted =
+    test_support::waitUntil([&]() { return attempts() >= attempts_after_key_frame + 2U; }, std::chrono::seconds(5));
+  harness->track_publisher.captureEncoded(makeEncodedFrame(false), request_key_frame);
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted) << "start attempts: " << attempts();
+  EXPECT_EQ(key_frame_requests->load(), 1);
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(

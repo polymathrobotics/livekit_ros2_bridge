@@ -39,9 +39,7 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(publisher.makePipelineCallbacks(
-    [this]() { return is_shutdown_.load(std::memory_order_acquire); },
-    [this](const std::string & reason) { onPipelineFailure(reason); }))
+, pipeline_(makePipelineCallbacks())
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
@@ -73,9 +71,29 @@ void GStreamerStream::close()
   pipeline_.stop();
 }
 
+PipelineCallbacks GStreamerStream::makePipelineCallbacks()
+{
+  auto is_shutdown = [this]() { return is_shutdown_.load(std::memory_order_acquire); };
+  auto on_failed = [this](const std::string & reason) { onPipelineFailure(reason); };
+  if (!requireOtherInput(spec_).passthrough) {
+    return publisher_.makePipelineCallbacks(is_shutdown, on_failed);
+  }
+
+  // Requesting a keyframe must not take mutex_: it runs inside pipeline
+  // callbacks, which pipeline_.stop() waits for.
+  return publisher_.makeEncodedPipelineCallbacks(
+    is_shutdown,
+    on_failed,
+    [this](const std::string & reason, const std::string & offered_caps) {
+      onPipelineFailure(reason, true, offered_caps);
+    },
+    [this]() { pipeline_.requestKeyFrame(); });
+}
+
 // Lock-free: the sync bus handler and a restart whose start() threw call this while start()
 // or the restart holds mutex_, so taking it here would deadlock the calling thread.
-void GStreamerStream::onPipelineFailure(const std::string & reason)
+void GStreamerStream::onPipelineFailure(
+  const std::string & reason, bool caps_mismatch, const std::string & offered_caps)
 {
   if (is_shutdown_.load(std::memory_order_acquire)) {
     return;
@@ -92,12 +110,21 @@ void GStreamerStream::onPipelineFailure(const std::string & reason)
     return;
   }
 
-  LogEvent(kLogger, "video_stream_pipeline_recovery_scheduled")
-    .field("stream_key", spec_.stream_key)
+  LogEvent event(kLogger, "video_stream_pipeline_recovery_scheduled");
+  event.field("stream_key", spec_.stream_key)
     .field("reason", reason)
     .field("restart_delay_ms", kRestartDelay.count())
-    .field("count", pending)
-    .warn();
+    .field("count", pending);
+  if (caps_mismatch) {
+    event.fieldQuoted(
+      "hint",
+      "the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
+      "config-interval=-1");
+  }
+  if (!offered_caps.empty()) {
+    event.fieldQuoted("offered_caps", offered_caps);
+  }
+  event.warn();
 }
 
 void GStreamerStream::restartPipelineAfterFailure()
@@ -110,6 +137,10 @@ void GStreamerStream::restartPipelineAfterFailure()
   pipeline_.stop();
   // Failures the old pipeline reported during this run must not restart the new one.
   failure_handler_.cancelPending();
+  // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
+  if (requireOtherInput(spec_).passthrough) {
+    publisher_.awaitKeyFrame();
+  }
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
@@ -124,6 +155,10 @@ void GStreamerStream::restartPipelineAfterFailure()
 void GStreamerStream::startPipelineLocked()
 {
   const auto & input = requireOtherInput(spec_);
+  if (input.passthrough) {
+    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
+    return;
+  }
   pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);
 }
 
