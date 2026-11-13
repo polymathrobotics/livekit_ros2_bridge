@@ -32,9 +32,9 @@ inline video::PipelineCallbacks makeNoOpVideoPipelineCallbacks()
   callbacks.on_unpack_failed = [](const std::string &) {};
   callbacks.on_capture_failed = [](const std::string &) {};
   callbacks.on_failed = [](const std::string &) {};
-  callbacks.on_encoded_frame = [](livekit::EncodedVideoSource::Frame, bool) {};
+  callbacks.on_encoded_frame = [](video::EncodedVideoFrame, bool) {};
   callbacks.on_caps_mismatch = [](const std::string &, const std::string &) {};
-  callbacks.on_key_frame_without_parameter_sets = []() {};
+  callbacks.on_key_frame_without_parameter_sets = [](livekit::VideoCodec) {};
   return callbacks;
 }
 

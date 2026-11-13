@@ -285,7 +285,8 @@ TEST(PipelineDescriptionTest, PassthroughEndingChecksFormatAndBoundsTheQueue)
   EXPECT_EQ(
     buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"),
     "rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"
-    " ! video/x-h264,stream-format=byte-stream,alignment=au"
+    " ! video/x-h264,stream-format=byte-stream,alignment=au;video/x-h265,stream-format=byte-stream,alignment=au;"
+    "video/x-av1,stream-format=obu-stream,alignment=tu"
     " ! queue leaky=downstream max-size-time=500000000 max-size-buffers=30 max-size-bytes=16777216"
     " ! appsink name=bridge_video_sink sync=false");
 }
