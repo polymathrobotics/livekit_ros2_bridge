@@ -17,9 +17,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -42,6 +42,8 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
+constexpr auto kBitrateWindow = std::chrono::seconds(1);
+constexpr auto kOverBudgetDuration = std::chrono::seconds(3);
 
 void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
@@ -83,6 +85,38 @@ livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
 }
 
 }  // namespace
+
+std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame_bytes, Clock::time_point now)
+{
+  if (window_started_at_ == Clock::time_point{}) {
+    window_started_at_ = now;
+  }
+  const auto elapsed = now - window_started_at_;
+  if (elapsed < kBitrateWindow) {
+    window_bytes_ += frame_bytes;
+    return std::nullopt;
+  }
+
+  const auto elapsed_us =
+    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+  const std::uint64_t bitrate_bps = window_bytes_ * 8U * 1'000'000U / elapsed_us;
+  const Clock::time_point window_started_at = window_started_at_;
+  window_started_at_ = now;
+  window_bytes_ = frame_bytes;
+
+  // Well above means more than 1.5x the target.
+  if (target_bitrate_bps_ == 0U || bitrate_bps * 2U <= target_bitrate_bps_ * 3U) {
+    over_budget_since_.reset();
+    return std::nullopt;
+  }
+  if (!over_budget_since_.has_value()) {
+    over_budget_since_ = window_started_at;
+  }
+  if (now - *over_budget_since_ < kOverBudgetDuration) {
+    return std::nullopt;
+  }
+  return bitrate_bps;
+}
 
 std::shared_ptr<TrackPublisher> TrackPublisher::create(
   rclcpp::node_interfaces::NodeInterfaces<
@@ -224,13 +258,13 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return keyFrameRequestDueLocked();
   }
 
-  // The failure fails the pipeline, which restarts it. Frames that arrive before
-  // then must not follow a lost one, so wait for a keyframe from now on.
-  try {
-    sendEncodedFrameLocked(frame);
-  } catch (...) {
-    awaitKeyFrameLocked();
-    throw;
+  // A failed publish throws, so the pipeline fails and restarts; frames still wait
+  // for a keyframe until the publish succeeds.
+  if (encoded_source_ == nullptr) {
+    publishEncodedSourceLocked(frame.width, frame.height);
+  }
+  if (!sendEncodedFrameLocked(frame)) {
+    return false;
   }
 
   if (!captured_frame_logged_) {
@@ -247,7 +281,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     awaiting_key_frame_ = false;
     logResumedLocked();
   }
-  return false;
+  return handleEncodedFeedbackLocked(frame.data.size());
 }
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
@@ -283,16 +317,88 @@ void TrackPublisher::logResumedLocked()
   discarded_frame_count_ = 0U;
 }
 
-void TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
+bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
 {
-  if (encoded_source_ == nullptr) {
-    publishEncodedSourceLocked(frame.width, frame.height);
+  frame.metadata = userTimestampMetadata(frame.timestamp_us);
+  std::string error;
+  try {
+    if (encoded_source_->captureFrame(frame)) {
+      return true;
+    }
+    error = "LiveKit did not accept the encoded frame.";
+  } catch (const std::exception & exc) {
+    error = exc.what();
+  } catch (...) {
+    // Fails the pipeline, which restarts it; until then, frames must not follow the lost one.
+    awaitKeyFrameLocked();
+    throw;
   }
 
-  frame.metadata = userTimestampMetadata(frame.timestamp_us);
-  if (!encoded_source_->captureFrame(frame)) {
-    throw std::runtime_error("LiveKit did not accept the encoded frame.");
+  // Unlike awaitKeyFrameLocked(), keep the keyframe request throttle running: a send
+  // can fail after every keyframe, and a reset would ask for one every other frame.
+  awaiting_key_frame_ = true;
+  logThrottledFailureLocked(capture_failed_log_throttle_, "video_stream_capture_failed", error);
+  return false;
+}
+
+bool TrackPublisher::handleEncodedFeedbackLocked(std::size_t frame_bytes)
+{
+  // Feedback only updates as frames are sent, so poll it after each one. Failing to
+  // read it doesn't affect the frame that was just sent.
+  livekit::EncodedVideoSource::Feedback feedback;
+  try {
+    feedback = encoded_source_->takeFeedback();
+  } catch (const std::exception & exc) {
+    logThrottledFailureLocked(feedback_failed_log_throttle_, "video_stream_passthrough_feedback_failed", exc.what());
   }
+  checkEncodedBitrateLocked(feedback, frame_bytes);
+
+  // A viewer's request shares the throttle with discarded frames.
+  return feedback.keyframe_requested && keyFrameRequestDueLocked();
+}
+
+void TrackPublisher::checkEncodedBitrateLocked(
+  const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes)
+{
+  // Without publish.max_bitrate_bps, LiveKit targets its default for the resolution,
+  // which a healthy camera can exceed.
+  const auto & encoding = spec_.publish_options.video_encoding;
+  if (!encoding.has_value() || encoding->max_bitrate == 0U) {
+    return;
+  }
+
+  if (feedback.rate_control.has_value()) {
+    bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
+  }
+  const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, PassthroughBitrateMonitor::Clock::now());
+  if (!bitrate_bps.has_value()) {
+    return;
+  }
+  const std::size_t pending = over_budget_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_over_budget")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("bitrate_bps", *bitrate_bps)
+    .field("target_bitrate_bps", bitrate_monitor_.targetBitrateBps())
+    .field("count", pending)
+    .warn();
+}
+
+void TrackPublisher::logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error)
+{
+  const std::size_t pending = throttle.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, event)
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
+    .field("count", pending)
+    .warn();
 }
 
 void TrackPublisher::awaitKeyFrame()
