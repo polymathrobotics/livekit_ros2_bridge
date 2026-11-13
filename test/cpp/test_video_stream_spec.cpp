@@ -238,6 +238,7 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   source.source_fragment = "videotestsrc is-live=true pattern=black";
   source.transform_fragment = "videobalance saturation=0.0";
   source.publish_options = expected_publish_options;
+  source.passthrough = true;
 
   config.other_sources.push_back(std::move(source));
 
@@ -249,6 +250,7 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecTrimsOtherSourceName)
   EXPECT_EQ(input.name, "front_camera");
   EXPECT_EQ(input.source_fragment, "videotestsrc is-live=true pattern=black");
   EXPECT_EQ(input.transform_fragment, "videobalance saturation=0.0");
+  EXPECT_TRUE(input.passthrough);
   expectTrackPublishOptionsEq(spec.publish_options, expected_publish_options);
 }
 

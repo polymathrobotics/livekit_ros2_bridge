@@ -114,7 +114,33 @@ void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const l
   EXPECT_DOUBLE_EQ(
     actual.video_encoding.has_value() ? actual.video_encoding->max_framerate : 0.0,
     expected.video_encoding.has_value() ? expected.video_encoding->max_framerate : 0.0);
+  EXPECT_EQ(actual.video_encoding.has_value(), expected.video_encoding.has_value());
   EXPECT_EQ(actual.simulcast, expected.simulcast);
+  EXPECT_EQ(actual.video_encoder, expected.video_encoder);
+}
+
+livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bitrate_bps = 0)
+{
+  livekit::TrackPublishOptions options;
+  options.video_codec = livekit::VideoCodec::H264;
+  options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  options.simulcast = false;
+  if (max_bitrate_bps > 0) {
+    livekit::VideoEncodingOptions encoding;
+    encoding.max_bitrate = max_bitrate_bps;
+    encoding.max_framerate = 0.0;
+    options.video_encoding = encoding;
+  }
+  return options;
+}
+
+rclcpp::NodeOptions makePassthroughSourceOptions()
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.other.front.source", "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  options.append_parameter_override("video.other.front.passthrough", true);
+  return options;
 }
 
 void expectSubscriptionQosOverrideEq(
@@ -570,6 +596,94 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
   EXPECT_EQ(sources[1].source_fragment, "videotestsrc is-live=true pattern=smpte");
 
   std::filesystem::remove(params_path);
+}
+
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedH264AndIgnoresGlobalPublishDefaults)
+{
+  auto options = makePassthroughSourceOptions();
+  appendVideoPublishOverrides(options, "vp8", 900000, 15.0, "enabled");
+
+  const RuntimeConfig config = loadRuntimeConfigForNode("startup_config_passthrough_ignores_globals", options);
+
+  ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+  const auto & source = config.video_stream.other_sources.front();
+  EXPECT_TRUE(source.passthrough);
+  EXPECT_EQ(source.source_fragment, "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions());
+}
+
+// It tells LiveKit what the camera sends; the global value and the frame rate stay ignored.
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoPassesOnlyItsOwnMaxBitrateToLivekit)
+{
+  struct MaxBitrateCase
+  {
+    int max_bitrate_bps;
+    std::uint64_t expected_max_bitrate_bps;
+    const char * node_name;
+  };
+
+  // 0 means LiveKit's default here as everywhere else; -1, the unset default, is above.
+  const std::vector<MaxBitrateCase> max_bitrate_cases{
+    {2500000, 2500000U, "startup_config_passthrough_max_bitrate"},
+    {0, 0U, "startup_config_passthrough_max_bitrate_zero"},
+  };
+
+  for (const auto & max_bitrate_case : max_bitrate_cases) {
+    SCOPED_TRACE(max_bitrate_case.max_bitrate_bps);
+    auto options = makePassthroughSourceOptions();
+    appendVideoPublishOverrides(options, "h264", 900000, 15.0, "disabled");
+    options.append_parameter_override("video.other.front.publish.max_bitrate_bps", max_bitrate_case.max_bitrate_bps);
+
+    const RuntimeConfig config = loadRuntimeConfigForNode(max_bitrate_case.node_name, options);
+
+    ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+    expectPublishOptionsEq(
+      config.video_stream.other_sources.front().publish_options,
+      makePassthroughPublishOptions(max_bitrate_case.expected_max_bitrate_bps));
+  }
+}
+
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
+{
+  struct RejectedOverride
+  {
+    const char * key;
+    rclcpp::ParameterValue value;
+    const char * node_name;
+  };
+
+  const std::vector<RejectedOverride> rejected_overrides{
+    {"transform", rclcpp::ParameterValue("videoflip"), "startup_config_passthrough_rejects_transform"},
+    {"publish.codec", rclcpp::ParameterValue("vp8"), "startup_config_passthrough_rejects_codec"},
+    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_rejects_codec_h264"},
+    {"publish.max_framerate", rclcpp::ParameterValue(15.0), "startup_config_passthrough_rejects_max_framerate"},
+    {"publish.max_framerate", rclcpp::ParameterValue(0.0), "startup_config_passthrough_rejects_max_framerate_zero"},
+    {"publish.simulcast", rclcpp::ParameterValue("enabled"), "startup_config_passthrough_rejects_simulcast"},
+    {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_rejects_simulcast_disabled"},
+  };
+
+  for (const auto & rejected_override : rejected_overrides) {
+    SCOPED_TRACE(rejected_override.node_name);
+    auto options = makePassthroughSourceOptions();
+    options.append_parameter_override(
+      std::string{"video.other.front."} + rejected_override.key, rejected_override.value);
+
+    const std::string expected_error = std::string{"other video source 'front' sets "} + rejected_override.key +
+                                       ", but passthrough forwards the camera's H.264 unchanged; leave it unset";
+    expectConfigError(rejected_override.node_name, options, expected_error.c_str());
+  }
+}
+
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps)
+{
+  auto options = makeStaticTokenOptions();
+  options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
+  options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true ! vp8enc deadline=1");
+  options.append_parameter_override("video.other.front.passthrough", true);
+
+  // vp8enc's output caps are known when the pipeline is parsed, so linking it to
+  // the bridge's H.264 caps filter already fails at startup.
+  expectConfigErrorContains("startup_config_passthrough_rejects_fixed_non_h264_caps", options, "could not link");
 }
 
 TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)
