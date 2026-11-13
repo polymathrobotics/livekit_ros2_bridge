@@ -84,6 +84,31 @@ livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
   return options;
 }
 
+const char * passthroughCodecName(livekit::VideoCodec codec)
+{
+  for (const PassthroughFormat & format : kPassthroughFormats) {
+    if (format.codec == codec) {
+      return format.name;
+    }
+  }
+  return "unknown";
+}
+
+const char * missingParameterSetsHint(livekit::VideoCodec codec)
+{
+  switch (codec) {
+    case livekit::VideoCodec::H265:
+      return "a keyframe arrived without VPS, SPS and PPS, so viewers who join late or reconnect may not be able to "
+             "decode the video; end the source with h265parse config-interval=-1";
+    case livekit::VideoCodec::AV1:
+      return "a keyframe arrived without a sequence header, so viewers who join late or reconnect may not be able to "
+             "decode the video; set the encoder to send a sequence header with every keyframe";
+    default:
+      return "a keyframe arrived without SPS and PPS, so viewers who join late or reconnect may not be able to decode "
+             "the video; end the source with h264parse config-interval=-1";
+  }
+}
+
 }  // namespace
 
 std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame_bytes, Clock::time_point now)
@@ -176,12 +201,14 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
   callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
   callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
   callbacks.on_failed = std::move(on_failed);
-  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame) {
-    captureEncoded(std::move(frame), request_key_frame);
+  callbacks.on_encoded_frame = [this, request_key_frame](EncodedVideoFrame encoded) {
+    captureEncoded(std::move(encoded), request_key_frame);
   };
   callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
-  callbacks.on_key_frame_without_parameter_sets = [this]() { onKeyFrameWithoutParameterSets(); };
+  callbacks.on_key_frame_without_parameter_sets = [this](livekit::VideoCodec codec) {
+    onKeyFrameWithoutParameterSets(codec);
+  };
   return callbacks;
 }
 
@@ -230,13 +257,12 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
   }
 }
 
-void TrackPublisher::captureEncoded(
-  livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame)
+void TrackPublisher::captureEncoded(EncodedVideoFrame encoded, const std::function<void()> & request_key_frame)
 {
   bool key_frame_needed = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    key_frame_needed = captureEncodedLocked(std::move(frame));
+    key_frame_needed = captureEncodedLocked(std::move(encoded));
   }
   // Never call into GStreamer while holding mutex_: the request travels upstream
   // through user-supplied source elements, and onFellBehind() waits for mutex_ on
@@ -246,12 +272,18 @@ void TrackPublisher::captureEncoded(
   }
 }
 
-bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame)
+bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded)
 {
   if (closed_) {
     return false;
   }
 
+  livekit::EncodedVideoSource::Frame & frame = encoded.frame;
+  // Frames in another codec than the track's wait for their own keyframe, which republishes.
+  const bool codec_changed = encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec;
+  if (codec_changed && !frame.is_keyframe) {
+    awaitKeyFrameLocked();
+  }
   if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
     logWaitingForFirstKeyFrameLocked();
@@ -260,8 +292,8 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
 
   // A failed publish throws, so the pipeline fails and restarts; frames still wait
   // for a keyframe until the publish succeeds.
-  if (encoded_source_ == nullptr) {
-    publishEncodedSourceLocked(frame.width, frame.height);
+  if (encoded_source_ == nullptr || codec_changed) {
+    publishEncodedSourceLocked(encoded.codec, frame.width, frame.height);
   }
   if (!sendEncodedFrameLocked(frame)) {
     return false;
@@ -271,6 +303,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     LogEvent(kLogger, "video_stream_frame_captured")
       .fieldOr("stream_key", spec_.stream_key)
       .fieldOr("track_name", spec_.track_name)
+      .field("codec", passthroughCodecName(encoded.codec))
       .field("width", frame.width)
       .field("height", frame.height)
       .field("timestamp_us", frame.timestamp_us)
@@ -464,15 +497,35 @@ bool TrackPublisher::keyFrameRequestDueLocked()
   return key_frame_request_throttle_.record() > 0U;
 }
 
-void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height)
+void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height)
 {
-  auto source = std::make_shared<livekit::EncodedVideoSource>(
-    livekit::VideoCodec::H264, static_cast<int>(width), static_cast<int>(height));
   const ScopeExit publishing_exit([this]() { encoded_publish_ended_at_ = std::chrono::steady_clock::now(); });
-  auto track =
-    connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
+  // A track keeps the codec it was published with.
+  std::optional<livekit::VideoCodec> previous_codec;
+  if (encoded_source_ != nullptr) {
+    previous_codec = encoded_source_->codec();
+    tryUnpublish(connection_, track_);
+    track_.reset();
+    encoded_source_.reset();
+    captured_frame_logged_ = false;
+  }
+
+  auto source = std::make_shared<livekit::EncodedVideoSource>(codec, static_cast<int>(width), static_cast<int>(height));
+  // LiveKit rejects every frame when the source's codec and the track's differ.
+  livekit::TrackPublishOptions options = publishOptionsWithFrameMetadata(spec_.publish_options);
+  options.video_codec = codec;
+  auto track = connection_.publishVideoTrack(spec_.track_name, source, options);
   encoded_source_ = std::move(source);
   track_ = std::move(track);
+  if (!previous_codec.has_value()) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_track_republished")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("previous_codec", passthroughCodecName(*previous_codec))
+    .field("codec", passthroughCodecName(codec))
+    .info();
 }
 
 void TrackPublisher::close()
@@ -537,7 +590,7 @@ void TrackPublisher::onCaptureFailed(const std::string & error)
     .warn();
 }
 
-void TrackPublisher::onKeyFrameWithoutParameterSets()
+void TrackPublisher::onKeyFrameWithoutParameterSets(livekit::VideoCodec codec)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   if (closed_ || parameter_sets_warning_logged_) {
@@ -547,10 +600,8 @@ void TrackPublisher::onKeyFrameWithoutParameterSets()
   parameter_sets_warning_logged_ = true;
   LogEvent(kLogger, "video_stream_passthrough_missing_parameter_sets")
     .fieldOr("stream_key", spec_.stream_key)
-    .fieldQuoted(
-      "hint",
-      "a keyframe arrived without SPS and PPS, so viewers who join late or reconnect may not be able to decode "
-      "the video; end the source with h264parse config-interval=-1")
+    .field("codec", passthroughCodecName(codec))
+    .fieldQuoted("hint", missingParameterSetsHint(codec))
     .warn();
 }
 

@@ -24,6 +24,7 @@
 #include <string>
 
 #include "livekit/encoded_video_source.h"
+#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_resources.hpp"
 
@@ -37,8 +38,15 @@ enum class PipelineOutput
 {
   // Raw I420 frames for LiveKit to encode.
   RawI420,
-  // Annex-B H.264 access units forwarded to LiveKit unchanged (passthrough).
-  EncodedH264,
+  // H.264, H.265, or AV1 frames forwarded to LiveKit unchanged (passthrough).
+  EncodedVideo,
+};
+
+// A passthrough frame and the codec its sample's caps named.
+struct EncodedVideoFrame
+{
+  livekit::VideoCodec codec = livekit::VideoCodec::H264;
+  livekit::EncodedVideoSource::Frame frame;
 };
 
 struct PipelineCallbacks
@@ -48,16 +56,16 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
-  // EncodedH264 only.
-  std::function<void(livekit::EncodedVideoSource::Frame frame)> on_encoded_frame;
-  // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
+  // EncodedVideo only.
+  std::function<void(EncodedVideoFrame encoded)> on_encoded_frame;
+  // EncodedVideo only: the bridge queue filled up because frames are consumed too slowly.
   std::function<void()> on_fell_behind;
-  // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
-  // the bridge's H.264 caps. offered_caps may be empty.
+  // EncodedVideo only, instead of on_failed: the source's output did not link or negotiate with
+  // the bridge's passthrough caps. offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
-  // EncodedH264 only: called before on_encoded_frame for each keyframe that lacks SPS or PPS,
-  // which a viewer starting at that keyframe needs to decode it.
-  std::function<void()> on_key_frame_without_parameter_sets;
+  // EncodedVideo only: called before on_encoded_frame for each keyframe that lacks the parameter
+  // sets a viewer starting at that keyframe needs to decode it.
+  std::function<void(livekit::VideoCodec codec)> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final
@@ -101,7 +109,7 @@ private:
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
   PipelineOutput output_ = PipelineOutput::RawI420;
-  // EncodedH264 only: the bridge queue, held from start() so stop() disconnects
+  // EncodedVideo only: the bridge queue, held from start() so stop() disconnects
   // overrun_handler_ from the element it was connected to.
   GstElementPtr bridge_queue_;
   gulong overrun_handler_ = 0U;

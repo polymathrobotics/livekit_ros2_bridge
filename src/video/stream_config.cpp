@@ -140,7 +140,7 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
-// Passthrough forwards the camera's H.264 unchanged and ignores global defaults. Returns the first
+// Passthrough forwards the camera's video unchanged and ignores global defaults. Returns the first
 // per-entry setting that is set, or null, also for entries without passthrough. Only
 // publish.max_bitrate_bps may be set, because it describes the camera.
 template <typename EntryT>
@@ -164,14 +164,13 @@ const char * findPassthroughOverride(const EntryT & entry)
   return nullptr;
 }
 
-// publish.max_bitrate_bps tells LiveKit the most this camera sends, which
-// bounds its rate target and pacing; without it LiveKit assumes a default for
-// the resolution. -1 (unset) and 0 leave that default in place.
+// Leaves the codec unset: the publisher takes it from the camera's first keyframe. publish.max_bitrate_bps
+// tells LiveKit the most this camera sends, which bounds its rate target and pacing; -1 (unset) and 0
+// leave LiveKit's default for the resolution.
 template <typename EntryT>
 livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
 {
   livekit::TrackPublishOptions options;
-  options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
   if (entry.publish.max_bitrate_bps >= 0) {
@@ -236,7 +235,7 @@ StreamConfig loadConfig(const Params & params)
     if (const char * setting = findPassthroughOverride(entry)) {
       throw std::runtime_error(
         source_context + " sets " + setting +
-        ", but passthrough forwards the camera's H.264 unchanged; leave it unset");
+        ", but passthrough forwards the camera's video unchanged; leave it unset");
     }
     const std::string transform = trim(entry.transform);
     const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)

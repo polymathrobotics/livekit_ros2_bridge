@@ -26,6 +26,7 @@
 #include "core/room_connection.hpp"
 #include "core/subscription_qos.hpp"
 #include "livekit/encoded_video_source.h"
+#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -38,6 +39,7 @@
 namespace livekit_ros2_bridge::video
 {
 
+struct EncodedVideoFrame;
 class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
@@ -99,10 +101,10 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking
-  // for a keyframe) whenever it waits for one. A failed publish throws; a failed send is logged and
-  // frames are discarded until the next keyframe.
-  void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
+  // Passthrough: publishes an EncodedVideoSource in the frames' codec on the first keyframe, and
+  // again at a keyframe in another codec; discards frames (asking for a keyframe) whenever it waits
+  // for one. A failed publish throws; a failed send is logged and waits for the next keyframe.
+  void captureEncoded(EncodedVideoFrame encoded, const std::function<void()> & request_key_frame);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
   // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe. A publish stalls
@@ -116,14 +118,14 @@ private:
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
-  void onKeyFrameWithoutParameterSets();
+  void onKeyFrameWithoutParameterSets(livekit::VideoCodec codec);
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
   // Callbacks for RawI420 pipelines.
   PipelineCallbacks makePipelineCallbacks(
     std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
-  // Callbacks for EncodedH264 (passthrough) pipelines; request_key_frame asks the
+  // Callbacks for EncodedVideo (passthrough) pipelines; request_key_frame asks the
   // source for a keyframe.
   PipelineCallbacks makeEncodedPipelineCallbacks(
     std::function<bool()> is_shutdown,
@@ -135,13 +137,14 @@ private:
 
   // Passthrough helpers returning bool, except sendEncodedFrameLocked(), return whether to request
   // a keyframe; callers do so after releasing mutex_ (see captureEncoded()).
-  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
+  bool captureEncodedLocked(EncodedVideoFrame encoded);
   void logWaitingForFirstKeyFrameLocked();
   // Returns whether the frame was sent; a failure is logged and waits for the next keyframe.
   bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
-  void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
+  // Unpublishes the track of another codec first, if there is one.
+  void publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height);
   bool handleEncodedFeedbackLocked(std::size_t frame_bytes);
   void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
   void logResumedLocked();

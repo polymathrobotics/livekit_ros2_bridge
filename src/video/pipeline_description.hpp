@@ -17,6 +17,8 @@
 #include <chrono>
 #include <string>
 
+#include "livekit/video_codec.h"
+
 namespace livekit_ros2_bridge::video
 {
 
@@ -26,6 +28,23 @@ inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
 
 // How much video the passthrough pipeline's bridge queue holds.
 inline constexpr auto kBridgeQueueDuration = std::chrono::seconds(1);
+
+// A codec passthrough forwards, with the media type its parser outputs and the layout the LiveKit
+// SDK expects: one access unit (H.264, H.265) or temporal unit (AV1) per buffer.
+struct PassthroughFormat
+{
+  livekit::VideoCodec codec;
+  // As publish.codec spells it.
+  const char * name;
+  const char * media_type;
+  const char * layout;
+};
+
+inline constexpr PassthroughFormat kPassthroughFormats[] = {
+  {livekit::VideoCodec::H264, "h264", "video/x-h264", "stream-format=byte-stream,alignment=au"},
+  {livekit::VideoCodec::H265, "h265", "video/x-h265", "stream-format=byte-stream,alignment=au"},
+  {livekit::VideoCodec::AV1, "av1", "video/x-av1", "stream-format=obu-stream,alignment=tu"},
+};
 
 inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
 {
@@ -48,9 +67,17 @@ inline std::string buildPipelineDescription(const std::string & source, const st
 inline std::string buildPassthroughPipelineDescription(const std::string & source)
 {
   std::string description = source;
-  // The source must emit the Annex-B, one-picture-per-buffer H.264 the LiveKit SDK expects,
-  // normally by ending with h264parse config-interval=-1; anything else fails to link or negotiate here.
-  description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
+  // The source must emit one of these, normally by ending with its codec's parser; anything else
+  // fails to link or negotiate here.
+  std::string caps;
+  for (const PassthroughFormat & format : kPassthroughFormats) {
+    caps += caps.empty() ? "" : ";";
+    caps += format.media_type;
+    caps += ",";
+    caps += format.layout;
+  }
+  description += " ! ";
+  description += caps;
   // Never drop: a lost encoded frame corrupts the picture until the next keyframe. An overrun of
   // this queue is the "fell behind" signal; the 32 MiB cap backstops buffers without timestamps,
   // which never reach the time limit.
