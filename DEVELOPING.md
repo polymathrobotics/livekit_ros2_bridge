@@ -32,7 +32,7 @@ To check the whole tree rather than only staged files, run `pre-commit run --all
 The bridge follows [semantic versioning](https://semver.org). A release is a `vX.Y.Z` tag on
 `main` with a GitHub release, and the notes on the
 [Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
-changelog. The bridge isn't released through bloom, so there is no `CHANGELOG.rst`.
+changelog.
 `polymath_core` pins the bridge to a release tag in `repos-jazzy.yaml`.
 
 A change is breaking when it can stop a deployed client or launch file from working: the client
