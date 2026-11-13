@@ -18,7 +18,7 @@ if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
 
-set(LIVEKIT_SDK_VERSION "1.12.2")
+set(LIVEKIT_SDK_VERSION "1.13.1")
 set(
   LIVEKIT_SDK_BASE_URL
   "https://github.com/livekit/client-sdk-cpp/releases/download/v${LIVEKIT_SDK_VERSION}"
@@ -62,13 +62,13 @@ macro(livekit_ros2_bridge_configure_sdk)
   if(_sdk_distro STREQUAL "jammy")
     set(_sdk_ubuntu_version "22.04")
 
-    set(_sdk_x64_sha256 "a262e98006f95bd24f75c44068eeeaeb91d4830c75f6c20fee032c8fefd1b034")
-    set(_sdk_arm64_sha256 "57234960500ea1013fd89e6c9cac313bd90170101f8366da973d61d46ef104e9")
+    set(_sdk_x64_sha256 "df818eda28c916873efd2cc280c7fcd7cd81bb1be246617946f19ba6a07bb29d")
+    set(_sdk_arm64_sha256 "b82f81baca79c1510962adef65f5611b10ef9545e1d44a664a5fa29aea451fa0")
   elseif(_sdk_distro STREQUAL "noble")
     set(_sdk_ubuntu_version "24.04")
 
-    set(_sdk_x64_sha256 "a7566af830b839ec8a0682f8a2569b9f8becbba91bca85b2348a09e893d763e9")
-    set(_sdk_arm64_sha256 "7db2d9d76c014bad248d83f34d5da43d66758180b0b6b8578a1f1c5fd06e29f8")
+    set(_sdk_x64_sha256 "fac895967a8d5dba7c29659b3963b15ac3ce1eb66a2fd267cf1948be67b32405")
+    set(_sdk_arm64_sha256 "e262da42d957996c48d3694f09e330f895a5d1fdbcabc0e783524dfa4cd20340")
   else()
     message(FATAL_ERROR "LIVEKIT_SDK_DISTRO must be 'jammy' or 'noble', got '${_sdk_distro}'.")
   endif()
