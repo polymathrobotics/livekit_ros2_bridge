@@ -41,16 +41,7 @@ minor version and fixes bump the patch version. Only release PRs change the vers
 `package.xml`; feature and fix PRs leave it alone.
 
 1. Open a PR that sets the new version in `package.xml`.
-2. Once it merges, draft the release on the commit the PR landed as. `--target` needs the full SHA:
-
-   ```bash
-   sha=$(gh pr view <PR number> --json mergeCommit --jq .mergeCommit.oid)
-   gh release create vX.Y.Z --draft --target "$sha" --generate-notes
-   ```
-
-3. Edit the draft: above the generated PR list, describe the user-facing changes, with any breaking
-   change first. Publishing the draft creates the tag:
-
-   ```bash
-   gh release edit vX.Y.Z --draft=false
-   ```
+2. Once it merges, draft a GitHub release with tag `vX.Y.Z` targeting the commit the PR landed as,
+   and generate its notes.
+3. Above the generated PR list, describe the user-facing changes, with any breaking change first,
+   then publish. Publishing creates the tag.
