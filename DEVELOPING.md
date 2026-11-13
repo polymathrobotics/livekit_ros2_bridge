@@ -34,11 +34,16 @@ The bridge follows [semantic versioning](https://semver.org). A release is a `vX
 [Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
 changelog.
 
-A change is breaking when it can stop a deployed client or parameter file from working: an
-incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md), which also bumps
-the protocol version `v` there, a renamed or removed ROS parameter or a changed default, or a renamed
-topic, service, or track the bridge serves. Before 1.0.0, breaking changes and new features bump the
-minor version and fixes bump the patch version.
+A change is breaking when it can stop a deployed client or parameter file from working. That
+includes:
+
+- an incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md), which also
+  bumps the protocol version `v` there
+- a renamed or removed ROS parameter, or a changed default
+- a renamed topic, service, or track that the bridge serves
+
+Before 1.0.0, breaking changes and new features bump the minor version, and fixes bump the patch
+version.
 
 Only release PRs change the version in `package.xml`. Feature and fix PRs leave it alone, and
 describe their user-facing effect in the PR description, saying clearly when it is breaking.
