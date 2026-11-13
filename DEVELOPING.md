@@ -30,21 +30,30 @@ To check the whole tree rather than only staged files, run `pre-commit run --all
 ## Releasing
 
 The bridge follows [semantic versioning](https://semver.org). A release is a `vX.Y.Z` tag on
-`main` with a GitHub release, and the release notes are the changelog. `polymath_core` pins the
-bridge to a release tag in `repos-jazzy.yaml`.
+`main` with a GitHub release, and the notes on the
+[Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
+changelog. The bridge isn't released through bloom, so there is no `CHANGELOG.rst`.
+`polymath_core` pins the bridge to a release tag in `repos-jazzy.yaml`.
 
 A change is breaking when it can stop a deployed client or launch file from working: the client
 protocol in [docs/protocol.md](docs/protocol.md), the ROS parameters, or the names of the topics,
 services, and tracks the bridge serves. Before 1.0.0, breaking changes and new features bump the
-minor version and fixes bump the patch version.
+minor version and fixes bump the patch version. Only release PRs change the version in
+`package.xml`; feature and fix PRs leave it alone.
 
 1. Open a PR that sets the new version in `package.xml`.
-2. Once it merges, tag the merge commit and create the release:
+2. Once it merges, draft the release on the commit the PR landed as. `--target` needs the full SHA:
 
    ```bash
-   gh release create vX.Y.Z --target <merge commit> --generate-notes
+   sha=$(gh pr view <PR number> --json mergeCommit --jq .mergeCommit.oid)
+   gh release create vX.Y.Z --draft --target "$sha" --generate-notes
    ```
 
-3. Edit the release notes: above the generated PR list, describe the user-facing changes, with any
-   breaking change first.
+3. Edit the draft: above the generated PR list, describe the user-facing changes, with any breaking
+   change first. Publishing the draft creates the tag:
+
+   ```bash
+   gh release edit vX.Y.Z --draft=false
+   ```
+
 4. Bump the bridge's `version` in `polymath_core`'s `repos-jazzy.yaml` to the new tag.
