@@ -25,8 +25,10 @@
 #include "audio/pipeline_description.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "support/ros_test_support.hpp"
+#include "support/video_pipeline_callbacks.hpp"
 #include "utils/gstreamer_resources.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/pipeline_description.hpp"
@@ -76,16 +78,38 @@ std::vector<std::string> deinitGStreamerCollectingWarnings()
 bool runVideoPipeline()
 {
   std::atomic<int> frame_count{0};
-  video::GStreamerPipeline pipeline(video::PipelineCallbacks{
-    []() { return false; },
-    [&](const livekit::VideoFrame &, std::int64_t) { ++frame_count; },
-    [](const std::string &) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-  });
+  video::PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_frame = [&](const livekit::VideoFrame &, std::int64_t) { ++frame_count; };
+  video::GStreamerPipeline pipeline(callbacks);
 
   pipeline.start(
     video::buildPipelineDescription("videotestsrc is-live=true ! video/x-raw,width=64,height=48", ""), false);
+  const bool received = test_support::waitUntil([&]() { return frame_count >= kFramesBeforeStop; }, kFrameTimeout);
+  pipeline.stop();
+  return received;
+}
+
+// Also asks for a keyframe, which borrows the appsink pad the pipeline holds. The
+// bridge forwards the bytes undecoded, so zero-filled buffers with H.264 caps suffice.
+bool runEncodedVideoPipeline()
+{
+  std::atomic<int> frame_count{0};
+  video::GStreamerPipeline * pipeline_handle = nullptr;
+  video::PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+    if (++frame_count == 1) {
+      pipeline_handle->requestKeyFrame();
+    }
+  };
+  video::GStreamerPipeline pipeline(callbacks);
+  pipeline_handle = &pipeline;
+
+  pipeline.start(
+    video::buildPassthroughPipelineDescription(
+      "fakesrc is-live=true sizetype=fixed sizemax=16 filltype=zero"
+      " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
+    false,
+    video::PipelineOutput::EncodedH264);
   const bool received = test_support::waitUntil([&]() { return frame_count >= kFramesBeforeStop; }, kFrameTimeout);
   pipeline.stop();
   return received;
@@ -128,6 +152,7 @@ TEST(GStreamerLeaksTest, StoppedPipelinesLeaveNoGStreamerObjectsAlive)
   ASSERT_TRUE(isLeaksTracerActive()) << "Run this binary with GST_TRACERS=leaks, as its CMake test does.";
 
   EXPECT_TRUE(runVideoPipeline()) << "The video pipeline delivered no frames.";
+  EXPECT_TRUE(runEncodedVideoPipeline()) << "The encoded video pipeline delivered no frames.";
   EXPECT_TRUE(runAudioPipeline()) << "The audio pipeline delivered no frames.";
   EXPECT_TRUE(runAudioOutputSink()) << "The audio output sink did not start and stop its pipeline.";
 
