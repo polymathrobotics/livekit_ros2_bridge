@@ -56,7 +56,7 @@ You need:
 - a pre-minted startup token provided via `livekit.token` or `LIVEKIT_TOKEN` env variable.
 - at least one allowed topic or service in `access.rules.*.allow`
 
-For standard package build and test commands, see [DEVELOPING.md](./DEVELOPING.md).
+For build, test, and release instructions, see [DEVELOPING.md](./DEVELOPING.md).
 
 ## Quickstart
 
@@ -117,6 +117,11 @@ Not supported today:
 - full audio support beyond audio output playback
 - large topic publish payloads
 - LiveKit RTC statistics and connection quality
+
+## Releases
+
+Each version's changes are listed on the
+[Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases).
 
 ## License
 
