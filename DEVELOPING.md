@@ -39,14 +39,13 @@ Don't change the version in `package.xml`; that happens in release PRs.
 ## Releasing
 
 The bridge follows [semantic versioning](https://semver.org). A release is a `vX.Y.Z` tag on
-`main` with a GitHub release, and the notes on the
-[Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
-changelog.
+`main` with a GitHub release.
 
 A change is breaking when it can stop a deployed client or parameter file from working. That
 includes:
 
-- an incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md)
+- a protocol change that existing clients can't handle, such as a renamed or removed RPC, field,
+  or data-packet topic
 - a renamed or removed ROS parameter, or a changed default
 - a renamed or removed track, or a change to what the bridge publishes on ROS topics such as
   `/diagnostics`
