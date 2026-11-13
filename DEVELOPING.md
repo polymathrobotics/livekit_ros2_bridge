@@ -33,7 +33,6 @@ The bridge follows [semantic versioning](https://semver.org). A release is a `vX
 `main` with a GitHub release, and the notes on the
 [Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
 changelog.
-`polymath_core` pins the bridge to a release tag in `repos-jazzy.yaml`.
 
 A change is breaking when it can stop a deployed client or launch file from working: the client
 protocol in [docs/protocol.md](docs/protocol.md), the ROS parameters, or the names of the topics,
@@ -55,5 +54,3 @@ minor version and fixes bump the patch version. Only release PRs change the vers
    ```bash
    gh release edit vX.Y.Z --draft=false
    ```
-
-4. Bump the bridge's `version` in `polymath_core`'s `repos-jazzy.yaml` to the new tag.
