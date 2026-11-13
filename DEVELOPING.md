@@ -27,6 +27,12 @@ pre-commit install
 
 To check the whole tree rather than only staged files, run `pre-commit run --all-files`.
 
+## Pull requests
+
+Describe the user-facing effect of a change in its PR description, and say clearly when it is
+breaking (see [Releasing](#releasing)). The release notes are written from these descriptions.
+Leave the version in `package.xml` alone; release PRs change it.
+
 ## Releasing
 
 The bridge follows [semantic versioning](https://semver.org). A release is a `vX.Y.Z` tag on
@@ -38,15 +44,14 @@ A change is breaking when it can stop a deployed client or parameter file from w
 includes:
 
 - an incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md), which also
-  bumps the protocol version `v` there
+  bumps the protocol version there
 - a renamed or removed ROS parameter, or a changed default
-- a renamed topic, service, or track that the bridge serves
+- a renamed or removed track, or a change to what the bridge publishes on ROS topics such as
+  `/diagnostics`
+- dropping a supported ROS distro
 
 Before 1.0.0, breaking changes and new features bump the minor version, and fixes bump the patch
 version.
-
-Only release PRs change the version in `package.xml`. Feature and fix PRs leave it alone, and
-describe their user-facing effect in the PR description, saying clearly when it is breaking.
 
 1. Open a PR that sets the new version in `package.xml`.
 2. Once it merges, draft a GitHub release with tag `vX.Y.Z` targeting the commit the PR landed as,

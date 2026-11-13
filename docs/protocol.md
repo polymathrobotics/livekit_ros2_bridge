@@ -54,7 +54,11 @@ Clients MUST treat these as implementation details and MUST NOT rely on any of t
 
 The [`lkros.status`](#data-packet-topic-lkrosstatus) packet and the [`lkros.capability`](#rpc-lkroscapability) response carry a protocol version field `v`, currently `2`.
 
-`v` changes only for breaking changes. Additions such as new fields, error codes, error reasons, or features keep the same `v`; clients learn about optional features through [`lkros.capability`](#rpc-lkroscapability).
+The protocol version changes only for breaking changes. Additions such as new fields, error codes, error reasons, or features keep the same protocol version, so each side tolerates what it does not recognize:
+
+- The bridge ignores unknown fields in what clients send, unless an operation says otherwise, and answers a heartbeat entry with an unrecognized `kind` with an [`unsupported_kind`](#lkrosstatus-error-reasons) error instead of rejecting the heartbeat.
+- Clients MUST ignore unknown fields in what the bridge sends, and treat unrecognized error codes and reasons as described in [Error Model](#error-model).
+- Before relying on an optional feature, clients SHOULD check that the bridge supports it: [`lkros.capability`](#rpc-lkroscapability) advertises configured features, and a bridge that lacks an RPC method answers with the unsupported-method error (`1400`). Older bridges drop a whole heartbeat that contains an unrecognized `kind`.
 
 ### Terms
 
@@ -875,7 +879,7 @@ A bridge with an audio output sink, two other audio sources and one other video 
 - `video.other.ids` MUST be the configured other video source ids, in configured order, each trimmed of surrounding whitespace. Each id is a valid `name` for a `kind: "other_video"` heartbeat entry (see [Other-Video Flow](#other-video-flow)).
 - `audio.other` MUST be advertised if and only if at least one other audio source is configured (`audio_other_ids`); it MUST NOT be advertised with an empty list.
 - `audio.other.ids` MUST be the configured other audio source ids, in configured order, each trimmed of surrounding whitespace. Each id is a valid `name` for a `kind: "other_audio"` heartbeat entry (see [Other-Audio Flow](#other-audio-flow)).
-- The schema is additive: new feature names and new fields MAY appear in later versions, and clients MUST ignore unknown feature names and unknown fields.
+- The schema is additive: new feature names and new fields MAY appear without changing the protocol version, and clients MUST ignore unknown feature names and unknown fields.
 - A bridge that predates this RPC answers with the LiveKit SDK's built-in unsupported-method error (`1400`). A client MUST treat that error as "this bridge does not support capability discovery" and MUST NOT interpret it as an empty feature set; the error and the empty `features` object are the two states of the discovery contract.
 
 ### Notes
