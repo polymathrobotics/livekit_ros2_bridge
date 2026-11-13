@@ -148,10 +148,11 @@ livekit_ros2_bridge:
           type: bool
           default_value: false
           description: >-
-            Forward this source's H.264 to LiveKit unchanged instead of decoding
-            and re-encoding it. The source must output Annex-B H.264, one access
-            unit per buffer, normally by ending with h264parse
-            config-interval=-1. See docs/configuration.md.
+            Forward this source's H.264, or experimentally H.265 or AV1, to
+            LiveKit unchanged instead of decoding and re-encoding it, in the
+            codec of its first keyframe. End the source with h264parse
+            config-interval=-1, h265parse config-interval=-1, or av1parse. See
+            docs/configuration.md.
         publish:
           codec:
             type: string
