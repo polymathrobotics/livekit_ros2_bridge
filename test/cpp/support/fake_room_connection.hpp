@@ -84,6 +84,7 @@ struct FakeRoomConnectionState
   std::vector<std::string> unpublished_data_track_names;
   std::vector<std::string> published_video_track_names;
   std::vector<livekit::TrackPublishOptions> published_video_options;
+  std::vector<std::shared_ptr<livekit::VideoSource>> published_video_sources;
   std::vector<std::string> unpublished_video_track_names;
   std::vector<std::string> published_audio_track_names;
   std::vector<livekit::TrackPublishOptions> published_audio_options;
@@ -248,13 +249,13 @@ public:
     const std::shared_ptr<livekit::VideoSource> & source,
     const livekit::TrackPublishOptions & options) override
   {
-    (void)source;
     std::function<void(const std::string & name)> hook;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       state->event_log.push_back("publish_video_track:" + name);
       state->published_video_track_names.push_back(name);
       state->published_video_options.push_back(options);
+      state->published_video_sources.push_back(source);
       state->notePublishedVideoTrack();
       hook = state->publish_video_track_hook;
     }
