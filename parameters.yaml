@@ -151,7 +151,7 @@ livekit_ros2_bridge:
             description: >-
               Optional encoder for this other video source. Empty or auto lets
               LiveKit encode the decoded video; pre_encoded forwards the
-              source's H.264 unchanged. See docs/configuration.md.
+              source's encoded video unchanged. See docs/configuration.md.
             validation:
               one_of<>: [['', auto, pre_encoded]]
           codec:
