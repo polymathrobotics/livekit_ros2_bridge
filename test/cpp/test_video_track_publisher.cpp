@@ -12,18 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
+#include "support/scoped_log_capture.hpp"
+#include "video/pipeline_description.hpp"
 #include "video/track_publisher.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -33,6 +40,9 @@ namespace
 
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
+
+// Slack for waits that must clearly outlast an interval or let another thread block.
+constexpr auto kTimingMargin = std::chrono::milliseconds(100);
 
 StreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
 {
@@ -53,6 +63,36 @@ livekit::VideoFrame makeFrame(int width, int height)
     height,
     livekit::VideoBufferType::I420,
     std::vector<std::uint8_t>(luma_size + (2U * chroma_plane_size), 128U));
+}
+
+StreamSpec makePassthroughSpec(const std::string & stream_key, const std::string & track_name)
+{
+  StreamSpec spec = makeSpec(stream_key, track_name);
+  spec.publish_options.video_codec = livekit::VideoCodec::H264;
+  spec.publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  spec.publish_options.simulcast = false;
+  return spec;
+}
+
+livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe, std::uint32_t width, std::uint32_t height)
+{
+  livekit::EncodedVideoSource::Frame frame;
+  frame.is_keyframe = is_keyframe;
+  frame.width = width;
+  frame.height = height;
+  frame.timestamp_us = 1000;
+  // Annex-B start code and an IDR (type 5) or non-IDR (type 1) slice header.
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
+  return frame;
+}
+
+// LiveKit rejects an empty frame, so sending this one fails.
+livekit::EncodedVideoSource::Frame makeEmptyDeltaFrame()
+{
+  livekit::EncodedVideoSource::Frame frame = makeEncodedFrame(false, 64, 48);
+  frame.data.clear();
+  return frame;
 }
 
 TEST(TrackPublisherTest, RepublishesOnSizeChangeAndUnpublishesOnDestruction)
@@ -202,6 +242,248 @@ TEST(TrackPublisherTest, BlockingPublishStillUnpublishesOnceOnDestruction)
   EXPECT_EQ(
     connection.state->unpublished_video_track_names,
     (std::vector<std::string>{"lkros.video.camera.concurrent_shutdown"}));
+}
+
+TEST(TrackPublisherTest, PassthroughPublishesEncodedSourceOnFirstKeyFrame)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:passthrough", "lkros.video.passthrough"));
+
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(connection.state->publishedVideoTrackCount(), 0U);
+  // Delta frames before the first keyframe are discarded; the request is throttled.
+  EXPECT_EQ(key_frame_requests, 1);
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(
+    connection.state->event_log,
+    (std::vector<std::string>{
+      "publish_video_track:lkros.video.passthrough",
+      "unpublish_video_track:lkros.video.passthrough",
+    }));
+  ASSERT_EQ(connection.state->published_video_options.size(), 1U);
+  const auto & options = connection.state->published_video_options.front();
+  ASSERT_TRUE(options.frame_metadata_features.has_value());
+  EXPECT_TRUE(options.frame_metadata_features->user_timestamp);
+  ASSERT_EQ(connection.state->published_video_sources.size(), 1U);
+  EXPECT_NE(
+    std::dynamic_pointer_cast<livekit::EncodedVideoSource>(connection.state->published_video_sources.front()), nullptr);
+  // Throttled: one line, logged at the first discarded frame.
+  EXPECT_EQ(
+    logs.fieldValues(
+      {"video_stream_passthrough_waiting_for_key_frame", "stream_key=stream:passthrough"}, "discarded_frames"),
+    std::vector<std::string>{"1"});
+}
+
+TEST(TrackPublisherTest, PassthroughSizeChangeDoesNotRepublish)
+{
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:resize", "lkros.video.resize"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(true, 128, 96), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 128, 96), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(
+    connection.state->event_log,
+    (std::vector<std::string>{
+      "publish_video_track:lkros.video.resize",
+      "unpublish_video_track:lkros.video.resize",
+    }));
+}
+
+TEST(TrackPublisherTest, PassthroughAwaitKeyFrameDiscardsUntilNextKeyFrame)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:restart", "lkros.video.restart"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(key_frame_requests, 0);
+
+  publisher->awaitKeyFrame();
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.restart"}));
+  EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.restart"}));
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:restart"}, "discarded_frames"),
+    std::vector<std::string>{"2"});
+  // Only the first wait logs: later ones follow a logged restart or fall behind.
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 0U);
+}
+
+TEST(TrackPublisherTest, PassthroughFellBehindRequestsThrottledKeyFrameAndDiscardsUntilIt)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:behind", "lkros.video.behind"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  // Overruns right after the publish are its backlog draining.
+  std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
+  publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+  // The queue overruns again while it stays full; that must not ask again.
+  publisher->onFellBehind(request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  // Once the keyframe arrives, the next fall behind asks again right away.
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 2);
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:behind"}, "discarded_frames"),
+    std::vector<std::string>{"1"});
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_fell_behind", "stream_key=stream:behind"}, "count"),
+    std::vector<std::string>{"1"});
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.behind"}));
+}
+
+TEST(TrackPublisherTest, PassthroughIgnoresFellBehindWhileFirstKeyFramePublishes)
+{
+  FakeRoomConnection connection;
+  std::promise<void> publish_started_promise;
+  std::future<void> publish_started_future = publish_started_promise.get_future();
+  std::promise<void> release_publish_promise;
+  std::shared_future<void> release_publish_future = release_publish_promise.get_future().share();
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    publish_started_promise.set_value();
+    (void)release_publish_future.wait_for(std::chrono::seconds(10));
+  };
+  std::atomic<int> key_frame_requests{0};
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:slow_publish", "lkros.video.slow_publish"));
+
+  auto capture_future = std::async(
+    std::launch::async, [&]() { publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame); });
+  const bool publish_started = publish_started_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+  auto fell_behind_future = std::async(std::launch::async, [&]() { publisher->onFellBehind(request_key_frame); });
+  // Let onFellBehind() reach the publisher and wait for the publish to end.
+  std::this_thread::sleep_for(kTimingMargin);
+  release_publish_promise.set_value();
+  capture_future.get();
+  fell_behind_future.get();
+  // Still live: the delta frame is sent, not discarded while waiting for a keyframe.
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_TRUE(publish_started);
+  EXPECT_EQ(key_frame_requests.load(), 0);
+}
+
+TEST(TrackPublisherTest, PassthroughIgnoresFellBehindForOneQueueLengthAfterSlowPublish)
+{
+  FakeRoomConnection connection;
+  // Longer than the bridge queue holds, so the backlog overruns it as it drains.
+  connection.state->publish_video_track_hook = [](const std::string &) {
+    std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
+  };
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:stalled_publish", "lkros.video.stalled_publish"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 0);
+
+  std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
+  publisher->onFellBehind(request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
+}
+
+TEST(TrackPublisherTest, PassthroughPublishFailureThrowsAndRetriesAtNextKeyFrame)
+{
+  FakeRoomConnection connection;
+  int publish_attempts = 0;
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    ++publish_attempts;
+    if (publish_attempts == 1) {
+      throw std::runtime_error("simulated video publish failure");
+    }
+  };
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:retry", "lkros.video.retry"));
+
+  // Thrown like a raw-frame failure, so the pipeline fails and restarts.
+  EXPECT_THROW(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame), std::runtime_error);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(publish_attempts, 1);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(publish_attempts, 2);
+  EXPECT_EQ(
+    connection.state->published_video_track_names,
+    (std::vector<std::string>{"lkros.video.retry", "lkros.video.retry"}));
+  EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.retry"}));
+}
+
+TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher = std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send", "lkros.video.send"));
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  EXPECT_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame), std::invalid_argument);
+  // The picture is broken until the next keyframe, so delta frames are discarded
+  // even before the pipeline restart lands.
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  publisher.reset();
+
+  EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
+  // Only the delta frame after the failure was discarded.
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
+    std::vector<std::string>{"1"});
 }
 
 }  // namespace

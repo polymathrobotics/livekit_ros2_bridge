@@ -23,6 +23,7 @@
 #include <functional>
 #include <string>
 
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_resources.hpp"
 
@@ -32,6 +33,14 @@ namespace livekit_ros2_bridge::video
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
+enum class PipelineOutput
+{
+  // Raw I420 frames for LiveKit to encode.
+  RawI420,
+  // Annex-B H.264 access units forwarded to LiveKit unchanged (passthrough).
+  EncodedH264,
+};
+
 struct PipelineCallbacks
 {
   std::function<bool()> is_shutdown;
@@ -39,6 +48,16 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
+  // EncodedH264 only.
+  std::function<void(livekit::EncodedVideoSource::Frame frame)> on_encoded_frame;
+  // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
+  std::function<void()> on_fell_behind;
+  // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
+  // the bridge's H.264 caps. offered_caps may be empty.
+  std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
+  // EncodedH264 only: called before on_encoded_frame for each keyframe that lacks SPS or PPS,
+  // which a viewer starting at that keyframe needs to decode it.
+  std::function<void()> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final
@@ -56,8 +75,13 @@ public:
   // Borrowed pointer; non-null after start(..., require_appsrc=true) until stop() or next start().
   GstAppSrc * appsrc() const noexcept;
 
-  void start(const std::string & description, bool require_appsrc);
+  void start(const std::string & description, bool require_appsrc, PipelineOutput output = PipelineOutput::RawI420);
   void stop();
+
+  // Asks the source for a keyframe (upstream force-key-unit); a no-op without a pipeline. Call it
+  // only from a pipeline callback, which stop() waits for before releasing the pad. The event runs
+  // through the source's elements on the calling thread, so one that takes its stream lock could block.
+  void requestKeyFrame();
 
 private:
   bool beginCallback();
@@ -67,6 +91,7 @@ private:
 
   GstFlowReturn onSample(GstAppSink * sink);
   void onBusMessage(GstMessage * message);
+  void onQueueOverrun();
 
   static constexpr std::size_t kCallbacksStopped = ~(~std::size_t{0} >> 1U);
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
@@ -75,6 +100,14 @@ private:
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
+  PipelineOutput output_ = PipelineOutput::RawI420;
+  // EncodedH264 only: the bridge queue, held from start() so stop() disconnects
+  // overrun_handler_ from the element it was connected to.
+  GstElementPtr bridge_queue_;
+  gulong overrun_handler_ = 0U;
+  // Owned reference to the appsink's sink pad, released by stop(); atomic so
+  // requestKeyFrame() can run on a pipeline callback's thread.
+  std::atomic<GstPad *> key_frame_pad_{nullptr};
 };
 
 }  // namespace livekit_ros2_bridge::video
