@@ -43,8 +43,7 @@ changelog.
 A change is breaking when it can stop a deployed client or parameter file from working. That
 includes:
 
-- an incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md), which also
-  bumps the protocol version there
+- an incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md)
 - a renamed or removed ROS parameter, or a changed default
 - a renamed or removed track, or a change to what the bridge publishes on ROS topics such as
   `/diagnostics`
