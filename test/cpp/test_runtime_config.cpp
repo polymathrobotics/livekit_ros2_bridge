@@ -121,8 +121,8 @@ void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const l
 
 livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bitrate_bps = 0)
 {
+  // No codec: the publisher takes it from the source's first keyframe.
   livekit::TrackPublishOptions options;
-  options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
   if (max_bitrate_bps > 0) {
@@ -598,7 +598,7 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
   std::filesystem::remove(params_path);
 }
 
-TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedH264AndIgnoresGlobalPublishDefaults)
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedVideoAndIgnoresGlobalPublishDefaults)
 {
   auto options = makePassthroughSourceOptions();
   appendVideoPublishOverrides(options, "vp8", 900000, 15.0, "enabled");
@@ -669,12 +669,12 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
       std::string{"video.other.front."} + rejected_override.key, rejected_override.value);
 
     const std::string expected_error = std::string{"other video source 'front' sets "} + rejected_override.key +
-                                       ", but passthrough forwards the camera's H.264 unchanged; leave it unset";
+                                       ", but passthrough forwards the camera's video unchanged; leave it unset";
     expectConfigError(rejected_override.node_name, options, expected_error.c_str());
   }
 }
 
-TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps)
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedUnsupportedCaps)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
@@ -682,8 +682,8 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps
   options.append_parameter_override("video.other.front.passthrough", true);
 
   // vp8enc's output caps are known when the pipeline is parsed, so linking it to
-  // the bridge's H.264 caps filter already fails at startup.
-  expectConfigErrorContains("startup_config_passthrough_rejects_fixed_non_h264_caps", options, "could not link");
+  // the bridge's passthrough caps filter already fails at startup.
+  expectConfigErrorContains("startup_config_passthrough_rejects_fixed_unsupported_caps", options, "could not link");
 }
 
 TEST_F(RuntimeConfigTest, OtherAudioLoadsWithGlobalAndPerSourcePublishOptions)

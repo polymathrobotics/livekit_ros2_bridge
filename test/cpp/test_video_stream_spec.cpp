@@ -280,14 +280,15 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
-// The source parses its own H.264; the bridge only checks its format and never drops a frame,
+// The source parses its own video; the bridge only checks its format and never drops a frame,
 // since a lost encoded frame corrupts the picture until the next keyframe.
-TEST(PipelineDescriptionTest, PassthroughEndingChecksH264FormatWithoutDroppingFrames)
+TEST(PipelineDescriptionTest, PassthroughEndingChecksFormatWithoutDroppingFrames)
 {
   EXPECT_EQ(
     buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"),
     "rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"
-    " ! video/x-h264,stream-format=byte-stream,alignment=au"
+    " ! video/x-h264,stream-format=byte-stream,alignment=au;video/x-h265,stream-format=byte-stream,alignment=au;"
+    "video/x-av1,stream-format=obu-stream,alignment=tu"
     " ! queue max-size-buffers=0 max-size-bytes=33554432 max-size-time=1000000000 leaky=no"
     " ! appsink name=bridge_video_sink sync=false");
 }

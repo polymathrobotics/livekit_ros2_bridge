@@ -48,7 +48,7 @@ public:
 private:
   PipelineCallbacks makePipelineCallbacks();
   // Coalesces repeated failures (EOS/error messages, a restart that throws) while a restart
-  // is pending. caps_mismatch adds the passthrough H.264 format hint to the log.
+  // is pending. caps_mismatch adds the passthrough format hint to the log.
   void onPipelineFailure(const std::string & reason, bool caps_mismatch = false, const std::string & offered_caps = {});
   void restartPipelineAfterFailure();
   void startPipelineLocked();

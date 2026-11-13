@@ -118,8 +118,9 @@ void GStreamerStream::onPipelineFailure(
   if (caps_mismatch) {
     event.fieldQuoted(
       "hint",
-      "the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
-      "config-interval=-1");
+      "the source must output H.264 or H.265 as an Annex-B byte stream with one access unit per buffer, or AV1 as "
+      "an OBU stream with one temporal unit per buffer; end it with h264parse config-interval=-1, h265parse "
+      "config-interval=-1, or av1parse");
   }
   if (!offered_caps.empty()) {
     event.fieldQuoted("offered_caps", offered_caps);
@@ -156,7 +157,7 @@ void GStreamerStream::startPipelineLocked()
 {
   const auto & input = requireOtherInput(spec_);
   if (input.passthrough) {
-    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
+    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedVideo);
     return;
   }
   pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);

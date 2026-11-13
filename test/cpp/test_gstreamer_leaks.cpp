@@ -96,7 +96,7 @@ bool runEncodedVideoPipeline()
   std::atomic<int> frame_count{0};
   video::GStreamerPipeline * pipeline_handle = nullptr;
   video::PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+  callbacks.on_encoded_frame = [&](video::EncodedVideoFrame) {
     if (++frame_count == 1) {
       pipeline_handle->requestKeyFrame();
     }
@@ -109,7 +109,7 @@ bool runEncodedVideoPipeline()
       "fakesrc is-live=true sizetype=fixed sizemax=16 filltype=zero"
       " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
     false,
-    video::PipelineOutput::EncodedH264);
+    video::PipelineOutput::EncodedVideo);
   const bool received = test_support::waitUntil([&]() { return frame_count >= kFramesBeforeStop; }, kFrameTimeout);
   pipeline.stop();
   return received;

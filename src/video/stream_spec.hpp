@@ -40,7 +40,7 @@ struct OtherSource
   std::string name;
   std::string source_fragment;
   std::string transform_fragment;
-  // Forward the source's H.264 to LiveKit unchanged instead of re-encoding it.
+  // Forward the source's H.264, H.265, or AV1 to LiveKit unchanged instead of re-encoding it.
   bool passthrough = false;
   livekit::TrackPublishOptions publish_options;
 };
