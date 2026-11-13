@@ -34,14 +34,18 @@ The bridge follows [semantic versioning](https://semver.org). A release is a `vX
 [Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases) are the
 changelog.
 
-A change is breaking when it can stop a deployed client or launch file from working: the client
-protocol in [docs/protocol.md](docs/protocol.md), the ROS parameters, or the names of the topics,
-services, and tracks the bridge serves. Before 1.0.0, breaking changes and new features bump the
-minor version and fixes bump the patch version. Only release PRs change the version in
-`package.xml`; feature and fix PRs leave it alone.
+A change is breaking when it can stop a deployed client or parameter file from working: an
+incompatible change to the client protocol in [docs/protocol.md](docs/protocol.md), which also bumps
+the protocol version `v` there, a renamed or removed ROS parameter or a changed default, or a renamed
+topic, service, or track the bridge serves. Before 1.0.0, breaking changes and new features bump the
+minor version and fixes bump the patch version.
+
+Only release PRs change the version in `package.xml`. Feature and fix PRs leave it alone, and
+describe their user-facing effect in the PR description, saying clearly when it is breaking.
 
 1. Open a PR that sets the new version in `package.xml`.
 2. Once it merges, draft a GitHub release with tag `vX.Y.Z` targeting the commit the PR landed as,
    and generate its notes.
-3. Above the generated PR list, describe the user-facing changes, with any breaking change first,
-   then publish. Publishing creates the tag.
+3. Above the generated PR list, write the user-facing changes under Breaking, Added, Changed, and
+   Fixed, leaving out empty headings, with a migration note for each breaking change. Then publish;
+   publishing creates the tag.

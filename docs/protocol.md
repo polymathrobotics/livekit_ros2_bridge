@@ -54,6 +54,8 @@ Clients MUST treat these as implementation details and MUST NOT rely on any of t
 
 The [`lkros.status`](#data-packet-topic-lkrosstatus) packet and the [`lkros.capability`](#rpc-lkroscapability) response carry a protocol version field `v`, currently `2`.
 
+`v` changes only for breaking changes. Additions such as new fields, error codes, error reasons, or features keep the same `v`; clients learn about optional features through [`lkros.capability`](#rpc-lkroscapability).
+
 ### Terms
 
 - **bridge**: the `livekit_ros2_bridge` participant in the LiveKit room.
@@ -150,7 +152,7 @@ The bridge MUST NOT invent a reply channel for a domain that does not have one. 
 
 Input validation errors (bad arguments, out-of-range values) MUST map to `2400`. All other unhandled errors MUST map to `2500` unless the handler has already raised a more specific code.
 
-These codes are stable. New codes MAY be added in later protocol versions; clients SHOULD treat unrecognized codes as equivalent to `2500`.
+These codes are stable. New codes MAY be added without changing the protocol version; clients SHOULD treat unrecognized codes as equivalent to `2500`.
 
 ### `lkros.status` Error Reasons
 
@@ -162,7 +164,7 @@ When a heartbeat target fails individually, the corresponding [`lkros.status`](#
 | `not_found` | lookup or subscription creation failed for another reason |
 | `unsupported_kind` | the bridge does not support the entry's subscription kind |
 
-New reasons MAY be added in later versions of this specification; clients SHOULD treat unrecognized reasons as equivalent to `not_found`, so adding a reason such as `unsupported_kind` does not change the protocol version.
+New reasons MAY be added without changing the protocol version; clients SHOULD treat unrecognized reasons as equivalent to `not_found`.
 
 ### Example
 

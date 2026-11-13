@@ -118,6 +118,11 @@ Not supported today:
 - large topic publish payloads
 - LiveKit RTC statistics and connection quality
 
+## Releases
+
+Each version's changes are listed on the
+[Releases page](https://github.com/polymathrobotics/livekit_ros2_bridge/releases).
+
 ## License
 
 Apache License 2.0
