@@ -85,7 +85,7 @@ target_link_libraries(livekit_ros2_bridge_utils PRIVATE
 add_library(livekit_ros2_bridge_video STATIC
   src/video/gstreamer_pipeline.cpp
   src/video/gstreamer_stream.cpp
-  src/video/h264_access_unit.cpp
+  src/video/access_unit.cpp
   src/video/ros_stream.cpp
   src/video/stream_config.cpp
   src/video/stream_spec.cpp
@@ -296,7 +296,7 @@ if(BUILD_TESTING)
     PkgConfig::gstreamer-video
   )
   livekit_ros2_bridge_add_test(test_video_track_publisher test/cpp/test_video_track_publisher.cpp)
-  livekit_ros2_bridge_add_test(test_h264_access_unit test/cpp/test_h264_access_unit.cpp livekit_ros2_bridge_video)
+  livekit_ros2_bridge_add_test(test_access_unit test/cpp/test_access_unit.cpp livekit_ros2_bridge_video)
   livekit_ros2_bridge_add_test(test_audio_stream_spec test/cpp/test_audio_stream_spec.cpp)
   livekit_ros2_bridge_add_test(
     test_audio_streams

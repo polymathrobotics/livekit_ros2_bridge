@@ -28,7 +28,7 @@
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
-#include "video/h264_access_unit.hpp"
+#include "video/access_unit.hpp"
 #include "video/pipeline_description.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -171,14 +171,14 @@ UnpackedH264Frame unpackH264Frame(GstSample * sample, std::int64_t timestamp_us)
 
   const auto * data = static_cast<const std::uint8_t *>(mapping.get()->data);
   const std::size_t size = mapping.get()->size;
-  const AccessUnitSummary summary = summarizeAccessUnit(data, size);
+  const AccessUnitSummary summary = summarizeH264AccessUnit(data, size);
   UnpackedH264Frame unpacked;
-  unpacked.frame.is_keyframe = summary.is_idr;
+  unpacked.frame.is_keyframe = summary.is_key_frame;
   unpacked.frame.width = static_cast<std::uint32_t>(width);
   unpacked.frame.height = static_cast<std::uint32_t>(height);
   unpacked.frame.timestamp_us = timestamp_us;
   unpacked.frame.data.assign(data, data + size);
-  unpacked.lacks_parameter_sets = summary.is_idr && !summary.has_parameter_sets;
+  unpacked.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
   return unpacked;
 }
 
