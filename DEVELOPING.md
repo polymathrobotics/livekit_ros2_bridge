@@ -29,9 +29,12 @@ To check the whole tree rather than only staged files, run `pre-commit run --all
 
 ## Pull requests
 
-Describe the user-facing effect of a change in its PR description, and say clearly when it is
-breaking (see [Releasing](#releasing)). The release notes are written from these descriptions.
-Leave the version in `package.xml` alone; release PRs change it.
+In the PR description:
+
+- describe what changes for users of the bridge
+- say clearly if the change is breaking (see [Releasing](#releasing))
+
+Don't change the version in `package.xml`; that happens in release PRs.
 
 ## Releasing
 
