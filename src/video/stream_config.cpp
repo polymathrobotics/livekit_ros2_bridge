@@ -177,7 +177,7 @@ livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
   options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
-  if (entry.publish.max_bitrate_bps >= 0) {
+  if (entry.publish.max_bitrate_bps > 0) {
     setEncoding(options, static_cast<std::uint64_t>(entry.publish.max_bitrate_bps), 0.0);
   }
   return options;
