@@ -221,36 +221,6 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
-// A static vp8enc link already fails to parse (and config validation rejects it); the
-// demuxer's dynamic pad fails at runtime like an RTSP camera would.
-TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
-{
-  std::mutex mismatch_mutex;
-  std::string offered_caps;
-  std::atomic<bool> mismatch_reported{false};
-  std::atomic<bool> failure_reported{false};
-  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_caps_mismatch = [&](const std::string &, const std::string & caps) {
-    const std::lock_guard<std::mutex> lock(mismatch_mutex);
-    if (!mismatch_reported.exchange(true)) {
-      offered_caps = caps;
-    }
-  };
-  callbacks.on_failed = [&](const std::string &) { failure_reported = true; };
-  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
-
-  pipeline.start(
-    buildPassthroughPipelineDescription(
-      "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"),
-    false);
-  const bool reported = test_support::waitUntil([&]() { return mismatch_reported.load(); }, std::chrono::seconds(10));
-  pipeline.stop();
-
-  ASSERT_TRUE(reported);
-  EXPECT_EQ(offered_caps.rfind("video/x-vp8", 0U), 0U) << offered_caps;
-  EXPECT_FALSE(failure_reported.load());
-}
-
 // Holds the first frame, as a stalled consumer would, until the bridge queue overruns. The
 // pipeline must contain and log what on_fell_behind throws.
 TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
@@ -420,7 +390,10 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
   const bool hint_logged = test_support::waitUntil(explained, std::chrono::seconds(10));
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
-  EXPECT_TRUE(hint_logged);
+  ASSERT_TRUE(hint_logged);
+  EXPECT_EQ(
+    logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint}),
+    logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 
