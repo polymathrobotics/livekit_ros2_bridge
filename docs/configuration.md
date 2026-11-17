@@ -164,7 +164,7 @@ Supported ROS video inputs:
 | `video.other.<id>.passthrough` | `false` | `true`, `false` | Forward the source's H.264 to LiveKit without decoding or re-encoding. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
 | `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec`. With `passthrough`, only empty, `h264`, or `auto`; they change nothing. |
 | `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps`. With `passthrough`, the most the camera sends; `-1` or `0` leaves LiveKit's default. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
-| `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate`. With `passthrough`, must stay unset. |
+| `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate`. With `passthrough`, only `-1.0` or `0`. |
 | `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast`. With `passthrough`, only empty, `disabled`, or `auto`; they change nothing. |
 
 Other video notes:
@@ -177,7 +177,6 @@ Other video notes:
 - `transform` is optional and sits between your ingress and the bridge-owned tail
 - the bridge appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`, unless `passthrough` is set (see [Passthrough](#passthrough-for-cameras-that-already-send-h264))
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
-- with `passthrough`, `source` may not name an element `bridge_video_queue`; the bridge reserves that name for its own queue
 - with `passthrough`, `source` must end in Annex-B H.264 with one access unit per buffer and caps that include width and height, normally `h264parse config-interval=-1`
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
@@ -372,7 +371,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
    - a non-H.264 source whose output caps are fixed when the pipeline is built (for example an encoder linked directly) is rejected at startup with a `could not link` error; one with dynamic pads (RTSP, demuxers) fails when the stream starts, and `video_stream_pipeline_recovery_scheduled` carries the hint `the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse config-interval=-1`
    - a source whose caps lack width and height gets the same hint
    - when the bridge can find them, `offered_caps` on the same event shows the caps the source produced
-   - on a passthrough entry, leave `transform` and `publish.max_framerate` unset; `publish.codec` may also be `h264` or `auto`, and `publish.simulcast` may also be `disabled` or `auto`, because passthrough always sends the camera's H.264 unchanged, as one stream at the camera's frame rate
+   - on a passthrough entry, leave `transform` empty; `publish.codec` may also be `h264` or `auto`, `publish.simulcast` may also be `disabled` or `auto`, and `publish.max_framerate` may also be `0`, because passthrough always sends the camera's H.264 unchanged, as one stream at the camera's frame rate
    - startup rejects any other value with an error that names the full parameter, such as `video.other.front_cam.publish.codec`
    - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
    - bitrate, resolution, frame rate, and keyframe interval all come from the camera
