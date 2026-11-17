@@ -278,7 +278,7 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kSlowSendFramesPerSecond;
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
-  TrackPublisher publisher(connection, makePassthroughSpec("appsrc"));
+  TrackPublisher publisher(connection, makePassthroughSpec(kH264AppSrc));
   // Only the appsink's streaming thread uses these until pipeline.stop() returns.
   SlowSendRun run;
   std::optional<std::uint32_t> last_sent_index;
