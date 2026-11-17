@@ -21,7 +21,6 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <string>
 
 #include "livekit/encoded_video_source.h"
@@ -49,11 +48,9 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
-  // EncodedH264 only; behind_live marks a stale frame (see GStreamerPipeline::isBehindLive()).
-  // Returns whether the frame was sent rather than discarded.
-  std::function<bool(livekit::EncodedVideoSource::Frame frame, bool behind_live)> on_encoded_frame;
-  // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
-  std::function<void()> on_fell_behind;
+  // EncodedH264 only; discontinuous (the buffer's DISCONT flag) marks a frame after a gap: the
+  // bridge queue dropped frames, data was lost upstream, or a run started.
+  std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
   // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
   // the bridge's H.264 caps, or its caps lack the width and height. offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
@@ -93,12 +90,7 @@ private:
   void stopCallbacksAndWait();
 
   GstFlowReturn onSample(GstAppSink * sink);
-  // EncodedH264: a frame is behind live when its PTS trails the clock by more than kLiveLagTolerance
-  // beyond the least lag (which absorbs the source's latency) this run or since a queue length of
-  // discarding. Without a PTS, it is when frames are queued behind it.
-  bool isBehindLive(GstSample * sample);
   void onBusMessage(GstMessage * message);
-  void onQueueOverrun();
 
   static constexpr std::size_t kCallbacksStopped = ~(~std::size_t{0} >> 1U);
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
@@ -108,14 +100,6 @@ private:
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
-  // EncodedH264 only: the bridge queue, held from start() so stop() disconnects
-  // overrun_handler_ from the element it was connected to and isBehindLive() reads its level.
-  GstElementPtr bridge_queue_;
-  gulong overrun_handler_ = 0U;
-  // EncodedH264 only, used on the streaming thread: the least lag behind the clock this run, and
-  // the running time since which every frame has been behind live and discarded.
-  std::optional<GstClockTimeDiff> least_live_lag_;
-  std::optional<GstClockTime> discarding_behind_live_since_;
   // Owned reference to the appsink's sink pad, released by stop(); atomic so
   // requestKeyFrame() can run on a pipeline callback's thread.
   std::atomic<GstPad *> key_frame_pad_{nullptr};

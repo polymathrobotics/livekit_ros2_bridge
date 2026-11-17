@@ -72,18 +72,14 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking for
-  // a keyframe) while it waits for one or, after falling behind, while they are behind_live. A failed
-  // publish or send throws and waits for the next keyframe. Returns whether the frame was sent.
+  // a keyframe) while it waits for one, as after a discontinuous delta frame. A failed publish or
+  // send throws and waits for the next keyframe. Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
     const std::function<void()> & request_key_frame,
-    bool behind_live = false);
+    bool discontinuous = false);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
-  // Passthrough: the pipeline queue filled up; discard frames until one is not behind live, then resume
-  // at a keyframe. A publish stalls the queue itself, so this waits for one in progress and is ignored
-  // for kBridgeQueueDuration after.
-  void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:
   friend class GStreamerStream;
@@ -111,7 +107,7 @@ private:
 
   // Returns whether the frame was sent. Callers request a keyframe after releasing
   // mutex_ (see captureEncoded()).
-  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool behind_live);
+  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
   // Publishes the encoded source on first use; throws if the publish or send fails.
   void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
@@ -119,7 +115,7 @@ private:
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
   void logResumedLocked();
-  void logFellBehindLocked();
+  void logDiscontinuityLocked();
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
@@ -141,18 +137,15 @@ private:
 
   // Passthrough state.
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
-  // When the last publish ended, successful or not; min() before the first one. Set before the
-  // publish releases mutex_, so an overrun that waited for it falls inside the ignored window.
-  std::chrono::steady_clock::time_point encoded_publish_ended_at_ = std::chrono::steady_clock::time_point::min();
   bool awaiting_key_frame_ = true;
-  // Set on falling behind; frames are discarded until one arrives that is not behind live.
-  bool draining_backlog_ = false;
+  // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
+  bool just_published_ = false;
   // Missing parameter sets come from the source's configuration, so warn once; the publisher
   // outlives pipeline restarts.
   bool parameter_sets_warning_logged_ = false;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
-  EventThrottle fell_behind_log_throttle_{kLogThrottle};
+  EventThrottle discontinuity_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle waiting_log_throttle_{kLogThrottle};
 };

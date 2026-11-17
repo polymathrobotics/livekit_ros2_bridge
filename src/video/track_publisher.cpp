@@ -14,7 +14,6 @@
 
 #include "video/track_publisher.hpp"
 
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -29,10 +28,8 @@
 #include "livekit/video_source.h"
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
-#include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
 #include "video/gstreamer_stream.hpp"
-#include "video/pipeline_description.hpp"
 #include "video/ros_stream.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -142,10 +139,9 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
   callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
   callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
   callbacks.on_failed = std::move(on_failed);
-  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
-    return captureEncoded(std::move(frame), request_key_frame, behind_live);
+  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame, bool discontinuous) {
+    (void)captureEncoded(std::move(frame), request_key_frame, discontinuous);
   };
-  callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
   callbacks.on_key_frame_without_parameter_sets = [this]() { onKeyFrameWithoutParameterSets(); };
   return callbacks;
@@ -197,7 +193,7 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
 }
 
 bool TrackPublisher::captureEncoded(
-  livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame, bool behind_live)
+  livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame, bool discontinuous)
 {
   bool sent = false;
   bool key_frame_needed = false;
@@ -206,24 +202,31 @@ bool TrackPublisher::captureEncoded(
     if (closed_) {
       return false;
     }
-    sent = captureEncodedLocked(std::move(frame), behind_live);
+    sent = captureEncodedLocked(std::move(frame), discontinuous);
     key_frame_needed = !sent && keyFrameRequestDueLocked();
   }
   // Never call into GStreamer while holding mutex_: the request travels upstream
-  // through user-supplied source elements, and onFellBehind() waits for mutex_ on
-  // an upstream streaming thread.
+  // through user-supplied source elements, which may block on their own locks.
   if (key_frame_needed) {
     request_key_frame();
   }
   return sent;
 }
 
-bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool behind_live)
+bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous)
 {
-  // After falling behind, the backlog is stale, keyframes included; it ends at the
-  // first frame that is not behind live.
-  draining_backlog_ = draining_backlog_ && behind_live;
-  if (draining_backlog_ || (awaiting_key_frame_ && !frame.is_keyframe)) {
+  // Frames before this one were dropped or lost, so a delta frame can't be decoded. While already
+  // waiting for a keyframe, as at the start of a run, that changes nothing.
+  const bool follows_publish = std::exchange(just_published_, false);
+  if (discontinuous && !awaiting_key_frame_) {
+    if (!follows_publish) {
+      logDiscontinuityLocked();
+    }
+    if (!frame.is_keyframe) {
+      awaitKeyFrameLocked();
+    }
+  }
+  if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
     logWaitingForFirstKeyFrameLocked();
     return false;
@@ -258,7 +261,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 {
   // Until the first keyframe publishes there is no track, and nothing else says
-  // why. Later waits follow a logged fall behind or restart.
+  // why. Later waits follow a logged discontinuity or restart.
   if (encoded_source_ != nullptr || waiting_log_throttle_.record() == 0U) {
     return;
   }
@@ -307,43 +310,17 @@ void TrackPublisher::awaitKeyFrame()
     return;
   }
 
-  // A pipeline that (re)starts has an empty queue, so there is no backlog to drop.
-  draining_backlog_ = false;
   awaitKeyFrameLocked();
 }
 
-void TrackPublisher::onFellBehind(const std::function<void()> & request_key_frame)
+void TrackPublisher::logDiscontinuityLocked()
 {
-  bool key_frame_needed = false;
-  {
-    // Waits out a publish, which holds mutex_ and stalls the sample thread on the server. Overruns
-    // during it, and the backlog draining after it, aren't falling behind.
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (closed_ || std::chrono::steady_clock::now() < encoded_publish_ended_at_ + kBridgeQueueDuration) {
-      return;
-    }
-
-    // Drop the backlog, then resume at the next keyframe. Discarding is quick, so the
-    // backlog drains and the feed resumes live, even when every frame is a keyframe.
-    draining_backlog_ = true;
-    awaitKeyFrameLocked();
-    key_frame_needed = keyFrameRequestDueLocked();
-    logFellBehindLocked();
-  }
-  // Called outside mutex_; see captureEncoded().
-  if (key_frame_needed) {
-    request_key_frame();
-  }
-}
-
-void TrackPublisher::logFellBehindLocked()
-{
-  const std::size_t pending = fell_behind_log_throttle_.record();
+  const std::size_t pending = discontinuity_log_throttle_.record();
   if (pending == 0U) {
     return;
   }
 
-  LogEvent(kLogger, "video_stream_passthrough_fell_behind")
+  LogEvent(kLogger, "video_stream_passthrough_discontinuity")
     .fieldOr("stream_key", spec_.stream_key)
     .field("count", pending)
     .warn();
@@ -370,11 +347,11 @@ void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32
 {
   auto source = std::make_shared<livekit::EncodedVideoSource>(
     livekit::VideoCodec::H264, static_cast<int>(width), static_cast<int>(height));
-  const ScopeExit publishing_exit([this]() { encoded_publish_ended_at_ = std::chrono::steady_clock::now(); });
   auto track =
     connection_.publishVideoTrack(spec_.track_name, source, publishOptionsWithFrameMetadata(spec_.publish_options));
   encoded_source_ = std::move(source);
   track_ = std::move(track);
+  just_published_ = true;
 }
 
 void TrackPublisher::close()

@@ -16,8 +16,6 @@
 
 #include <gst/video/video.h>
 
-#include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -41,10 +39,6 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.gstreamer_video_pipeline");
-
-// Well under the bridge queue, so the feed resumes near live after falling behind, yet above
-// ordinary capture and network jitter.
-constexpr auto kLiveLagTolerance = std::chrono::milliseconds(250);
 
 // Runs inside the C callbacks' catch blocks, so a failure to log is dropped
 // rather than thrown back into GStreamer.
@@ -210,9 +204,7 @@ UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, 
   return unpacked;
 }
 
-// Sets `sent` when on_encoded_frame sends the frame.
-GstFlowReturn deliverEncodedSample(
-  GstSample * sample, std::int64_t timestamp_us, bool behind_live, const PipelineCallbacks & callbacks, bool & sent)
+GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
 {
   // Reported like a format mismatch, so the log carries the h264parse hint. Not-negotiated
   // stops the flow, so this runs once per pipeline run rather than once per sample.
@@ -223,9 +215,10 @@ GstFlowReturn deliverEncodedSample(
     return GST_FLOW_NOT_NEGOTIATED;
   }
 
+  GstBuffer * buffer = gst_sample_get_buffer(sample);
   UnpackedH264Frame unpacked;
   try {
-    unpacked = unpackH264Frame(gst_sample_get_buffer(sample), *picture_size, timestamp_us);
+    unpacked = unpackH264Frame(buffer, *picture_size, timestamp_us);
   } catch (const std::exception & exc) {
     callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
@@ -242,7 +235,7 @@ GstFlowReturn deliverEncodedSample(
     if (unpacked.lacks_parameter_sets) {
       callbacks.on_key_frame_without_parameter_sets();
     }
-    sent = callbacks.on_encoded_frame(std::move(unpacked.frame), behind_live);
+    callbacks.on_encoded_frame(std::move(unpacked.frame), GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT));
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks.on_capture_failed(exc.what());
@@ -318,19 +311,6 @@ std::string findUnlinkedSourceCaps(GstBin * bin)
   return offered_caps;
 }
 
-// The element whose src pad feeds `sink_pad`, or null when nothing is linked to it.
-GstElementPtr findUpstreamElement(GstPad * sink_pad)
-{
-  if (sink_pad == nullptr) {
-    return nullptr;
-  }
-  const GstObjectPtr<GstPad> peer(gst_pad_get_peer(sink_pad));
-  if (peer == nullptr) {
-    return nullptr;
-  }
-  return GstElementPtr(gst_pad_get_parent_element(peer.get()));
-}
-
 }  // namespace
 
 GStreamerPipeline::GStreamerPipeline(PipelineCallbacks callbacks, PipelineOutput output)
@@ -391,8 +371,6 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   ensureGStreamerInitialized();
   stop();
   resumeCallbacks();
-  least_live_lag_.reset();
-  discarding_behind_live_since_.reset();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
@@ -428,37 +406,10 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   GstAppSinkPtr appsink(GST_APP_SINK(sink_element.release()));
   GstObjectPtr<GstPad> sink_pad(gst_element_get_static_pad(GST_ELEMENT(appsink.get()), "sink"));
 
-  // Encoded frames can't be dropped, so the bridge queue blocks when full; its
-  // overrun is the signal that the consumer fell behind.
-  GstElementPtr queue;
-  if (output_ == PipelineOutput::EncodedH264) {
-    queue = findUpstreamElement(sink_pad.get());
-    if (queue == nullptr) {
-      throw std::runtime_error("Video pipeline did not link the expected queue to its appsink.");
-    }
-  }
-
   // Set these before installing the callbacks below, which read them.
   pipeline_ = std::move(pipeline);
   appsrc_ = std::move(appsrc);
   key_frame_pad_.store(sink_pad.release(), std::memory_order_release);
-
-  // stop() disconnects this C callback before releasing the bin. Like the
-  // callbacks below, it catches everything.
-  if (queue != nullptr) {
-    bridge_queue_ = std::move(queue);
-    overrun_handler_ = g_signal_connect(
-      bridge_queue_.get(),
-      "overrun",
-      G_CALLBACK(+[](GstElement *, gpointer user_data) {
-        try {
-          static_cast<GStreamerPipeline *>(user_data)->onQueueOverrun();
-        } catch (...) {
-          logContainedException("queue_overrun");
-        }
-      }),
-      this);
-  }
 
   // stop() clears this C callback before releasing the bin. It catches
   // everything: an exception unwinding through GStreamer's C frames would
@@ -514,11 +465,6 @@ void GStreamerPipeline::stop()
     gst_app_sink_set_callbacks(GST_APP_SINK(appsink.get()), &callbacks, nullptr, nullptr);
   }
 
-  if (bridge_queue_ != nullptr) {
-    g_signal_handler_disconnect(bridge_queue_.get(), overrun_handler_);
-    overrun_handler_ = 0U;
-  }
-
   GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
   gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
   const GstStateChangeReturn result = gst_element_set_state(pipeline_.get(), GST_STATE_NULL);
@@ -527,8 +473,6 @@ void GStreamerPipeline::stop()
   }
   stopCallbacksAndWait();
 
-  // isBehindLive() reads the queue's level until the callbacks stop.
-  bridge_queue_.reset();
   appsrc_.reset();
   pipeline_.reset();
 }
@@ -562,13 +506,7 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
                                       : 0;
 
   if (output_ == PipelineOutput::EncodedH264) {
-    const bool behind_live = isBehindLive(sample.get());
-    bool sent = false;
-    const GstFlowReturn result = deliverEncodedSample(sample.get(), timestamp_us, behind_live, callbacks_, sent);
-    if (!behind_live || sent) {
-      discarding_behind_live_since_.reset();
-    }
-    return result;
+    return deliverEncodedSample(sample.get(), timestamp_us, callbacks_);
   }
 
   livekit::VideoFrame frame;
@@ -596,47 +534,6 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     callbacks_.on_capture_failed(std::string(kUnknownExceptionValue));
     return GST_FLOW_ERROR;
   }
-}
-
-bool GStreamerPipeline::isBehindLive(GstSample * sample)
-{
-  GstBuffer * buffer = gst_sample_get_buffer(sample);
-  const GstSegment * segment = gst_sample_get_segment(sample);
-  const GstClockTime now = gst_element_get_current_running_time(pipeline_.get());
-  const GstClockTime running_time = buffer != nullptr && segment != nullptr && GST_BUFFER_PTS_IS_VALID(buffer)
-                                      ? gst_segment_to_running_time(segment, GST_FORMAT_TIME, GST_BUFFER_PTS(buffer))
-                                      : GST_CLOCK_TIME_NONE;
-  if (!GST_CLOCK_TIME_IS_VALID(now) || !GST_CLOCK_TIME_IS_VALID(running_time)) {
-    // Read after the pull, so it counts only the frames behind this one; thread-safe.
-    guint frames_queued_behind = 0U;
-    g_object_get(bridge_queue_.get(), "current-level-buffers", &frames_queued_behind, nullptr);
-    return frames_queued_behind > 0U;
-  }
-
-  const GstClockTimeDiff lag = GST_CLOCK_DIFF(running_time, now);
-  least_live_lag_ = std::min(least_live_lag_.value_or(lag), lag);
-  if (lag - *least_live_lag_ <= std::chrono::nanoseconds(kLiveLagTolerance).count()) {
-    return false;
-  }
-
-  // Still discarding a queue length later means the source's lag itself rose (or its PTS jumped
-  // back), not a backlog; take this lag as live so the drain ends.
-  discarding_behind_live_since_ = discarding_behind_live_since_.value_or(now);
-  if (GST_CLOCK_DIFF(*discarding_behind_live_since_, now) <= std::chrono::nanoseconds(kBridgeQueueDuration).count()) {
-    return true;
-  }
-  least_live_lag_ = lag;
-  discarding_behind_live_since_.reset();
-  return false;
-}
-
-void GStreamerPipeline::onQueueOverrun()
-{
-  if (!beginCallback()) {
-    return;
-  }
-  const ScopeExit callback_exit([this]() { endCallback(); });
-  callbacks_.on_fell_behind();
 }
 
 void GStreamerPipeline::onBusMessage(GstMessage * message)

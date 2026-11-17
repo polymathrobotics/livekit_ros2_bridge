@@ -138,17 +138,19 @@ livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
   return frame;
 }
 
-// A live source of IDR access units pushed through the bridge appsrc, one per buffer.
-constexpr char kKeyFrameAppSrc[] =
+// A live source of H.264 access units pushed through the bridge appsrc, one per buffer.
+constexpr char kH264AppSrc[] =
   "appsrc name=bridge_video_src is-live=true format=time"
   " caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\"";
 
-// Pushes an IDR access unit to kKeyFrameAppSrc whose index follows its slice header.
-void pushIndexedKeyFrame(GstAppSrc * appsrc, std::uint32_t frame_index, std::chrono::nanoseconds timestamp)
+// Pushes an IDR or non-IDR access unit to kH264AppSrc whose index follows its slice header.
+void pushIndexedFrame(
+  GstAppSrc * appsrc, std::uint32_t frame_index, bool is_keyframe, std::chrono::nanoseconds timestamp)
 {
   const auto index_high = static_cast<std::uint8_t>(frame_index >> 8U);
   const auto index_low = static_cast<std::uint8_t>(frame_index & 0xFFU);
-  const std::uint8_t access_unit[] = {0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U, index_high, index_low};
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  const std::uint8_t access_unit[] = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U, index_high, index_low};
   GstBuffer * buffer = gst_buffer_new_memdup(access_unit, sizeof(access_unit));
   GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(timestamp.count());
   (void)gst_app_src_push_buffer(appsrc, buffer);
@@ -248,144 +250,96 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
-// Holds the first frame, as a stalled consumer would, until the bridge queue overruns. The
-// pipeline must contain and log what on_fell_behind throws.
-TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
+// What the publisher sent in a passthrough run with slow sends.
+struct SlowSendRun
 {
-  test_support::ScopedLogCapture logs;
-  std::atomic<bool> fell_behind{false};
-  const auto reported_fell_behind = [&]() { return fell_behind.load(); };
-  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame, bool) {
-    return test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
-  };
-  callbacks.on_fell_behind = [&]() {
-    fell_behind = true;
-    throw std::runtime_error("simulated fell behind failure");
-  };
-  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
+  std::uint32_t sent_frames = 0U;
+  std::uint32_t sent_delta_frames = 0U;
+  // Sent delta frames whose previous frame was not sent, so viewers could not decode them.
+  std::uint32_t undecodable_delta_frames = 0U;
+  // Sent frames whose previous frame was not sent.
+  std::uint32_t resumes_after_gap = 0U;
+  // The most frames pushed after a frame by the time it was sent.
+  std::uint32_t most_frames_behind = 0U;
+  int key_frame_requests = 0;
+  std::size_t discontinuity_warnings = 0U;
+};
 
-  // datarate stamps each 16-byte buffer 0.1 s after the last, so ten of them fill the queue.
-  pipeline.start(
-    buildPassthroughPipelineDescription(
-      "fakesrc format=time datarate=160 sizetype=fixed sizemax=16 filltype=zero"
-      " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
-    false);
-  const bool reported = test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
-  pipeline.stop();
+constexpr std::uint32_t kSlowSendFramesPerSecond = 30U;
+constexpr auto kFramesPerBridgeQueue =
+  static_cast<std::uint32_t>(kSlowSendFramesPerSecond * kBridgeQueueDuration / std::chrono::seconds(1));
 
-  EXPECT_TRUE(reported);
-  EXPECT_GE(
-    logs.countLines(
-      {"video_pipeline_callback_failed", "callback=queue_overrun", "error=simulated fell behind failure"}),
-    1U);
-}
-
-// A live 30 fps all-IDR source whose frames take 100 ms each to send, behind a 2 s publish that
-// backs frames up past the bridge queue, as in an rtpjitterbuffer. Each handled overrun must drop
-// the whole backlog: resuming at a queued keyframe would stay further behind than the queue holds.
-TEST_F(StreamTest, PassthroughPipelineWithSlowSendsDropsBacklogInsteadOfFallingFurtherBehind)
+// A live 30 fps source with a keyframe every `key_frame_interval` frames, whose frames take
+// 100 ms each to send, as when the uplink is too slow, so the bridge can send a third of them.
+SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
 {
-  constexpr std::uint32_t kFramesPerSecond = 30U;
-  constexpr std::uint32_t kFrameCount = kFramesPerSecond * 9U / 2U;
-  constexpr std::uint32_t kFramesPerQueue = kFramesPerSecond * static_cast<std::uint32_t>(kBridgeQueueDuration.count());
+  constexpr std::uint32_t kFrameCount = kSlowSendFramesPerSecond * 5U / 2U;
   constexpr auto kSendDuration = std::chrono::milliseconds(100);
-  const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kFramesPerSecond;
+  const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kSlowSendFramesPerSecond;
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
-  connection.state->publish_video_track_hook = [](const std::string &) {
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-  };
   TrackPublisher publisher(connection, makePassthroughSpec("appsrc"));
-  const std::function<void()> request_key_frame = []() {};
+  // Only the appsink's streaming thread uses these until pipeline.stop() returns.
+  SlowSendRun run;
+  std::optional<std::uint32_t> last_sent_index;
+  const std::function<void()> request_key_frame = [&run]() { ++run.key_frame_requests; };
   std::atomic<std::uint32_t> pushed_frames{0U};
-  std::atomic<bool> discarded_any{false};
-  std::atomic<std::uint32_t> most_frames_behind_after_discarding{0U};
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool discontinuous) {
     const std::uint32_t frame_index = readFrameIndex(frame);
-    if (!publisher.captureEncoded(std::move(frame), request_key_frame, behind_live)) {
-      discarded_any = true;
-      return false;
+    const std::uint32_t frames_behind = pushed_frames.load() - 1U - frame_index;
+    const bool is_keyframe = frame.is_keyframe;
+    if (!publisher.captureEncoded(std::move(frame), request_key_frame, discontinuous)) {
+      return;
     }
-    if (discarded_any) {
-      const std::uint32_t frames_behind = pushed_frames.load() - 1U - frame_index;
-      most_frames_behind_after_discarding = std::max(most_frames_behind_after_discarding.load(), frames_behind);
-    }
+    const bool follows_gap = last_sent_index.has_value() && *last_sent_index + 1U != frame_index;
+    ++run.sent_frames;
+    run.sent_delta_frames += is_keyframe ? 0U : 1U;
+    run.undecodable_delta_frames += !is_keyframe && (follows_gap || !last_sent_index.has_value()) ? 1U : 0U;
+    run.resumes_after_gap += follows_gap ? 1U : 0U;
+    run.most_frames_behind = std::max(run.most_frames_behind, frames_behind);
+    last_sent_index = frame_index;
     std::this_thread::sleep_for(kSendDuration);
-    return true;
   };
-  callbacks.on_fell_behind = [&]() { publisher.onFellBehind(request_key_frame); };
   GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
 
-  // identity releases the frames backed up in appsrc at most one per 5 ms, so the queue can empty first.
-  pipeline.start(
-    buildPassthroughPipelineDescription(std::string(kKeyFrameAppSrc) + " ! identity sleep-time=5000"), true);
+  pipeline.start(buildPassthroughPipelineDescription(kH264AppSrc), true);
   const auto started_at = std::chrono::steady_clock::now();
   for (std::uint32_t frame_index = 0U; frame_index < kFrameCount; ++frame_index) {
     std::this_thread::sleep_until(started_at + frame_index * frame_interval);
     pushed_frames = frame_index + 1U;
-    pushIndexedKeyFrame(pipeline.appsrc(), frame_index, frame_index * frame_interval);
+    pushIndexedFrame(
+      pipeline.appsrc(), frame_index, frame_index % key_frame_interval == 0U, frame_index * frame_interval);
   }
   pipeline.stop();
 
-  ASSERT_GE(logs.countLines({"video_stream_passthrough_fell_behind"}), 1U);
-  EXPECT_TRUE(discarded_any.load()) << "no queued frame was discarded";
-  EXPECT_LE(most_frames_behind_after_discarding.load(), kFramesPerQueue * 3U / 2U);
+  run.discontinuity_warnings = logs.countLines({"video_stream_passthrough_discontinuity"});
+  return run;
 }
 
-// From the seventh frame on, frames arrive 1 s after their timestamps rather than at once, as when
-// network latency rises for good; then sends slow down until the bridge falls behind. Every frame
-// now looks behind live, so the drain must give up after a queue length instead of freezing the feed.
-TEST_F(StreamTest, PassthroughDrainEndsWhenTheSourceLagRisesForGood)
+// Every frame is a keyframe, so each one can resume the feed; the bridge must still drop
+// frames rather than fall further behind than its queue holds.
+TEST_F(StreamTest, PassthroughWithSlowSendsStaysWithinTheQueueOfLive)
 {
-  constexpr std::uint32_t kFramesPerSecond = 30U;
-  constexpr std::uint32_t kFramesBeforeLagRises = 6U;
-  constexpr std::uint32_t kFrameCount = kFramesPerSecond * 7U / 2U;
-  constexpr auto kAddedLag = std::chrono::seconds(1);
-  constexpr auto kSendDuration = std::chrono::milliseconds(200);
-  constexpr auto kTimingMargin = std::chrono::milliseconds(500);
-  const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kFramesPerSecond;
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  TrackPublisher publisher(connection, makePassthroughSpec("appsrc"));
-  const std::function<void()> request_key_frame = []() {};
-  // Only the appsink's streaming thread uses these until pipeline.stop() returns.
-  std::optional<std::chrono::steady_clock::time_point> discarding_since;
-  std::chrono::steady_clock::duration longest_discarding = std::chrono::steady_clock::duration::zero();
-  std::size_t resumed_count = 0U;
-  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
-    const auto now = std::chrono::steady_clock::now();
-    if (!publisher.captureEncoded(std::move(frame), request_key_frame, behind_live)) {
-      discarding_since = discarding_since.value_or(now);
-      return false;
-    }
-    if (discarding_since.has_value()) {
-      ++resumed_count;
-      longest_discarding = std::max(longest_discarding, now - *discarding_since);
-      discarding_since.reset();
-    }
-    std::this_thread::sleep_for(kSendDuration);
-    return true;
-  };
-  callbacks.on_fell_behind = [&]() { publisher.onFellBehind(request_key_frame); };
-  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
+  const SlowSendRun run = runPassthroughWithSlowSends(1U);
 
-  pipeline.start(buildPassthroughPipelineDescription(kKeyFrameAppSrc), true);
-  const auto started_at = std::chrono::steady_clock::now();
-  for (std::uint32_t frame_index = 0U; frame_index < kFrameCount; ++frame_index) {
-    const auto timestamp = frame_index * frame_interval;
-    const auto added_lag = frame_index < kFramesBeforeLagRises ? std::chrono::nanoseconds(0) : kAddedLag;
-    std::this_thread::sleep_until(started_at + timestamp + added_lag);
-    pushIndexedKeyFrame(pipeline.appsrc(), frame_index, timestamp);
-  }
-  pipeline.stop();
+  EXPECT_GE(run.sent_frames, 2U);
+  EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
+  EXPECT_GE(run.discontinuity_warnings, 1U);
+  EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
+}
 
-  ASSERT_GE(logs.countLines({"video_stream_passthrough_fell_behind"}), 1U);
-  EXPECT_GE(resumed_count, 1U) << "the feed never resumed after falling behind";
-  EXPECT_FALSE(discarding_since.has_value()) << "the feed was still discarding when the source stopped";
-  EXPECT_LE(longest_discarding, kBridgeQueueDuration + kTimingMargin);
+// With delta frames, a frame after dropped ones can't be decoded, so nothing but a keyframe
+// may follow a gap.
+TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
+{
+  const SlowSendRun run = runPassthroughWithSlowSends(10U);
+
+  EXPECT_GE(run.sent_delta_frames, 1U);
+  EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
+  EXPECT_EQ(run.undecodable_delta_frames, 0U);
+  EXPECT_GE(run.key_frame_requests, 1);
+  EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
