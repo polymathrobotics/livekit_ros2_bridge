@@ -137,10 +137,6 @@ void GStreamerStream::restartPipelineAfterFailure()
   pipeline_.stop();
   // Failures the old pipeline reported during this run must not restart the new one.
   failure_handler_.cancelPending();
-  // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
-  if (requireOtherInput(spec_).passthrough) {
-    publisher_.awaitKeyFrame();
-  }
   try {
     startPipelineLocked();
   } catch (const std::exception & exc) {
@@ -156,6 +152,8 @@ void GStreamerStream::startPipelineLocked()
 {
   const auto & input = requireOtherInput(spec_);
   if (input.passthrough) {
+    // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
+    publisher_.awaitKeyFrame();
     pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
     return;
   }
