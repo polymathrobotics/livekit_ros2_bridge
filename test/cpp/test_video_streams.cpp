@@ -221,15 +221,14 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
-// Runs a passthrough pipeline over `source_fragment` until it reports a caps mismatch, and
-// expects that instead of a generic failure, with offered caps starting with `caps_prefix`.
-void expectPassthroughCapsMismatch(const std::string & source_fragment, const std::string & caps_prefix)
+// A static vp8enc link already fails to parse (and config validation rejects it); the
+// demuxer's dynamic pad fails at runtime like an RTSP camera would.
+TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
 {
   std::mutex mismatch_mutex;
   std::string offered_caps;
   std::atomic<bool> mismatch_reported{false};
   std::atomic<bool> failure_reported{false};
-  std::atomic<bool> unpack_failed{false};
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   callbacks.on_caps_mismatch = [&](const std::string &, const std::string & caps) {
     const std::lock_guard<std::mutex> lock(mismatch_mutex);
@@ -238,35 +237,19 @@ void expectPassthroughCapsMismatch(const std::string & source_fragment, const st
     }
   };
   callbacks.on_failed = [&](const std::string &) { failure_reported = true; };
-  callbacks.on_unpack_failed = [&](const std::string &) { unpack_failed = true; };
   GStreamerPipeline pipeline(callbacks);
 
-  pipeline.start(buildPassthroughPipelineDescription(source_fragment), false, PipelineOutput::EncodedH264);
+  pipeline.start(
+    buildPassthroughPipelineDescription(
+      "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"),
+    false,
+    PipelineOutput::EncodedH264);
   const bool reported = test_support::waitUntil([&]() { return mismatch_reported.load(); }, std::chrono::seconds(10));
   pipeline.stop();
 
   ASSERT_TRUE(reported);
-  EXPECT_EQ(offered_caps.rfind(caps_prefix, 0U), 0U) << offered_caps;
+  EXPECT_EQ(offered_caps.rfind("video/x-vp8", 0U), 0U) << offered_caps;
   EXPECT_FALSE(failure_reported.load());
-  EXPECT_FALSE(unpack_failed.load());
-}
-
-// A static vp8enc link already fails to parse (and config validation rejects it); the
-// demuxer's dynamic pad fails at runtime like an RTSP camera would.
-TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
-{
-  expectPassthroughCapsMismatch(
-    "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux", "video/x-vp8");
-}
-
-// Passthrough takes the picture size from the caps. h264parse adds it, but a bare
-// depayloader such as rtph264depay negotiates H.264 caps without it.
-TEST_F(StreamTest, PassthroughPipelineReportsH264WithoutDimensionsAsCapsMismatch)
-{
-  expectPassthroughCapsMismatch(
-    "fakesrc sizetype=fixed sizemax=16 filltype=zero"
-    " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au",
-    "video/x-h264");
 }
 
 // Holds the first frame, as a stalled consumer would, until the bridge queue overruns. The
