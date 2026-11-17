@@ -392,8 +392,9 @@ TEST(TrackPublisherTest, PassthroughIgnoresFellBehindWhileFirstKeyFramePublishes
     std::launch::async, [&]() { publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame); });
   const bool publish_started = publish_started_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
   auto fell_behind_future = std::async(std::launch::async, [&]() { publisher->onFellBehind(request_key_frame); });
-  // Let onFellBehind() reach the publisher and wait for the publish to end.
-  std::this_thread::sleep_for(kTimingMargin);
+  // onFellBehind() waits out the publish, which holds mutex_.
+  EXPECT_EQ(fell_behind_future.wait_for(kTimingMargin), std::future_status::timeout)
+    << "onFellBehind() returned during the publish";
   release_publish_promise.set_value();
   capture_future.get();
   fell_behind_future.get();
@@ -452,7 +453,6 @@ TEST(TrackPublisherTest, PassthroughPublishFailureThrowsAndRetriesAtNextKeyFrame
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
   publisher.reset();
 
-  EXPECT_EQ(publish_attempts, 2);
   EXPECT_EQ(
     connection.state->published_video_track_names,
     (std::vector<std::string>{"lkros.video.retry", "lkros.video.retry"}));
