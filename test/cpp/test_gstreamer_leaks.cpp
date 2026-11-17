@@ -101,15 +101,14 @@ bool runEncodedVideoPipeline()
       pipeline_handle->requestKeyFrame();
     }
   };
-  video::GStreamerPipeline pipeline(callbacks);
+  video::GStreamerPipeline pipeline(callbacks, video::PipelineOutput::EncodedH264);
   pipeline_handle = &pipeline;
 
   pipeline.start(
     video::buildPassthroughPipelineDescription(
       "fakesrc is-live=true sizetype=fixed sizemax=16 filltype=zero"
       " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
-    false,
-    video::PipelineOutput::EncodedH264);
+    false);
   const bool received = test_support::waitUntil([&]() { return frame_count >= kFramesBeforeStop; }, kFrameTimeout);
   pipeline.stop();
   return received;

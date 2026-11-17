@@ -325,8 +325,9 @@ GstElementPtr findUpstreamElement(GstPad * sink_pad)
 
 }  // namespace
 
-GStreamerPipeline::GStreamerPipeline(PipelineCallbacks callbacks)
+GStreamerPipeline::GStreamerPipeline(PipelineCallbacks callbacks, PipelineOutput output)
 : callbacks_(std::move(callbacks))
+, output_(output)
 {}
 
 GStreamerPipeline::~GStreamerPipeline()
@@ -377,7 +378,7 @@ void GStreamerPipeline::stopCallbacksAndWait()
   }
 }
 
-void GStreamerPipeline::start(const std::string & description, bool require_appsrc, PipelineOutput output)
+void GStreamerPipeline::start(const std::string & description, bool require_appsrc)
 {
   ensureGStreamerInitialized();
   stop();
@@ -420,7 +421,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   // Encoded frames can't be dropped, so the bridge queue blocks when full; its
   // overrun is the signal that the consumer fell behind.
   GstElementPtr queue;
-  if (output == PipelineOutput::EncodedH264) {
+  if (output_ == PipelineOutput::EncodedH264) {
     queue = findUpstreamElement(sink_pad.get());
     if (queue == nullptr) {
       throw std::runtime_error("Video pipeline did not link the expected queue to its appsink.");
@@ -430,7 +431,6 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   // Set these before installing the callbacks below, which read them.
   pipeline_ = std::move(pipeline);
   appsrc_ = std::move(appsrc);
-  output_ = output;
   key_frame_pad_.store(sink_pad.release(), std::memory_order_release);
 
   // stop() disconnects this C callback before releasing the bin. Like the

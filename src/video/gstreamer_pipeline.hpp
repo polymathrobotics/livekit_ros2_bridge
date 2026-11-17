@@ -63,7 +63,8 @@ struct PipelineCallbacks
 class GStreamerPipeline final
 {
 public:
-  explicit GStreamerPipeline(PipelineCallbacks callbacks);
+  // A pipeline keeps its output mode for its lifetime; every start() produces that output.
+  explicit GStreamerPipeline(PipelineCallbacks callbacks, PipelineOutput output = PipelineOutput::RawI420);
   ~GStreamerPipeline();
 
   GStreamerPipeline(const GStreamerPipeline &) = delete;
@@ -75,7 +76,7 @@ public:
   // Borrowed pointer; non-null after start(..., require_appsrc=true) until stop() or next start().
   GstAppSrc * appsrc() const noexcept;
 
-  void start(const std::string & description, bool require_appsrc, PipelineOutput output = PipelineOutput::RawI420);
+  void start(const std::string & description, bool require_appsrc);
   void stop();
 
   // Asks the source for a keyframe (upstream force-key-unit); a no-op without a pipeline. Call it
@@ -97,10 +98,10 @@ private:
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
 
   const PipelineCallbacks callbacks_;
+  const PipelineOutput output_;
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
-  PipelineOutput output_ = PipelineOutput::RawI420;
   // EncodedH264 only: the bridge queue, held from start() so stop() disconnects
   // overrun_handler_ from the element it was connected to.
   GstElementPtr bridge_queue_;

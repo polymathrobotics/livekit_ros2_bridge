@@ -237,13 +237,12 @@ TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
     }
   };
   callbacks.on_failed = [&](const std::string &) { failure_reported = true; };
-  GStreamerPipeline pipeline(callbacks);
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
 
   pipeline.start(
     buildPassthroughPipelineDescription(
       "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"),
-    false,
-    PipelineOutput::EncodedH264);
+    false);
   const bool reported = test_support::waitUntil([&]() { return mismatch_reported.load(); }, std::chrono::seconds(10));
   pipeline.stop();
 
@@ -267,15 +266,14 @@ TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
     fell_behind = true;
     throw std::runtime_error("simulated fell behind failure");
   };
-  GStreamerPipeline pipeline(callbacks);
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
 
   // datarate stamps each 16-byte buffer 0.1 s after the last, so ten of them fill the queue.
   pipeline.start(
     buildPassthroughPipelineDescription(
       "fakesrc format=time datarate=160 sizetype=fixed sizemax=16 filltype=zero"
       " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48"),
-    false,
-    PipelineOutput::EncodedH264);
+    false);
   const bool reported = test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
   pipeline.stop();
 

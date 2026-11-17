@@ -39,7 +39,9 @@ constexpr auto kRestartDelay = std::chrono::milliseconds(250);
 GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 : spec_(std::move(spec))
 , publisher_(publisher)
-, pipeline_(makePipelineCallbacks())
+, pipeline_(
+    makePipelineCallbacks(),
+    requireOtherInput(spec_).passthrough ? PipelineOutput::EncodedH264 : PipelineOutput::RawI420)
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 
@@ -154,7 +156,7 @@ void GStreamerStream::startPipelineLocked()
   if (input.passthrough) {
     // A passthrough pipeline may start mid-stream; viewers need a keyframe first.
     publisher_.awaitKeyFrame();
-    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false, PipelineOutput::EncodedH264);
+    pipeline_.start(buildPassthroughPipelineDescription(input.source_fragment), false);
     return;
   }
   pipeline_.start(buildPipelineDescription(input.source_fragment, input.transform_fragment), false);
