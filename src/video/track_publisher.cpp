@@ -262,13 +262,18 @@ void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 {
   // Until the first keyframe publishes there is no track, and nothing else says
   // why. Later waits follow a logged discontinuity or restart.
-  if (encoded_source_ != nullptr || waiting_log_throttle_.record() == 0U) {
+  if (encoded_source_ != nullptr) {
+    return;
+  }
+  const std::size_t pending = waiting_log_throttle_.record();
+  if (pending == 0U) {
     return;
   }
 
   LogEvent(kLogger, "video_stream_passthrough_waiting_for_key_frame")
     .fieldOr("stream_key", spec_.stream_key)
     .field("discarded_frames", discarded_frame_count_)
+    .field("count", pending)
     .info();
 }
 

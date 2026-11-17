@@ -276,6 +276,9 @@ TEST(TrackPublisherTest, PassthroughPublishesEncodedSourceOnFirstKeyFrame)
     logs.fieldValues(
       {"video_stream_passthrough_waiting_for_key_frame", "stream_key=stream:passthrough"}, "discarded_frames"),
     std::vector<std::string>{"1"});
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_waiting_for_key_frame", "stream_key=stream:passthrough"}, "count"),
+    std::vector<std::string>{"1"});
 }
 
 TEST(TrackPublisherTest, PassthroughSizeChangeDoesNotRepublish)
