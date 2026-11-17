@@ -356,12 +356,12 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
        video.other.front_cam.publish.max_bitrate_bps: 2000000  # the camera's configured bitrate
    ```
 
-   - the bridge appends the caps `video/x-h264,stream-format=byte-stream,alignment=au` (Annex-B, one access unit per buffer, which `h264parse` produces), a queue that never drops frames and holds up to about 1 s of video or 32 MiB, whichever fills first, and its own sink
+   - the bridge appends the caps `video/x-h264,stream-format=byte-stream,alignment=au` (Annex-B, one access unit per buffer, which `h264parse` produces), a queue that holds up to about 0.5 s of video (at most 30 frames), and its own sink
    - the source's caps must also include width and height; `h264parse` adds them, but `rtph264depay` alone does not
    - `config-interval=-1` repeats the SPS and PPS before every keyframe, so a viewer who joins late or reconnects can start decoding there; if a keyframe arrives without them, the bridge logs `video_stream_passthrough_missing_parameter_sets` once per stream
    - `latency=200` keeps `rtspsrc`'s jitterbuffer short; its 2000 ms default adds two seconds of delay
    - do not use `uridecodebin`; it decodes the stream
-   - the source must be live, such as a camera or `rtspsrc`; a file source reads faster than real time, so the bridge keeps falling behind and skipping frames
+   - the source must be live, such as a camera or `rtspsrc`; a file source reads faster than real time, so the bridge keeps dropping frames
    - `h264parse` is in `gstreamer1.0-plugins-bad`, which the bridge does not depend on; the runtime environment must provide it, or startup fails
    - clients request the source and receive the track exactly as for any other video source
 
@@ -387,7 +387,8 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
    - while the bridge waits for a keyframe, it asks the source for one (an upstream GStreamer force-key-unit event); RTSP cameras honor it only if they support RTCP PLI or FIR, and many don't, in which case the bridge waits for the camera's next keyframe
    - a new viewer also waits for the camera's next keyframe
    - after startup or a pipeline restart, the bridge discards frames until the first keyframe; until the track is first published it logs `video_stream_passthrough_waiting_for_key_frame` at most once per 5 s with the frames discarded so far, and if that keeps repeating, the camera may never send IDR frames
-   - if the bridge falls more than about 1 s behind, it drops the queued backlog and resumes at a fresh keyframe instead of showing a corrupted picture, and logs `video_stream_passthrough_fell_behind` at most once per 5 s with a `count`
+   - the bridge keeps up to about 0.5 s of video; if it falls further behind, it drops the oldest frames, so the delay it adds doesn't grow
+   - after a gap, whether the bridge dropped frames or they were lost upstream (for example RTP packet loss), it discards frames until the next keyframe and asks the source for one, instead of showing a corrupted picture; it logs `video_stream_passthrough_discontinuity` at most once per 5 s with a `count`, except right after publishing the track, which stalls the stream briefly
    - once a keyframe arrives after frames were discarded, it logs `video_stream_passthrough_resumed` with the frames it discarded, at most once per 5 s with a `count`
    - if publishing the track or sending a frame fails, the bridge logs `video_stream_capture_failed`, restarts the pipeline, and then waits for a keyframe
 
