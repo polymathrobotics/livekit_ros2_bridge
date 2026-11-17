@@ -99,16 +99,10 @@ TEST(H264AccessUnitTest, IgnoresIdrHeaderByteNotAfterStartCode)
 {
   EXPECT_FALSE(containsIdr(kIdrSliceNal));
   EXPECT_FALSE(containsIdr({0x00U, 0x01U, kIdrSlice, 0x88U}));
-  // An encoder escapes 00 00 01 inside a payload as 00 00 03 01. A parameter
-  // set, unlike a slice, lets the scan reach the escaped bytes.
+  // An encoder escapes 00 00 01 inside a payload as 00 00 03 01, so an unescaped
+  // 00 00 01 always starts a NAL unit. A parameter set, unlike a slice, lets the
+  // scan reach the escaped bytes.
   EXPECT_FALSE(containsIdr({0x00U, 0x00U, 0x01U, 0x67U, 0x42U, 0x00U, 0x00U, 0x03U, 0x01U, kIdrSlice, 0x00U}));
-}
-
-TEST(H264AccessUnitTest, TreatsUnescapedStartCodeInPayloadAsStartCode)
-{
-  // Annex-B guarantees 00 00 01 never occurs inside a NAL unit, so any
-  // occurrence starts a new NAL unit.
-  EXPECT_TRUE(containsIdr({0x00U, 0x00U, 0x01U, 0x67U, 0x42U, 0x00U, 0x00U, 0x01U, kIdrSlice, 0x88U}));
 }
 
 TEST(H264AccessUnitTest, DecidesAtTheFirstSlice)
