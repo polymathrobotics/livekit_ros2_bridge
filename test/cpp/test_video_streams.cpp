@@ -253,7 +253,6 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
 // What the publisher sent in a passthrough run with slow sends.
 struct SlowSendRun
 {
-  std::uint32_t sent_frames = 0U;
   std::uint32_t sent_delta_frames = 0U;
   // Sent delta frames whose previous frame was not sent, so viewers could not decode them.
   std::uint32_t undecodable_delta_frames = 0U;
@@ -293,7 +292,6 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
       return;
     }
     const bool follows_gap = last_sent_index.has_value() && *last_sent_index + 1U != frame_index;
-    ++run.sent_frames;
     run.sent_delta_frames += is_keyframe ? 0U : 1U;
     run.undecodable_delta_frames += !is_keyframe && (follows_gap || !last_sent_index.has_value()) ? 1U : 0U;
     run.resumes_after_gap += follows_gap ? 1U : 0U;
@@ -317,13 +315,13 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   return run;
 }
 
-// Every frame is a keyframe, so each one can resume the feed; the bridge must still drop
-// frames rather than fall further behind than its queue holds.
+// Every frame is a keyframe, so each one can resume the feed without asking the source for one;
+// the bridge must still drop frames rather than fall further behind than its queue holds.
 TEST_F(StreamTest, PassthroughWithSlowSendsStaysWithinTheQueueOfLive)
 {
   const SlowSendRun run = runPassthroughWithSlowSends(1U);
 
-  EXPECT_GE(run.sent_frames, 2U);
+  EXPECT_EQ(run.key_frame_requests, 0) << "a keyframe after a gap was not sent";
   EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
   EXPECT_GE(run.discontinuity_warnings, 1U);
   EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);

@@ -327,7 +327,7 @@ TEST(TrackPublisherTest, PassthroughAwaitKeyFrameDiscardsUntilNextKeyFrame)
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:restart"}, "discarded_frames"),
     std::vector<std::string>{"2"});
-  // Only the first wait logs: later ones follow a logged restart or fall behind.
+  // Only the first wait logs: later ones follow a logged restart or discontinuity.
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 0U);
 }
 
