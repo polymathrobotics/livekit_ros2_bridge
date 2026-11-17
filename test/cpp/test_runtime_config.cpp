@@ -134,6 +134,9 @@ livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bit
   return options;
 }
 
+// A parse-only stand-in: these tests only load and validate config, and CI lacks h264parse
+// (gstreamer1.0-plugins-bad). At runtime it would fail, as rtph264depay's caps lack width and
+// height; real sources end with `h264parse config-interval=-1`, as the docs say.
 rclcpp::NodeOptions makePassthroughSourceOptions()
 {
   auto options = makeStaticTokenOptions();

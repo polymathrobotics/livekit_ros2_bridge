@@ -269,7 +269,8 @@ constexpr auto kFramesPerBridgeQueue =
   static_cast<std::uint32_t>(kSlowSendFramesPerSecond * kBridgeQueueDuration / std::chrono::seconds(1));
 
 // A live 30 fps source with a keyframe every `key_frame_interval` frames, whose frames take
-// 100 ms each to send, as when the uplink is too slow, so the bridge can send a third of them.
+// 100 ms each to send, as when the bridge's sample thread stalls on a busy host, so the
+// bridge can send a third of them.
 SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
 {
   constexpr std::uint32_t kFrameCount = kSlowSendFramesPerSecond * 5U / 2U;
