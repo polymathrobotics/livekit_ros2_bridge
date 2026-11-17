@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -439,7 +441,8 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
   const std::filesystem::path access_unit_path =
-    std::filesystem::temp_directory_path() / "lkros_idr_without_parameter_sets.h264";
+    std::filesystem::temp_directory_path() /
+    ("lkros_idr_without_parameter_sets_" + std::to_string(::getpid()) + ".h264");
   {
     // An Annex-B IDR slice alone, as a source without h264parse config-interval=-1 can send it.
     const char idr_without_parameter_sets[] = {0x00, 0x00, 0x00, 0x01, 0x65, static_cast<char>(0x88), 0x00};
