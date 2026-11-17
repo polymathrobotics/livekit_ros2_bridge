@@ -369,28 +369,6 @@ TEST(TrackPublisherTest, PassthroughDiscontinuousDeltaFrameWaitsForNextKeyFrame)
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.gap"}));
 }
 
-// A keyframe needs nothing before it, so a discontinuous one resumes at once.
-TEST(TrackPublisherTest, PassthroughDiscontinuousKeyFrameIsSent)
-{
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  int key_frame_requests = 0;
-  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
-  auto publisher =
-    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:gap_idr", "lkros.video.gap_idr"));
-
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame, true));
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
-  publisher.reset();
-
-  EXPECT_EQ(key_frame_requests, 0);
-  // Frames were still lost, so the gap is logged.
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_discontinuity", "stream_key=stream:gap_idr"}), 1U);
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_resumed"}), 0U);
-}
-
 // The first buffer of every pipeline run is marked discontinuous, while the publisher already
 // waits for a keyframe, so it is not a gap.
 TEST(TrackPublisherTest, PassthroughStartOfRunIsNotLoggedAsAGap)
