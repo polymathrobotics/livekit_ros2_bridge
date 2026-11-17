@@ -210,8 +210,9 @@ UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, 
   return unpacked;
 }
 
+// Sets `sent` when on_encoded_frame sends the frame.
 GstFlowReturn deliverEncodedSample(
-  GstSample * sample, std::int64_t timestamp_us, bool behind_live, const PipelineCallbacks & callbacks)
+  GstSample * sample, std::int64_t timestamp_us, bool behind_live, const PipelineCallbacks & callbacks, bool & sent)
 {
   // Reported like a format mismatch, so the log carries the h264parse hint. Not-negotiated
   // stops the flow, so this runs once per pipeline run rather than once per sample.
@@ -241,7 +242,7 @@ GstFlowReturn deliverEncodedSample(
     if (unpacked.lacks_parameter_sets) {
       callbacks.on_key_frame_without_parameter_sets();
     }
-    callbacks.on_encoded_frame(std::move(unpacked.frame), behind_live);
+    sent = callbacks.on_encoded_frame(std::move(unpacked.frame), behind_live);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks.on_capture_failed(exc.what());
@@ -391,6 +392,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   stop();
   resumeCallbacks();
   least_live_lag_.reset();
+  discarding_behind_live_since_.reset();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
@@ -560,7 +562,13 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
                                       : 0;
 
   if (output_ == PipelineOutput::EncodedH264) {
-    return deliverEncodedSample(sample.get(), timestamp_us, isBehindLive(sample.get()), callbacks_);
+    const bool behind_live = isBehindLive(sample.get());
+    bool sent = false;
+    const GstFlowReturn result = deliverEncodedSample(sample.get(), timestamp_us, behind_live, callbacks_, sent);
+    if (!behind_live || sent) {
+      discarding_behind_live_since_.reset();
+    }
+    return result;
   }
 
   livekit::VideoFrame frame;
@@ -607,7 +615,19 @@ bool GStreamerPipeline::isBehindLive(GstSample * sample)
 
   const GstClockTimeDiff lag = GST_CLOCK_DIFF(running_time, now);
   least_live_lag_ = std::min(least_live_lag_.value_or(lag), lag);
-  return lag - *least_live_lag_ > std::chrono::nanoseconds(kLiveLagTolerance).count();
+  if (lag - *least_live_lag_ <= std::chrono::nanoseconds(kLiveLagTolerance).count()) {
+    return false;
+  }
+
+  // Still discarding a queue length later means the source's lag itself rose (or its PTS jumped
+  // back), not a backlog; take this lag as live so the drain ends.
+  discarding_behind_live_since_ = discarding_behind_live_since_.value_or(now);
+  if (GST_CLOCK_DIFF(*discarding_behind_live_since_, now) <= std::chrono::nanoseconds(kBridgeQueueDuration).count()) {
+    return true;
+  }
+  least_live_lag_ = lag;
+  discarding_behind_live_since_.reset();
+  return false;
 }
 
 void GStreamerPipeline::onQueueOverrun()

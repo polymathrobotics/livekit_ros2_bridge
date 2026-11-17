@@ -100,6 +100,7 @@ bool runEncodedVideoPipeline()
     if (++frame_count == 1) {
       pipeline_handle->requestKeyFrame();
     }
+    return true;
   };
   video::GStreamerPipeline pipeline(callbacks, video::PipelineOutput::EncodedH264);
   pipeline_handle = &pipeline;

@@ -143,7 +143,7 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
   callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
   callbacks.on_failed = std::move(on_failed);
   callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
-    (void)captureEncoded(std::move(frame), request_key_frame, behind_live);
+    return captureEncoded(std::move(frame), request_key_frame, behind_live);
   };
   callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);

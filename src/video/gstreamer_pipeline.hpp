@@ -50,7 +50,8 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
   // EncodedH264 only; behind_live marks a stale frame (see GStreamerPipeline::isBehindLive()).
-  std::function<void(livekit::EncodedVideoSource::Frame frame, bool behind_live)> on_encoded_frame;
+  // Returns whether the frame was sent rather than discarded.
+  std::function<bool(livekit::EncodedVideoSource::Frame frame, bool behind_live)> on_encoded_frame;
   // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
   std::function<void()> on_fell_behind;
   // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
@@ -93,8 +94,8 @@ private:
 
   GstFlowReturn onSample(GstAppSink * sink);
   // EncodedH264: a frame is behind live when its PTS trails the clock by more than kLiveLagTolerance
-  // beyond the least lag this run, which absorbs the source's latency. Without a PTS, it is when
-  // frames are queued behind it.
+  // beyond the least lag (which absorbs the source's latency) this run or since a queue length of
+  // discarding. Without a PTS, it is when frames are queued behind it.
   bool isBehindLive(GstSample * sample);
   void onBusMessage(GstMessage * message);
   void onQueueOverrun();
@@ -111,8 +112,10 @@ private:
   // overrun_handler_ from the element it was connected to and isBehindLive() reads its level.
   GstElementPtr bridge_queue_;
   gulong overrun_handler_ = 0U;
-  // EncodedH264 only: the least lag behind the clock this run; only isBehindLive() uses it.
+  // EncodedH264 only, used on the streaming thread: the least lag behind the clock this run, and
+  // the running time since which every frame has been behind live and discarded.
   std::optional<GstClockTimeDiff> least_live_lag_;
+  std::optional<GstClockTime> discarding_behind_live_since_;
   // Owned reference to the appsink's sink pad, released by stop(); atomic so
   // requestKeyFrame() can run on a pipeline callback's thread.
   std::atomic<GstPad *> key_frame_pad_{nullptr};
