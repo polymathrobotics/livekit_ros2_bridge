@@ -179,7 +179,7 @@ Other video notes:
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
 - with `passthrough`, `source` must end in Annex-B H.264 with one access unit per buffer and caps that include width and height, normally `h264parse config-interval=-1`
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
-- explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
+- explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior, except with `passthrough`, where they change nothing
 
 Lookup notes:
 
