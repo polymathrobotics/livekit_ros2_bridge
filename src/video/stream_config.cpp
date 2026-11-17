@@ -141,14 +141,11 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
 }
 
 // Passthrough forwards the source's H.264 unchanged and ignores global defaults, so this throws on
-// the first per-entry setting that would change the stream; entries without passthrough pass.
+// the first per-entry setting that would change the stream.
 // publish.max_bitrate_bps is always allowed because it describes the source.
 template <typename EntryT>
 void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
 {
-  if (!entry.passthrough) {
-    return;
-  }
   const auto reject = [&id](const char * setting, const char * allowed) {
     throw std::runtime_error(
       "video.other." + id + "." + setting +
@@ -239,10 +236,17 @@ StreamConfig loadConfig(const Params & params)
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
-    requirePassthroughCompatible(id, entry);
     const std::string transform = trim(entry.transform);
-    const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)
-                                                      : buildPipelineDescription(source_fragment, transform);
+    std::string description;
+    livekit::TrackPublishOptions publish_options;
+    if (entry.passthrough) {
+      requirePassthroughCompatible(id, entry);
+      description = buildPassthroughPipelineDescription(source_fragment);
+      publish_options = makePassthroughPublishOptions(entry);
+    } else {
+      description = buildPipelineDescription(source_fragment, transform);
+      publish_options = parsePublishOptions(entry, config.default_publish_options);
+    }
     validatePipeline(source_context, description, kOtherSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
@@ -259,8 +263,7 @@ StreamConfig loadConfig(const Params & params)
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
     source.passthrough = entry.passthrough;
-    source.publish_options = entry.passthrough ? makePassthroughPublishOptions(entry)
-                                               : parsePublishOptions(entry, config.default_publish_options);
+    source.publish_options = std::move(publish_options);
     config.other_sources.push_back(std::move(source));
   }
 
