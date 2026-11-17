@@ -53,7 +53,7 @@ struct PipelineCallbacks
   // EncodedH264 only: the bridge queue filled up because frames are consumed too slowly.
   std::function<void()> on_fell_behind;
   // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
-  // the bridge's H.264 caps. offered_caps may be empty.
+  // the bridge's H.264 caps, or its caps lack the width and height. offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
   // EncodedH264 only: called before on_encoded_frame for each keyframe that lacks SPS or PPS,
   // which a viewer starting at that keyframe needs to decode it.

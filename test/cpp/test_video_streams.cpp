@@ -62,6 +62,11 @@ constexpr auto kHangTimeout = std::chrono::seconds(10);
 // The interval the stream throttles its restart warnings to.
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 
+// The hint a passthrough stream logs when its source's output does not fit the bridge's H.264 caps.
+constexpr char kPassthroughFormatHint[] =
+  "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
+  "config-interval=-1\"";
+
 // Expects `event` logged at least once, first with count=1, and at most once per throttle
 // interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
 void expectThrottledEvent(
@@ -216,14 +221,15 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
-// A static vp8enc link already fails to parse (and config validation rejects it); the
-// demuxer's dynamic pad fails at runtime like an RTSP camera would.
-TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
+// Runs a passthrough pipeline over `source_fragment` until it reports a caps mismatch, and
+// expects that instead of a generic failure, with offered caps starting with `caps_prefix`.
+void expectPassthroughCapsMismatch(const std::string & source_fragment, const std::string & caps_prefix)
 {
   std::mutex mismatch_mutex;
   std::string offered_caps;
   std::atomic<bool> mismatch_reported{false};
   std::atomic<bool> failure_reported{false};
+  std::atomic<bool> unpack_failed{false};
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   callbacks.on_caps_mismatch = [&](const std::string &, const std::string & caps) {
     const std::lock_guard<std::mutex> lock(mismatch_mutex);
@@ -232,19 +238,35 @@ TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
     }
   };
   callbacks.on_failed = [&](const std::string &) { failure_reported = true; };
+  callbacks.on_unpack_failed = [&](const std::string &) { unpack_failed = true; };
   GStreamerPipeline pipeline(callbacks);
 
-  pipeline.start(
-    buildPassthroughPipelineDescription(
-      "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"),
-    false,
-    PipelineOutput::EncodedH264);
+  pipeline.start(buildPassthroughPipelineDescription(source_fragment), false, PipelineOutput::EncodedH264);
   const bool reported = test_support::waitUntil([&]() { return mismatch_reported.load(); }, std::chrono::seconds(10));
   pipeline.stop();
 
   ASSERT_TRUE(reported);
-  EXPECT_EQ(offered_caps.rfind("video/x-vp8", 0U), 0U) << offered_caps;
+  EXPECT_EQ(offered_caps.rfind(caps_prefix, 0U), 0U) << offered_caps;
   EXPECT_FALSE(failure_reported.load());
+  EXPECT_FALSE(unpack_failed.load());
+}
+
+// A static vp8enc link already fails to parse (and config validation rejects it); the
+// demuxer's dynamic pad fails at runtime like an RTSP camera would.
+TEST_F(StreamTest, PassthroughPipelineReportsNonH264SourceAsCapsMismatch)
+{
+  expectPassthroughCapsMismatch(
+    "videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux", "video/x-vp8");
+}
+
+// Passthrough takes the picture size from the caps. h264parse adds it, but a bare
+// depayloader such as rtph264depay negotiates H.264 caps without it.
+TEST_F(StreamTest, PassthroughPipelineReportsH264WithoutDimensionsAsCapsMismatch)
+{
+  expectPassthroughCapsMismatch(
+    "fakesrc sizetype=fixed sizemax=16 filltype=zero"
+    " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au",
+    "video/x-h264");
 }
 
 // Holds the first frame, as a stalled consumer would, until the bridge queue overruns. The
@@ -410,10 +432,7 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
   const auto close_stream = [harness]() { harness->stream.close(); };
   const auto explained = [&]() {
     return logs.countLines(
-             {"video_stream_pipeline_recovery_scheduled",
-              "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it "
-              "with h264parse config-interval=-1\"",
-              "offered_caps=\"video/x-vp8"}) > 0U;
+             {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-vp8"}) > 0U;
   };
 
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
@@ -421,6 +440,40 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   EXPECT_TRUE(hint_logged);
+  EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
+}
+
+// H.264 caps without width and height, as from rtph264depay without h264parse, fail on every
+// restart; each recovery warning carries the hint, throttled, with no per-sample warning.
+TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  test_support::ScopedLogCapture logs;
+  const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
+    std::string("fakesrc sizetype=fixed sizemax=16 filltype=zero"
+                " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au ! ") +
+    ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  const auto restarted_twice = [attempts_before]() {
+    return ControlledStartElement::startAttempts() - attempts_before >= 3U;
+  };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  const auto started_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool restarted = test_support::waitUntil(restarted_twice, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted);
+  expectThrottledEvent(logs, "video_stream_pipeline_recovery_scheduled", started_at);
+  EXPECT_EQ(
+    logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-h264"}),
+    logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
+  EXPECT_EQ(logs.countLines({"video_stream_sample_unpack_failed"}), 0U);
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 

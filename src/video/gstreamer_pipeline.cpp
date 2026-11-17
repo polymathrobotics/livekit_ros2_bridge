@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -140,28 +141,49 @@ livekit::VideoFrame unpackI420Frame(GstSample * sample)
   return frame;
 }
 
+struct PictureSize
+{
+  int width = 0;
+  int height = 0;
+};
+
+// Empty unless the caps carry a positive width and height. h264parse adds them; a bare
+// depayloader such as rtph264depay negotiates H.264 caps without them.
+std::optional<PictureSize> readPictureSize(const GstCaps * caps)
+{
+  if (caps == nullptr || gst_caps_get_size(caps) == 0U) {
+    return std::nullopt;
+  }
+  const GstStructure * structure = gst_caps_get_structure(caps, 0U);
+  PictureSize size;
+  if (
+    !gst_structure_get_int(structure, "width", &size.width) ||
+    !gst_structure_get_int(structure, "height", &size.height) || size.width <= 0 || size.height <= 0)
+  {
+    return std::nullopt;
+  }
+  return size;
+}
+
+std::string capsToString(const GstCaps * caps)
+{
+  if (caps == nullptr) {
+    return {};
+  }
+  const GCharPtr caps_text(gst_caps_to_string(caps));
+  return caps_text != nullptr ? caps_text.get() : "";
+}
+
 struct UnpackedH264Frame
 {
   livekit::EncodedVideoSource::Frame frame;
   bool lacks_parameter_sets = false;
 };
 
-UnpackedH264Frame unpackH264Frame(GstSample * sample, std::int64_t timestamp_us)
+UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, std::int64_t timestamp_us)
 {
-  GstCaps * caps = gst_sample_get_caps(sample);
-  GstBuffer * buffer = gst_sample_get_buffer(sample);
-  if (caps == nullptr || buffer == nullptr || gst_caps_get_size(caps) == 0U) {
-    throw std::runtime_error("GStreamer sample is missing caps or buffer.");
-  }
-
-  const GstStructure * structure = gst_caps_get_structure(caps, 0U);
-  int width = 0;
-  int height = 0;
-  if (
-    !gst_structure_get_int(structure, "width", &width) || !gst_structure_get_int(structure, "height", &height) ||
-    width <= 0 || height <= 0)
-  {
-    throw std::runtime_error("H.264 sample caps are missing valid dimensions.");
+  if (buffer == nullptr) {
+    throw std::runtime_error("GStreamer sample is missing its buffer.");
   }
 
   GstBufferMap mapping(*buffer, GST_MAP_READ);
@@ -174,8 +196,8 @@ UnpackedH264Frame unpackH264Frame(GstSample * sample, std::int64_t timestamp_us)
   const AccessUnitSummary summary = summarizeAccessUnit(data, size);
   UnpackedH264Frame unpacked;
   unpacked.frame.is_keyframe = summary.is_idr;
-  unpacked.frame.width = static_cast<std::uint32_t>(width);
-  unpacked.frame.height = static_cast<std::uint32_t>(height);
+  unpacked.frame.width = static_cast<std::uint32_t>(picture_size.width);
+  unpacked.frame.height = static_cast<std::uint32_t>(picture_size.height);
   unpacked.frame.timestamp_us = timestamp_us;
   unpacked.frame.data.assign(data, data + size);
   unpacked.lacks_parameter_sets = summary.is_idr && !summary.has_parameter_sets;
@@ -184,9 +206,18 @@ UnpackedH264Frame unpackH264Frame(GstSample * sample, std::int64_t timestamp_us)
 
 GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
 {
+  // Reported like a format mismatch, so the log carries the h264parse hint. Not-negotiated
+  // stops the flow, so this runs once per pipeline run rather than once per sample.
+  GstCaps * caps = gst_sample_get_caps(sample);
+  const std::optional<PictureSize> picture_size = readPictureSize(caps);
+  if (!picture_size.has_value()) {
+    callbacks.on_caps_mismatch("H.264 caps have no width and height", capsToString(caps));
+    return GST_FLOW_NOT_NEGOTIATED;
+  }
+
   UnpackedH264Frame unpacked;
   try {
-    unpacked = unpackH264Frame(sample, timestamp_us);
+    unpacked = unpackH264Frame(gst_sample_get_buffer(sample), *picture_size, timestamp_us);
   } catch (const std::exception & exc) {
     callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
