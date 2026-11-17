@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -25,6 +26,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -231,7 +234,7 @@ TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
   std::atomic<bool> fell_behind{false};
   const auto reported_fell_behind = [&]() { return fell_behind.load(); };
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame, bool) {
     (void)test_support::waitUntil(reported_fell_behind, std::chrono::seconds(10));
   };
   callbacks.on_fell_behind = [&]() {
@@ -254,6 +257,68 @@ TEST_F(StreamTest, PassthroughPipelineReportsFellBehindWhenItsQueueFills)
     logs.countLines(
       {"video_pipeline_callback_failed", "callback=queue_overrun", "error=simulated fell behind failure"}),
     1U);
+}
+
+// A live 30 fps all-IDR source whose frames take 100 ms each to send, behind a 2 s publish that
+// backs frames up past the bridge queue, as in an rtpjitterbuffer. Each handled overrun must drop
+// the whole backlog: resuming at a queued keyframe would stay further behind than the queue holds.
+TEST_F(StreamTest, PassthroughPipelineWithSlowSendsDropsBacklogInsteadOfFallingFurtherBehind)
+{
+  constexpr std::uint32_t kFramesPerSecond = 30U;
+  constexpr std::uint32_t kFrameCount = kFramesPerSecond * 9U / 2U;
+  constexpr std::uint32_t kFramesPerQueue = kFramesPerSecond * static_cast<std::uint32_t>(kBridgeQueueDuration.count());
+  constexpr auto kSendDuration = std::chrono::milliseconds(100);
+  const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kFramesPerSecond;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  connection.state->publish_video_track_hook = [](const std::string &) {
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+  };
+  TrackPublisher publisher(connection, makePassthroughSpec("appsrc"));
+  const std::function<void()> request_key_frame = []() {};
+  std::atomic<std::uint32_t> pushed_frames{0U};
+  std::atomic<bool> discarded_any{false};
+  std::atomic<std::uint32_t> most_frames_behind_after_discarding{0U};
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
+    // The frame's index follows its IDR slice header.
+    const std::uint32_t frame_index = (std::uint32_t{frame.data[6]} << 8U) | frame.data[7];
+    if (!publisher.captureEncoded(std::move(frame), request_key_frame, behind_live)) {
+      discarded_any = true;
+      return;
+    }
+    if (discarded_any) {
+      const std::uint32_t frames_behind = pushed_frames.load() - 1U - frame_index;
+      most_frames_behind_after_discarding = std::max(most_frames_behind_after_discarding.load(), frames_behind);
+    }
+    std::this_thread::sleep_for(kSendDuration);
+  };
+  callbacks.on_fell_behind = [&]() { publisher.onFellBehind(request_key_frame); };
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
+
+  pipeline.start(
+    buildPassthroughPipelineDescription(
+      "appsrc name=bridge_video_src is-live=true format=time"
+      " caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\""
+      // Releases the frames backed up in appsrc at most one per 5 ms, so the queue can empty first.
+      " ! identity sleep-time=5000"),
+    true);
+  const auto started_at = std::chrono::steady_clock::now();
+  for (std::uint32_t frame_index = 0U; frame_index < kFrameCount; ++frame_index) {
+    std::this_thread::sleep_until(started_at + frame_index * frame_interval);
+    const auto index_high = static_cast<std::uint8_t>(frame_index >> 8U);
+    const auto index_low = static_cast<std::uint8_t>(frame_index & 0xFFU);
+    const std::uint8_t access_unit[] = {0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U, index_high, index_low};
+    GstBuffer * buffer = gst_buffer_new_memdup(access_unit, sizeof(access_unit));
+    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>((frame_index * frame_interval).count());
+    pushed_frames = frame_index + 1U;
+    (void)gst_app_src_push_buffer(pipeline.appsrc(), buffer);
+  }
+  pipeline.stop();
+
+  ASSERT_GE(logs.countLines({"video_stream_passthrough_fell_behind"}), 1U);
+  EXPECT_TRUE(discarded_any.load()) << "no queued frame was discarded";
+  EXPECT_LE(most_frames_behind_after_discarding.load(), kFramesPerQueue * 3U / 2U);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)

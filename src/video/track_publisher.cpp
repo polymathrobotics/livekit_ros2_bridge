@@ -142,8 +142,8 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
   callbacks.on_unpack_failed = [this](const std::string & error) { onSampleUnpackFailed(error); };
   callbacks.on_capture_failed = [this](const std::string & error) { onCaptureFailed(error); };
   callbacks.on_failed = std::move(on_failed);
-  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame) {
-    captureEncoded(std::move(frame), request_key_frame);
+  callbacks.on_encoded_frame = [this, request_key_frame](livekit::EncodedVideoSource::Frame frame, bool behind_live) {
+    (void)captureEncoded(std::move(frame), request_key_frame, behind_live);
   };
   callbacks.on_fell_behind = [this, request_key_frame]() { onFellBehind(request_key_frame); };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
@@ -196,13 +196,18 @@ void TrackPublisher::capture(const livekit::VideoFrame & frame, std::int64_t tim
   }
 }
 
-void TrackPublisher::captureEncoded(
-  livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame)
+bool TrackPublisher::captureEncoded(
+  livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame, bool behind_live)
 {
+  bool sent = false;
   bool key_frame_needed = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    key_frame_needed = captureEncodedLocked(std::move(frame));
+    if (closed_) {
+      return false;
+    }
+    sent = captureEncodedLocked(std::move(frame), behind_live);
+    key_frame_needed = !sent && keyFrameRequestDueLocked();
   }
   // Never call into GStreamer while holding mutex_: the request travels upstream
   // through user-supplied source elements, and onFellBehind() waits for mutex_ on
@@ -210,18 +215,18 @@ void TrackPublisher::captureEncoded(
   if (key_frame_needed) {
     request_key_frame();
   }
+  return sent;
 }
 
-bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame)
+bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool behind_live)
 {
-  if (closed_) {
-    return false;
-  }
-
-  if (awaiting_key_frame_ && !frame.is_keyframe) {
+  // After falling behind, the backlog is stale, keyframes included; it ends at the
+  // first frame that is not behind live.
+  draining_backlog_ = draining_backlog_ && behind_live;
+  if (draining_backlog_ || (awaiting_key_frame_ && !frame.is_keyframe)) {
     ++discarded_frame_count_;
     logWaitingForFirstKeyFrameLocked();
-    return keyFrameRequestDueLocked();
+    return false;
   }
 
   // The failure fails the pipeline, which restarts it. Frames that arrive before
@@ -247,7 +252,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     awaiting_key_frame_ = false;
     logResumedLocked();
   }
-  return false;
+  return true;
 }
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
@@ -302,6 +307,8 @@ void TrackPublisher::awaitKeyFrame()
     return;
   }
 
+  // A pipeline that (re)starts has an empty queue, so there is no backlog to drop.
+  draining_backlog_ = false;
   awaitKeyFrameLocked();
 }
 
@@ -316,8 +323,9 @@ void TrackPublisher::onFellBehind(const std::function<void()> & request_key_fram
       return;
     }
 
-    // Frames are discarded quickly while waiting, so the queue drains and the
-    // feed resumes live at the requested keyframe.
+    // Drop the backlog, then resume at the next keyframe. Discarding is quick, so the
+    // backlog drains and the feed resumes live, even when every frame is a keyframe.
+    draining_backlog_ = true;
     awaitKeyFrameLocked();
     key_frame_needed = keyFrameRequestDueLocked();
     logFellBehindLocked();

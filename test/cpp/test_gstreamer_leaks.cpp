@@ -96,7 +96,7 @@ bool runEncodedVideoPipeline()
   std::atomic<int> frame_count{0};
   video::GStreamerPipeline * pipeline_handle = nullptr;
   video::PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame) {
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame, bool) {
     if (++frame_count == 1) {
       pipeline_handle->requestKeyFrame();
     }

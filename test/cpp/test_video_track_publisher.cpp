@@ -337,7 +337,9 @@ TEST(TrackPublisherTest, PassthroughAwaitKeyFrameDiscardsUntilNextKeyFrame)
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 0U);
 }
 
-TEST(TrackPublisherTest, PassthroughFellBehindRequestsThrottledKeyFrameAndDiscardsUntilIt)
+// Frames still behind live after the bridge fell behind are stale, keyframes included, so an
+// all-IDR stream resumes only once frames catch up.
+TEST(TrackPublisherTest, PassthroughFellBehindDiscardsStaleFramesAndResumesAtNextKeyFrame)
 {
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -346,26 +348,33 @@ TEST(TrackPublisherTest, PassthroughFellBehindRequestsThrottledKeyFrameAndDiscar
   auto publisher =
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:behind", "lkros.video.behind"));
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
   // Overruns right after the publish are its backlog draining.
   std::this_thread::sleep_for(kBridgeQueueDuration + kTimingMargin);
   publisher->onFellBehind(request_key_frame);
   EXPECT_EQ(key_frame_requests, 1);
-  // The queue overruns again while it stays full; that must not ask again.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame, true));
+  // The queue overruns again while it drains; that must not ask again.
   publisher->onFellBehind(request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
-  publisher->onFellBehind(request_key_frame);
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame, true));
+  // Caught up, delta frames still wait for a keyframe.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame, false));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame, false));
   EXPECT_EQ(key_frame_requests, 1);
+  // Only falling behind makes frames behind live stale.
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame, true));
 
-  // Once the keyframe arrives, the next fall behind asks again right away.
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+  // Once resumed, the next fall behind asks again right away.
   publisher->onFellBehind(request_key_frame);
+  EXPECT_EQ(key_frame_requests, 2);
+  // A restart ends the drain, so the new pipeline's first keyframe resumes.
+  publisher->awaitKeyFrame();
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame, true));
   publisher.reset();
 
-  EXPECT_EQ(key_frame_requests, 2);
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:behind"}, "discarded_frames"),
-    std::vector<std::string>{"1"});
+    std::vector<std::string>{"3"});
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_fell_behind", "stream_key=stream:behind"}, "count"),
     std::vector<std::string>{"1"});

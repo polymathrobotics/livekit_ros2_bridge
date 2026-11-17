@@ -16,6 +16,8 @@
 
 #include <gst/video/video.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -39,6 +41,10 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("livekit_ros2_bridge.gstreamer_video_pipeline");
+
+// Well under the bridge queue, so the feed resumes near live after falling behind, yet above
+// ordinary capture and network jitter.
+constexpr auto kLiveLagTolerance = std::chrono::milliseconds(250);
 
 // Runs inside the C callbacks' catch blocks, so a failure to log is dropped
 // rather than thrown back into GStreamer.
@@ -204,7 +210,8 @@ UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, 
   return unpacked;
 }
 
-GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
+GstFlowReturn deliverEncodedSample(
+  GstSample * sample, std::int64_t timestamp_us, bool behind_live, const PipelineCallbacks & callbacks)
 {
   // Reported like a format mismatch, so the log carries the h264parse hint. Not-negotiated
   // stops the flow, so this runs once per pipeline run rather than once per sample.
@@ -234,7 +241,7 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
     if (unpacked.lacks_parameter_sets) {
       callbacks.on_key_frame_without_parameter_sets();
     }
-    callbacks.on_encoded_frame(std::move(unpacked.frame));
+    callbacks.on_encoded_frame(std::move(unpacked.frame), behind_live);
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks.on_capture_failed(exc.what());
@@ -383,6 +390,7 @@ void GStreamerPipeline::start(const std::string & description, bool require_apps
   ensureGStreamerInitialized();
   stop();
   resumeCallbacks();
+  least_live_lag_.reset();
 
   GError * raw_error = nullptr;
   GstElementPtr pipeline(gst_parse_launch(description.c_str(), &raw_error));
@@ -507,7 +515,6 @@ void GStreamerPipeline::stop()
   if (bridge_queue_ != nullptr) {
     g_signal_handler_disconnect(bridge_queue_.get(), overrun_handler_);
     overrun_handler_ = 0U;
-    bridge_queue_.reset();
   }
 
   GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
@@ -518,6 +525,8 @@ void GStreamerPipeline::stop()
   }
   stopCallbacksAndWait();
 
+  // isBehindLive() reads the queue's level until the callbacks stop.
+  bridge_queue_.reset();
   appsrc_.reset();
   pipeline_.reset();
 }
@@ -551,7 +560,7 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
                                       : 0;
 
   if (output_ == PipelineOutput::EncodedH264) {
-    return deliverEncodedSample(sample.get(), timestamp_us, callbacks_);
+    return deliverEncodedSample(sample.get(), timestamp_us, isBehindLive(sample.get()), callbacks_);
   }
 
   livekit::VideoFrame frame;
@@ -579,6 +588,26 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
     callbacks_.on_capture_failed(std::string(kUnknownExceptionValue));
     return GST_FLOW_ERROR;
   }
+}
+
+bool GStreamerPipeline::isBehindLive(GstSample * sample)
+{
+  GstBuffer * buffer = gst_sample_get_buffer(sample);
+  const GstSegment * segment = gst_sample_get_segment(sample);
+  const GstClockTime now = gst_element_get_current_running_time(pipeline_.get());
+  const GstClockTime running_time = buffer != nullptr && segment != nullptr && GST_BUFFER_PTS_IS_VALID(buffer)
+                                      ? gst_segment_to_running_time(segment, GST_FORMAT_TIME, GST_BUFFER_PTS(buffer))
+                                      : GST_CLOCK_TIME_NONE;
+  if (!GST_CLOCK_TIME_IS_VALID(now) || !GST_CLOCK_TIME_IS_VALID(running_time)) {
+    // Read after the pull, so it counts only the frames behind this one; thread-safe.
+    guint frames_queued_behind = 0U;
+    g_object_get(bridge_queue_.get(), "current-level-buffers", &frames_queued_behind, nullptr);
+    return frames_queued_behind > 0U;
+  }
+
+  const GstClockTimeDiff lag = GST_CLOCK_DIFF(running_time, now);
+  least_live_lag_ = std::min(least_live_lag_.value_or(lag), lag);
+  return lag - *least_live_lag_ > std::chrono::nanoseconds(kLiveLagTolerance).count();
 }
 
 void GStreamerPipeline::onQueueOverrun()

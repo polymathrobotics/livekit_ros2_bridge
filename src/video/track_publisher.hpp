@@ -71,14 +71,18 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking
-  // for a keyframe) whenever it waits for one. A failed publish or send throws, and frames are then
-  // discarded until the next keyframe.
-  void captureEncoded(livekit::EncodedVideoSource::Frame frame, const std::function<void()> & request_key_frame);
+  // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking for
+  // a keyframe) while it waits for one or, after falling behind, while they are behind_live. A failed
+  // publish or send throws and waits for the next keyframe. Returns whether the frame was sent.
+  bool captureEncoded(
+    livekit::EncodedVideoSource::Frame frame,
+    const std::function<void()> & request_key_frame,
+    bool behind_live = false);
   // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
-  // Passthrough: the pipeline queue filled up; skip ahead to a requested keyframe. A publish stalls
-  // the queue itself, so this waits for one in progress and is ignored for kBridgeQueueDuration after.
+  // Passthrough: the pipeline queue filled up; discard frames until one is not behind live, then resume
+  // at a keyframe. A publish stalls the queue itself, so this waits for one in progress and is ignored
+  // for kBridgeQueueDuration after.
   void onFellBehind(const std::function<void()> & request_key_frame);
 
 private:
@@ -105,9 +109,9 @@ private:
 
   void close();
 
-  // The passthrough *Locked helpers return whether to request a keyframe; callers
-  // do so after releasing mutex_ (see captureEncoded()).
-  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame);
+  // Returns whether the frame was sent. Callers request a keyframe after releasing
+  // mutex_ (see captureEncoded()).
+  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool behind_live);
   void logWaitingForFirstKeyFrameLocked();
   // Publishes the encoded source on first use; throws if the publish or send fails.
   void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
@@ -141,6 +145,8 @@ private:
   // publish releases mutex_, so an overrun that waited for it falls inside the ignored window.
   std::chrono::steady_clock::time_point encoded_publish_ended_at_ = std::chrono::steady_clock::time_point::min();
   bool awaiting_key_frame_ = true;
+  // Set on falling behind; frames are discarded until one arrives that is not behind live.
+  bool draining_backlog_ = false;
   // Missing parameter sets come from the source's configuration, so warn once; the publisher
   // outlives pipeline restarts.
   bool parameter_sets_warning_logged_ = false;
