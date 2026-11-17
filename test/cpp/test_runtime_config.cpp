@@ -138,7 +138,8 @@ rclcpp::NodeOptions makePassthroughSourceOptions()
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("video.other.front.source", "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  options.append_parameter_override(
+    "video.other.front.source", "rtspsrc location=rtsp://camera/stream ! rtph264depay ! h264parse config-interval=-1");
   options.append_parameter_override("video.other.front.passthrough", true);
   return options;
 }
@@ -608,7 +609,8 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedH264AndIgnoresGloba
   ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
   const auto & source = config.video_stream.other_sources.front();
   EXPECT_TRUE(source.passthrough);
-  EXPECT_EQ(source.source_fragment, "rtspsrc location=rtsp://camera/stream ! rtph264depay");
+  EXPECT_EQ(
+    source.source_fragment, "rtspsrc location=rtsp://camera/stream ! rtph264depay ! h264parse config-interval=-1");
   expectPublishOptionsEq(source.publish_options, makePassthroughPublishOptions());
 }
 
