@@ -160,12 +160,12 @@ Supported ROS video inputs:
 | --- | --- | --- | --- |
 | `video_other_ids` | `[]` | array of ids | Other video ids defined under `video.other.<id>.*` |
 | `video.other.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
-| `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
+| `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress. With `passthrough`, must stay empty. |
 | `video.other.<id>.passthrough` | `false` | `true`, `false` | Forward the source's H.264 to LiveKit without decoding or re-encoding. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
-| `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
+| `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec`. With `passthrough`, only empty, `h264`, or `auto`; they change nothing. |
 | `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps`. With `passthrough`, the most the camera sends; `-1` or `0` leaves LiveKit's default. See [Passthrough](#passthrough-for-cameras-that-already-send-h264). |
-| `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
-| `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
+| `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate`. With `passthrough`, must stay unset. |
+| `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast`. With `passthrough`, only empty, `disabled`, or `auto`; they change nothing. |
 
 Other video notes:
 
@@ -177,7 +177,8 @@ Other video notes:
 - `transform` is optional and sits between your ingress and the bridge-owned tail
 - the bridge appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`, unless `passthrough` is set (see [Passthrough](#passthrough-for-cameras-that-already-send-h264))
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
-- with `passthrough`, `source` must end in Annex-B H.264 with one access unit per buffer, normally `h264parse config-interval=-1`
+- with `passthrough`, `source` may not name an element `bridge_video_queue`; the bridge reserves that name for its own queue
+- with `passthrough`, `source` must end in Annex-B H.264 with one access unit per buffer and caps that include width and height, normally `h264parse config-interval=-1`
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
 
@@ -309,7 +310,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
 
    - `source` should start with the ingress stage such as `uridecodebin` or `v4l2src`
    - `transform` is optional and should contain only middle-of-pipeline processing stages
-   - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own queue/convert/I420/appsink tail
+   - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own queue/convert/I420/appsink tail, or its own H.264 caps/queue/appsink tail with [passthrough](#passthrough-for-cameras-that-already-send-h264)
    - leave `video.publish.*` and per-source `publish.*` unset unless you need to force codec, bitrate, framerate, or simulcast behavior
    - other video sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_other_ids`
 
@@ -351,24 +352,28 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
      ros__parameters:
        video_other_ids: ["front_cam"]
 
-       video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/cam0_1 protocols=tcp latency=200 ! rtph264depay request-keyframe=true ! h264parse config-interval=-1"
+       video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/<stream-path> protocols=tcp latency=200 ! rtph264depay request-keyframe=true ! h264parse config-interval=-1"
        video.other.front_cam.passthrough: true
        video.other.front_cam.publish.max_bitrate_bps: 2000000  # the camera's configured bitrate
    ```
 
    - the bridge appends the caps `video/x-h264,stream-format=byte-stream,alignment=au` (Annex-B, one access unit per buffer, which `h264parse` produces), a queue that never drops frames and holds up to about 1 s of video or 32 MiB, whichever fills first, and its own sink
+   - the source's caps must also include width and height; `h264parse` adds them, but `rtph264depay` alone does not
    - `config-interval=-1` repeats the SPS and PPS before every keyframe, so a viewer who joins late or reconnects can start decoding there; if a keyframe arrives without them, the bridge logs `video_stream_passthrough_missing_parameter_sets` once per stream
    - `latency=200` keeps `rtspsrc`'s jitterbuffer short; its 2000 ms default adds two seconds of delay
    - do not use `uridecodebin`; it decodes the stream
    - the source must be live, such as a camera or `rtspsrc`; a file source reads faster than real time, so the bridge keeps falling behind and skipping frames
-   - `h264parse` is in `gstreamer1.0-plugins-bad`, which the bridge does not depend on; the robot image must provide it, or startup fails
+   - `h264parse` is in `gstreamer1.0-plugins-bad`, which the bridge does not depend on; the runtime environment must provide it, or startup fails
    - clients request the source and receive the track exactly as for any other video source
 
 2. Know what the bridge can't do with a stream it doesn't re-encode.
 
    - passthrough supports H.264 only for now; H.265 and other codecs are refused, and MJPEG can't be forwarded over WebRTC at all. For such a camera, use its H.264 stream if it has one (many IP cameras offer it as a second stream), or leave `passthrough` off so the bridge decodes the video and LiveKit re-encodes it
    - a non-H.264 source whose output caps are fixed when the pipeline is built (for example an encoder linked directly) is rejected at startup with a `could not link` error; one with dynamic pads (RTSP, demuxers) fails when the stream starts, and `video_stream_pipeline_recovery_scheduled` carries the hint `the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse config-interval=-1`
-   - a passthrough entry must leave `transform`, `publish.codec`, `publish.max_framerate`, and `publish.simulcast` unset; startup rejects any value, even `h264`, `auto`, `0`, or `disabled`, because passthrough always sends the camera's H.264 unchanged, as one stream at the camera's frame rate
+   - a source whose caps lack width and height gets the same hint
+   - when the bridge can find them, `offered_caps` on the same event shows the caps the source produced
+   - on a passthrough entry, leave `transform` and `publish.max_framerate` unset; `publish.codec` may also be `h264` or `auto`, and `publish.simulcast` may also be `disabled` or `auto`, because passthrough always sends the camera's H.264 unchanged, as one stream at the camera's frame rate
+   - startup rejects any other value with an error that names the full parameter, such as `video.other.front_cam.publish.codec`
    - global `video.publish.*` defaults are ignored for passthrough sources, not rejected
    - bitrate, resolution, frame rate, and keyframe interval all come from the camera
 
@@ -389,7 +394,7 @@ Some cameras already send H.264. By default the bridge decodes that stream and L
 
 5. Set the camera up for it.
 
-   - use a substream (for example `cam0_1`), not the stream a recorder reads
+   - use a secondary, lower-bitrate stream if the camera offers one
    - use a constant bitrate comfortably under the link budget
    - set the keyframe interval to about 1 s
    - use Baseline or Main profile with no B-frames; WebRTC can't play B-frames
