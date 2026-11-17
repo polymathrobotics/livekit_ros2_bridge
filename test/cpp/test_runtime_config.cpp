@@ -645,34 +645,76 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoPassesOnlyItsOwnMaxBitrateToLivek
   }
 }
 
-TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntryOverrides)
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoAcceptsPerEntrySettingsThatChangeNothing)
 {
-  struct RejectedOverride
+  struct NoOpSetting
   {
     const char * key;
     rclcpp::ParameterValue value;
     const char * node_name;
   };
 
-  const std::vector<RejectedOverride> rejected_overrides{
-    {"transform", rclcpp::ParameterValue("videoflip"), "startup_config_passthrough_rejects_transform"},
-    {"publish.codec", rclcpp::ParameterValue("vp8"), "startup_config_passthrough_rejects_codec"},
-    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_rejects_codec_h264"},
-    {"publish.max_framerate", rclcpp::ParameterValue(15.0), "startup_config_passthrough_rejects_max_framerate"},
-    {"publish.max_framerate", rclcpp::ParameterValue(0.0), "startup_config_passthrough_rejects_max_framerate_zero"},
-    {"publish.simulcast", rclcpp::ParameterValue("enabled"), "startup_config_passthrough_rejects_simulcast"},
-    {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_rejects_simulcast_disabled"},
+  // The source already sends one H.264 encoding at its own frame rate.
+  const std::vector<NoOpSetting> no_op_settings{
+    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_accepts_codec_h264"},
+    {"publish.codec", rclcpp::ParameterValue("auto"), "startup_config_passthrough_accepts_codec_auto"},
+    {"publish.max_framerate", rclcpp::ParameterValue(0.0), "startup_config_passthrough_accepts_max_framerate_zero"},
+    {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_accepts_simulcast_disabled"},
+    {"publish.simulcast", rclcpp::ParameterValue("auto"), "startup_config_passthrough_accepts_simulcast_auto"},
   };
 
-  for (const auto & rejected_override : rejected_overrides) {
-    SCOPED_TRACE(rejected_override.node_name);
+  for (const auto & no_op_setting : no_op_settings) {
+    SCOPED_TRACE(no_op_setting.node_name);
     auto options = makePassthroughSourceOptions();
-    options.append_parameter_override(
-      std::string{"video.other.front."} + rejected_override.key, rejected_override.value);
+    options.append_parameter_override(std::string{"video.other.front."} + no_op_setting.key, no_op_setting.value);
 
-    const std::string expected_error = std::string{"other video source 'front' sets "} + rejected_override.key +
-                                       ", but passthrough forwards the camera's H.264 unchanged; leave it unset";
-    expectConfigError(rejected_override.node_name, options, expected_error.c_str());
+    const RuntimeConfig config = loadRuntimeConfigForNode(no_op_setting.node_name, options);
+
+    ASSERT_EQ(config.video_stream.other_sources.size(), 1U);
+    expectPublishOptionsEq(config.video_stream.other_sources.front().publish_options, makePassthroughPublishOptions());
+  }
+}
+
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldChangeTheStream)
+{
+  struct RejectedSetting
+  {
+    const char * key;
+    rclcpp::ParameterValue value;
+    const char * allowed;
+    const char * node_name;
+  };
+
+  const std::vector<RejectedSetting> rejected_settings{
+    {"transform",
+     rclcpp::ParameterValue("videoflip"),
+     "leave it empty",
+     "startup_config_passthrough_rejects_transform"},
+    {"publish.codec",
+     rclcpp::ParameterValue("vp8"),
+     "use h264 or auto, or leave it empty",
+     "startup_config_passthrough_rejects_codec"},
+    {"publish.max_framerate",
+     rclcpp::ParameterValue(15.0),
+     "use 0 or leave it at -1",
+     "startup_config_passthrough_rejects_max_framerate"},
+    {"publish.simulcast",
+     rclcpp::ParameterValue("enabled"),
+     "use disabled or auto, or leave it empty",
+     "startup_config_passthrough_rejects_simulcast"},
+  };
+
+  for (const auto & rejected_setting : rejected_settings) {
+    SCOPED_TRACE(rejected_setting.node_name);
+    const std::string parameter = std::string{"video.other.front."} + rejected_setting.key;
+    auto options = makePassthroughSourceOptions();
+    options.append_parameter_override(parameter, rejected_setting.value);
+
+    const std::string expected_error = parameter +
+                                       " is not supported with passthrough, which forwards the source's H.264 "
+                                       "unchanged; " +
+                                       rejected_setting.allowed;
+    expectConfigError(rejected_setting.node_name, options, expected_error.c_str());
   }
 }
 

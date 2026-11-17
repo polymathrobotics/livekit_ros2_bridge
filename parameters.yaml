@@ -143,7 +143,9 @@ livekit_ros2_bridge:
         transform:
           type: string
           default_value: ''
-          description: Optional GStreamer transform fragment inserted after other video ingress.
+          description: >-
+            Optional GStreamer transform fragment inserted after other video
+            ingress. Must be empty with passthrough.
         passthrough:
           type: bool
           default_value: false
@@ -151,12 +153,17 @@ livekit_ros2_bridge:
             Forward this source's H.264 to LiveKit unchanged instead of decoding
             and re-encoding it. The source must output Annex-B H.264, one access
             unit per buffer, normally by ending with h264parse
-            config-interval=-1. See docs/configuration.md.
+            config-interval=-1. Global video.publish settings are ignored; the
+            transform and publish descriptions list the values allowed with
+            passthrough. See docs/configuration.md.
         publish:
           codec:
             type: string
             default_value: ''
-            description: Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec.
+            description: >-
+              Optional LiveKit codec override for this other video source.
+              Empty inherits from video.publish.codec. With passthrough, only
+              empty, auto, or h264.
             validation:
               one_of<>: [['', auto, vp8, h264, av1, vp9, h265]]
           max_bitrate_bps:
@@ -172,13 +179,19 @@ livekit_ros2_bridge:
           max_framerate:
             type: double
             default_value: -1.0
-            description: Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate.
+            description: >-
+              Optional LiveKit max video framerate override for this other video
+              source. -1 inherits from video.publish.max_framerate. With
+              passthrough, only -1 or 0.
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ''
-            description: Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast.
+            description: >-
+              Optional LiveKit simulcast override for this other video source.
+              Empty inherits from video.publish.simulcast. With passthrough, only
+              empty, auto, or disabled.
             validation:
               one_of<>: [['', auto, enabled, disabled]]
 

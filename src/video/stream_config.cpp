@@ -140,28 +140,36 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
-// Passthrough forwards the camera's H.264 unchanged and ignores global defaults. Returns the first
-// per-entry setting that is set, or null, also for entries without passthrough. Only
-// publish.max_bitrate_bps may be set, because it describes the camera.
+struct PassthroughConflict
+{
+  const char * setting;
+  const char * allowed;
+};
+
+// Passthrough forwards the source's H.264 unchanged and ignores global defaults. Returns the first
+// per-entry setting that would change the stream, or nothing, also for entries without passthrough.
+// publish.max_bitrate_bps is always allowed because it describes the source.
 template <typename EntryT>
-const char * findPassthroughOverride(const EntryT & entry)
+std::optional<PassthroughConflict> findPassthroughConflict(const EntryT & entry)
 {
   if (!entry.passthrough) {
-    return nullptr;
+    return std::nullopt;
   }
   if (!trim(entry.transform).empty()) {
-    return "transform";
+    return PassthroughConflict{"transform", "leave it empty"};
   }
-  if (!trim(entry.publish.codec).empty()) {
-    return "publish.codec";
+  const std::string codec = trim(entry.publish.codec);
+  if (!codec.empty() && codec != "h264" && codec != "auto") {
+    return PassthroughConflict{"publish.codec", "use h264 or auto, or leave it empty"};
   }
-  if (entry.publish.max_framerate >= 0.0) {
-    return "publish.max_framerate";
+  if (entry.publish.max_framerate > 0.0) {
+    return PassthroughConflict{"publish.max_framerate", "use 0 or leave it at -1"};
   }
-  if (!trim(entry.publish.simulcast).empty()) {
-    return "publish.simulcast";
+  const std::string simulcast = trim(entry.publish.simulcast);
+  if (!simulcast.empty() && simulcast != "disabled" && simulcast != "auto") {
+    return PassthroughConflict{"publish.simulcast", "use disabled or auto, or leave it empty"};
   }
-  return nullptr;
+  return std::nullopt;
 }
 
 // publish.max_bitrate_bps tells LiveKit the most this camera sends, which
@@ -233,10 +241,10 @@ StreamConfig loadConfig(const Params & params)
     if (source_fragment.empty()) {
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
-    if (const char * setting = findPassthroughOverride(entry)) {
+    if (const auto conflict = findPassthroughConflict(entry)) {
       throw std::runtime_error(
-        source_context + " sets " + setting +
-        ", but passthrough forwards the camera's H.264 unchanged; leave it unset");
+        "video.other." + id + "." + conflict->setting +
+        " is not supported with passthrough, which forwards the source's H.264 unchanged; " + conflict->allowed);
     }
     const std::string transform = trim(entry.transform);
     const std::string description = entry.passthrough ? buildPassthroughPipelineDescription(source_fragment)
