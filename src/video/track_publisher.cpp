@@ -14,6 +14,7 @@
 
 #include "video/track_publisher.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -39,6 +40,8 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
+constexpr auto kBitrateWindow = std::chrono::seconds(1);
+constexpr auto kOverBudgetDuration = std::chrono::seconds(3);
 
 void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
@@ -80,6 +83,37 @@ livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
 }
 
 }  // namespace
+
+std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame_bytes, Clock::time_point now)
+{
+  if (window_started_at_ == Clock::time_point{}) {
+    window_started_at_ = now;
+  }
+  const auto elapsed = now - window_started_at_;
+  if (elapsed < kBitrateWindow) {
+    window_bytes_ += frame_bytes;
+    return std::nullopt;
+  }
+
+  const auto elapsed_us =
+    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+  const std::uint64_t bitrate_bps = window_bytes_ * 8U * 1'000'000U / elapsed_us;
+  const Clock::time_point window_started_at = window_started_at_;
+  window_started_at_ = now;
+  window_bytes_ = frame_bytes;
+
+  if (target_bitrate_bps_ == 0U || bitrate_bps * 2U <= target_bitrate_bps_ * 3U) {
+    over_budget_since_.reset();
+    return std::nullopt;
+  }
+  if (!over_budget_since_.has_value()) {
+    over_budget_since_ = window_started_at;
+  }
+  if (now - *over_budget_since_ < kOverBudgetDuration) {
+    return std::nullopt;
+  }
+  return bitrate_bps;
+}
 
 std::shared_ptr<TrackPublisher> TrackPublisher::create(
   rclcpp::node_interfaces::NodeInterfaces<
@@ -267,19 +301,51 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   if (frame.is_keyframe) {
     livekit_key_frame_request_pending_ = false;
   }
-  readEncodedFeedbackLocked();
+  checkEncodedBitrateLocked(readEncodedFeedbackLocked(), frame.data.size());
   return true;
 }
 
-void TrackPublisher::readEncodedFeedbackLocked()
+livekit::EncodedVideoSource::Feedback TrackPublisher::readEncodedFeedbackLocked()
 {
+  livekit::EncodedVideoSource::Feedback feedback;
   try {
-    if (read_encoded_feedback_(*encoded_source_).keyframe_requested) {
-      livekit_key_frame_request_pending_ = true;
-    }
+    feedback = read_encoded_feedback_(*encoded_source_);
   } catch (const std::exception & exc) {
     logThrottledFailureLocked(feedback_failed_log_throttle_, "video_stream_passthrough_feedback_failed", exc.what());
   }
+  if (feedback.keyframe_requested) {
+    livekit_key_frame_request_pending_ = true;
+  }
+  return feedback;
+}
+
+void TrackPublisher::checkEncodedBitrateLocked(
+  const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes)
+{
+  // Unset max_bitrate_bps leaves LiveKit's default target, which a healthy camera can exceed.
+  const auto & encoding = spec_.publish_options.video_encoding;
+  if (!encoding.has_value() || encoding->max_bitrate == 0U) {
+    return;
+  }
+
+  if (feedback.rate_control.has_value()) {
+    bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
+  }
+  const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, PassthroughBitrateMonitor::Clock::now());
+  if (!bitrate_bps.has_value()) {
+    return;
+  }
+  const std::size_t pending = over_budget_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_over_budget")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("bitrate_bps", *bitrate_bps)
+    .field("target_bitrate_bps", bitrate_monitor_.targetBitrateBps())
+    .field("count", pending)
+    .warn();
 }
 
 void TrackPublisher::logViewerKeyFrameRequestLocked()

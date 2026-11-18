@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/room_connection.hpp"
@@ -40,6 +41,31 @@ namespace livekit_ros2_bridge::video
 class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
+
+class PassthroughBitrateMonitor final
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  void setTarget(std::uint64_t target_bitrate_bps)
+  {
+    target_bitrate_bps_ = target_bitrate_bps;
+  }
+
+  std::uint64_t targetBitrateBps() const
+  {
+    return target_bitrate_bps_;
+  }
+
+  // Returns the bitrate once it has stayed well above the target for a few seconds.
+  std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
+
+private:
+  std::uint64_t target_bitrate_bps_ = 0U;
+  Clock::time_point window_started_at_{};
+  std::uint64_t window_bytes_ = 0U;
+  std::optional<Clock::time_point> over_budget_since_;
+};
 
 class TrackPublisher final
 {
@@ -111,7 +137,8 @@ private:
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
-  void readEncodedFeedbackLocked();
+  livekit::EncodedVideoSource::Feedback readEncodedFeedbackLocked();
+  void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
   void logResumedLocked();
   void logDiscontinuityLocked();
   void logViewerKeyFrameRequestLocked();
@@ -152,6 +179,8 @@ private:
   EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
   EventThrottle capture_failed_log_throttle_{kLogThrottle};
+  EventThrottle over_budget_log_throttle_{kLogThrottle};
+  PassthroughBitrateMonitor bitrate_monitor_;
 };
 
 }  // namespace livekit_ros2_bridge::video

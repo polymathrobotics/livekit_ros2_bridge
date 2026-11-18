@@ -18,6 +18,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -588,6 +589,50 @@ TEST(TrackPublisherTest, PassthroughFailedFeedbackReadKeepsSendingAndKeepsTheKey
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_feedback_failed", "stream_key=stream:feedback"}, "count"),
     std::vector<std::string>{"1"});
+}
+
+TEST(PassthroughBitrateMonitorTest, ReportsOnlyAfterStayingWellAboveTarget)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  monitor.setTarget(1'000'000U);
+  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+
+  // 25 kB every 100 ms is 2 Mbit/s, twice the target.
+  std::optional<int> first_report_index;
+  std::optional<std::uint64_t> first_report_bps;
+  for (int frame_index = 0; frame_index <= 50; ++frame_index) {
+    const auto reported = monitor.record(25'000U, start + milliseconds(100 * frame_index));
+    if (reported.has_value() && !first_report_index.has_value()) {
+      first_report_index = frame_index;
+      first_report_bps = reported;
+    }
+  }
+
+  ASSERT_TRUE(first_report_index.has_value());
+  EXPECT_EQ(*first_report_index, 30);
+  EXPECT_EQ(*first_report_bps, 2'000'000U);
+}
+
+TEST(PassthroughBitrateMonitorTest, StaysQuietWithinBudgetWithoutTargetOrWhenOverrunIsBrief)
+{
+  using std::chrono::milliseconds;
+  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+
+  PassthroughBitrateMonitor without_target;
+  PassthroughBitrateMonitor within_budget;
+  within_budget.setTarget(1'000'000U);
+  PassthroughBitrateMonitor brief_overrun;
+  brief_overrun.setTarget(1'000'000U);
+  for (int frame_index = 0; frame_index <= 100; ++frame_index) {
+    const auto now = start + milliseconds(100 * frame_index);
+    EXPECT_FALSE(without_target.record(25'000U, now).has_value());
+    // 18.75 kB every 100 ms is 1.5 Mbit/s: exactly 1.5x the target is not well above it.
+    EXPECT_FALSE(within_budget.record(18'750U, now).has_value());
+    // Two seconds over budget, then one second under, repeated.
+    const bool under_budget_second = (frame_index / 10) % 3 == 2;
+    EXPECT_FALSE(brief_overrun.record(under_budget_second ? 5'000U : 25'000U, now).has_value());
+  }
 }
 
 }  // namespace
