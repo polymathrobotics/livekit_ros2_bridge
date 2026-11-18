@@ -143,27 +143,21 @@ livekit_ros2_bridge:
         transform:
           type: string
           default_value: ''
-          description: >-
-            Optional GStreamer transform fragment inserted after other video
-            ingress. Must be empty with passthrough.
-        passthrough:
-          type: bool
-          default_value: false
-          description: >-
-            Forward this source's H.264 to LiveKit unchanged instead of decoding
-            and re-encoding it. The source must output Annex-B H.264, one access
-            unit per buffer, normally by ending with h264parse
-            config-interval=-1. Global video.publish settings are ignored; the
-            transform and publish descriptions list the values allowed with
-            passthrough. See docs/configuration.md.
+          description: Optional GStreamer transform fragment inserted after other video ingress.
         publish:
-          codec:
+          encoder:
             type: string
             default_value: ''
             description: >-
-              Optional LiveKit codec override for this other video source.
-              Empty inherits from video.publish.codec. With passthrough, only
-              empty, auto, or h264.
+              Optional encoder for this other video source. Empty or auto lets
+              LiveKit encode the decoded video; pre_encoded forwards the
+              source's H.264 unchanged. See docs/configuration.md.
+            validation:
+              one_of<>: [['', auto, pre_encoded]]
+          codec:
+            type: string
+            default_value: ''
+            description: Optional LiveKit codec override for this other video source. Empty inherits from video.publish.codec.
             validation:
               one_of<>: [['', auto, vp8, h264, av1, vp9, h265]]
           max_bitrate_bps:
@@ -172,26 +166,19 @@ livekit_ros2_bridge:
             description: >-
               Optional LiveKit max video bitrate override for this other video
               source in bps. -1 inherits from
-              video.publish.max_bitrate_bps. With passthrough, set it to the
-              camera's configured bitrate; -1 or 0 leaves LiveKit's default.
+              video.publish.max_bitrate_bps.
             validation:
               gt_eq<>: [-1]
           max_framerate:
             type: double
             default_value: -1.0
-            description: >-
-              Optional LiveKit max video framerate override for this other video
-              source. -1 inherits from video.publish.max_framerate. With
-              passthrough, only -1 or 0.
+            description: Optional LiveKit max video framerate override for this other video source. -1 inherits from video.publish.max_framerate.
             validation:
               gt_eq<>: [-1.0]
           simulcast:
             type: string
             default_value: ''
-            description: >-
-              Optional LiveKit simulcast override for this other video source.
-              Empty inherits from video.publish.simulcast. With passthrough, only
-              empty, auto, or disabled.
+            description: Optional LiveKit simulcast override for this other video source. Empty inherits from video.publish.simulcast.
             validation:
               one_of<>: [['', auto, enabled, disabled]]
 

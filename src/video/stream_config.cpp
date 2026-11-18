@@ -149,7 +149,7 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
   const auto reject = [&id](const char * setting, const char * allowed) {
     throw std::runtime_error(
       "video.other." + id + "." + setting +
-      " is not supported with passthrough, which forwards the source's H.264 unchanged; " + allowed);
+      " is not supported with publish.encoder pre_encoded, which forwards the source's H.264 unchanged; " + allowed);
   };
   if (!trim(entry.transform).empty()) {
     reject("transform", "leave it empty");
@@ -237,9 +237,10 @@ StreamConfig loadConfig(const Params & params)
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
     const std::string transform = trim(entry.transform);
+    const bool passthrough = trim(entry.publish.encoder) == "pre_encoded";
     std::string description;
     livekit::TrackPublishOptions publish_options;
-    if (entry.passthrough) {
+    if (passthrough) {
       requirePassthroughCompatible(id, entry);
       description = buildPassthroughPipelineDescription(source_fragment);
       publish_options = makePassthroughPublishOptions(entry);
@@ -262,7 +263,7 @@ StreamConfig loadConfig(const Params & params)
     source.name = name;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
-    source.passthrough = entry.passthrough;
+    source.passthrough = passthrough;
     source.publish_options = std::move(publish_options);
     config.other_sources.push_back(std::move(source));
   }

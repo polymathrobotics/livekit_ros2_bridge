@@ -42,12 +42,11 @@ livekit_ros2_bridge:
     # `video.topics.ids` / `video.other.ids` yet.
     # ROS topics use required `pattern`, optional `transform`, and optional
     # `publish.*` overrides.
-    # Other video sources use required `source`, optional `transform`, optional
-    # `passthrough`, and optional `publish.*` overrides. Their ids are trimmed
-    # only; `/front`, `front`, and `front/` are three distinct other video sources.
-    # The bridge appends its own queue/convert/I420/appsink tail. With
-    # `passthrough: true` it forwards the source's H.264 unchanged instead; the
-    # source must then end with `h264parse config-interval=-1`.
+    # Other video sources use required `source`, optional `transform`, and optional
+    # `publish.*` overrides. Their ids are trimmed only; `/front`, `front`,
+    # and `front/` are three distinct other video sources.
+    # The bridge appends its own queue/convert/I420/appsink tail, unless
+    # `publish.encoder: pre_encoded` forwards the source's H.264 unchanged.
     #
     # Optional default LiveKit publish policy:
     # video.publish.codec: "auto"  # or "vp8", "h264", "av1", "vp9", "h265"
