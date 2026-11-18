@@ -76,7 +76,7 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
-  // Also requests a keyframe when LiveKit asks for one. Throws on a failed publish or send.
+  // Also requests a keyframe when LiveKit asks for one. Throws on a failed publish only.
   // Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
@@ -107,8 +107,7 @@ private:
 
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
-  // Publishes the encoded source on first use; throws if the publish or send fails.
-  void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
+  bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
@@ -116,7 +115,7 @@ private:
   void logResumedLocked();
   void logDiscontinuityLocked();
   void logViewerKeyFrameRequestLocked();
-  void logFeedbackFailedLocked(const std::string & error);
+  void logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
@@ -152,6 +151,7 @@ private:
   EventThrottle waiting_log_throttle_{kLogThrottle};
   EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
+  EventThrottle capture_failed_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::video

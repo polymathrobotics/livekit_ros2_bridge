@@ -40,8 +40,9 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-// Mirrors TrackPublisher's private keyframe request interval, plus slack to clearly outlast it.
+// Mirror TrackPublisher's private intervals, plus slack to clearly outlast them.
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
 
 StreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
@@ -450,7 +451,7 @@ TEST(TrackPublisherTest, PassthroughPublishFailureThrowsAndRetriesAtNextKeyFrame
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.retry"}));
 }
 
-TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
+TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
 {
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -458,21 +459,56 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
   const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
   auto publisher = std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send", "lkros.video.send"));
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-  EXPECT_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame), std::invalid_argument);
-  // The picture is broken until the next keyframe, even before the restart lands.
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(sent);
+  // The picture is broken until the next keyframe.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_EQ(key_frame_requests, 1);
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   publisher.reset();
 
   EXPECT_EQ(key_frame_requests, 1);
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
   EXPECT_EQ(
+    logs.fieldValues({"video_stream_capture_failed", "stream_key=stream:send"}, "count"),
+    std::vector<std::string>{"1"});
+  EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
     std::vector<std::string>{"1"});
+}
+
+TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send_storm", "lkros.video.send_storm"));
+  constexpr int kFailedSends = 20;
+
+  const auto started_at = std::chrono::steady_clock::now();
+  // Per iteration: the keyframe is sent, the next frame fails, and the one after is discarded.
+  for (int failed_send = 0; failed_send < kFailedSends; ++failed_send) {
+    publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+    publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame);
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  }
+  const auto elapsed = std::chrono::steady_clock::now() - started_at;
+  publisher.reset();
+
+  EXPECT_GE(key_frame_requests, 1);
+  EXPECT_LE(key_frame_requests, 1 + elapsed / kKeyFrameRequestInterval);
+  const std::vector<std::string> counts =
+    logs.fieldValues({"video_stream_capture_failed", "stream_key=stream:send_storm"}, "count");
+  ASSERT_FALSE(counts.empty());
+  EXPECT_EQ(counts.front(), "1");
+  EXPECT_LE(counts.size(), 1U + static_cast<std::size_t>(elapsed / kLogThrottle));
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send_storm"}));
 }
 
 // LiveKit asks for a keyframe once per gap and drops delta frames until it gets one, so a request

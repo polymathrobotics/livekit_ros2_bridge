@@ -19,7 +19,6 @@
 #include <exception>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -242,12 +241,12 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return false;
   }
 
-  // The failure restarts the pipeline; frames arriving before then must not follow a lost one.
-  try {
-    sendEncodedFrameLocked(frame);
-  } catch (...) {
-    awaitKeyFrameLocked();
-    throw;
+  // A failed publish throws and restarts the pipeline; frames until then are still discarded.
+  if (encoded_source_ == nullptr) {
+    publishEncodedSourceLocked(frame.width, frame.height);
+  }
+  if (!sendEncodedFrameLocked(frame)) {
+    return false;
   }
 
   if (!captured_frame_logged_) {
@@ -279,7 +278,7 @@ void TrackPublisher::readEncodedFeedbackLocked()
       livekit_key_frame_request_pending_ = true;
     }
   } catch (const std::exception & exc) {
-    logFeedbackFailedLocked(exc.what());
+    logThrottledFailureLocked(feedback_failed_log_throttle_, "video_stream_passthrough_feedback_failed", exc.what());
   }
 }
 
@@ -296,14 +295,14 @@ void TrackPublisher::logViewerKeyFrameRequestLocked()
     .info();
 }
 
-void TrackPublisher::logFeedbackFailedLocked(const std::string & error)
+void TrackPublisher::logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error)
 {
-  const std::size_t pending = feedback_failed_log_throttle_.record();
+  const std::size_t pending = throttle.record();
   if (pending == 0U) {
     return;
   }
 
-  LogEvent(kLogger, "video_stream_passthrough_feedback_failed")
+  LogEvent(kLogger, event)
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
     .field("count", pending)
@@ -347,16 +346,27 @@ void TrackPublisher::logResumedLocked()
   discarded_frame_count_ = 0U;
 }
 
-void TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
+bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
 {
-  if (encoded_source_ == nullptr) {
-    publishEncodedSourceLocked(frame.width, frame.height);
+  frame.metadata = userTimestampMetadata(frame.timestamp_us);
+  std::string error;
+  try {
+    if (encoded_source_->captureFrame(frame)) {
+      return true;
+    }
+    error = "LiveKit did not accept the encoded frame.";
+  } catch (const std::exception & exc) {
+    error = exc.what();
+  } catch (...) {
+    // Restarts the pipeline; frames until then must not follow the lost one.
+    awaitKeyFrameLocked();
+    throw;
   }
 
-  frame.metadata = userTimestampMetadata(frame.timestamp_us);
-  if (!encoded_source_->captureFrame(frame)) {
-    throw std::runtime_error("LiveKit did not accept the encoded frame.");
-  }
+  // Not awaitKeyFrameLocked(): resetting its throttle would request a keyframe after every failure.
+  awaiting_key_frame_ = true;
+  logThrottledFailureLocked(capture_failed_log_throttle_, "video_stream_capture_failed", error);
+  return false;
 }
 
 void TrackPublisher::awaitKeyFrame()
