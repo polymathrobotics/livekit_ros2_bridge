@@ -32,7 +32,6 @@ constexpr std::uint8_t kNonIdrSlice = 0x41U;
 const Bytes kShortStartCode{0x00U, 0x00U, 0x01U};
 const Bytes kLongStartCode{0x00U, 0x00U, 0x00U, 0x01U};
 
-// NAL units (header byte plus a few payload bytes) as an encoder emits them.
 const Bytes kAccessUnitDelimiterNal{0x09U, 0x10U};
 const Bytes kSequenceParameterSetNal{0x67U, 0x42U, 0xC0U, 0x1EU};
 const Bytes kPictureParameterSetNal{0x68U, 0xCEU, 0x3CU, 0x80U};
@@ -99,24 +98,20 @@ TEST(H264AccessUnitTest, IgnoresIdrHeaderByteNotAfterStartCode)
 {
   EXPECT_FALSE(containsIdr(kIdrSliceNal));
   EXPECT_FALSE(containsIdr({0x00U, 0x01U, kIdrSlice, 0x88U}));
-  // An encoder escapes 00 00 01 inside a payload as 00 00 03 01, so an unescaped
-  // 00 00 01 always starts a NAL unit. A parameter set, unlike a slice, lets the
-  // scan reach the escaped bytes.
+  // 00 00 03 01 is an escaped 00 00 01 inside a payload, not a NAL unit start;
+  // a parameter set, unlike a slice, lets the scan reach it.
   EXPECT_FALSE(containsIdr({0x00U, 0x00U, 0x01U, 0x67U, 0x42U, 0x00U, 0x00U, 0x03U, 0x01U, kIdrSlice, 0x00U}));
 }
 
 TEST(H264AccessUnitTest, DecidesAtTheFirstSlice)
 {
-  // Every slice of one picture has the same NAL type, so the first slice
-  // decides. Bytes after a non-IDR slice that look like an IDR NAL unit cannot
-  // make the access unit an IDR, and the scan does not read them.
+  // All slices of a picture share a NAL type, so the scan must not read past the first slice.
   EXPECT_FALSE(containsIdr(concat({kLongStartCode, kNonIdrSliceNal, kShortStartCode, kIdrSliceNal})));
   EXPECT_TRUE(containsIdr(concat({kLongStartCode, kIdrSliceNal, kShortStartCode, kNonIdrSliceNal})));
 }
 
 TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrSlice)
 {
-  // Mixes both start code lengths, so each NAL unit is found after either.
   const AccessUnitSummary with_both = summarize(concat(
     {kLongStartCode,
      kAccessUnitDelimiterNal,

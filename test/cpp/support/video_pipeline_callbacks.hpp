@@ -24,7 +24,6 @@
 namespace livekit_ros2_bridge::test_support
 {
 
-// Video pipeline callbacks that do nothing, for tests to override the ones they observe.
 inline video::PipelineCallbacks makeNoOpVideoPipelineCallbacks()
 {
   video::PipelineCallbacks callbacks;

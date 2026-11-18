@@ -250,7 +250,7 @@ TEST(TrackPublisherTest, PassthroughPublishesEncodedSourceOnFirstKeyFrame)
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   EXPECT_EQ(connection.state->publishedVideoTrackCount(), 0U);
-  // Delta frames before the first keyframe are discarded; the request is throttled.
+  // Two discarded frames, one request: throttled.
   EXPECT_EQ(key_frame_requests, 1);
 
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
@@ -334,8 +334,6 @@ TEST(TrackPublisherTest, PassthroughAwaitKeyFrameDiscardsUntilNextKeyFrame)
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 0U);
 }
 
-// A discontinuous frame follows frames that were dropped or lost, so a delta frame can't be
-// decoded; discard frames until the next keyframe, asking for one.
 TEST(TrackPublisherTest, PassthroughDiscontinuousDeltaFrameWaitsForNextKeyFrame)
 {
   test_support::ScopedLogCapture logs;
@@ -348,7 +346,7 @@ TEST(TrackPublisherTest, PassthroughDiscontinuousDeltaFrameWaitsForNextKeyFrame)
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame, true));
   EXPECT_EQ(key_frame_requests, 1);
-  // While waiting, requests stay throttled and another gap changes nothing.
+  // Still waiting: no new request, and another gap changes nothing.
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame, true));
   EXPECT_EQ(key_frame_requests, 1);
@@ -369,8 +367,7 @@ TEST(TrackPublisherTest, PassthroughDiscontinuousDeltaFrameWaitsForNextKeyFrame)
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.gap"}));
 }
 
-// The first buffer of every pipeline run is marked discontinuous, while the publisher already
-// waits for a keyframe, so it is not a gap.
+// The first buffer of every run is marked discontinuous, but the publisher is already waiting for a keyframe.
 TEST(TrackPublisherTest, PassthroughStartOfRunIsNotLoggedAsAGap)
 {
   test_support::ScopedLogCapture logs;
@@ -390,8 +387,7 @@ TEST(TrackPublisherTest, PassthroughStartOfRunIsNotLoggedAsAGap)
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_discontinuity"}), 0U);
 }
 
-// Publishing stalls the sample thread, so the bridge queue may drop frames meanwhile; the frame
-// after the publish then waits for a keyframe like any other gap, without a warning.
+// Publishing stalls the sample thread, so frames may be dropped meanwhile; that gap is not warned about.
 TEST(TrackPublisherTest, PassthroughGapRightAfterPublishWaitsForKeyFrameWithoutWarning)
 {
   test_support::ScopedLogCapture logs;
@@ -457,8 +453,7 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
 
   publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
   EXPECT_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame), std::invalid_argument);
-  // The picture is broken until the next keyframe, so delta frames are discarded
-  // even before the pipeline restart lands.
+  // The picture is broken until the next keyframe, even before the restart lands.
   publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   EXPECT_EQ(key_frame_requests, 1);
 
@@ -468,7 +463,6 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
 
   EXPECT_EQ(key_frame_requests, 1);
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
-  // Only the delta frame after the failure was discarded.
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
     std::vector<std::string>{"1"});

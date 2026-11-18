@@ -134,9 +134,8 @@ livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bit
   return options;
 }
 
-// A parse-only stand-in: these tests only load and validate config, and CI lacks h264parse
-// (gstreamer1.0-plugins-bad). At runtime it would fail, as rtph264depay's caps lack width and
-// height; real sources end with `h264parse config-interval=-1`, as the docs say.
+// A parse-only stand-in: these tests only load config, and CI lacks h264parse (gstreamer1.0-plugins-bad).
+// Real sources end with `h264parse config-interval=-1`.
 rclcpp::NodeOptions makePassthroughSourceOptions()
 {
   auto options = makeStaticTokenOptions();
@@ -625,7 +624,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoPassesOnlyItsOwnMaxBitrateToLivek
     const char * node_name;
   };
 
-  // 0 means LiveKit's default here as everywhere else; -1, the unset default, is above.
+  // 0 means LiveKit's default; the unset default, -1, is tested above.
   const std::vector<MaxBitrateCase> max_bitrate_cases{
     {2500000, 2500000U, "startup_config_passthrough_max_bitrate"},
     {0, 0U, "startup_config_passthrough_max_bitrate_zero"},
@@ -726,8 +725,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps
   options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true pattern=ball");
   options.append_parameter_override("video.other.front.publish.encoder", "pre_encoded");
 
-  // This raw source loads as a decoded source, but its caps are known when the
-  // pipeline is parsed, so linking it to the bridge's H.264 caps filter fails at startup.
+  // Fixed raw caps are known at pipeline parse, so linking to the bridge's H.264 caps filter fails at startup.
   expectConfigErrorContains("startup_config_passthrough_rejects_fixed_non_h264_caps", options, "could not link");
 }
 

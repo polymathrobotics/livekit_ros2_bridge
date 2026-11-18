@@ -280,8 +280,6 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
-// The source parses its own H.264; the bridge checks its format and keeps at most about 0.5 s of
-// it, dropping the oldest frames beyond that, with or without timestamps.
 TEST(PipelineDescriptionTest, PassthroughEndingChecksH264FormatAndBoundsTheQueue)
 {
   EXPECT_EQ(

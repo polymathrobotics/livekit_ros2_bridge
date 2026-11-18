@@ -68,7 +68,6 @@ constexpr auto kHangTimeout = std::chrono::seconds(10);
 // The interval the stream throttles its restart warnings to.
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 
-// The hint a passthrough stream logs when its source's output does not fit the bridge's H.264 caps.
 constexpr char kPassthroughFormatHint[] =
   "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
   "config-interval=-1\"";
@@ -138,12 +137,10 @@ livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
   return frame;
 }
 
-// A live source of H.264 access units pushed through the bridge appsrc, one per buffer.
 constexpr char kH264AppSrc[] =
   "appsrc name=bridge_video_src is-live=true format=time"
   " caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\"";
 
-// Pushes an IDR or non-IDR access unit to kH264AppSrc whose index follows its slice header.
 void pushIndexedFrame(
   GstAppSrc * appsrc, std::uint32_t frame_index, bool is_keyframe, std::chrono::nanoseconds timestamp)
 {
@@ -250,15 +247,12 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
-// What the publisher sent in a passthrough run with slow sends.
 struct SlowSendRun
 {
   std::uint32_t sent_delta_frames = 0U;
-  // Sent delta frames whose previous frame was not sent, so viewers could not decode them.
   std::uint32_t undecodable_delta_frames = 0U;
-  // Sent frames whose previous frame was not sent.
   std::uint32_t resumes_after_gap = 0U;
-  // The most frames pushed after a frame by the time it was sent.
+  // Most frames pushed after a frame by the time it was sent.
   std::uint32_t most_frames_behind = 0U;
   int key_frame_requests = 0;
   std::size_t discontinuity_warnings = 0U;
@@ -268,9 +262,7 @@ constexpr std::uint32_t kSlowSendFramesPerSecond = 30U;
 constexpr auto kFramesPerBridgeQueue =
   static_cast<std::uint32_t>(kSlowSendFramesPerSecond * kBridgeQueueDuration / std::chrono::seconds(1));
 
-// A live 30 fps source with a keyframe every `key_frame_interval` frames, whose frames take
-// 100 ms each to send, as when the bridge's sample thread stalls on a busy host, so the
-// bridge can send a third of them.
+// A live 30 fps source whose frames take 100 ms each to send, as when the sample thread stalls on a busy host.
 SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
 {
   constexpr std::uint32_t kFrameCount = kSlowSendFramesPerSecond * 5U / 2U;
@@ -316,8 +308,7 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   return run;
 }
 
-// Every frame is a keyframe, so each one can resume the feed without asking the source for one;
-// the bridge must still drop frames rather than fall further behind than its queue holds.
+// Every frame is a keyframe, so the feed resumes without asking the source for one.
 TEST_F(StreamTest, PassthroughWithSlowSendsStaysWithinTheQueueOfLive)
 {
   const SlowSendRun run = runPassthroughWithSlowSends(1U);
@@ -328,8 +319,6 @@ TEST_F(StreamTest, PassthroughWithSlowSendsStaysWithinTheQueueOfLive)
   EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
 }
 
-// With delta frames, a frame after dropped ones can't be decoded, so nothing but a keyframe
-// may follow a gap.
 TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
 {
   const SlowSendRun run = runPassthroughWithSlowSends(10U);
@@ -463,7 +452,7 @@ TEST_F(StreamTest, FailureDuringRestartLeadsToAnotherRestart)
 TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
 {
   test_support::ScopedLogCapture logs;
-  // The demuxer's dynamic pad fails at runtime, like an RTSP camera that sends VP8 would.
+  // The demuxer's dynamic pad fails at runtime, as with an RTSP camera that sends VP8.
   const auto harness = std::make_shared<OtherStreamHarness>(
     makePassthroughSpec("videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"));
   const auto start_stream = [harness]() { harness->stream.start(); };
@@ -484,8 +473,7 @@ TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 
-// H.264 caps without width and height, as from rtph264depay without h264parse, fail on every
-// restart; each recovery warning carries the hint, throttled, with no per-sample warning.
+// H.264 caps without width and height, as from rtph264depay without h264parse.
 TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
 {
   using test_support::ControlledStartElement;
@@ -518,8 +506,7 @@ TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 
-// A viewer that starts at an IDR without SPS and PPS cannot decode it. The source sends
-// three such frames and ends, and is restarted; the stream warns about them once.
+// The source sends three such frames and ends, then restarts; the warning must not repeat.
 TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
 {
   using test_support::ControlledStartElement;
@@ -529,7 +516,6 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
     std::filesystem::temp_directory_path() /
     ("lkros_idr_without_parameter_sets_" + std::to_string(::getpid()) + ".h264");
   {
-    // An Annex-B IDR slice alone, as a source without h264parse config-interval=-1 can send it.
     const char idr_without_parameter_sets[] = {0x00, 0x00, 0x00, 0x01, 0x65, static_cast<char>(0x88), 0x00};
     std::ofstream file(access_unit_path, std::ios::binary);
     file.write(idr_without_parameter_sets, sizeof(idr_without_parameter_sets));
@@ -542,7 +528,7 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
     " num-buffers=3 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
     ControlledStartElement::kFactoryName));
   const auto attempts_before = ControlledStartElement::startAttempts();
-  // The third start follows the end of the second run, so its frames have arrived too.
+  // The third start follows the second run's end, so its frames have arrived.
   const auto second_run_ended = [attempts_before]() {
     return ControlledStartElement::startAttempts() - attempts_before >= 3U;
   };
@@ -557,15 +543,12 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
 }
 
-// A restarted source can start mid-stream, so after each restart the publisher
-// discards frames, asking for a keyframe, until one arrives.
 TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
 {
   using test_support::ControlledStartElement;
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
-  // A source that sends nothing and ends at once, so the stream keeps restarting
-  // and every frame comes from the test.
+  // Ends at once without sending, so the stream keeps restarting and all frames come from the test.
   const auto harness = std::make_shared<OtherStreamHarness>(
     makePassthroughSpec(std::string("fakesrc num-buffers=0 ! ") + ControlledStartElement::kFactoryName));
   const auto attempts_before = ControlledStartElement::startAttempts();
@@ -577,7 +560,7 @@ TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
 
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
   harness->track_publisher.captureEncoded(makeEncodedFrame(true), request_key_frame);
-  // A restart that had already begun may have waited before the keyframe; the second did not.
+  // A restart already under way may have waited before the keyframe; the second did not.
   const std::size_t attempts_after_key_frame = attempts();
   const bool restarted =
     test_support::waitUntil([&]() { return attempts() >= attempts_after_key_frame + 2U; }, std::chrono::seconds(5));
