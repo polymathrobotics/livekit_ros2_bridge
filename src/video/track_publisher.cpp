@@ -314,7 +314,9 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
     return false;
   }
 
+  // A republish unpublishes the old track first, so the keyframe wait must be set before it.
   if (encoded_source_ == nullptr || codec_changed) {
+    awaitKeyFrameLocked();
     publishEncodedSourceLocked(encoded.codec, frame.width, frame.height);
   }
   if (!sendEncodedFrameLocked(frame)) {

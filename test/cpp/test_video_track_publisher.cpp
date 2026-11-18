@@ -387,6 +387,49 @@ TEST(TrackPublisherTest, PassthroughRepublishesWhenTheCodecChanges)
     std::vector<std::string>{"1"});
 }
 
+// The old track is already unpublished, so a delta frame must not start a new one.
+TEST(TrackPublisherTest, PassthroughFailedRepublishWaitsForNextKeyFrame)
+{
+  using livekit::VideoCodec;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int publish_attempts = 0;
+  connection.state->publish_video_track_hook = [&](const std::string &) {
+    ++publish_attempts;
+    if (publish_attempts == 2) {
+      throw std::runtime_error("simulated video republish failure");
+    }
+  };
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:refail", "lkros.video.refail"));
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
+  EXPECT_THROW(
+    publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame), std::runtime_error);
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, VideoCodec::H265), request_key_frame));
+  EXPECT_EQ(publish_attempts, 2);
+  EXPECT_EQ(key_frame_requests, 1);
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
+  // Publishing stalls the stream, so a gap right after the republish is expected, not reported.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, VideoCodec::H265), request_key_frame, true));
+  publisher.reset();
+
+  EXPECT_EQ(
+    connection.state->event_log,
+    (std::vector<std::string>{
+      "publish_video_track:lkros.video.refail",
+      "unpublish_video_track:lkros.video.refail",
+      "publish_video_track:lkros.video.refail",
+      "publish_video_track:lkros.video.refail",
+      "unpublish_video_track:lkros.video.refail",
+    }));
+  EXPECT_EQ(connection.state->published_video_options.back().video_codec, VideoCodec::H265);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_discontinuity"}), 0U);
+}
+
 TEST(TrackPublisherTest, PassthroughSizeChangeDoesNotRepublish)
 {
   FakeRoomConnection connection;
