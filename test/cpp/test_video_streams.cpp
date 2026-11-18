@@ -506,26 +506,44 @@ TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 
-// The source sends three such frames and ends, then restarts; the warning must not repeat.
-TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
+using AccessUnit = std::vector<std::uint8_t>;
+
+const AccessUnit kSequenceAndPictureParameterSets = {
+  0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
+const AccessUnit kIdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
+const AccessUnit kDeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
+
+AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
+{
+  AccessUnit joined = first;
+  joined.insert(joined.end(), second.begin(), second.end());
+  return joined;
+}
+
+// multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
+void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_units)
 {
   using test_support::ControlledStartElement;
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
-  const std::filesystem::path access_unit_path =
-    std::filesystem::temp_directory_path() /
-    ("lkros_idr_without_parameter_sets_" + std::to_string(::getpid()) + ".h264");
-  {
-    const char idr_without_parameter_sets[] = {0x00, 0x00, 0x00, 0x01, 0x65, static_cast<char>(0x88), 0x00};
-    std::ofstream file(access_unit_path, std::ios::binary);
-    file.write(idr_without_parameter_sets, sizeof(idr_without_parameter_sets));
+  const std::string path_prefix =
+    (std::filesystem::temp_directory_path() / ("lkros_access_unit_" + std::to_string(::getpid()))).string();
+  std::vector<std::filesystem::path> access_unit_paths;
+  for (std::size_t index = 0U; index < access_units.size(); ++index) {
+    access_unit_paths.push_back(path_prefix + "_" + std::to_string(index) + ".h264");
+    std::ofstream file(access_unit_paths.back(), std::ios::binary);
+    file.write(
+      reinterpret_cast<const char *>(access_units[index].data()),
+      static_cast<std::streamsize>(access_units[index].size()));
   }
-  const ScopeExit remove_access_unit([&]() { std::filesystem::remove(access_unit_path); });
-  test_support::ScopedLogCapture logs;
-  // multifilesrc sends the whole file as each buffer.
+  const ScopeExit remove_access_units([&]() {
+    for (const std::filesystem::path & path : access_unit_paths) {
+      std::filesystem::remove(path);
+    }
+  });
   const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
-    "multifilesrc location=" + access_unit_path.string() +
-    " num-buffers=3 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
+    "multifilesrc location=" + path_prefix +
+    "_%d.h264 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
     ControlledStartElement::kFactoryName));
   const auto attempts_before = ControlledStartElement::startAttempts();
   // The third start follows the second run's end, so its frames have arrived.
@@ -540,7 +558,27 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   ASSERT_TRUE(restarted);
+}
+
+// The warning must not repeat across the restart.
+TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
+{
+  test_support::ScopedLogCapture logs;
+
+  runPassthroughStreamOverAccessUnits({kIdrSlice, kIdrSlice, kIdrSlice});
+
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
+}
+
+TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
+{
+  test_support::ScopedLogCapture logs;
+
+  runPassthroughStreamOverAccessUnits(
+    {concatenate(kSequenceAndPictureParameterSets, kIdrSlice), kDeltaSlice, kDeltaSlice});
+
+  EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
 }
 
 TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
