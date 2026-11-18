@@ -140,9 +140,8 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
-// Passthrough forwards the source's H.264 unchanged and ignores global defaults, so this throws on
-// the first per-entry setting that would change the stream.
-// publish.max_bitrate_bps is always allowed because it describes the source.
+// Passthrough ignores global defaults, so throw on any per-entry setting that would change the
+// stream; publish.max_bitrate_bps is allowed because it describes the source.
 template <typename EntryT>
 void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
 {
@@ -167,9 +166,7 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
   }
 }
 
-// publish.max_bitrate_bps tells LiveKit the most this camera sends, which
-// bounds its rate target and pacing; without it LiveKit assumes a default for
-// the resolution. -1 (unset) and 0 leave that default in place.
+// max_bitrate_bps bounds LiveKit's rate target; -1 and 0 keep its resolution-based default.
 template <typename EntryT>
 livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
 {

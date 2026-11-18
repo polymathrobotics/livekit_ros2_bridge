@@ -71,14 +71,12 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: publishes an EncodedVideoSource on the first keyframe and discards frames (asking for
-  // a keyframe) while it waits for one, as after a discontinuous delta frame. A failed publish or
-  // send throws and waits for the next keyframe. Returns whether the frame was sent.
+  // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
+  // Throws on a failed publish or send. Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
     const std::function<void()> & request_key_frame,
     bool discontinuous = false);
-  // Passthrough: discard frames until the next keyframe, e.g. after a pipeline restart.
   void awaitKeyFrame();
 
 private:
@@ -92,11 +90,8 @@ private:
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
-  // Callbacks for RawI420 pipelines.
   PipelineCallbacks makePipelineCallbacks(
     std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
-  // Callbacks for EncodedH264 (passthrough) pipelines; request_key_frame asks the
-  // source for a keyframe.
   PipelineCallbacks makeEncodedPipelineCallbacks(
     std::function<bool()> is_shutdown,
     std::function<void(const std::string & reason)> on_failed,
@@ -105,8 +100,7 @@ private:
 
   void close();
 
-  // Returns whether the frame was sent. Callers request a keyframe after releasing
-  // mutex_ (see captureEncoded()).
+  // Callers request a keyframe after releasing mutex_ (see captureEncoded()).
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
   // Publishes the encoded source on first use; throws if the publish or send fails.
@@ -135,13 +129,11 @@ private:
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<livekit::LocalVideoTrack> track_;
 
-  // Passthrough state.
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
   bool awaiting_key_frame_ = true;
   // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
   bool just_published_ = false;
-  // Missing parameter sets come from the source's configuration, so warn once; the publisher
-  // outlives pipeline restarts.
+  // Warn once: the cause is the source's setup, and the publisher outlives restarts.
   bool parameter_sets_warning_logged_ = false;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};

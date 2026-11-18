@@ -147,8 +147,7 @@ struct PictureSize
   int height = 0;
 };
 
-// Empty unless the caps carry a positive width and height. h264parse adds them; a bare
-// depayloader such as rtph264depay negotiates H.264 caps without them.
+// h264parse adds width and height; a bare depayloader such as rtph264depay does not.
 std::optional<PictureSize> readPictureSize(const GstCaps * caps)
 {
   if (caps == nullptr || gst_caps_get_size(caps) == 0U) {
@@ -206,8 +205,8 @@ UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, 
 
 GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
 {
-  // Reported like a format mismatch, so the log carries the h264parse hint. Not-negotiated
-  // stops the flow, so this runs once per pipeline run rather than once per sample.
+  // Reported as a mismatch so the log carries the h264parse hint; not-negotiated stops the flow,
+  // so this fires once per run.
   GstCaps * caps = gst_sample_get_caps(sample);
   const std::optional<PictureSize> picture_size = readPictureSize(caps);
   if (!picture_size.has_value()) {
@@ -246,8 +245,7 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 }
 
-// Not-linked and not-negotiated both mean an element's output did not fit the next element; in
-// passthrough that is usually a source whose output is not byte-stream, AU-aligned H.264.
+// Not-linked and not-negotiated usually mean the source isn't byte-stream, AU-aligned H.264.
 bool isCapsMismatch(GstMessage * message, const GError * error)
 {
   if (
@@ -267,8 +265,6 @@ bool isCapsMismatch(GstMessage * message, const GError * error)
   return flow_return == GST_FLOW_NOT_LINKED || flow_return == GST_FLOW_NOT_NEGOTIATED;
 }
 
-// gst_element_foreach_src_pad() callback: appends an unlinked pad's caps to the
-// std::string in found_caps, separated by "; ".
 gboolean appendUnlinkedPadCaps(GstElement *, GstPad * pad, gpointer found_caps)
 {
   if (gst_pad_is_linked(pad)) {
@@ -291,15 +287,13 @@ gboolean appendUnlinkedPadCaps(GstElement *, GstPad * pad, gpointer found_caps)
   }
 }
 
-// gst_iterator_foreach() callback over a bin's elements.
 void appendElementUnlinkedCaps(const GValue * item, gpointer found_caps)
 {
   auto * element = GST_ELEMENT(g_value_get_object(item));
   (void)gst_element_foreach_src_pad(element, appendUnlinkedPadCaps, found_caps);
 }
 
-// Best effort: caps left on unlinked source pads of top-level elements are what
-// the source offered when it could not link onward. Joined with "; ".
+// Best effort: the caps the unlinked source pads offered.
 std::string findUnlinkedSourceCaps(GstBin * bin)
 {
   std::string offered_caps;

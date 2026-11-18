@@ -22,16 +22,12 @@ namespace livekit_ros2_bridge::video
 
 struct AccessUnitSummary
 {
-  // Holds an IDR slice (NAL type 5), the only frame a WebRTC viewer can start from.
   bool is_idr = false;
-  // Holds an SPS (NAL type 7) and a PPS (NAL type 8) before its first slice; a viewer
-  // starting at this access unit cannot decode it without them.
+  // SPS and PPS both precede the first slice; a viewer starting here cannot decode without them.
   bool has_parameter_sets = false;
 };
 
-// Scans an Annex-B H.264 access unit up to its first coded slice, since a picture's slices share
-// a type and its parameter sets precede them; every 00 00 01 counts as a start code. `data` may
-// be null only when `size == 0`.
+// Stops at the first coded slice: its type decides, and the parameter sets precede it.
 AccessUnitSummary summarizeAccessUnit(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

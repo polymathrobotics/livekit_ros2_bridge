@@ -24,7 +24,6 @@ namespace livekit_ros2_bridge::video
 inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
 
-// How much video the passthrough pipeline's bridge queue holds before it drops the oldest frames.
 inline constexpr auto kBridgeQueueDuration = std::chrono::milliseconds(500);
 
 inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
@@ -48,12 +47,10 @@ inline std::string buildPipelineDescription(const std::string & source, const st
 inline std::string buildPassthroughPipelineDescription(const std::string & source)
 {
   std::string description = source;
-  // The source must emit the Annex-B, one-picture-per-buffer H.264 the LiveKit SDK expects,
-  // normally by ending with h264parse config-interval=-1; anything else fails to link or negotiate here.
+  // Sources end with h264parse config-interval=-1, or this fails to link or negotiate.
   description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
-  // Never block the source: drop the oldest frames instead, marking the next one DISCONT. 30 buffers
-  // is the same 0.5 s at 60 fps and bounds sources without timestamps; 16 MiB (0.5 s at 256 Mbit/s)
-  // only bounds memory.
+  // Drop the oldest frames rather than block the source (the next frame is marked DISCONT). The
+  // 30-buffer cap bounds sources without timestamps; the 16 MiB cap only bounds memory.
   description += " ! queue leaky=downstream max-size-time=";
   description += std::to_string(std::chrono::nanoseconds(kBridgeQueueDuration).count());
   description += " max-size-buffers=30 max-size-bytes=16777216";

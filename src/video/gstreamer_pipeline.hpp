@@ -35,9 +35,7 @@ using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
 enum class PipelineOutput
 {
-  // Raw I420 frames for LiveKit to encode.
   RawI420,
-  // Annex-B H.264 access units forwarded to LiveKit unchanged (passthrough).
   EncodedH264,
 };
 
@@ -48,21 +46,18 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
-  // EncodedH264 only; discontinuous (the buffer's DISCONT flag) marks a frame after a gap: the
-  // bridge queue dropped frames, data was lost upstream, or a run started.
+  // EncodedH264 only; discontinuous: frames before this one were dropped or lost.
   std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
-  // EncodedH264 only, instead of on_failed: the source's output did not link or negotiate with
-  // the bridge's H.264 caps, or its caps lack the width and height. offered_caps may be empty.
+  // EncodedH264 only, instead of on_failed: the source did not link or negotiate H.264 caps with
+  // width and height. offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
-  // EncodedH264 only: called before on_encoded_frame for each keyframe that lacks SPS or PPS,
-  // which a viewer starting at that keyframe needs to decode it.
+  // EncodedH264 only: called before on_encoded_frame for a keyframe that lacks SPS or PPS.
   std::function<void()> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final
 {
 public:
-  // A pipeline keeps its output mode for its lifetime; every start() produces that output.
   explicit GStreamerPipeline(PipelineCallbacks callbacks, PipelineOutput output = PipelineOutput::RawI420);
   ~GStreamerPipeline();
 
@@ -78,9 +73,8 @@ public:
   void start(const std::string & description, bool require_appsrc);
   void stop();
 
-  // Asks the source for a keyframe (upstream force-key-unit); a no-op without a pipeline. Call it
-  // only from a pipeline callback, which stop() waits for before releasing the pad. The event runs
-  // through the source's elements on the calling thread, so one that takes its stream lock could block.
+  // Call only from a pipeline callback (stop() waits for those before releasing the pad); the event
+  // runs on the calling thread, so a source element holding its stream lock can block it.
   void requestKeyFrame();
 
 private:
@@ -100,8 +94,7 @@ private:
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
-  // Owned reference to the appsink's sink pad, released by stop(); atomic so
-  // requestKeyFrame() can run on a pipeline callback's thread.
+  // Atomic: requestKeyFrame() runs on callback threads.
   std::atomic<GstPad *> key_frame_pad_{nullptr};
 };
 

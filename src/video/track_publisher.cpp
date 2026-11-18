@@ -215,8 +215,7 @@ bool TrackPublisher::captureEncoded(
 
 bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous)
 {
-  // Frames before this one were dropped or lost, so a delta frame can't be decoded. While already
-  // waiting for a keyframe, as at the start of a run, that changes nothing.
+  // After a gap delta frames can't be decoded; no change while already awaiting a keyframe.
   const bool follows_publish = std::exchange(just_published_, false);
   if (discontinuous && !awaiting_key_frame_) {
     if (!follows_publish) {
@@ -232,8 +231,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return false;
   }
 
-  // The failure fails the pipeline, which restarts it. Frames that arrive before
-  // then must not follow a lost one, so wait for a keyframe from now on.
+  // The failure restarts the pipeline; frames arriving before then must not follow a lost one.
   try {
     sendEncodedFrameLocked(frame);
   } catch (...) {
@@ -260,8 +258,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 {
-  // Until the first keyframe publishes there is no track, and nothing else says
-  // why. Later waits follow a logged discontinuity or restart.
+  // Only before the first publish, when nothing else says why there is no track.
   if (encoded_source_ != nullptr) {
     return;
   }
@@ -279,7 +276,7 @@ void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 
 void TrackPublisher::logResumedLocked()
 {
-  // While the log is throttled, keep counting so the next one includes these frames.
+  // While throttled, keep counting so the next log includes these frames.
   if (discarded_frame_count_ == 0U) {
     return;
   }
@@ -338,8 +335,7 @@ void TrackPublisher::awaitKeyFrameLocked()
   }
 
   awaiting_key_frame_ = true;
-  // Let the first discarded frame ask for a keyframe right away; requests while
-  // still waiting stay throttled.
+  // The first discarded frame requests a keyframe immediately; later requests stay throttled.
   key_frame_request_throttle_ = EventThrottle(kKeyFrameRequestInterval);
 }
 
