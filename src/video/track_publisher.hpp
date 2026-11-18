@@ -116,6 +116,7 @@ private:
   void readEncodedFeedbackLocked();
   void logResumedLocked();
   void logDiscontinuityLocked();
+  void logViewerKeyFrameRequestLocked();
   void logFeedbackFailedLocked(const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
@@ -150,6 +151,7 @@ private:
   EventThrottle discontinuity_log_throttle_{kLogThrottle};
   EventThrottle resumed_log_throttle_{kLogThrottle};
   EventThrottle waiting_log_throttle_{kLogThrottle};
+  EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
 };
 

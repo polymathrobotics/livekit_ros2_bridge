@@ -357,7 +357,7 @@ livekit_ros2_bridge:
 - only H.264 is supported
 - bitrate, resolution, and frame rate come from the camera; set `publish.max_bitrate_bps` to the camera's configured bitrate, and leave `transform` and the other `publish.*` keys unset, since global `video.publish.*` defaults don't apply
 - configure the camera with a keyframe interval of about 1 s and no B-frames (Baseline or Main profile)
-- LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
+- LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_viewer_key_frame_request` (at most every 5 s), and `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
 
 ### Cab microphones
 

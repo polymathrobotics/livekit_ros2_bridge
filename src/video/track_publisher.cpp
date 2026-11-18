@@ -212,6 +212,9 @@ bool TrackPublisher::captureEncoded(
     sent = captureEncodedLocked(std::move(frame), discontinuous);
     // A viewer's request shares the throttle with discarded frames.
     key_frame_needed = (!sent || livekit_key_frame_request_pending_) && keyFrameRequestDueLocked();
+    if (key_frame_needed && livekit_key_frame_request_pending_) {
+      logViewerKeyFrameRequestLocked();
+    }
   }
   // Never call into GStreamer while holding mutex_: the request travels upstream
   // through user-supplied source elements, which may block on their own locks.
@@ -278,6 +281,19 @@ void TrackPublisher::readEncodedFeedbackLocked()
   } catch (const std::exception & exc) {
     logFeedbackFailedLocked(exc.what());
   }
+}
+
+void TrackPublisher::logViewerKeyFrameRequestLocked()
+{
+  const std::size_t pending = viewer_key_frame_request_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_viewer_key_frame_request")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("count", pending)
+    .info();
 }
 
 void TrackPublisher::logFeedbackFailedLocked(const std::string & error)

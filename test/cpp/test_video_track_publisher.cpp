@@ -331,6 +331,7 @@ TEST(TrackPublisherTest, PassthroughAwaitKeyFrameDiscardsUntilNextKeyFrame)
   publisher.reset();
 
   EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_viewer_key_frame_request"}), 0U);
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.restart"}));
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.restart"}));
   EXPECT_EQ(
@@ -478,6 +479,7 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
 // the throttle holds back must be made later, not lost.
 TEST(TrackPublisherTest, PassthroughLiveKitKeyFrameRequestWaitsOutTheThrottle)
 {
+  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
   int key_frame_requests = 0;
   const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
@@ -496,10 +498,14 @@ TEST(TrackPublisherTest, PassthroughLiveKitKeyFrameRequestWaitsOutTheThrottle)
   livekit_wants_key_frame = true;
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_viewer_key_frame_request"}), 0U);
 
   std::this_thread::sleep_for(kKeyFrameRequestInterval + kTimingMargin);
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_EQ(key_frame_requests, 2);
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_viewer_key_frame_request", "stream_key=stream:viewer"}, "count"),
+    std::vector<std::string>{"1"});
 
   // A sent keyframe answers the request.
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
