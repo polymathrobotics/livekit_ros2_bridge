@@ -247,6 +247,27 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_NE(failure_reason, "eos");
 }
 
+struct ForceKeyUnitCounts
+{
+  std::atomic<int> received{0};
+  std::atomic<int> without_all_headers{0};
+};
+
+GstPadProbeReturn countForceKeyUnitEvent(GstPad *, GstPadProbeInfo * info, gpointer user_data)
+{
+  GstEvent * event = GST_PAD_PROBE_INFO_EVENT(info);
+  if (GST_EVENT_TYPE(event) != GST_EVENT_CUSTOM_UPSTREAM || !gst_event_has_name(event, "GstForceKeyUnit")) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  auto * counts = static_cast<ForceKeyUnitCounts *>(user_data);
+  gboolean all_headers = FALSE;
+  gst_structure_get_boolean(gst_event_get_structure(event), "all-headers", &all_headers);
+  ++counts->received;
+  counts->without_all_headers += all_headers == TRUE ? 0 : 1;
+  return GST_PAD_PROBE_OK;
+}
+
 struct SlowSendRun
 {
   std::uint32_t sent_delta_frames = 0U;
@@ -254,7 +275,9 @@ struct SlowSendRun
   std::uint32_t resumes_after_gap = 0U;
   // Most frames pushed after a frame by the time it was sent.
   std::uint32_t most_frames_behind = 0U;
+  // Force-key-unit events that reached the source.
   int key_frame_requests = 0;
+  int key_frame_requests_without_all_headers = 0;
   std::size_t discontinuity_warnings = 0U;
 };
 
@@ -274,7 +297,9 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   // Only the appsink's streaming thread uses these until pipeline.stop() returns.
   SlowSendRun run;
   std::optional<std::uint32_t> last_sent_index;
-  const std::function<void()> request_key_frame = [&run]() { ++run.key_frame_requests; };
+  ForceKeyUnitCounts force_key_units;
+  GStreamerPipeline * pipeline_handle = nullptr;
+  const std::function<void()> request_key_frame = [&pipeline_handle]() { pipeline_handle->requestKeyFrame(); };
   std::atomic<std::uint32_t> pushed_frames{0U};
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool discontinuous) {
@@ -293,8 +318,12 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
     std::this_thread::sleep_for(kSendDuration);
   };
   GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
+  pipeline_handle = &pipeline;
 
   pipeline.start(buildPassthroughPipelineDescription(kH264AppSrc), true);
+  const GstObjectPtr<GstPad> source_pad(gst_element_get_static_pad(GST_ELEMENT(pipeline.appsrc()), "src"));
+  gst_pad_add_probe(
+    source_pad.get(), GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, &countForceKeyUnitEvent, &force_key_units, nullptr);
   const auto started_at = std::chrono::steady_clock::now();
   for (std::uint32_t frame_index = 0U; frame_index < kFrameCount; ++frame_index) {
     std::this_thread::sleep_until(started_at + frame_index * frame_interval);
@@ -304,6 +333,8 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   }
   pipeline.stop();
 
+  run.key_frame_requests = force_key_units.received;
+  run.key_frame_requests_without_all_headers = force_key_units.without_all_headers;
   run.discontinuity_warnings = logs.countLines({"video_stream_passthrough_discontinuity"});
   return run;
 }
@@ -327,6 +358,7 @@ TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
   EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
   EXPECT_EQ(run.undecodable_delta_frames, 0U);
   EXPECT_GE(run.key_frame_requests, 1);
+  EXPECT_EQ(run.key_frame_requests_without_all_headers, 0);
   EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
 }
 
@@ -558,6 +590,16 @@ void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   ASSERT_TRUE(restarted);
+}
+
+// Every frame is a delta frame, which the publisher discards while waiting for a keyframe.
+TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
+{
+  const auto requests_before = test_support::ControlledStartElement::forceKeyUnitEvents();
+
+  runPassthroughStreamOverAccessUnits({kDeltaSlice, kDeltaSlice, kDeltaSlice});
+
+  EXPECT_GE(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before + 1U);
 }
 
 // The warning must not repeat across the restart.
