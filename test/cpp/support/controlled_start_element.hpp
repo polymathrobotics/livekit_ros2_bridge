@@ -25,9 +25,9 @@
 namespace livekit_ros2_bridge::test_support
 {
 
-// Test-only "lkroscontrolledstart": an identity whose start (READY->PAUSED) a test steers
-// through a process-wide mode, to make a stream's start() throw or to report a failure
-// while it runs. Tests that use it set the mode first.
+// Test-only identity whose start a test steers through a process-wide mode (make start() throw
+// or report a failure while running) and which counts the force-key-unit events reaching its
+// src pad, to show a stream forwards keyframe requests to its source.
 class ControlledStartElement final
 {
 public:

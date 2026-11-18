@@ -256,13 +256,13 @@ struct ForceKeyUnitCounts
 GstPadProbeReturn countForceKeyUnitEvent(GstPad *, GstPadProbeInfo * info, gpointer user_data)
 {
   GstEvent * event = GST_PAD_PROBE_INFO_EVENT(info);
-  if (GST_EVENT_TYPE(event) != GST_EVENT_CUSTOM_UPSTREAM || !gst_event_has_name(event, "GstForceKeyUnit")) {
+  if (!gst_video_event_is_force_key_unit(event)) {
     return GST_PAD_PROBE_OK;
   }
 
   auto * counts = static_cast<ForceKeyUnitCounts *>(user_data);
   gboolean all_headers = FALSE;
-  gst_structure_get_boolean(gst_event_get_structure(event), "all-headers", &all_headers);
+  gst_video_event_parse_upstream_force_key_unit(event, nullptr, &all_headers, nullptr);
   ++counts->received;
   counts->without_all_headers += all_headers == TRUE ? 0 : 1;
   return GST_PAD_PROBE_OK;
@@ -599,7 +599,7 @@ TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
 
   runPassthroughStreamOverAccessUnits({kDeltaSlice, kDeltaSlice, kDeltaSlice});
 
-  EXPECT_GE(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before + 1U);
+  EXPECT_GT(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before);
 }
 
 // The warning must not repeat across the restart.
