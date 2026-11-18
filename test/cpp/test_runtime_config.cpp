@@ -723,11 +723,11 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
-  options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true ! vp8enc deadline=1");
+  options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true pattern=ball");
   options.append_parameter_override("video.other.front.publish.encoder", "pre_encoded");
 
-  // vp8enc's output caps are known when the pipeline is parsed, so linking it to
-  // the bridge's H.264 caps filter already fails at startup.
+  // This raw source loads as a decoded source, but its caps are known when the
+  // pipeline is parsed, so linking it to the bridge's H.264 caps filter fails at startup.
   expectConfigErrorContains("startup_config_passthrough_rejects_fixed_non_h264_caps", options, "could not link");
 }
 
