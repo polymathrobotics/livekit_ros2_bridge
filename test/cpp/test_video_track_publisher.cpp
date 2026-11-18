@@ -20,6 +20,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -37,6 +39,10 @@ namespace
 
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
+
+// Mirrors TrackPublisher's private keyframe request interval, plus slack to clearly outlast it.
+constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+constexpr auto kTimingMargin = std::chrono::milliseconds(100);
 
 StreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
 {
@@ -465,6 +471,80 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
+    std::vector<std::string>{"1"});
+}
+
+// LiveKit asks for a keyframe once per gap and drops delta frames until it gets one, so a request
+// the throttle holds back must be made later, not lost.
+TEST(TrackPublisherTest, PassthroughLiveKitKeyFrameRequestWaitsOutTheThrottle)
+{
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  bool livekit_wants_key_frame = false;
+  const TrackPublisher::EncodedFeedbackReader read_feedback = [&](const livekit::EncodedVideoSource &) {
+    livekit::EncodedVideoSource::Feedback feedback;
+    feedback.keyframe_requested = std::exchange(livekit_wants_key_frame, false);
+    return feedback;
+  };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:viewer", "lkros.video.viewer"), read_feedback);
+
+  // The discarded delta frame asks for a keyframe, which starts the throttle.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  livekit_wants_key_frame = true;
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 1);
+
+  std::this_thread::sleep_for(kKeyFrameRequestInterval + kTimingMargin);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 2);
+
+  // A sent keyframe answers the request.
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  std::this_thread::sleep_for(kKeyFrameRequestInterval + kTimingMargin);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 2);
+}
+
+TEST(TrackPublisherTest, PassthroughFailedFeedbackReadKeepsSendingAndKeepsTheKeyFrameRequest)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  int feedback_reads = 0;
+  const TrackPublisher::EncodedFeedbackReader read_feedback = [&](const livekit::EncodedVideoSource &) {
+    ++feedback_reads;
+    livekit::EncodedVideoSource::Feedback feedback;
+    // The first read arrives with the keyframe that was just sent, so the request outlives it.
+    feedback.keyframe_requested = feedback_reads == 1;
+    if (feedback_reads == 2 || feedback_reads == 3) {
+      throw std::runtime_error("feedback unavailable");
+    }
+    return feedback;
+  };
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:feedback", "lkros.video.feedback"), read_feedback);
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 1);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 1);
+
+  std::this_thread::sleep_for(kKeyFrameRequestInterval + kTimingMargin);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 2);
+
+  // An empty read doesn't answer the request either.
+  std::this_thread::sleep_for(kKeyFrameRequestInterval + kTimingMargin);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 3);
+
+  // The second failure falls inside the log throttle.
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_feedback_failed", "stream_key=stream:feedback"}, "count"),
     std::vector<std::string>{"1"});
 }
 

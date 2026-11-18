@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -104,10 +105,16 @@ std::shared_ptr<TrackPublisher> TrackPublisher::create(
   return publisher;
 }
 
-TrackPublisher::TrackPublisher(RoomConnection & connection, StreamSpec spec)
+TrackPublisher::TrackPublisher(
+  RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback)
 : connection_(connection)
 , spec_(std::move(spec))
-{}
+, read_encoded_feedback_(std::move(read_encoded_feedback))
+{
+  if (read_encoded_feedback_ == nullptr) {
+    read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
+  }
+}
 
 TrackPublisher::~TrackPublisher()
 {
@@ -203,7 +210,8 @@ bool TrackPublisher::captureEncoded(
       return false;
     }
     sent = captureEncodedLocked(std::move(frame), discontinuous);
-    key_frame_needed = !sent && keyFrameRequestDueLocked();
+    // A viewer's request shares the throttle with discarded frames.
+    key_frame_needed = (!sent || livekit_key_frame_request_pending_) && keyFrameRequestDueLocked();
   }
   // Never call into GStreamer while holding mutex_: the request travels upstream
   // through user-supplied source elements, which may block on their own locks.
@@ -253,7 +261,37 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     awaiting_key_frame_ = false;
     logResumedLocked();
   }
+  // Cleared before reading feedback so a request reported with this keyframe stays pending.
+  if (frame.is_keyframe) {
+    livekit_key_frame_request_pending_ = false;
+  }
+  readEncodedFeedbackLocked();
   return true;
+}
+
+void TrackPublisher::readEncodedFeedbackLocked()
+{
+  try {
+    if (read_encoded_feedback_(*encoded_source_).keyframe_requested) {
+      livekit_key_frame_request_pending_ = true;
+    }
+  } catch (const std::exception & exc) {
+    logFeedbackFailedLocked(exc.what());
+  }
+}
+
+void TrackPublisher::logFeedbackFailedLocked(const std::string & error)
+{
+  const std::size_t pending = feedback_failed_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_feedback_failed")
+    .fieldOr("stream_key", spec_.stream_key)
+    .fieldOr("error", error)
+    .field("count", pending)
+    .warn();
 }
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
