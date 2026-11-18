@@ -101,7 +101,7 @@ bool runEncodedVideoPipeline()
       pipeline_handle->requestKeyFrame();
     }
   };
-  video::GStreamerPipeline pipeline(callbacks, video::PipelineOutput::EncodedH264);
+  video::GStreamerPipeline pipeline(callbacks, video::PipelineOutput::EncodedVideo);
   pipeline_handle = &pipeline;
 
   pipeline.start(

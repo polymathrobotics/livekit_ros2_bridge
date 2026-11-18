@@ -280,7 +280,7 @@ TEST(StreamSpecTest, ResolveOtherSourceSpecRejectsInvalidNames)
     [&]() { (void)resolveOtherSourceSpec(config, " \t\n "); }, "Invalid other video name.");
 }
 
-TEST(PipelineDescriptionTest, PassthroughEndingChecksH264FormatAndBoundsTheQueue)
+TEST(PipelineDescriptionTest, PassthroughEndingChecksFormatAndBoundsTheQueue)
 {
   EXPECT_EQ(
     buildPassthroughPipelineDescription("rtspsrc location=rtsp://camera ! rtph264depay ! h264parse config-interval=-1"),

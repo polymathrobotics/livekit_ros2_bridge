@@ -292,7 +292,7 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
     last_sent_index = frame_index;
     std::this_thread::sleep_for(kSendDuration);
   };
-  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedH264);
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
 
   pipeline.start(buildPassthroughPipelineDescription(kH264AppSrc), true);
   const auto started_at = std::chrono::steady_clock::now();
@@ -449,7 +449,7 @@ TEST_F(StreamTest, FailureDuringRestartLeadsToAnotherRestart)
   EXPECT_TRUE(restarted_after_failed_restart) << "start attempts: " << attempts();
 }
 
-TEST_F(StreamTest, PassthroughStreamExplainsNonH264Source)
+TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
 {
   test_support::ScopedLogCapture logs;
   // The demuxer's dynamic pad fails at runtime, as with an RTSP camera that sends VP8.

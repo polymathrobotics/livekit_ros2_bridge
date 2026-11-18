@@ -22,12 +22,12 @@ namespace livekit_ros2_bridge::video
 
 struct AccessUnitSummary
 {
-  bool is_idr = false;
+  bool is_key_frame = false;
   // SPS and PPS both precede the first slice; a viewer starting here cannot decode without them.
   bool has_parameter_sets = false;
 };
 
 // Stops at the first coded slice: its type decides, and the parameter sets precede it.
-AccessUnitSummary summarizeAccessUnit(const std::uint8_t * data, std::size_t size);
+AccessUnitSummary summarizeH264AccessUnit(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
-#include "video/h264_access_unit.hpp"
+#include "video/access_unit.hpp"
 
 namespace livekit_ros2_bridge::video
 {
@@ -51,12 +51,12 @@ Bytes concat(std::initializer_list<Bytes> parts)
 
 AccessUnitSummary summarize(const Bytes & bytes)
 {
-  return summarizeAccessUnit(bytes.data(), bytes.size());
+  return summarizeH264AccessUnit(bytes.data(), bytes.size());
 }
 
 bool containsIdr(const Bytes & bytes)
 {
-  return summarize(bytes).is_idr;
+  return summarize(bytes).is_key_frame;
 }
 
 TEST(H264AccessUnitTest, DetectsIdrWhenItIsTheLastByte)
@@ -86,12 +86,12 @@ TEST(H264AccessUnitTest, RejectsRecoveryPointIntraSliceThatIsNotIdr)
 
 TEST(H264AccessUnitTest, RejectsEmptyAndTruncatedInput)
 {
-  EXPECT_FALSE(summarizeAccessUnit(nullptr, 0U).is_idr);
+  EXPECT_FALSE(summarizeH264AccessUnit(nullptr, 0U).is_key_frame);
   EXPECT_FALSE(containsIdr(kShortStartCode));
   EXPECT_FALSE(containsIdr(kLongStartCode));
   // Ends at a start code; the IDR header byte just past `size` must not be read.
   const Bytes start_code_at_end = concat({kLongStartCode, kSequenceParameterSetNal, kShortStartCode, {kIdrSlice}});
-  EXPECT_FALSE(summarizeAccessUnit(start_code_at_end.data(), start_code_at_end.size() - 1U).is_idr);
+  EXPECT_FALSE(summarizeH264AccessUnit(start_code_at_end.data(), start_code_at_end.size() - 1U).is_key_frame);
 }
 
 TEST(H264AccessUnitTest, IgnoresIdrHeaderByteNotAfterStartCode)
@@ -121,22 +121,22 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
      kPictureParameterSetNal,
      kShortStartCode,
      kIdrSliceNal}));
-  EXPECT_TRUE(with_both.is_idr);
+  EXPECT_TRUE(with_both.is_key_frame);
   EXPECT_TRUE(with_both.has_parameter_sets);
 
   const AccessUnitSummary without_either =
     summarize(concat({kLongStartCode, kAccessUnitDelimiterNal, kLongStartCode, kIdrSliceNal}));
-  EXPECT_TRUE(without_either.is_idr);
+  EXPECT_TRUE(without_either.is_key_frame);
   EXPECT_FALSE(without_either.has_parameter_sets);
 
   const AccessUnitSummary sps_only =
     summarize(concat({kLongStartCode, kSequenceParameterSetNal, kLongStartCode, kIdrSliceNal}));
-  EXPECT_TRUE(sps_only.is_idr);
+  EXPECT_TRUE(sps_only.is_key_frame);
   EXPECT_FALSE(sps_only.has_parameter_sets);
 
   const AccessUnitSummary pps_only =
     summarize(concat({kLongStartCode, kPictureParameterSetNal, kLongStartCode, kIdrSliceNal}));
-  EXPECT_TRUE(pps_only.is_idr);
+  EXPECT_TRUE(pps_only.is_key_frame);
   EXPECT_FALSE(pps_only.has_parameter_sets);
 
   const AccessUnitSummary after_slice = summarize(concat(
@@ -146,7 +146,7 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
      kSequenceParameterSetNal,
      kShortStartCode,
      kPictureParameterSetNal}));
-  EXPECT_TRUE(after_slice.is_idr);
+  EXPECT_TRUE(after_slice.is_key_frame);
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 

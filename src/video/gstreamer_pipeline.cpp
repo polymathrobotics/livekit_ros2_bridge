@@ -29,7 +29,7 @@
 #include "rclcpp/logging.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
-#include "video/h264_access_unit.hpp"
+#include "video/access_unit.hpp"
 #include "video/pipeline_description.hpp"
 
 namespace livekit_ros2_bridge::video
@@ -173,13 +173,13 @@ std::string capsToString(const GstCaps * caps)
   return caps_text != nullptr ? caps_text.get() : "";
 }
 
-struct UnpackedH264Frame
+struct UnpackedEncodedFrame
 {
   livekit::EncodedVideoSource::Frame frame;
   bool lacks_parameter_sets = false;
 };
 
-UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, std::int64_t timestamp_us)
+UnpackedEncodedFrame unpackEncodedFrame(GstBuffer * buffer, PictureSize picture_size, std::int64_t timestamp_us)
 {
   if (buffer == nullptr) {
     throw std::runtime_error("GStreamer sample is missing its buffer.");
@@ -192,14 +192,14 @@ UnpackedH264Frame unpackH264Frame(GstBuffer * buffer, PictureSize picture_size, 
 
   const auto * data = static_cast<const std::uint8_t *>(mapping.get()->data);
   const std::size_t size = mapping.get()->size;
-  const AccessUnitSummary summary = summarizeAccessUnit(data, size);
-  UnpackedH264Frame unpacked;
-  unpacked.frame.is_keyframe = summary.is_idr;
+  const AccessUnitSummary summary = summarizeH264AccessUnit(data, size);
+  UnpackedEncodedFrame unpacked;
+  unpacked.frame.is_keyframe = summary.is_key_frame;
   unpacked.frame.width = static_cast<std::uint32_t>(picture_size.width);
   unpacked.frame.height = static_cast<std::uint32_t>(picture_size.height);
   unpacked.frame.timestamp_us = timestamp_us;
   unpacked.frame.data.assign(data, data + size);
-  unpacked.lacks_parameter_sets = summary.is_idr && !summary.has_parameter_sets;
+  unpacked.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
   return unpacked;
 }
 
@@ -215,9 +215,9 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 
   GstBuffer * buffer = gst_sample_get_buffer(sample);
-  UnpackedH264Frame unpacked;
+  UnpackedEncodedFrame unpacked;
   try {
-    unpacked = unpackH264Frame(buffer, *picture_size, timestamp_us);
+    unpacked = unpackEncodedFrame(buffer, *picture_size, timestamp_us);
   } catch (const std::exception & exc) {
     callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
@@ -496,7 +496,7 @@ GstFlowReturn GStreamerPipeline::onSample(GstAppSink * sink)
                                       ? static_cast<std::int64_t>(GST_BUFFER_PTS(buffer) / 1000U)
                                       : 0;
 
-  if (output_ == PipelineOutput::EncodedH264) {
+  if (output_ == PipelineOutput::EncodedVideo) {
     return deliverEncodedSample(sample.get(), timestamp_us, callbacks_);
   }
 
@@ -546,7 +546,7 @@ void GStreamerPipeline::onBusMessage(GstMessage * message)
   gst_message_parse_error(message, &raw_error, nullptr);
   GErrorPtr error(raw_error);
   const std::string reason = error != nullptr && error->message != nullptr ? error->message : "error";
-  if (output_ == PipelineOutput::EncodedH264 && isCapsMismatch(message, error.get())) {
+  if (output_ == PipelineOutput::EncodedVideo && isCapsMismatch(message, error.get())) {
     callbacks_.on_caps_mismatch(reason, findUnlinkedSourceCaps(GST_BIN(pipeline_.get())));
     return;
   }

@@ -36,7 +36,7 @@ using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 enum class PipelineOutput
 {
   RawI420,
-  EncodedH264,
+  EncodedVideo,
 };
 
 struct PipelineCallbacks
@@ -47,7 +47,7 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
 
-  // The rest are used only with PipelineOutput::EncodedH264.
+  // The rest are used only with PipelineOutput::EncodedVideo.
   // discontinuous: frames before this one were dropped or lost.
   std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
   // Reported instead of on_failed; offered_caps may be empty.

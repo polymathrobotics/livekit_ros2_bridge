@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "video/h264_access_unit.hpp"
+#include "video/access_unit.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -36,7 +36,7 @@ bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
 
 }  // namespace
 
-AccessUnitSummary summarizeAccessUnit(const std::uint8_t * data, std::size_t size)
+AccessUnitSummary summarizeH264AccessUnit(const std::uint8_t * data, std::size_t size)
 {
   constexpr std::size_t kStartCodeSize = 3U;
   if (data == nullptr || size <= kStartCodeSize) {

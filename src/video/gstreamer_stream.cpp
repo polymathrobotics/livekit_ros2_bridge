@@ -41,7 +41,7 @@ GStreamerStream::GStreamerStream(StreamSpec spec, TrackPublisher & publisher)
 , publisher_(publisher)
 , pipeline_(
     makePipelineCallbacks(),
-    requireOtherInput(spec_).passthrough ? PipelineOutput::EncodedH264 : PipelineOutput::RawI420)
+    requireOtherInput(spec_).passthrough ? PipelineOutput::EncodedVideo : PipelineOutput::RawI420)
 , failure_handler_(kRestartDelay, [this]() { restartPipelineAfterFailure(); })
 {}
 

@@ -600,7 +600,7 @@ TEST_F(RuntimeConfigTest, SlashVariantsLoadAsDistinctOtherSources)
   std::filesystem::remove(params_path);
 }
 
-TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedH264AndIgnoresGlobalPublishDefaults)
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoUsesPreEncodedVideoAndIgnoresGlobalPublishDefaults)
 {
   auto options = makePassthroughSourceOptions();
   appendVideoPublishOverrides(options, "vp8", 900000, 15.0, "enabled");
@@ -718,7 +718,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
   }
 }
 
-TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps)
+TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedUnsupportedCaps)
 {
   auto options = makeStaticTokenOptions();
   options.append_parameter_override("video_other_ids", std::vector<std::string>{"front"});
@@ -726,7 +726,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedNonH264Caps
   options.append_parameter_override("video.other.front.publish.encoder", "pre_encoded");
 
   // Fixed raw caps are known at pipeline parse, so linking to the bridge's H.264 caps filter fails at startup.
-  expectConfigErrorContains("startup_config_passthrough_rejects_fixed_non_h264_caps", options, "could not link");
+  expectConfigErrorContains("startup_config_passthrough_rejects_fixed_unsupported_caps", options, "could not link");
 }
 
 TEST_F(RuntimeConfigTest, OtherVideoEncoderAutoDecodesLikeTheDefault)
