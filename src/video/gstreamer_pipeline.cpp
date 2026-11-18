@@ -275,19 +275,16 @@ gboolean appendUnlinkedPadCaps(GstElement *, GstPad * pad, gpointer found_caps)
     return TRUE;
   }
   utils::GstCapsPtr caps(gst_pad_get_current_caps(pad));
-  if (caps == nullptr) {
-    return TRUE;
-  }
-  GCharPtr caps_text(gst_caps_to_string(caps.get()));
-  if (caps_text == nullptr) {
-    return TRUE;
-  }
 
   // Exceptions must not cross GStreamer's C frames; keep what was found.
   try {
+    const std::string caps_text = capsToString(caps.get());
+    if (caps_text.empty()) {
+      return TRUE;
+    }
     auto & caps_list = *static_cast<std::string *>(found_caps);
     caps_list += caps_list.empty() ? "" : "; ";
-    caps_list += caps_text.get();
+    caps_list += caps_text;
     return TRUE;
   } catch (...) {
     return FALSE;
