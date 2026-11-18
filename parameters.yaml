@@ -145,6 +145,15 @@ livekit_ros2_bridge:
           default_value: ''
           description: Optional GStreamer transform fragment inserted after other video ingress.
         publish:
+          encoder:
+            type: string
+            default_value: ''
+            description: >-
+              Optional encoder for this other video source. Empty or auto lets
+              LiveKit encode the decoded video; pre_encoded forwards the
+              source's H.264 unchanged. See docs/configuration.md.
+            validation:
+              one_of<>: [['', auto, pre_encoded]]
           codec:
             type: string
             default_value: ''

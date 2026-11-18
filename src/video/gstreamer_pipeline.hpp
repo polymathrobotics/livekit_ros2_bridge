@@ -23,6 +23,7 @@
 #include <functional>
 #include <string>
 
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_resources.hpp"
 
@@ -32,6 +33,12 @@ namespace livekit_ros2_bridge::video
 using GstAppSrcPtr = GstObjectPtr<GstAppSrc>;
 using GstAppSinkPtr = GstObjectPtr<GstAppSink>;
 
+enum class PipelineOutput
+{
+  RawI420,
+  EncodedVideo,
+};
+
 struct PipelineCallbacks
 {
   std::function<bool()> is_shutdown;
@@ -39,12 +46,20 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
+
+  // The rest are used only with PipelineOutput::EncodedVideo.
+  // discontinuous: frames before this one were dropped or lost.
+  std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
+  // Reported instead of on_failed; offered_caps may be empty.
+  std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
+  // Called before on_encoded_frame for a keyframe that lacks SPS or PPS.
+  std::function<void()> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final
 {
 public:
-  explicit GStreamerPipeline(PipelineCallbacks callbacks);
+  explicit GStreamerPipeline(PipelineCallbacks callbacks, PipelineOutput output = PipelineOutput::RawI420);
   ~GStreamerPipeline();
 
   GStreamerPipeline(const GStreamerPipeline &) = delete;
@@ -59,6 +74,10 @@ public:
   void start(const std::string & description, bool require_appsrc);
   void stop();
 
+  // Call only from a pipeline callback (stop() waits for those before releasing the pad); the event
+  // runs on the calling thread, so a source element holding its stream lock can block it.
+  void requestKeyFrame();
+
 private:
   bool beginCallback();
   void endCallback();
@@ -72,9 +91,12 @@ private:
   static constexpr std::size_t kCallbackCountMask = ~kCallbacksStopped;
 
   const PipelineCallbacks callbacks_;
+  const PipelineOutput output_;
   std::atomic<std::size_t> callback_state_{0};
   GstElementPtr pipeline_;
   GstAppSrcPtr appsrc_;
+  // Atomic: requestKeyFrame() runs on callback threads.
+  std::atomic<GstPad *> key_frame_pad_{nullptr};
 };
 
 }  // namespace livekit_ros2_bridge::video

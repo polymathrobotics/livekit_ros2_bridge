@@ -25,9 +25,9 @@
 namespace livekit_ros2_bridge::test_support
 {
 
-// Test-only "lkroscontrolledstart": an identity whose start (READY->PAUSED) a test steers
-// through a process-wide mode, to make a stream's start() throw or to report a failure
-// while it runs. Tests that use it set the mode first.
+// Test-only identity whose start a test steers through a process-wide mode (make start() throw
+// or report a failure while running) and which counts the force-key-unit events reaching its
+// src pad, to show a stream forwards keyframe requests to its source.
 class ControlledStartElement final
 {
 public:
@@ -89,6 +89,12 @@ public:
     return startAttemptCounter().load(std::memory_order_acquire);
   }
 
+  // How many force-key-unit events have reached the src pad of any instance.
+  static std::size_t forceKeyUnitEvents()
+  {
+    return forceKeyUnitCounter().load(std::memory_order_acquire);
+  }
+
 private:
   using ChangeState = GstStateChangeReturn (*)(GstElement * element, GstStateChange transition);
 
@@ -135,7 +141,25 @@ private:
     const Mode mode = modeSlot().load(std::memory_order_acquire);
     g_object_set_qdata(G_OBJECT(element), mode_quark, GINT_TO_POINTER(static_cast<int>(mode) + 1));
     startAttemptCounter().fetch_add(1U, std::memory_order_acq_rel);
+    countForceKeyUnitEvents(element);
     return mode;
+  }
+
+  static void countForceKeyUnitEvents(GstElement * element)
+  {
+    const utils::GstObjectPtr<GstPad> source_pad(gst_element_get_static_pad(element, "src"));
+    gst_pad_add_probe(
+      source_pad.get(),
+      GST_PAD_PROBE_TYPE_EVENT_UPSTREAM,
+      [](GstPad *, GstPadProbeInfo * info, gpointer) {
+        GstEvent * event = GST_PAD_PROBE_INFO_EVENT(info);
+        if (GST_EVENT_TYPE(event) == GST_EVENT_CUSTOM_UPSTREAM && gst_event_has_name(event, "GstForceKeyUnit")) {
+          forceKeyUnitCounter().fetch_add(1U, std::memory_order_acq_rel);
+        }
+        return GST_PAD_PROBE_OK;
+      },
+      nullptr,
+      nullptr);
   }
 
   static ChangeState & parentChangeState()
@@ -151,6 +175,12 @@ private:
   }
 
   static std::atomic<std::size_t> & startAttemptCounter()
+  {
+    static std::atomic<std::size_t> instance{0U};
+    return instance;
+  }
+
+  static std::atomic<std::size_t> & forceKeyUnitCounter()
   {
     static std::atomic<std::size_t> instance{0U};
     return instance;

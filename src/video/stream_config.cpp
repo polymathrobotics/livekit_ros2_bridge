@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "livekit/room_event_types.h"
+#include "livekit/video_codec.h"
 #include "utils/gstreamer_pipeline_validation.hpp"
 #include "utils/param_entries.hpp"
 #include "utils/ros_resource_name_utils.hpp"
@@ -52,21 +53,20 @@ RosResourcePattern requireRosResourcePattern(std::string_view raw, const char * 
 std::optional<livekit::VideoCodec> parseVideoCodec(const std::string & value)
 {
   const std::string codec = trim(value);
-  // This SDK version lacks stable named constants; values match its wire mapping.
   if (codec == "vp8") {
-    return static_cast<livekit::VideoCodec>(0);
+    return livekit::VideoCodec::VP8;
   }
   if (codec == "h264") {
-    return static_cast<livekit::VideoCodec>(1);
+    return livekit::VideoCodec::H264;
   }
   if (codec == "av1") {
-    return static_cast<livekit::VideoCodec>(2);
+    return livekit::VideoCodec::AV1;
   }
   if (codec == "vp9") {
-    return static_cast<livekit::VideoCodec>(3);
+    return livekit::VideoCodec::VP9;
   }
   if (codec == "h265") {
-    return static_cast<livekit::VideoCodec>(4);
+    return livekit::VideoCodec::H265;
   }
   return std::nullopt;
 }
@@ -140,6 +140,46 @@ livekit::TrackPublishOptions parsePublishOptions(const EntryT & entry, const liv
   return options;
 }
 
+// Passthrough ignores global defaults, so throw on any per-entry setting that would change the
+// stream; publish.max_bitrate_bps is allowed because it describes the source.
+template <typename EntryT>
+void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
+{
+  const auto reject = [&id](const char * setting, const char * allowed) {
+    throw std::runtime_error(
+      "video.other." + id + "." + setting +
+      " is not supported with publish.encoder pre_encoded, which forwards the source's H.264 unchanged; " + allowed);
+  };
+  if (!trim(entry.transform).empty()) {
+    reject("transform", "leave it empty");
+  }
+  const std::string codec = trim(entry.publish.codec);
+  if (!codec.empty() && codec != "h264" && codec != "auto") {
+    reject("publish.codec", "use h264 or auto, or leave it empty");
+  }
+  if (entry.publish.max_framerate > 0.0) {
+    reject("publish.max_framerate", "use 0 or leave it at -1");
+  }
+  const std::string simulcast = trim(entry.publish.simulcast);
+  if (!simulcast.empty() && simulcast != "disabled" && simulcast != "auto") {
+    reject("publish.simulcast", "use disabled or auto, or leave it empty");
+  }
+}
+
+// max_bitrate_bps bounds LiveKit's rate target; -1 and 0 keep its resolution-based default.
+template <typename EntryT>
+livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
+{
+  livekit::TrackPublishOptions options;
+  options.video_codec = livekit::VideoCodec::H264;
+  options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  options.simulcast = false;
+  if (entry.publish.max_bitrate_bps > 0) {
+    setEncoding(options, static_cast<std::uint64_t>(entry.publish.max_bitrate_bps), 0.0);
+  }
+  return options;
+}
+
 constexpr utils::EndpointLayout kRosTopicRuleLayout{1U, 1U, 1U, 1U, kBridgeAppSrcName, kBridgeAppSinkName};
 constexpr utils::EndpointLayout kOtherSourceLayout = utils::makeOtherSourceLayout(kBridgeAppSinkName);
 
@@ -194,7 +234,18 @@ StreamConfig loadConfig(const Params & params)
       throw std::runtime_error(source_context + " requires a non-empty source");
     }
     const std::string transform = trim(entry.transform);
-    validatePipeline(source_context, buildPipelineDescription(source_fragment, transform), kOtherSourceLayout);
+    const bool passthrough = trim(entry.publish.encoder) == "pre_encoded";
+    std::string description;
+    livekit::TrackPublishOptions publish_options;
+    if (passthrough) {
+      requirePassthroughCompatible(id, entry);
+      description = buildPassthroughPipelineDescription(source_fragment);
+      publish_options = makePassthroughPublishOptions(entry);
+    } else {
+      description = buildPipelineDescription(source_fragment, transform);
+      publish_options = parsePublishOptions(entry, config.default_publish_options);
+    }
+    validatePipeline(source_context, description, kOtherSourceLayout);
 
     // Only trim surrounding whitespace; slash and colon variants stay distinct.
     const std::string name = trim(id);
@@ -209,7 +260,8 @@ StreamConfig loadConfig(const Params & params)
     source.name = name;
     source.source_fragment = source_fragment;
     source.transform_fragment = transform;
-    source.publish_options = parsePublishOptions(entry, config.default_publish_options);
+    source.passthrough = passthrough;
+    source.publish_options = std::move(publish_options);
     config.other_sources.push_back(std::move(source));
   }
 

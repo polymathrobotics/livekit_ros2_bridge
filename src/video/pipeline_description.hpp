@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <string>
 
 namespace livekit_ros2_bridge::video
@@ -22,6 +23,8 @@ namespace livekit_ros2_bridge::video
 // Reserved names used to recover bridge-owned endpoints from parsed GStreamer bins.
 inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
+
+inline constexpr auto kBridgeQueueDuration = std::chrono::milliseconds(500);
 
 inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
 {
@@ -38,6 +41,22 @@ inline std::string buildPipelineDescription(const std::string & source, const st
   description += " ! appsink name=";
   description += kBridgeAppSinkName;
   description += " sync=false drop=true max-buffers=1";
+  return description;
+}
+
+inline std::string buildPassthroughPipelineDescription(const std::string & source)
+{
+  std::string description = source;
+  // Sources end with h264parse config-interval=-1, or this fails to link or negotiate.
+  description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
+  // Drop the oldest frames rather than block the source (the next frame is marked DISCONT). The
+  // 30-buffer cap bounds sources without timestamps; the 16 MiB cap only bounds memory.
+  description += " ! queue leaky=downstream max-size-time=";
+  description += std::to_string(std::chrono::nanoseconds(kBridgeQueueDuration).count());
+  description += " max-size-buffers=30 max-size-bytes=16777216";
+  description += " ! appsink name=";
+  description += kBridgeAppSinkName;
+  description += " sync=false";
   return description;
 }
 

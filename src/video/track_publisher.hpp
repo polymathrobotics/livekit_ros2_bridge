@@ -15,6 +15,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -23,6 +24,7 @@
 
 #include "core/room_connection.hpp"
 #include "core/subscription_qos.hpp"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -51,8 +53,12 @@ public:
     StreamSpec spec,
     const SubscriptionQosConfig * qos_config);
 
+  // The seam for tests: a real source can't be driven without a room.
+  using EncodedFeedbackReader =
+    std::function<livekit::EncodedVideoSource::Feedback(const livekit::EncodedVideoSource & source)>;
+
   // Does not start a ROS or GStreamer input stream.
-  TrackPublisher(RoomConnection & connection, StreamSpec spec);
+  TrackPublisher(RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback = nullptr);
 
   ~TrackPublisher();
 
@@ -69,6 +75,15 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
+  // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
+  // Also requests a keyframe when LiveKit asks for one. Throws on a failed publish or send.
+  // Returns whether the frame was sent.
+  bool captureEncoded(
+    livekit::EncodedVideoSource::Frame frame,
+    const std::function<void()> & request_key_frame,
+    bool discontinuous = false);
+  void awaitKeyFrame();
+
 private:
   friend class GStreamerStream;
   friend class RosStream;
@@ -76,18 +91,39 @@ private:
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
+  void onKeyFrameWithoutParameterSets();
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
   PipelineCallbacks makePipelineCallbacks(
     std::function<bool()> is_shutdown, std::function<void(const std::string & reason)> on_failed);
+  PipelineCallbacks makeEncodedPipelineCallbacks(
+    std::function<bool()> is_shutdown,
+    std::function<void(const std::string & reason)> on_failed,
+    std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch,
+    std::function<void()> request_key_frame);
 
   void close();
 
+  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
+  void logWaitingForFirstKeyFrameLocked();
+  // Publishes the encoded source on first use; throws if the publish or send fails.
+  void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
+  void awaitKeyFrameLocked();
+  bool keyFrameRequestDueLocked();
+  void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
+  void readEncodedFeedbackLocked();
+  void logResumedLocked();
+  void logDiscontinuityLocked();
+  void logViewerKeyFrameRequestLocked();
+  void logFeedbackFailedLocked(const std::string & error);
+
+  static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
   StreamSpec spec_;
+  EncodedFeedbackReader read_encoded_feedback_;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
@@ -100,6 +136,22 @@ private:
   std::unique_ptr<GStreamerStream> gstreamer_stream_;
   std::shared_ptr<livekit::VideoSource> source_;
   std::shared_ptr<livekit::LocalVideoTrack> track_;
+
+  std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
+  bool awaiting_key_frame_ = true;
+  // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
+  bool just_published_ = false;
+  // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
+  bool livekit_key_frame_request_pending_ = false;
+  // Warn once: the cause is the source's setup, and the publisher outlives restarts.
+  bool parameter_sets_warning_logged_ = false;
+  std::size_t discarded_frame_count_ = 0U;
+  EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
+  EventThrottle discontinuity_log_throttle_{kLogThrottle};
+  EventThrottle resumed_log_throttle_{kLogThrottle};
+  EventThrottle waiting_log_throttle_{kLogThrottle};
+  EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
+  EventThrottle feedback_failed_log_throttle_{kLogThrottle};
 };
 
 }  // namespace livekit_ros2_bridge::video

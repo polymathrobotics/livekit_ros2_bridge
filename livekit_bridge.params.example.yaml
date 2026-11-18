@@ -45,7 +45,8 @@ livekit_ros2_bridge:
     # Other video sources use required `source`, optional `transform`, and optional
     # `publish.*` overrides. Their ids are trimmed only; `/front`, `front`,
     # and `front/` are three distinct other video sources.
-    # The bridge always appends its own queue/convert/I420/appsink tail.
+    # The bridge appends its own queue/convert/I420/appsink tail, unless
+    # `publish.encoder: pre_encoded` forwards the source's H.264 unchanged.
     #
     # Optional default LiveKit publish policy:
     # video.publish.codec: "auto"  # or "vp8", "h264", "av1", "vp9", "h265"

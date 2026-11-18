@@ -168,6 +168,7 @@ StreamSpec resolveOtherSourceSpec(const StreamConfig & config, const std::string
     name,
     source.source_fragment,
     source.transform_fragment,
+    source.passthrough,
   };
   spec.publish_options = source.publish_options;
 

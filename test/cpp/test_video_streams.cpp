@@ -12,17 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <unistd.h>
+
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "sensor_msgs/image_encodings.hpp"
 #include "sensor_msgs/msg/compressed_image.hpp"
@@ -32,6 +43,7 @@
 #include "support/fake_room_connection.hpp"
 #include "support/ros_test_support.hpp"
 #include "support/scoped_log_capture.hpp"
+#include "support/video_pipeline_callbacks.hpp"
 #include "utils/log_event.hpp"
 #include "utils/scope_exit.hpp"
 #include "video/gstreamer_pipeline.hpp"
@@ -55,6 +67,10 @@ constexpr auto kHangTimeout = std::chrono::seconds(10);
 
 // The interval the stream throttles its restart warnings to.
 constexpr auto kLogThrottle = std::chrono::seconds(5);
+
+constexpr char kPassthroughFormatHint[] =
+  "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
+  "config-interval=-1\"";
 
 // Expects `event` logged at least once, first with count=1, and at most once per throttle
 // interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
@@ -98,15 +114,48 @@ const char * compressedImageInterfaceType()
   return rosidl_generator_traits::name<sensor_msgs::msg::CompressedImage>();
 }
 
-PipelineCallbacks makeNoOpPipelineCallbacks()
+StreamSpec makePassthroughSpec(const std::string & source_fragment)
 {
-  return PipelineCallbacks{
-    []() { return false; },
-    [](const livekit::VideoFrame &, std::int64_t) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-    [](const std::string &) {},
-  };
+  StreamSpec spec = makeOtherSpec();
+  spec.input = OtherInput{"test", source_fragment, "", true};
+  spec.publish_options.video_codec = livekit::VideoCodec::H264;
+  spec.publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
+  spec.publish_options.simulcast = false;
+  return spec;
+}
+
+livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
+{
+  livekit::EncodedVideoSource::Frame frame;
+  frame.is_keyframe = is_keyframe;
+  frame.width = 64U;
+  frame.height = 48U;
+  frame.timestamp_us = 1000;
+  // Annex-B start code and an IDR (type 5) or non-IDR (type 1) slice header.
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
+  return frame;
+}
+
+constexpr char kH264AppSrc[] =
+  "appsrc name=bridge_video_src is-live=true format=time"
+  " caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\"";
+
+void pushIndexedFrame(
+  GstAppSrc * appsrc, std::uint32_t frame_index, bool is_keyframe, std::chrono::nanoseconds timestamp)
+{
+  const auto index_high = static_cast<std::uint8_t>(frame_index >> 8U);
+  const auto index_low = static_cast<std::uint8_t>(frame_index & 0xFFU);
+  const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
+  const std::uint8_t access_unit[] = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U, index_high, index_low};
+  GstBuffer * buffer = gst_buffer_new_memdup(access_unit, sizeof(access_unit));
+  GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(timestamp.count());
+  (void)gst_app_src_push_buffer(appsrc, buffer);
+}
+
+std::uint32_t readFrameIndex(const livekit::EncodedVideoSource::Frame & frame)
+{
+  return (std::uint32_t{frame.data[6]} << 8U) | frame.data[7];
 }
 
 void expectStartErrorContains(
@@ -132,7 +181,7 @@ protected:
 
 TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSink)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline, "videotestsrc is-live=true ! fakesink name=bridge_video_sink", false, "must be a GstAppSink");
@@ -140,7 +189,7 @@ TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSink)
 
 TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   expectStartErrorContains(
     pipeline,
@@ -151,7 +200,7 @@ TEST_F(StreamTest, PipelineStartRejectsNamedNonAppSrcWhenRequired)
 
 TEST_F(StreamTest, PipelineStartCapturesRequiredAppSrcHandle)
 {
-  GStreamerPipeline pipeline(makeNoOpPipelineCallbacks());
+  GStreamerPipeline pipeline(test_support::makeNoOpVideoPipelineCallbacks());
 
   pipeline.start("appsrc name=bridge_video_src is-live=true ! appsink name=bridge_video_sink", true);
 
@@ -164,7 +213,7 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   std::mutex error_mutex;
   std::string capture_error;
   std::string failure_reason;
-  PipelineCallbacks callbacks = makeNoOpPipelineCallbacks();
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   // on_capture_failed also throws, so the exception reaches the new_sample catch;
   // the failed sample makes the pipeline post an error, which on_failed throws on.
   callbacks.on_frame = [](const livekit::VideoFrame &, std::int64_t) { throw 42; };
@@ -196,6 +245,121 @@ TEST_F(StreamTest, PipelineContainsNonStandardCallbackExceptions)
   EXPECT_EQ(capture_error, std::string(kUnknownExceptionValue));
   EXPECT_TRUE(reported);
   EXPECT_NE(failure_reason, "eos");
+}
+
+struct ForceKeyUnitCounts
+{
+  std::atomic<int> received{0};
+  std::atomic<int> without_all_headers{0};
+};
+
+GstPadProbeReturn countForceKeyUnitEvent(GstPad *, GstPadProbeInfo * info, gpointer user_data)
+{
+  GstEvent * event = GST_PAD_PROBE_INFO_EVENT(info);
+  if (!gst_video_event_is_force_key_unit(event)) {
+    return GST_PAD_PROBE_OK;
+  }
+
+  auto * counts = static_cast<ForceKeyUnitCounts *>(user_data);
+  gboolean all_headers = FALSE;
+  gst_video_event_parse_upstream_force_key_unit(event, nullptr, &all_headers, nullptr);
+  ++counts->received;
+  counts->without_all_headers += all_headers == TRUE ? 0 : 1;
+  return GST_PAD_PROBE_OK;
+}
+
+struct SlowSendRun
+{
+  std::uint32_t sent_delta_frames = 0U;
+  std::uint32_t undecodable_delta_frames = 0U;
+  std::uint32_t resumes_after_gap = 0U;
+  // Most frames pushed after a frame by the time it was sent.
+  std::uint32_t most_frames_behind = 0U;
+  // Force-key-unit events that reached the source.
+  int key_frame_requests = 0;
+  int key_frame_requests_without_all_headers = 0;
+  std::size_t discontinuity_warnings = 0U;
+};
+
+constexpr std::uint32_t kSlowSendFramesPerSecond = 30U;
+constexpr auto kFramesPerBridgeQueue =
+  static_cast<std::uint32_t>(kSlowSendFramesPerSecond * kBridgeQueueDuration / std::chrono::seconds(1));
+
+// A live 30 fps source whose frames take 100 ms each to send, as when the sample thread stalls on a busy host.
+SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
+{
+  constexpr std::uint32_t kFrameCount = kSlowSendFramesPerSecond * 5U / 2U;
+  constexpr auto kSendDuration = std::chrono::milliseconds(100);
+  const auto frame_interval = std::chrono::nanoseconds(std::chrono::seconds(1)) / kSlowSendFramesPerSecond;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  TrackPublisher publisher(connection, makePassthroughSpec(kH264AppSrc));
+  // Only the appsink's streaming thread uses these until pipeline.stop() returns.
+  SlowSendRun run;
+  std::optional<std::uint32_t> last_sent_index;
+  ForceKeyUnitCounts force_key_units;
+  GStreamerPipeline * pipeline_handle = nullptr;
+  const std::function<void()> request_key_frame = [&pipeline_handle]() { pipeline_handle->requestKeyFrame(); };
+  std::atomic<std::uint32_t> pushed_frames{0U};
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool discontinuous) {
+    const std::uint32_t frame_index = readFrameIndex(frame);
+    const std::uint32_t frames_behind = pushed_frames.load() - 1U - frame_index;
+    const bool is_keyframe = frame.is_keyframe;
+    if (!publisher.captureEncoded(std::move(frame), request_key_frame, discontinuous)) {
+      return;
+    }
+    const bool follows_gap = last_sent_index.has_value() && *last_sent_index + 1U != frame_index;
+    run.sent_delta_frames += is_keyframe ? 0U : 1U;
+    run.undecodable_delta_frames += !is_keyframe && (follows_gap || !last_sent_index.has_value()) ? 1U : 0U;
+    run.resumes_after_gap += follows_gap ? 1U : 0U;
+    run.most_frames_behind = std::max(run.most_frames_behind, frames_behind);
+    last_sent_index = frame_index;
+    std::this_thread::sleep_for(kSendDuration);
+  };
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
+  pipeline_handle = &pipeline;
+
+  pipeline.start(buildPassthroughPipelineDescription(kH264AppSrc), true);
+  const GstObjectPtr<GstPad> source_pad(gst_element_get_static_pad(GST_ELEMENT(pipeline.appsrc()), "src"));
+  gst_pad_add_probe(
+    source_pad.get(), GST_PAD_PROBE_TYPE_EVENT_UPSTREAM, &countForceKeyUnitEvent, &force_key_units, nullptr);
+  const auto started_at = std::chrono::steady_clock::now();
+  for (std::uint32_t frame_index = 0U; frame_index < kFrameCount; ++frame_index) {
+    std::this_thread::sleep_until(started_at + frame_index * frame_interval);
+    pushed_frames = frame_index + 1U;
+    pushIndexedFrame(
+      pipeline.appsrc(), frame_index, frame_index % key_frame_interval == 0U, frame_index * frame_interval);
+  }
+  pipeline.stop();
+
+  run.key_frame_requests = force_key_units.received;
+  run.key_frame_requests_without_all_headers = force_key_units.without_all_headers;
+  run.discontinuity_warnings = logs.countLines({"video_stream_passthrough_discontinuity"});
+  return run;
+}
+
+// Every frame is a keyframe, so the feed resumes without asking the source for one.
+TEST_F(StreamTest, PassthroughWithSlowSendsStaysWithinTheQueueOfLive)
+{
+  const SlowSendRun run = runPassthroughWithSlowSends(1U);
+
+  EXPECT_EQ(run.key_frame_requests, 0) << "a keyframe after a gap was not sent";
+  EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
+  EXPECT_GE(run.discontinuity_warnings, 1U);
+  EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
+}
+
+TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
+{
+  const SlowSendRun run = runPassthroughWithSlowSends(10U);
+
+  EXPECT_GE(run.sent_delta_frames, 1U);
+  EXPECT_GE(run.resumes_after_gap, 1U) << "no frame was dropped";
+  EXPECT_EQ(run.undecodable_delta_frames, 0U);
+  EXPECT_GE(run.key_frame_requests, 1);
+  EXPECT_EQ(run.key_frame_requests_without_all_headers, 0);
+  EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
@@ -315,6 +479,176 @@ TEST_F(StreamTest, FailureDuringRestartLeadsToAnotherRestart)
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   EXPECT_TRUE(restarted_after_failed_restart) << "start attempts: " << attempts();
+}
+
+TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
+{
+  test_support::ScopedLogCapture logs;
+  // The demuxer's dynamic pad fails at runtime, as with an RTSP camera that sends VP8.
+  const auto harness = std::make_shared<OtherStreamHarness>(
+    makePassthroughSpec("videotestsrc is-live=true ! vp8enc deadline=1 ! matroskamux streamable=true ! matroskademux"));
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+  const auto explained = [&]() {
+    return logs.countLines(
+             {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-vp8"}) > 0U;
+  };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool hint_logged = test_support::waitUntil(explained, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(hint_logged);
+  EXPECT_EQ(
+    logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint}),
+    logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
+  EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
+}
+
+// H.264 caps without width and height, as from rtph264depay without h264parse.
+TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  test_support::ScopedLogCapture logs;
+  const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
+    std::string("fakesrc sizetype=fixed sizemax=16 filltype=zero"
+                " ! capsfilter caps=video/x-h264,stream-format=byte-stream,alignment=au ! ") +
+    ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  const auto restarted_twice = [attempts_before]() {
+    return ControlledStartElement::startAttempts() - attempts_before >= 3U;
+  };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  const auto started_at = std::chrono::steady_clock::now();
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool restarted = test_support::waitUntil(restarted_twice, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted);
+  expectThrottledEvent(logs, "video_stream_pipeline_recovery_scheduled", started_at);
+  EXPECT_EQ(
+    logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-h264"}),
+    logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
+  EXPECT_EQ(logs.countLines({"video_stream_sample_unpack_failed"}), 0U);
+  EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
+}
+
+using AccessUnit = std::vector<std::uint8_t>;
+
+const AccessUnit kSequenceAndPictureParameterSets = {
+  0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
+const AccessUnit kIdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
+const AccessUnit kDeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
+
+AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
+{
+  AccessUnit joined = first;
+  joined.insert(joined.end(), second.begin(), second.end());
+  return joined;
+}
+
+// multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
+void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_units)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  const std::string path_prefix =
+    (std::filesystem::temp_directory_path() / ("lkros_access_unit_" + std::to_string(::getpid()))).string();
+  std::vector<std::filesystem::path> access_unit_paths;
+  for (std::size_t index = 0U; index < access_units.size(); ++index) {
+    access_unit_paths.push_back(path_prefix + "_" + std::to_string(index) + ".h264");
+    std::ofstream file(access_unit_paths.back(), std::ios::binary);
+    file.write(
+      reinterpret_cast<const char *>(access_units[index].data()),
+      static_cast<std::streamsize>(access_units[index].size()));
+  }
+  const ScopeExit remove_access_units([&]() {
+    for (const std::filesystem::path & path : access_unit_paths) {
+      std::filesystem::remove(path);
+    }
+  });
+  const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
+    "multifilesrc location=" + path_prefix +
+    "_%d.h264 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
+    ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  // The third start follows the second run's end, so its frames have arrived.
+  const auto second_run_ended = [attempts_before]() {
+    return ControlledStartElement::startAttempts() - attempts_before >= 3U;
+  };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  const bool restarted = test_support::waitUntil(second_run_ended, std::chrono::seconds(10));
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted);
+}
+
+// Every frame is a delta frame, which the publisher discards while waiting for a keyframe.
+TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
+{
+  const auto requests_before = test_support::ControlledStartElement::forceKeyUnitEvents();
+
+  runPassthroughStreamOverAccessUnits({kDeltaSlice, kDeltaSlice, kDeltaSlice});
+
+  EXPECT_GT(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before);
+}
+
+// The warning must not repeat across the restart.
+TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
+{
+  test_support::ScopedLogCapture logs;
+
+  runPassthroughStreamOverAccessUnits({kIdrSlice, kIdrSlice, kIdrSlice});
+
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
+}
+
+TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
+{
+  test_support::ScopedLogCapture logs;
+
+  runPassthroughStreamOverAccessUnits(
+    {concatenate(kSequenceAndPictureParameterSets, kIdrSlice), kDeltaSlice, kDeltaSlice});
+
+  EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
+}
+
+TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
+{
+  using test_support::ControlledStartElement;
+  ControlledStartElement::registerFactory();
+  ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
+  // Ends at once without sending, so the stream keeps restarting and all frames come from the test.
+  const auto harness = std::make_shared<OtherStreamHarness>(
+    makePassthroughSpec(std::string("fakesrc num-buffers=0 ! ") + ControlledStartElement::kFactoryName));
+  const auto attempts_before = ControlledStartElement::startAttempts();
+  const auto attempts = [attempts_before]() { return ControlledStartElement::startAttempts() - attempts_before; };
+  const auto key_frame_requests = std::make_shared<std::atomic<int>>(0);
+  const std::function<void()> request_key_frame = [key_frame_requests]() { ++*key_frame_requests; };
+  const auto start_stream = [harness]() { harness->stream.start(); };
+  const auto close_stream = [harness]() { harness->stream.close(); };
+
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  harness->track_publisher.captureEncoded(makeEncodedFrame(true), request_key_frame);
+  // A restart already under way may have waited before the keyframe; the second did not.
+  const std::size_t attempts_after_key_frame = attempts();
+  const bool restarted =
+    test_support::waitUntil([&]() { return attempts() >= attempts_after_key_frame + 2U; }, std::chrono::seconds(5));
+  harness->track_publisher.captureEncoded(makeEncodedFrame(false), request_key_frame);
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
+
+  ASSERT_TRUE(restarted) << "start attempts: " << attempts();
+  EXPECT_EQ(key_frame_requests->load(), 1);
 }
 
 void expectRosTopicStreamLifecycleIsIdempotent(

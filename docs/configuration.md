@@ -22,6 +22,7 @@ If a change affects LiveKit connection settings, access rules, QoS override matc
   - [QoS](#qos)
 - [Common scenarios](#common-scenarios)
   - [RTSP or device inputs](#rtsp-or-device-inputs)
+  - [Cameras that already send H.264](#cameras-that-already-send-h264)
   - [Cab microphones](#cab-microphones)
   - [Audio output playback](#audio-output-playback)
 
@@ -108,9 +109,9 @@ Pattern notes:
 Publish default notes:
 
 - these defaults expose the same publish controls described in LiveKit's [video track configuration guide](https://docs.livekit.io/transport/media/advanced/) and C++ [`TrackPublishOptions` reference](https://docs.livekit.io/reference/client-sdk-cpp/structlivekit_1_1TrackPublishOptions.html); the bridge forwards them directly when it publishes a video track
-- these defaults apply to ROS video topics, other video sources, and the built-in ROS fallback rule
+- these defaults apply to ROS video topics, other video sources, and the built-in ROS fallback rule, except sources with `publish.encoder: pre_encoded`
 - `auto` or `0` means "use LiveKit SDK default behavior" for that field
-- entry-level overrides merge per field with these global defaults
+- entry-level overrides merge per field with these global defaults (not for `pre_encoded` sources)
 
 #### ROS topics
 
@@ -160,6 +161,7 @@ Supported ROS video inputs:
 | `video_other_ids` | `[]` | array of ids | Other video ids defined under `video.other.<id>.*` |
 | `video.other.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
 | `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
+| `video.other.<id>.publish.encoder` | `""` | `""`, `auto`, `pre_encoded` | `pre_encoded` forwards the source's H.264 to LiveKit without decoding or re-encoding it; see [Cameras that already send H.264](#cameras-that-already-send-h264). Empty or `auto` lets LiveKit encode. Conflicting settings fail startup. |
 | `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec` |
 | `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
 | `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
@@ -171,9 +173,9 @@ Other video notes:
 - every entry under `video.other.<id>.*` must have a matching id in `video_other_ids`
 - `video_other_ids` stays at the root because `generate_parameter_library` 0.6 cannot nest it in the supported distro matrix
 - `source` is required and must be non-empty after trimming
-- `source` should start with a concrete ingress element such as `uridecodebin`, `v4l2src`, or `videotestsrc`
-- `transform` is optional and sits between your ingress and the bridge-owned tail
-- the bridge always appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`
+- `source` should start with a concrete ingress element such as `uridecodebin`, `v4l2src`, or `videotestsrc` (not `uridecodebin` with `pre_encoded`)
+- `transform` is optional and sits between your ingress and the bridge-owned tail; `pre_encoded` requires it empty
+- the bridge always appends `queue max-size-buffers=2 leaky=downstream ! videoconvert ! video/x-raw,format=I420 ! appsink`, except with `pre_encoded`, which has its own tail (see [Cameras that already send H.264](#cameras-that-already-send-h264))
 - neither `source` nor `transform` may define `appsrc` or `appsink`; the bridge owns those endpoints
 - startup validates `source` plus `transform` with GStreamer, but runtime failures can still happen when a stream actually starts
 - explicit entry values of `auto` or `0` still count as overrides and reset that field back to LiveKit SDK default behavior
@@ -306,7 +308,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
 
    - `source` should start with the ingress stage such as `uridecodebin` or `v4l2src`
    - `transform` is optional and should contain only middle-of-pipeline processing stages
-   - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own queue/convert/I420/appsink tail
+   - do not put `appsrc` or `appsink` into either fragment; the bridge owns those endpoints and appends its own tail (queue, convert to I420, appsink; `pre_encoded` differs, see [Cameras that already send H.264](#cameras-that-already-send-h264))
    - leave `video.publish.*` and per-source `publish.*` unset unless you need to force codec, bitrate, framerate, or simulcast behavior
    - other video sources do not need `access.rules.subscribe.allow`; they become available because they are declared in `video_other_ids`
 
@@ -336,6 +338,26 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
    - the track name is deterministic, for example `lkros.video.other.front_rtsp`
    - if the source id contains reserved bytes, the track-name suffix is percent-encoded
    - if a client asks for a source that does not exist, the bridge reports `not_found`
+
+### Cameras that already send H.264
+
+By default the bridge decodes a camera's H.264 and LiveKit encodes it again. Set `publish.encoder: pre_encoded` on the source and the bridge forwards the camera's H.264 to LiveKit unchanged, which saves CPU and delay.
+
+```yaml
+livekit_ros2_bridge:
+  ros__parameters:
+    video_other_ids: ["front_cam"]
+
+    video.other.front_cam.source: "rtspsrc location=rtsp://<camera-ip>/<stream-path> protocols=tcp latency=200 ! rtph264depay request-keyframe=true ! h264parse config-interval=-1"
+    video.other.front_cam.publish.encoder: "pre_encoded"
+    video.other.front_cam.publish.max_bitrate_bps: 2000000  # the camera's configured bitrate
+```
+
+- end `source` with `h264parse config-interval=-1` (from `gstreamer1.0-plugins-bad`, which the runtime environment must provide); don't use `uridecodebin`, which decodes the stream
+- only H.264 is supported
+- bitrate, resolution, and frame rate come from the camera; set `publish.max_bitrate_bps` to the camera's configured bitrate, and leave `transform` and the other `publish.*` keys unset, since global `video.publish.*` defaults don't apply
+- configure the camera with a keyframe interval of about 1 s and no B-frames (Baseline or Main profile); keyframes must be IDR frames, so a stream that only recovers with intra refresh or non-IDR I-frames never publishes
+- LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_viewer_key_frame_request` (at most every 5 s), and `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
 
 ### Cab microphones
 
