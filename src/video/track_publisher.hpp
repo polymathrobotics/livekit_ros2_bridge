@@ -105,7 +105,6 @@ private:
 
   void close();
 
-  // Callers request a keyframe after releasing mutex_ (see captureEncoded()).
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
   // Publishes the encoded source on first use; throws if the publish or send fails.

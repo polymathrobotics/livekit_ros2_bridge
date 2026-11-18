@@ -46,12 +46,13 @@ struct PipelineCallbacks
   std::function<void(const std::string & error)> on_unpack_failed;
   std::function<void(const std::string & error)> on_capture_failed;
   std::function<void(const std::string & reason)> on_failed;
-  // EncodedH264 only; discontinuous: frames before this one were dropped or lost.
+
+  // The rest are used only with PipelineOutput::EncodedH264.
+  // discontinuous: frames before this one were dropped or lost.
   std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
-  // EncodedH264 only, instead of on_failed: the source did not link or negotiate H.264 caps with
-  // width and height. offered_caps may be empty.
+  // Reported instead of on_failed; offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
-  // EncodedH264 only: called before on_encoded_frame for a keyframe that lacks SPS or PPS.
+  // Called before on_encoded_frame for a keyframe that lacks SPS or PPS.
   std::function<void()> on_key_frame_without_parameter_sets;
 };
 

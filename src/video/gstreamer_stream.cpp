@@ -81,8 +81,7 @@ PipelineCallbacks GStreamerStream::makePipelineCallbacks()
     return publisher_.makePipelineCallbacks(is_shutdown, on_failed);
   }
 
-  // Requesting a keyframe must not take mutex_: it runs inside pipeline
-  // callbacks, which pipeline_.stop() waits for.
+  // Must not take the stream's mutex_: this runs inside callbacks that stop() waits for.
   return publisher_.makeEncodedPipelineCallbacks(
     is_shutdown,
     on_failed,
