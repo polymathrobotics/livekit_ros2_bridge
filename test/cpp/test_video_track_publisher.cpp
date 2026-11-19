@@ -504,7 +504,7 @@ TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
     std::vector<std::string>{"1"});
 }
 
-TEST(TrackPublisherTest, PassthroughStallThrowsLogsTheEventAndRestartStartsTheClockAtTheFirstFrame)
+TEST(TrackPublisherTest, PassthroughStallThrowsAndLogsTheStalledEvent)
 {
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -519,8 +519,20 @@ TEST(TrackPublisherTest, PassthroughStallThrowsLogsTheEventAndRestartStartsTheCl
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_key_frame_stalled", "stream_key=stream:stall"}, "timeout_ms"),
     std::vector<std::string>{"50"});
+}
 
-  // A slow reconnect must not count: the clock starts at the first discarded frame, not at the restart.
+// A slow reconnect must not count: the clock starts at the first discarded frame, not at the restart.
+TEST(TrackPublisherTest, PassthroughRestartStartsTheStallClockAtTheFirstFrame)
+{
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:reconnect", "lkros.video.reconnect"), nullptr, kStallTimeout);
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  std::this_thread::sleep_for(kStallTimeout + kTimingMargin);
+
   publisher->awaitKeyFrame();
   std::this_thread::sleep_for(kStallTimeout + kTimingMargin);
   bool sent = true;
