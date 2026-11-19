@@ -138,7 +138,6 @@ TrackPublisher::TrackPublisher(
 , spec_(std::move(spec))
 , read_encoded_feedback_(std::move(read_encoded_feedback))
 , now_provider_(std::move(now_provider))
-, current_key_frame_stall_timeout_(kKeyFrameStallTimeout)
 {
   if (read_encoded_feedback_ == nullptr) {
     read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
@@ -439,8 +438,6 @@ void TrackPublisher::awaitKeyFrame()
   }
 
   awaitKeyFrameLocked();
-  // Called when the pipeline (re)starts: the stall clock begins with its first frame.
-  awaiting_since_.reset();
 }
 
 void TrackPublisher::logDiscontinuityLocked()
@@ -458,6 +455,8 @@ void TrackPublisher::logDiscontinuityLocked()
 
 void TrackPublisher::awaitKeyFrameLocked()
 {
+  // The stall clock begins with the first frame after a (re)start.
+  awaiting_since_.reset();
   if (awaiting_key_frame_) {
     return;
   }

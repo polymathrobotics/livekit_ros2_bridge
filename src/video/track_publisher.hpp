@@ -164,7 +164,7 @@ private:
   EncodedFeedbackReader read_encoded_feedback_;
   NowProvider now_provider_;
   // Doubles after each stall restart and persists across them; a sent keyframe resets it.
-  std::chrono::milliseconds current_key_frame_stall_timeout_;
+  std::chrono::milliseconds current_key_frame_stall_timeout_ = kKeyFrameStallTimeout;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
