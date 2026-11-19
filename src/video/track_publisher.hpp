@@ -145,8 +145,8 @@ private:
   bool keyFrameRequestDueLocked();
   void checkKeyFrameStallLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
-  livekit::EncodedVideoSource::Feedback readEncodedFeedbackLocked();
-  void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
+  void readEncodedFeedbackLocked();
+  void checkEncodedBitrateLocked(std::size_t frame_bytes);
   void logResumedLocked();
   void logDiscontinuityLocked();
   void logViewerKeyFrameRequestLocked();

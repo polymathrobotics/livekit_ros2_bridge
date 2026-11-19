@@ -305,11 +305,12 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   if (frame.is_keyframe) {
     livekit_key_frame_request_pending_ = false;
   }
-  checkEncodedBitrateLocked(readEncodedFeedbackLocked(), frame.data.size());
+  readEncodedFeedbackLocked();
+  checkEncodedBitrateLocked(frame.data.size());
   return true;
 }
 
-livekit::EncodedVideoSource::Feedback TrackPublisher::readEncodedFeedbackLocked()
+void TrackPublisher::readEncodedFeedbackLocked()
 {
   livekit::EncodedVideoSource::Feedback feedback;
   try {
@@ -320,11 +321,12 @@ livekit::EncodedVideoSource::Feedback TrackPublisher::readEncodedFeedbackLocked(
   if (feedback.keyframe_requested) {
     livekit_key_frame_request_pending_ = true;
   }
-  return feedback;
+  if (feedback.rate_control.has_value()) {
+    bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
+  }
 }
 
-void TrackPublisher::checkEncodedBitrateLocked(
-  const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes)
+void TrackPublisher::checkEncodedBitrateLocked(std::size_t frame_bytes)
 {
   // Without max_bitrate_bps, LiveKit's target is only a default, so exceeding it proves nothing.
   const auto & encoding = spec_.publish_options.video_encoding;
@@ -332,9 +334,6 @@ void TrackPublisher::checkEncodedBitrateLocked(
     return;
   }
 
-  if (feedback.rate_control.has_value()) {
-    bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
-  }
   const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, now_provider_());
   if (!bitrate_bps.has_value()) {
     return;
