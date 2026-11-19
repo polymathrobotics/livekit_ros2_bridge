@@ -663,6 +663,7 @@ TEST(TrackPublisherTest, PassthroughResumeRestartsTheStallClock)
   // The next wait starts a new clock instead of continuing the one that ended.
   fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
   EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 }
 
 TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
