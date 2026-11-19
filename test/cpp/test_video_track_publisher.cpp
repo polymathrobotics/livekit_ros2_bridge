@@ -41,7 +41,7 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-// Mirror TrackPublisher's private intervals, plus slack to clearly outlast them.
+// Same as TrackPublisher's private intervals, plus extra time to be safe.
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
@@ -493,7 +493,6 @@ TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
   constexpr int kFailedSends = 20;
 
   const auto started_at = std::chrono::steady_clock::now();
-  // Per iteration: the keyframe is sent, the next frame fails, and the one after is discarded.
   for (int failed_send = 0; failed_send < kFailedSends; ++failed_send) {
     publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
     publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame);
@@ -627,7 +626,7 @@ TEST(PassthroughBitrateMonitorTest, StaysQuietWithinBudgetWithoutTargetOrWhenOve
   for (int frame_index = 0; frame_index <= 100; ++frame_index) {
     const auto now = start + milliseconds(100 * frame_index);
     EXPECT_FALSE(without_target.record(25'000U, now).has_value());
-    // 18.75 kB every 100 ms is 1.5 Mbit/s: exactly 1.5x the target is not well above it.
+    // 18.75 kB every 100 ms is 1.5 Mbit/s, exactly 1.5x the target, which is not over budget.
     EXPECT_FALSE(within_budget.record(18'750U, now).has_value());
     // Two seconds over budget, then one second under, repeated.
     const bool under_budget_second = (frame_index / 10) % 3 == 2;

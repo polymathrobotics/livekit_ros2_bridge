@@ -275,7 +275,6 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     return false;
   }
 
-  // A failed publish throws and restarts the pipeline; frames until then are still discarded.
   if (encoded_source_ == nullptr) {
     publishEncodedSourceLocked(frame.width, frame.height);
   }
@@ -322,7 +321,7 @@ livekit::EncodedVideoSource::Feedback TrackPublisher::readEncodedFeedbackLocked(
 void TrackPublisher::checkEncodedBitrateLocked(
   const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes)
 {
-  // Unset max_bitrate_bps leaves LiveKit's default target, which a healthy camera can exceed.
+  // Without max_bitrate_bps, LiveKit's target is only a default, so exceeding it proves nothing.
   const auto & encoding = spec_.publish_options.video_encoding;
   if (!encoding.has_value() || encoding->max_bitrate == 0U) {
     return;
@@ -424,12 +423,12 @@ bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame &
   } catch (const std::exception & exc) {
     error = exc.what();
   } catch (...) {
-    // Restarts the pipeline; frames until then must not follow the lost one.
+    // The pipeline restarts; drop frames until then, since they would follow a lost one.
     awaitKeyFrameLocked();
     throw;
   }
 
-  // Not awaitKeyFrameLocked(): resetting its throttle would request a keyframe after every failure.
+  // Not awaitKeyFrameLocked(): it would request a keyframe right after every failure.
   awaiting_key_frame_ = true;
   logThrottledFailureLocked(capture_failed_log_throttle_, "video_stream_capture_failed", error);
   return false;

@@ -57,7 +57,7 @@ public:
     return target_bitrate_bps_;
   }
 
-  // Returns the bitrate once it has stayed well above the target for a few seconds.
+  // Returns the camera's bitrate once it has been well over the target for a few seconds.
   std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
 
 private:
@@ -102,7 +102,7 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
-  // Also requests a keyframe when LiveKit asks for one. Throws on a failed publish only.
+  // Also passes on LiveKit's keyframe requests. A failed send is discarded; only a failed publish throws.
   // Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
