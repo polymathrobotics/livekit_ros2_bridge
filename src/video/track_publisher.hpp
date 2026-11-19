@@ -78,9 +78,6 @@ public:
     StreamSpec spec,
     const SubscriptionQosConfig * qos_config);
 
-  // How long a published track may wait for a keyframe before the pipeline restarts.
-  static constexpr auto kKeyFrameStallTimeout = std::chrono::seconds(5);
-
   // The seam for tests: a real source can't be driven without a room.
   using EncodedFeedbackReader =
     std::function<livekit::EncodedVideoSource::Feedback(const livekit::EncodedVideoSource & source)>;
@@ -153,6 +150,8 @@ private:
   void logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+  // How long a published track may wait for a keyframe before the pipeline restarts.
+  static constexpr auto kKeyFrameStallTimeout = std::chrono::seconds(5);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
@@ -174,7 +173,8 @@ private:
 
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
   bool awaiting_key_frame_ = true;
-  // Set by the first frame the wait discards or fails, so a slow camera start doesn't count.
+  // Only set while awaiting_key_frame_, by the first frame the wait discards or fails, so a slow
+  // camera start doesn't count.
   std::optional<std::chrono::steady_clock::time_point> awaiting_since_;
   // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
   bool just_published_ = false;

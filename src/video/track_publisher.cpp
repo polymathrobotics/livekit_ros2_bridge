@@ -42,9 +42,6 @@ namespace
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
 constexpr auto kBitrateWindow = std::chrono::seconds(3);
-// Over budget means above 3/2 of the target.
-constexpr std::uint64_t kOverBudgetRatioNumerator = 3U;
-constexpr std::uint64_t kOverBudgetRatioDenominator = 2U;
 
 void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
@@ -104,10 +101,8 @@ std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame
   window_started_at_ = now;
   window_bytes_ = frame_bytes;
 
-  if (
-    target_bitrate_bps_ == 0U ||
-    bitrate_bps * kOverBudgetRatioDenominator <= target_bitrate_bps_ * kOverBudgetRatioNumerator)
-  {
+  // Over budget means above 3/2 of the target.
+  if (target_bitrate_bps_ == 0U || bitrate_bps * 2U <= target_bitrate_bps_ * 3U) {
     return std::nullopt;
   }
   return bitrate_bps;
@@ -327,7 +322,7 @@ void TrackPublisher::checkEncodedBitrateLocked(
 {
   // Without max_bitrate_bps, LiveKit's target is only a default, so exceeding it proves nothing.
   const auto & encoding = spec_.publish_options.video_encoding;
-  if (!encoding.has_value()) {
+  if (!encoding.has_value() || encoding->max_bitrate == 0U) {
     return;
   }
 
