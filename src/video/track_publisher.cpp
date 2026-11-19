@@ -20,6 +20,7 @@
 #include <exception>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
@@ -136,10 +137,14 @@ std::shared_ptr<TrackPublisher> TrackPublisher::create(
 }
 
 TrackPublisher::TrackPublisher(
-  RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback)
+  RoomConnection & connection,
+  StreamSpec spec,
+  EncodedFeedbackReader read_encoded_feedback,
+  std::chrono::milliseconds key_frame_stall_timeout)
 : connection_(connection)
 , spec_(std::move(spec))
 , read_encoded_feedback_(std::move(read_encoded_feedback))
+, key_frame_stall_timeout_(key_frame_stall_timeout)
 {
   if (read_encoded_feedback_ == nullptr) {
     read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
@@ -269,6 +274,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
     logWaitingForFirstKeyFrameLocked();
+    throwIfKeyFrameStalledLocked();
     return false;
   }
 
@@ -291,6 +297,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
   if (awaiting_key_frame_) {
     awaiting_key_frame_ = false;
+    awaiting_since_.reset();
     logResumedLocked();
   }
   // Cleared before reading feedback so a request reported with this keyframe stays pending.
@@ -416,12 +423,14 @@ bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame &
     if (encoded_source_->captureFrame(frame)) {
       return true;
     }
-  } catch (const std::exception & exc) {
+  } catch (const std::invalid_argument & exc) {
+    // The SDK rejected this frame. Any other exception is a fault and restarts the pipeline.
     error = exc.what();
   }
 
   awaiting_key_frame_ = true;
   logThrottledFailureLocked(send_failed_log_throttle_, "video_stream_passthrough_send_failed", error);
+  throwIfKeyFrameStalledLocked();
   return false;
 }
 
@@ -433,6 +442,8 @@ void TrackPublisher::awaitKeyFrame()
   }
 
   awaitKeyFrameLocked();
+  // Called when the pipeline (re)starts: the stall clock begins with its first frame.
+  awaiting_since_.reset();
 }
 
 void TrackPublisher::logDiscontinuityLocked()
@@ -464,6 +475,25 @@ void TrackPublisher::awaitKeyFrameLocked()
 bool TrackPublisher::keyFrameRequestDueLocked()
 {
   return key_frame_request_throttle_.record() > 0U;
+}
+
+// Throwing restarts the pipeline, the only way out when a source never sends a keyframe again.
+void TrackPublisher::throwIfKeyFrameStalledLocked()
+{
+  // Before the first publish the source may just not be ready.
+  if (encoded_source_ == nullptr) {
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  if (!awaiting_since_.has_value()) {
+    awaiting_since_ = now;
+  }
+  const auto waited = now - *awaiting_since_;
+  if (waited < key_frame_stall_timeout_) {
+    return;
+  }
+  throw std::runtime_error(
+    "no keyframe for " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(waited).count()) + " ms");
 }
 
 void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height)

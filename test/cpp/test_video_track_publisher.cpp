@@ -45,6 +45,7 @@ const test_support::ScopedLiveKitInit kLiveKitInit;
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
+constexpr auto kStallTimeout = std::chrono::milliseconds(50);
 
 StreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
 {
@@ -480,6 +481,51 @@ TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
     std::vector<std::string>{"1"});
+}
+
+TEST(TrackPublisherTest, PassthroughStallAfterPublishThrowsAndRestartRestartsTheClock)
+{
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:stall", "lkros.video.stall"), nullptr, kStallTimeout);
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  std::this_thread::sleep_for(kStallTimeout + kTimingMargin);
+  EXPECT_THROW(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame), std::runtime_error);
+
+  publisher->awaitKeyFrame();
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+}
+
+TEST(TrackPublisherTest, PassthroughNeverStallsBeforeTheFirstPublish)
+{
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:not_ready", "lkros.video.not_ready"), nullptr, kStallTimeout);
+
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  std::this_thread::sleep_for(kStallTimeout + kTimingMargin);
+  EXPECT_NO_THROW(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+}
+
+TEST(TrackPublisherTest, PassthroughKeyFrameInTimeEndsTheWait)
+{
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:recovers", "lkros.video.recovers"), nullptr, kStallTimeout);
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+
+  // The next wait starts a new clock instead of continuing the one that ended.
+  std::this_thread::sleep_for(kStallTimeout + kTimingMargin);
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
 }
 
 TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)

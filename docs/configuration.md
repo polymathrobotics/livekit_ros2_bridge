@@ -359,8 +359,8 @@ livekit_ros2_bridge:
 - configure the camera with a keyframe interval of about 1 s and no B-frames (Baseline or Main profile); keyframes must be IDR frames, so a stream that only recovers with intra refresh or non-IDR I-frames never publishes
 - LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_viewer_key_frame_request` (at most every 5 s), and `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
 - if `publish.max_bitrate_bps` is set and the camera keeps sending much more than LiveKit's target, the bridge logs `video_stream_passthrough_over_budget` (at most every 5 s); lower the camera's bitrate
-- if LiveKit refuses a frame, the bridge logs `video_stream_passthrough_send_failed` (at most every 5 s) and skips frames until the next keyframe
-- if publishing the track fails, the pipeline restarts
+- if LiveKit refuses or rejects a frame, the bridge logs `video_stream_passthrough_send_failed` (at most every 5 s) and skips frames until the next keyframe
+- if publishing the track fails, or a published track is still waiting for a keyframe after 5 s, the pipeline restarts
 
 ### Cab microphones
 

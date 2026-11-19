@@ -78,12 +78,19 @@ public:
     StreamSpec spec,
     const SubscriptionQosConfig * qos_config);
 
+  // How long a published track may wait for a keyframe before the pipeline restarts.
+  static constexpr auto kKeyFrameStallTimeout = std::chrono::seconds(5);
+
   // The seam for tests: a real source can't be driven without a room.
   using EncodedFeedbackReader =
     std::function<livekit::EncodedVideoSource::Feedback(const livekit::EncodedVideoSource & source)>;
 
   // Does not start a ROS or GStreamer input stream.
-  TrackPublisher(RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback = nullptr);
+  TrackPublisher(
+    RoomConnection & connection,
+    StreamSpec spec,
+    EncodedFeedbackReader read_encoded_feedback = nullptr,
+    std::chrono::milliseconds key_frame_stall_timeout = kKeyFrameStallTimeout);
 
   ~TrackPublisher();
 
@@ -101,7 +108,8 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
-  // Also passes on LiveKit's keyframe requests. A failed send is discarded; only a failed publish throws.
+  // Also passes on LiveKit's keyframe requests. A failed send is discarded; a failed publish, or a
+  // published track still without a keyframe after the stall timeout, throws.
   // Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
@@ -135,6 +143,7 @@ private:
   bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
+  void throwIfKeyFrameStalledLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
   livekit::EncodedVideoSource::Feedback readEncodedFeedbackLocked();
   void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
@@ -149,6 +158,7 @@ private:
   RoomConnection & connection_;
   StreamSpec spec_;
   EncodedFeedbackReader read_encoded_feedback_;
+  std::chrono::milliseconds key_frame_stall_timeout_;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
@@ -164,6 +174,8 @@ private:
 
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
   bool awaiting_key_frame_ = true;
+  // Set by the first frame the wait discards or fails, so a slow camera start doesn't count.
+  std::optional<std::chrono::steady_clock::time_point> awaiting_since_;
   // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
