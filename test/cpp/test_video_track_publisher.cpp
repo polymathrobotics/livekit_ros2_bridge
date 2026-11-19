@@ -590,7 +590,7 @@ TEST(TrackPublisherTest, PassthroughFailedFeedbackReadKeepsSendingAndKeepsTheKey
     std::vector<std::string>{"1"});
 }
 
-TEST(PassthroughBitrateMonitorTest, ReportsOnlyAfterStayingWellAboveTarget)
+TEST(PassthroughBitrateMonitorTest, ReportsWhenAWindowAveragesWellAboveTarget)
 {
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
