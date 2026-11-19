@@ -270,8 +270,12 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
   if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
-    logWaitingForFirstKeyFrameLocked();
-    throwIfKeyFrameStalledLocked();
+    // Before the first publish the source may just not be ready.
+    if (encoded_source_ == nullptr) {
+      logWaitingForFirstKeyFrameLocked();
+    } else {
+      checkKeyFrameStallLocked();
+    }
     return false;
   }
 
@@ -378,10 +382,6 @@ void TrackPublisher::logThrottledFailureLocked(EventThrottle & throttle, const c
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 {
-  // Only before the first publish, when nothing else says why there is no track.
-  if (encoded_source_ != nullptr) {
-    return;
-  }
   const std::size_t pending = waiting_log_throttle_.record();
   if (pending == 0U) {
     return;
@@ -417,18 +417,22 @@ bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame &
 {
   frame.metadata = userTimestampMetadata(frame.timestamp_us);
   std::string error = "LiveKit did not accept the encoded frame.";
+  bool accepted = false;
   try {
-    if (encoded_source_->captureFrame(frame)) {
-      return true;
-    }
+    accepted = encoded_source_->captureFrame(frame);
   } catch (const std::invalid_argument & exc) {
-    // The SDK rejected this frame. Any other exception is a fault and restarts the pipeline.
+    // The SDK rejected this frame. Other exceptions restart the pipeline, which calls
+    // awaitKeyFrame(), so later frames can't follow a lost one.
     error = exc.what();
   }
+  if (accepted) {
+    return true;
+  }
 
+  // Not awaitKeyFrameLocked(): resetting the throttle would request a keyframe after every failure.
   awaiting_key_frame_ = true;
   logThrottledFailureLocked(send_failed_log_throttle_, "video_stream_passthrough_send_failed", error);
-  throwIfKeyFrameStalledLocked();
+  checkKeyFrameStallLocked();
   return false;
 }
 
@@ -457,8 +461,6 @@ void TrackPublisher::logDiscontinuityLocked()
     .warn();
 }
 
-// A failed send sets awaiting_key_frame_ directly: resetting the throttle here would request a
-// keyframe right after every failure.
 void TrackPublisher::awaitKeyFrameLocked()
 {
   if (awaiting_key_frame_) {
@@ -476,12 +478,8 @@ bool TrackPublisher::keyFrameRequestDueLocked()
 }
 
 // Throwing restarts the pipeline, the only way out when a source never sends a keyframe again.
-void TrackPublisher::throwIfKeyFrameStalledLocked()
+void TrackPublisher::checkKeyFrameStallLocked()
 {
-  // Before the first publish the source may just not be ready.
-  if (encoded_source_ == nullptr) {
-    return;
-  }
   const auto now = now_provider_();
   if (!awaiting_since_.has_value()) {
     awaiting_since_ = now;

@@ -143,7 +143,7 @@ private:
   bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
-  void throwIfKeyFrameStalledLocked();
+  void checkKeyFrameStallLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
   livekit::EncodedVideoSource::Feedback readEncodedFeedbackLocked();
   void checkEncodedBitrateLocked(const livekit::EncodedVideoSource::Feedback & feedback, std::size_t frame_bytes);
