@@ -809,9 +809,6 @@ TEST(TrackPublisherTest, PassthroughWarnsOverBudgetOnlyWhenMaxBitrateIsSet)
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_over_budget", "stream_key=stream:capped"}, "target_bitrate_bps"),
     std::vector<std::string>{"1000000"});
-  EXPECT_EQ(
-    logs.fieldValues({"video_stream_passthrough_over_budget", "stream_key=stream:capped"}, "count"),
-    std::vector<std::string>{"1"});
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget", "stream_key=stream:uncapped"}), 0U);
 }
 

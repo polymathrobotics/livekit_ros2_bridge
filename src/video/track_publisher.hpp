@@ -197,7 +197,6 @@ private:
   EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
   EventThrottle send_failed_log_throttle_{kLogThrottle};
-  EventThrottle over_budget_log_throttle_{kLogThrottle};
   PassthroughBitrateMonitor bitrate_monitor_;
 };
 

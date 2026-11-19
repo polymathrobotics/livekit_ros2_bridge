@@ -340,16 +340,11 @@ void TrackPublisher::checkEncodedBitrateLocked(
   if (!bitrate_bps.has_value()) {
     return;
   }
-  const std::size_t pending = over_budget_log_throttle_.record();
-  if (pending == 0U) {
-    return;
-  }
 
   LogEvent(kLogger, "video_stream_passthrough_over_budget")
     .fieldOr("stream_key", spec_.stream_key)
     .field("bitrate_bps", *bitrate_bps)
     .field("target_bitrate_bps", bitrate_monitor_.targetBitrateBps())
-    .field("count", pending)
     .warn();
 }
 
