@@ -14,6 +14,7 @@
 
 #include "video/track_publisher.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -140,6 +141,7 @@ TrackPublisher::TrackPublisher(
 , spec_(std::move(spec))
 , read_encoded_feedback_(std::move(read_encoded_feedback))
 , key_frame_stall_timeout_(key_frame_stall_timeout)
+, current_key_frame_stall_timeout_(key_frame_stall_timeout)
 {
   if (read_encoded_feedback_ == nullptr) {
     read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
@@ -293,6 +295,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   if (awaiting_key_frame_) {
     awaiting_key_frame_ = false;
     awaiting_since_.reset();
+    current_key_frame_stall_timeout_ = key_frame_stall_timeout_;
     logResumedLocked();
   }
   // Cleared before reading feedback so a request reported with this keyframe stays pending.
@@ -484,11 +487,20 @@ void TrackPublisher::throwIfKeyFrameStalledLocked()
     awaiting_since_ = now;
   }
   const auto waited = now - *awaiting_since_;
-  if (waited < key_frame_stall_timeout_) {
+  if (waited < current_key_frame_stall_timeout_) {
     return;
   }
-  throw std::runtime_error(
-    "no keyframe for " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(waited).count()) + " ms");
+
+  const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(waited).count();
+  LogEvent(kLogger, "video_stream_passthrough_key_frame_stalled")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("waited_ms", waited_ms)
+    .field("timeout_ms", current_key_frame_stall_timeout_.count())
+    .warn();
+  current_key_frame_stall_timeout_ = std::max(
+    key_frame_stall_timeout_,
+    std::min(current_key_frame_stall_timeout_ * 2, std::chrono::milliseconds(kMaxKeyFrameStallTimeout)));
+  throw std::runtime_error("no keyframe for " + std::to_string(waited_ms) + " ms");
 }
 
 void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height)

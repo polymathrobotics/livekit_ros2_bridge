@@ -152,12 +152,16 @@ private:
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
   // How long a published track may wait for a keyframe before the pipeline restarts.
   static constexpr auto kKeyFrameStallTimeout = std::chrono::seconds(5);
+  // A restart of a source with a long keyframe interval can need longer than the base to get one.
+  static constexpr auto kMaxKeyFrameStallTimeout = std::chrono::seconds(30);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
   StreamSpec spec_;
   EncodedFeedbackReader read_encoded_feedback_;
   std::chrono::milliseconds key_frame_stall_timeout_;
+  // Doubles after each stall restart and persists across them; a sent keyframe resets it.
+  std::chrono::milliseconds current_key_frame_stall_timeout_;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
