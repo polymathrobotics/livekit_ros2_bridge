@@ -414,23 +414,17 @@ void TrackPublisher::logResumedLocked()
 bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
 {
   frame.metadata = userTimestampMetadata(frame.timestamp_us);
-  std::string error;
+  std::string error = "LiveKit did not accept the encoded frame.";
   try {
     if (encoded_source_->captureFrame(frame)) {
       return true;
     }
-    error = "LiveKit did not accept the encoded frame.";
   } catch (const std::exception & exc) {
     error = exc.what();
-  } catch (...) {
-    // The pipeline restarts; drop frames until then, since they would follow a lost one.
-    awaitKeyFrameLocked();
-    throw;
   }
 
-  // Not awaitKeyFrameLocked(): it would request a keyframe right after every failure.
   awaiting_key_frame_ = true;
-  logThrottledFailureLocked(capture_failed_log_throttle_, "video_stream_capture_failed", error);
+  logThrottledFailureLocked(send_failed_log_throttle_, "video_stream_passthrough_send_failed", error);
   return false;
 }
 
@@ -457,6 +451,8 @@ void TrackPublisher::logDiscontinuityLocked()
     .warn();
 }
 
+// A failed send sets awaiting_key_frame_ directly: resetting the throttle here would request a
+// keyframe right after every failure.
 void TrackPublisher::awaitKeyFrameLocked()
 {
   if (awaiting_key_frame_) {

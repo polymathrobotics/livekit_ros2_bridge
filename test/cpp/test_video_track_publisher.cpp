@@ -475,7 +475,7 @@ TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
   EXPECT_EQ(key_frame_requests, 1);
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
   EXPECT_EQ(
-    logs.fieldValues({"video_stream_capture_failed", "stream_key=stream:send"}, "count"),
+    logs.fieldValues({"video_stream_passthrough_send_failed", "stream_key=stream:send"}, "count"),
     std::vector<std::string>{"1"});
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
@@ -504,7 +504,7 @@ TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
   EXPECT_GE(key_frame_requests, 1);
   EXPECT_LE(key_frame_requests, 1 + elapsed / kKeyFrameRequestInterval);
   const std::vector<std::string> counts =
-    logs.fieldValues({"video_stream_capture_failed", "stream_key=stream:send_storm"}, "count");
+    logs.fieldValues({"video_stream_passthrough_send_failed", "stream_key=stream:send_storm"}, "count");
   ASSERT_FALSE(counts.empty());
   EXPECT_EQ(counts.front(), "1");
   EXPECT_LE(counts.size(), 1U + static_cast<std::size_t>(elapsed / kLogThrottle));
