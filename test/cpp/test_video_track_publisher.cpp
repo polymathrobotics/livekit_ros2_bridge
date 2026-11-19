@@ -41,7 +41,7 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-// Same as TrackPublisher's private intervals, plus extra time to be safe.
+// Mirror TrackPublisher's private intervals; the margin makes real sleeps clearly outlast them.
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
@@ -630,7 +630,9 @@ TEST(TrackPublisherTest, PassthroughAllKeyFrameSourceStallsWhenEveryKeyFrameIsRe
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
   EXPECT_FALSE(publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame));
   fake_clock.advance(kBaseStallTimeout - kOneMillisecond);
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame));
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame));
+  EXPECT_FALSE(sent);
   fake_clock.advance(2 * kOneMillisecond);
   EXPECT_THROW(publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame), std::runtime_error);
 }
@@ -645,7 +647,9 @@ TEST(TrackPublisherTest, PassthroughNeverStallsBeforeTheFirstPublish)
 
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   fake_clock.advance(kMaxStallTimeout + kOneMillisecond);
-  EXPECT_NO_THROW(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_FALSE(sent);
 }
 
 TEST(TrackPublisherTest, PassthroughResumeRestartsTheStallClock)
@@ -813,7 +817,7 @@ TEST(TrackPublisherTest, PassthroughWarnsOverBudgetOnlyWhenMaxBitrateIsSet)
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget", "stream_key=stream:uncapped"}), 0U);
 }
 
-TEST(PassthroughBitrateMonitorTest, ReportsWhenAWindowAveragesWellAboveTarget)
+TEST(PassthroughBitrateMonitorTest, ReportsEveryWindowThatAveragesWellAboveTarget)
 {
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
@@ -821,20 +825,19 @@ TEST(PassthroughBitrateMonitorTest, ReportsWhenAWindowAveragesWellAboveTarget)
   const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
 
   // 25 kB every 100 ms is 2 Mbit/s, twice the target.
-  std::optional<int> first_report_index;
-  std::optional<std::uint64_t> first_report_bps;
-  for (int frame_index = 0; frame_index <= 50; ++frame_index) {
+  std::vector<int> report_frame_indexes;
+  std::vector<std::uint64_t> reported_bitrates;
+  for (int frame_index = 0; frame_index <= 60; ++frame_index) {
     const auto reported = monitor.record(25'000U, start + milliseconds(100 * frame_index));
-    if (reported.has_value() && !first_report_index.has_value()) {
-      first_report_index = frame_index;
-      first_report_bps = reported;
+    if (reported.has_value()) {
+      report_frame_indexes.push_back(frame_index);
+      reported_bitrates.push_back(*reported);
     }
   }
 
-  // The first 3 s window closes at frame 30.
-  ASSERT_TRUE(first_report_index.has_value());
-  EXPECT_EQ(*first_report_index, 30);
-  EXPECT_EQ(*first_report_bps, 2'000'000U);
+  // A 3 s window closes at frames 30 and 60; the closing frame's bytes seed the next window.
+  EXPECT_EQ(report_frame_indexes, (std::vector<int>{30, 60}));
+  EXPECT_EQ(reported_bitrates, (std::vector<std::uint64_t>{2'000'000U, 2'000'000U}));
 }
 
 TEST(PassthroughBitrateMonitorTest, StaysQuietWithoutATarget)
