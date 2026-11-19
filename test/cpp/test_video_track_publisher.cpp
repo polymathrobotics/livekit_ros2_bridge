@@ -118,16 +118,6 @@ livekit::EncodedVideoSource::Frame makeEmptyFrame(bool is_keyframe)
   return frame;
 }
 
-livekit::EncodedVideoSource::Frame makeEmptyDeltaFrame()
-{
-  return makeEmptyFrame(false);
-}
-
-livekit::EncodedVideoSource::Frame makeEmptyKeyFrame()
-{
-  return makeEmptyFrame(true);
-}
-
 livekit::EncodedVideoSource::Frame makeLargeDeltaFrame(std::size_t frame_bytes)
 {
   livekit::EncodedVideoSource::Frame frame = makeEncodedFrame(false, 64, 48);
@@ -500,7 +490,7 @@ TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
   bool sent = true;
-  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   EXPECT_FALSE(sent);
   // The picture is broken until the next keyframe.
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
@@ -521,17 +511,21 @@ TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
 }
 
 // Expects a stall check right at `stall_timeout` to throw and one a millisecond earlier not to.
-void expectStallsOnlyAfter(TrackPublisher & publisher, FakeClock & fake_clock, std::chrono::milliseconds stall_timeout)
+void expectStallsOnlyAfter(
+  TrackPublisher & publisher,
+  FakeClock & fake_clock,
+  std::chrono::milliseconds stall_timeout,
+  const livekit::EncodedVideoSource::Frame & probe_frame = makeEncodedFrame(false, 64, 48))
 {
   const std::function<void()> request_key_frame = []() {};
   // The first discarded frame starts the clock if a send failure has not already.
-  EXPECT_FALSE(publisher.captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher.captureEncoded(probe_frame, request_key_frame));
   fake_clock.advance(stall_timeout - kOneMillisecond);
   bool sent = true;
-  EXPECT_NO_THROW(sent = publisher.captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_NO_THROW(sent = publisher.captureEncoded(probe_frame, request_key_frame));
   EXPECT_FALSE(sent);
   fake_clock.advance(2 * kOneMillisecond);
-  EXPECT_THROW(publisher.captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame), std::runtime_error);
+  EXPECT_THROW(publisher.captureEncoded(probe_frame, request_key_frame), std::runtime_error);
 }
 
 TEST(TrackPublisherTest, PassthroughStallThrowsAfterTheBaseTimeoutAndLogsTheStalledEvent)
@@ -544,7 +538,7 @@ TEST(TrackPublisherTest, PassthroughStallThrowsAfterTheBaseTimeoutAndLogsTheStal
     connection, makePassthroughSpec("stream:stall", "lkros.video.stall"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 
   EXPECT_EQ(
@@ -565,7 +559,7 @@ TEST(TrackPublisherTest, PassthroughRestartStartsTheStallClockAtTheFirstFrame)
     connection, makePassthroughSpec("stream:reconnect", "lkros.video.reconnect"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
 
   publisher->awaitKeyFrame();
@@ -585,7 +579,7 @@ TEST(TrackPublisherTest, PassthroughStallTimeoutDoublesAfterEachRestartUpToTheMa
     connection, makePassthroughSpec("stream:backoff", "lkros.video.backoff"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 
   for (const auto stall_timeout : {2 * kBaseStallTimeout, 4 * kBaseStallTimeout, kMaxStallTimeout, kMaxStallTimeout}) {
@@ -606,14 +600,14 @@ TEST(TrackPublisherTest, PassthroughStallTimeoutResetsToTheBaseWhenAKeyFrameIsSe
     fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 
   publisher->awaitKeyFrame();
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
 
   // Only a reset makes the next stall come at the base instead of the doubled timeout.
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 }
 
@@ -627,13 +621,7 @@ TEST(TrackPublisherTest, PassthroughAllKeyFrameSourceStallsWhenEveryKeyFrameIsRe
     connection, makePassthroughSpec("stream:all_intra", "lkros.video.all_intra"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame));
-  fake_clock.advance(kBaseStallTimeout - kOneMillisecond);
-  bool sent = true;
-  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame));
-  EXPECT_FALSE(sent);
-  fake_clock.advance(2 * kOneMillisecond);
-  EXPECT_THROW(publisher->captureEncoded(makeEmptyKeyFrame(), request_key_frame), std::runtime_error);
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout, makeEmptyFrame(true));
 }
 
 TEST(TrackPublisherTest, PassthroughNeverStallsBeforeTheFirstPublish)
@@ -660,12 +648,12 @@ TEST(TrackPublisherTest, PassthroughResumeRestartsTheStallClock)
     connection, makePassthroughSpec("stream:recovers", "lkros.video.recovers"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
 
   // The next wait starts a new clock instead of continuing the one that ended.
   fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
-  EXPECT_FALSE(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
   expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
 }
 
@@ -682,7 +670,7 @@ TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
   const auto started_at = std::chrono::steady_clock::now();
   for (int failed_send = 0; failed_send < kFailedSends; ++failed_send) {
     publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-    publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame);
+    publisher->captureEncoded(makeEmptyFrame(false), request_key_frame);
     publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
   }
   const auto elapsed = std::chrono::steady_clock::now() - started_at;
