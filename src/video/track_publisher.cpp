@@ -133,18 +133,18 @@ std::shared_ptr<TrackPublisher> TrackPublisher::create(
 }
 
 TrackPublisher::TrackPublisher(
-  RoomConnection & connection,
-  StreamSpec spec,
-  EncodedFeedbackReader read_encoded_feedback,
-  std::chrono::milliseconds key_frame_stall_timeout)
+  RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback, NowProvider now_provider)
 : connection_(connection)
 , spec_(std::move(spec))
 , read_encoded_feedback_(std::move(read_encoded_feedback))
-, key_frame_stall_timeout_(key_frame_stall_timeout)
-, current_key_frame_stall_timeout_(key_frame_stall_timeout)
+, now_provider_(std::move(now_provider))
+, current_key_frame_stall_timeout_(kKeyFrameStallTimeout)
 {
   if (read_encoded_feedback_ == nullptr) {
     read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
+  }
+  if (now_provider_ == nullptr) {
+    now_provider_ = []() { return std::chrono::steady_clock::now(); };
   }
 }
 
@@ -295,7 +295,7 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   if (awaiting_key_frame_) {
     awaiting_key_frame_ = false;
     awaiting_since_.reset();
-    current_key_frame_stall_timeout_ = key_frame_stall_timeout_;
+    current_key_frame_stall_timeout_ = kKeyFrameStallTimeout;
     logResumedLocked();
   }
   // Cleared before reading feedback so a request reported with this keyframe stays pending.
@@ -332,7 +332,7 @@ void TrackPublisher::checkEncodedBitrateLocked(
   if (feedback.rate_control.has_value()) {
     bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
   }
-  const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, PassthroughBitrateMonitor::Clock::now());
+  const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, now_provider_());
   if (!bitrate_bps.has_value()) {
     return;
   }
@@ -482,7 +482,7 @@ void TrackPublisher::throwIfKeyFrameStalledLocked()
   if (encoded_source_ == nullptr) {
     return;
   }
-  const auto now = std::chrono::steady_clock::now();
+  const auto now = now_provider_();
   if (!awaiting_since_.has_value()) {
     awaiting_since_ = now;
   }
@@ -497,9 +497,8 @@ void TrackPublisher::throwIfKeyFrameStalledLocked()
     .field("waited_ms", waited_ms)
     .field("timeout_ms", current_key_frame_stall_timeout_.count())
     .warn();
-  current_key_frame_stall_timeout_ = std::max(
-    key_frame_stall_timeout_,
-    std::min(current_key_frame_stall_timeout_ * 2, std::chrono::milliseconds(kMaxKeyFrameStallTimeout)));
+  current_key_frame_stall_timeout_ =
+    std::min(current_key_frame_stall_timeout_ * 2, std::chrono::milliseconds(kMaxKeyFrameStallTimeout));
   throw std::runtime_error("no keyframe for " + std::to_string(waited_ms) + " ms");
 }
 

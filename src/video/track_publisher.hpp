@@ -82,12 +82,15 @@ public:
   using EncodedFeedbackReader =
     std::function<livekit::EncodedVideoSource::Feedback(const livekit::EncodedVideoSource & source)>;
 
+  // The seam for tests: lets them advance time instead of sleeping.
+  using NowProvider = std::function<std::chrono::steady_clock::time_point()>;
+
   // Does not start a ROS or GStreamer input stream.
   TrackPublisher(
     RoomConnection & connection,
     StreamSpec spec,
     EncodedFeedbackReader read_encoded_feedback = nullptr,
-    std::chrono::milliseconds key_frame_stall_timeout = kKeyFrameStallTimeout);
+    NowProvider now_provider = nullptr);
 
   ~TrackPublisher();
 
@@ -159,7 +162,7 @@ private:
   RoomConnection & connection_;
   StreamSpec spec_;
   EncodedFeedbackReader read_encoded_feedback_;
-  std::chrono::milliseconds key_frame_stall_timeout_;
+  NowProvider now_provider_;
   // Doubles after each stall restart and persists across them; a sent keyframe resets it.
   std::chrono::milliseconds current_key_frame_stall_timeout_;
 
