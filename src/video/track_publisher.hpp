@@ -57,14 +57,13 @@ public:
     return target_bitrate_bps_;
   }
 
-  // Returns the camera's bitrate once it has been well over the target for a few seconds.
+  // Returns the camera's bitrate when a window of a few seconds averaged well above the target.
   std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
 
 private:
   std::uint64_t target_bitrate_bps_ = 0U;
   Clock::time_point window_started_at_{};
   std::uint64_t window_bytes_ = 0U;
-  std::optional<Clock::time_point> over_budget_since_;
 };
 
 class TrackPublisher final

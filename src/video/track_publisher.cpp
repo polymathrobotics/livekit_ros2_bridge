@@ -40,11 +40,10 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
-constexpr auto kBitrateWindow = std::chrono::seconds(1);
+constexpr auto kBitrateWindow = std::chrono::seconds(3);
 // Over budget means above 3/2 of the target.
 constexpr std::uint64_t kOverBudgetRatioNumerator = 3U;
 constexpr std::uint64_t kOverBudgetRatioDenominator = 2U;
-constexpr auto kOverBudgetDuration = std::chrono::seconds(3);
 
 void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
@@ -101,7 +100,6 @@ std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame
   const auto elapsed_us =
     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
   const std::uint64_t bitrate_bps = window_bytes_ * 8U * 1'000'000U / elapsed_us;
-  const Clock::time_point window_started_at = window_started_at_;
   window_started_at_ = now;
   window_bytes_ = frame_bytes;
 
@@ -109,13 +107,6 @@ std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame
     target_bitrate_bps_ == 0U ||
     bitrate_bps * kOverBudgetRatioDenominator <= target_bitrate_bps_ * kOverBudgetRatioNumerator)
   {
-    over_budget_since_.reset();
-    return std::nullopt;
-  }
-  if (!over_budget_since_.has_value()) {
-    over_budget_since_ = window_started_at;
-  }
-  if (now - *over_budget_since_ < kOverBudgetDuration) {
     return std::nullopt;
   }
   return bitrate_bps;

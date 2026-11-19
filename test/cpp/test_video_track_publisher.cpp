@@ -608,6 +608,7 @@ TEST(PassthroughBitrateMonitorTest, ReportsOnlyAfterStayingWellAboveTarget)
     }
   }
 
+  // The first 3 s window closes at frame 30.
   ASSERT_TRUE(first_report_index.has_value());
   EXPECT_EQ(*first_report_index, 30);
   EXPECT_EQ(*first_report_bps, 2'000'000U);
@@ -644,9 +645,9 @@ TEST(PassthroughBitrateMonitorTest, StaysQuietWhenTheOverrunIsBrief)
   monitor.setTarget(1'000'000U);
   const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
 
-  // Two seconds over budget, then one second under, repeated.
+  // One second over budget, then two seconds under, repeated.
   for (int frame_index = 0; frame_index <= 100; ++frame_index) {
-    const bool under_budget_second = (frame_index / 10) % 3 == 2;
+    const bool under_budget_second = (frame_index / 10) % 3 != 0;
     const auto reported =
       monitor.record(under_budget_second ? 5'000U : 25'000U, start + milliseconds(100 * frame_index));
     EXPECT_FALSE(reported.has_value());
