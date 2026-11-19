@@ -51,11 +51,10 @@ constexpr auto kMaxStallTimeout = std::chrono::seconds(30);
 constexpr auto kBitrateWindow = std::chrono::seconds(3);
 constexpr auto kOneMillisecond = std::chrono::milliseconds(1);
 
-// Lets tests move time by hand instead of sleeping. It starts away from the epoch,
-// which the bitrate monitor treats as "no window yet".
+// Lets tests move time by hand instead of sleeping.
 struct FakeClock
 {
-  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::time_point{};
 
   void advance(std::chrono::milliseconds duration)
   {
@@ -822,7 +821,7 @@ TEST(PassthroughBitrateMonitorTest, ReportsEveryWindowThatAveragesWellAboveTarge
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
   monitor.setTarget(1'000'000U);
-  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+  const auto start = std::chrono::steady_clock::time_point{};
 
   // 25 kB every 100 ms is 2 Mbit/s, twice the target.
   std::vector<int> report_frame_indexes;
@@ -844,7 +843,7 @@ TEST(PassthroughBitrateMonitorTest, StaysQuietWithoutATarget)
 {
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
-  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+  const auto start = std::chrono::steady_clock::time_point{};
 
   for (int frame_index = 0; frame_index <= 100; ++frame_index) {
     EXPECT_FALSE(monitor.record(25'000U, start + milliseconds(100 * frame_index)).has_value());
@@ -856,7 +855,7 @@ TEST(PassthroughBitrateMonitorTest, StaysQuietAtExactlyOnePointFiveTimesTheTarge
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
   monitor.setTarget(1'000'000U);
-  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+  const auto start = std::chrono::steady_clock::time_point{};
 
   // 18.75 kB every 100 ms is 1.5 Mbit/s, exactly 1.5x the target, which is not over budget.
   for (int frame_index = 0; frame_index <= 100; ++frame_index) {
@@ -869,7 +868,7 @@ TEST(PassthroughBitrateMonitorTest, StaysQuietWhenTheOverrunIsBrief)
   using std::chrono::milliseconds;
   PassthroughBitrateMonitor monitor;
   monitor.setTarget(1'000'000U);
-  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::seconds(100);
+  const auto start = std::chrono::steady_clock::time_point{};
 
   // One second over budget, then two seconds under, repeated.
   for (int frame_index = 0; frame_index <= 100; ++frame_index) {

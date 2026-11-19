@@ -62,7 +62,7 @@ public:
 
 private:
   std::uint64_t target_bitrate_bps_ = 0U;
-  Clock::time_point window_started_at_{};
+  std::optional<Clock::time_point> window_started_at_;
   std::uint64_t window_bytes_ = 0U;
 };
 

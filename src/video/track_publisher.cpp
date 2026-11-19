@@ -87,10 +87,10 @@ livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
 
 std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame_bytes, Clock::time_point now)
 {
-  if (window_started_at_ == Clock::time_point{}) {
+  if (!window_started_at_.has_value()) {
     window_started_at_ = now;
   }
-  const auto elapsed = now - window_started_at_;
+  const auto elapsed = now - *window_started_at_;
   if (elapsed < kBitrateWindow) {
     window_bytes_ += frame_bytes;
     return std::nullopt;
