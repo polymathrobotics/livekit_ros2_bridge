@@ -179,8 +179,6 @@ private:
   std::shared_ptr<livekit::LocalVideoTrack> track_;
 
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
-  // The codec of the last track that published, kept when a failed republish drops encoded_source_.
-  std::optional<livekit::VideoCodec> published_codec_;
   bool awaiting_key_frame_ = true;
   // Only set while awaiting_key_frame_, by the first frame the wait discards or fails, so a slow
   // camera start doesn't count.

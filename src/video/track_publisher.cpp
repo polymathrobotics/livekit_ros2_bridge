@@ -543,6 +543,7 @@ void TrackPublisher::checkKeyFrameStallLocked()
 
 void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height)
 {
+  const bool republish = published_once_;
   // A track keeps the codec it was published with.
   if (encoded_source_ != nullptr) {
     tryUnpublish(connection_, track_);
@@ -563,15 +564,13 @@ void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::
   bitrate_monitor_ = PassthroughBitrateMonitor();
   parameter_sets_warning_logged_ = false;
 
-  const std::optional<livekit::VideoCodec> previous_codec = published_codec_;
-  published_codec_ = codec;
-  if (!previous_codec.has_value()) {
+  published_once_ = true;
+  if (!republish) {
     return;
   }
 
   LogEvent(kLogger, "video_stream_track_republished")
     .fieldOr("stream_key", spec_.stream_key)
-    .field("previous_codec", passthroughCodecName(*previous_codec))
     .field("codec", passthroughCodecName(codec))
     .info();
 }
@@ -591,7 +590,6 @@ void TrackPublisher::close()
     }
 
     published_once_ = false;
-    published_codec_.reset();
     captured_frame_logged_ = false;
     closed_ = true;
     ros_stream = std::move(ros_stream_);

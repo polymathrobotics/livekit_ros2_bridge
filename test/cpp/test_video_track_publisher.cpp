@@ -385,10 +385,8 @@ TEST(TrackPublisherTest, PassthroughRepublishesWhenTheCodecChanges)
   const auto republished_source = publishedEncodedSource(connection, 1U);
   ASSERT_NE(republished_source, nullptr);
   EXPECT_EQ(republished_source->codec(), livekit::VideoCodec::H265);
-  EXPECT_EQ(
-    logs.countLines(
-      {"video_stream_track_republished", "stream_key=stream:recodec", "previous_codec=h264", " codec=h265"}),
-    1U);
+  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "stream_key=stream:recodec", " codec=h265"}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "previous_codec"}), 0U);
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:recodec"}, "discarded_frames"),
     std::vector<std::string>{"1"});
@@ -457,10 +455,7 @@ TEST(TrackPublisherTest, PassthroughFailedRepublishWaitsForNextKeyFrame)
       "unpublish_video_track:lkros.video.refail",
     }));
   // The retry that succeeds reports the change, as the raw-video path does.
-  EXPECT_EQ(
-    logs.countLines(
-      {"video_stream_track_republished", "stream_key=stream:refail", "previous_codec=h264", " codec=h265"}),
-    1U);
+  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "stream_key=stream:refail", " codec=h265"}), 1U);
 }
 
 TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOncePerPublishedTrack)
