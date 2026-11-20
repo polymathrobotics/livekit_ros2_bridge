@@ -30,8 +30,8 @@ struct NalUnitSyntax
   std::uint8_t type_mask;
   std::uint8_t first_slice_type;
   std::uint8_t last_slice_type;
-  std::uint8_t first_idr_type;
-  std::uint8_t last_idr_type;
+  std::uint8_t first_key_frame_type;
+  std::uint8_t last_key_frame_type;
   std::uint64_t parameter_set_types;
 };
 
@@ -40,10 +40,11 @@ constexpr std::uint64_t typeBit(unsigned nal_unit_type)
   return std::uint64_t{1} << nal_unit_type;
 }
 
-// Slices 1-5, IDR 5, SPS 7, PPS 8.
+// Slices 1-5, key frames are IDR (5), SPS 7, PPS 8.
 constexpr NalUnitSyntax kH264Syntax{0U, 0x1FU, 1U, 5U, 5U, 5U, typeBit(7U) | typeBit(8U)};
-// Slices 0-31, IDR_W_RADL 19 and IDR_N_LP 20, VPS 32, SPS 33, PPS 34.
-constexpr NalUnitSyntax kH265Syntax{1U, 0x3FU, 0U, 31U, 19U, 20U, typeBit(32U) | typeBit(33U) | typeBit(34U)};
+// Slices 0-31, key frames are the IRAP types 16-21 (BLA, IDR, CRA), VPS 32, SPS 33, PPS 34.
+// An open GOP sends a CRA for every keyframe after the first; with no B-frames it has no RASL pictures.
+constexpr NalUnitSyntax kH265Syntax{1U, 0x3FU, 0U, 31U, 16U, 21U, typeBit(32U) | typeBit(33U) | typeBit(34U)};
 
 bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
 {
@@ -71,8 +72,9 @@ AccessUnitSummary summarizeAnnexBAccessUnit(const NalUnitSyntax & syntax, const 
     const auto nal_unit_type =
       static_cast<std::uint8_t>((data[offset + kStartCodeSize] >> syntax.type_shift) & syntax.type_mask);
     if (nal_unit_type >= syntax.first_slice_type && nal_unit_type <= syntax.last_slice_type) {
-      const bool is_idr = nal_unit_type >= syntax.first_idr_type && nal_unit_type <= syntax.last_idr_type;
-      return {is_idr, has_parameter_sets()};
+      const bool is_key_frame =
+        nal_unit_type >= syntax.first_key_frame_type && nal_unit_type <= syntax.last_key_frame_type;
+      return {is_key_frame, has_parameter_sets()};
     }
     found_types |= typeBit(nal_unit_type);
   }

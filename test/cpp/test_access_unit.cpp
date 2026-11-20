@@ -156,9 +156,18 @@ const Bytes kH265VideoParameterSetNal{0x40U, 0x01U, 0x0CU, 0x01U};
 const Bytes kH265SequenceParameterSetNal{0x42U, 0x01U, 0x01U, 0x01U};
 const Bytes kH265PictureParameterSetNal{0x44U, 0x01U, 0xC1U, 0x72U};
 const Bytes kH265IdrWithLeadingPicturesNal{0x26U, 0x01U, 0xAFU, 0x08U};
-const Bytes kH265IdrWithoutLeadingPicturesNal{0x28U, 0x01U, 0xAFU, 0x08U};
-const Bytes kH265CleanRandomAccessNal{0x2AU, 0x01U, 0xAFU, 0x08U};
 const Bytes kH265TrailingPictureNal{0x02U, 0x01U, 0xD0U, 0x08U};
+
+constexpr std::uint8_t kFirstH265SliceType = 0U;
+constexpr std::uint8_t kLastH265SliceType = 31U;
+// BLA_W_LP, BLA_W_RADL, BLA_N_LP, IDR_W_RADL, IDR_N_LP and CRA_NUT; 22 and 23 are reserved.
+constexpr std::uint8_t kFirstH265RandomAccessType = 16U;
+constexpr std::uint8_t kLastH265RandomAccessType = 21U;
+
+Bytes h265SliceOfType(std::uint8_t nal_unit_type)
+{
+  return {static_cast<std::uint8_t>(nal_unit_type << 1U), 0x01U, 0xAFU, 0x08U};
+}
 
 AccessUnitSummary summarizeH265(const Bytes & bytes)
 {
@@ -180,12 +189,14 @@ Bytes h265AccessUnitWithParameterSets(const Bytes & slice)
      slice});
 }
 
-TEST(H265AccessUnitTest, DetectsBothIdrTypesWithTheirParameterSets)
+// libwebrtc's depacketizer marks the same types as key frames, and x265's open GOP sends a CRA for each.
+TEST(H265AccessUnitTest, TreatsEveryRandomAccessPictureAsAKeyFrameWithItsParameterSets)
 {
-  for (const Bytes & idr_slice : {kH265IdrWithLeadingPicturesNal, kH265IdrWithoutLeadingPicturesNal}) {
-    SCOPED_TRACE(static_cast<int>(idr_slice.front()));
-    const AccessUnitSummary summary = summarizeH265(h265AccessUnitWithParameterSets(idr_slice));
-    EXPECT_TRUE(summary.is_key_frame);
+  for (std::uint8_t type = kFirstH265SliceType; type <= kLastH265SliceType; ++type) {
+    SCOPED_TRACE(static_cast<int>(type));
+    const AccessUnitSummary summary = summarizeH265(h265AccessUnitWithParameterSets(h265SliceOfType(type)));
+    const bool is_random_access = type >= kFirstH265RandomAccessType && type <= kLastH265RandomAccessType;
+    EXPECT_EQ(summary.is_key_frame, is_random_access);
     EXPECT_TRUE(summary.has_parameter_sets);
   }
 }
@@ -235,14 +246,13 @@ TEST(H265AccessUnitTest, ReportsParameterSetsOnlyWhenVpsSpsAndPpsAllPrecedeTheId
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 
-TEST(H265AccessUnitTest, RejectsCleanRandomAccessAndTrailingPictures)
+TEST(H265AccessUnitTest, DecidesAtTheFirstSlice)
 {
-  // A CRA's leading pictures can't be decoded from a fresh start, so it isn't a keyframe.
-  EXPECT_FALSE(summarizeH265(h265AccessUnitWithParameterSets(kH265CleanRandomAccessNal)).is_key_frame);
-  EXPECT_FALSE(summarizeH265(h265AccessUnitWithParameterSets(kH265TrailingPictureNal)).is_key_frame);
   EXPECT_FALSE(
     summarizeH265(concat({kLongStartCode, kH265TrailingPictureNal, kShortStartCode, kH265IdrWithLeadingPicturesNal}))
       .is_key_frame);
+  EXPECT_TRUE(summarizeH265(concat({kLongStartCode, h265SliceOfType(21U), kShortStartCode, kH265TrailingPictureNal}))
+                .is_key_frame);
 }
 
 TEST(H265AccessUnitTest, ReadsTheTypeFromItsOwnHeaderLayout)

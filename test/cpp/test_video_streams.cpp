@@ -419,12 +419,15 @@ TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
       {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}}}),
     (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}}));
 
-  // An IDR without VPS, SPS and PPS, then a CRA: h265parse leaves DELTA_UNIT clear on both.
+  // An IDR without VPS, SPS and PPS, then a CRA, then a trailing picture.
   EXPECT_EQ(
     forwardThroughPassthroughPipeline(
       "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48",
-      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU}}, {{0x00U, 0x00U, 0x00U, 0x01U, 0x2AU, 0x01U, 0xAFU}}}),
-    (std::vector<ForwardedFrame>{{VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
+      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU}},
+       {{0x00U, 0x00U, 0x00U, 0x01U, 0x2AU, 0x01U, 0xAFU}},
+       {{0x00U, 0x00U, 0x00U, 0x01U, 0x02U, 0x01U, 0xAFU}}}),
+    (std::vector<ForwardedFrame>{
+      {VideoCodec::H265, true, true}, {VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
 
   // Temporal delimiter, sequence header, and frame OBUs.
   const std::vector<std::uint8_t> key_frame_with_sequence_header{
