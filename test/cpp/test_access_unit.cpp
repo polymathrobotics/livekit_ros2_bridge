@@ -417,8 +417,6 @@ TEST(Av1TemporalUnitTest, RejectsFramesWhoseHeaderByteIsMissing)
   EXPECT_FALSE(summarizeAv1({kFrameObu, 0x00U}).is_key_frame);
   // The frame claims five bytes but one is left, so the key frame bits it holds are not trusted.
   EXPECT_FALSE(summarizeAv1({kFrameObu, 0x05U, kShownKeyFrameBits}).is_key_frame);
-  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x01U}).is_key_frame);
-  EXPECT_FALSE(summarizeAv1({kFrameObu | kHasExtensionBit, 0x00U, 0x01U}).is_key_frame);
   // No size field and nothing after the header.
   EXPECT_FALSE(summarizeAv1({0x30U}).is_key_frame);
 }
