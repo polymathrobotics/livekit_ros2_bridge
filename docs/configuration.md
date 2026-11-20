@@ -355,7 +355,7 @@ livekit_ros2_bridge:
 
 - end `source` with the camera codec's parser: `h264parse config-interval=-1`, `h265parse config-interval=-1`, or `av1parse` (from `gstreamer1.0-plugins-bad`, which the runtime environment must provide); don't use `uridecodebin`, which decodes the stream
 - the track uses the camera's codec, so `publish.codec` must be empty or `auto`; if the codec changes, the bridge republishes the track at the next keyframe
-- viewers get no fallback codec, so use H.264 unless all of them can play the camera's codec: Firefox can't play H.265, AV1 reaches only Chrome and Edge, and H.265 needs LiveKit server 1.9.1 or later
+- viewers get no fallback codec, so use H.264 unless all of them can play the camera's codec: H.265 needs LiveKit server 1.13.11 or later and Chrome 136+ with a hardware decoder or Safari 18+, and LiveKit doesn't send AV1 to Safari or Firefox
 - bitrate, resolution, and frame rate come from the camera; set `publish.max_bitrate_bps` to the camera's configured bitrate, and leave `transform` and the other `publish.*` keys unset, since global `video.publish.*` defaults don't apply
 - configure the camera with a keyframe interval of about 1 s and no B-frames (H.264: Baseline or Main profile); H.264 keyframes must be IDR frames and H.265 keyframes IDR, CRA, or BLA pictures, so a stream that only recovers with intra refresh or non-IDR I-frames never publishes
 - LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_viewer_key_frame_request` (at most every 5 s), and `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
