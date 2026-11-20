@@ -162,7 +162,7 @@ Supported ROS video inputs:
 | `video.other.<id>.source` | none | non-empty GStreamer ingress fragment | Required ingress fragment such as `uridecodebin`, `v4l2src`, or `videotestsrc` |
 | `video.other.<id>.transform` | `""` | GStreamer middle fragment | Optional processing stages inserted after the ingress |
 | `video.other.<id>.publish.encoder` | `""` | `""`, `auto`, `pre_encoded` | `pre_encoded` forwards the source's encoded video to LiveKit without decoding or re-encoding it; see [Cameras that already encode video](#cameras-that-already-encode-video). Empty or `auto` lets LiveKit encode. Conflicting settings fail startup. |
-| `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec`; with `publish.encoder: pre_encoded`, only empty or `auto` |
+| `video.other.<id>.publish.codec` | `""` | `""`, `auto`, `vp8`, `h264`, `av1`, `vp9`, `h265` | Empty inherits `video.publish.codec`. With `publish.encoder: pre_encoded`, only empty or `auto`, and the camera's codec is used |
 | `video.other.<id>.publish.max_bitrate_bps` | `-1` | integer `>= -1` | `-1` inherits `video.publish.max_bitrate_bps` |
 | `video.other.<id>.publish.max_framerate` | `-1.0` | double `>= -1.0` | `-1.0` inherits `video.publish.max_framerate` |
 | `video.other.<id>.publish.simulcast` | `""` | `""`, `auto`, `enabled`, `disabled` | Empty inherits `video.publish.simulcast` |
@@ -341,7 +341,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
 
 ### Cameras that already encode video
 
-By default the bridge decodes a camera's video and LiveKit encodes it again. Set `publish.encoder: pre_encoded` on the source and the bridge forwards the camera's H.264, H.265, or AV1 to LiveKit unchanged, which saves CPU and delay. H.265 and AV1 are experimental: they haven't been tested with real cameras or browsers.
+By default the bridge decodes a camera's video and LiveKit encodes it again. Set `publish.encoder: pre_encoded` on the source and the bridge forwards the camera's H.264, H.265, or AV1 to LiveKit unchanged, which saves CPU and delay. H.265 and AV1 are experimental: viewers get no fallback codec, so use H.264 unless every viewer can decode the camera's codec, and H.265 needs LiveKit server 1.13.11 or later.
 
 ```yaml
 livekit_ros2_bridge:
@@ -354,10 +354,9 @@ livekit_ros2_bridge:
 ```
 
 - end `source` with the camera codec's parser: `h264parse config-interval=-1`, `h265parse config-interval=-1`, or `av1parse` (from `gstreamer1.0-plugins-bad`, which the runtime environment must provide); don't use `uridecodebin`, which decodes the stream
-- the track uses the camera's codec, so `publish.codec` must be empty or `auto`; if the codec changes, the bridge republishes the track at the next keyframe
-- viewers get no fallback codec, so use H.264 unless all of them can play the camera's codec: H.265 needs LiveKit server 1.13.11 or later and Chrome 136+ with a hardware decoder or Safari 18+, and LiveKit doesn't send AV1 to Safari or Firefox
+- if the camera's codec changes, the bridge republishes the track at the next keyframe
 - bitrate, resolution, and frame rate come from the camera; set `publish.max_bitrate_bps` to the camera's configured bitrate, and leave `transform` and the other `publish.*` keys unset, since global `video.publish.*` defaults don't apply
-- configure the camera with a keyframe interval of about 1 s and no B-frames (H.264: Baseline or Main profile); H.264 keyframes must be IDR frames and H.265 keyframes IDR, CRA, or BLA pictures, so a stream that only recovers with intra refresh or non-IDR I-frames never publishes
+- configure the camera with a keyframe interval of about 1 s and no B-frames (H.264: Baseline or Main profile); a stream that only recovers with intra refresh never publishes, since keyframes must be IDR (H.265: IDR, CRA, or BLA) pictures
 - LiveKit's keyframe requests (a viewer joins, or recovers from packet loss) are forwarded to the source and repeated every 500 ms until a keyframe is sent; the bridge logs `video_stream_passthrough_viewer_key_frame_request` (at most every 5 s), and `video_stream_passthrough_feedback_failed` if reading LiveKit's requests fails
 - if `publish.max_bitrate_bps` is set and the bridge sends more than 1.5x LiveKit's target over a 3 s window, it logs `video_stream_passthrough_over_budget` (at most once per window); lower the camera's bitrate or check the network, since LiveKit also lowers its target on a congested link
 - if LiveKit refuses or rejects a frame, the bridge logs `video_stream_passthrough_send_failed` (at most every 5 s) and skips frames until the next keyframe
