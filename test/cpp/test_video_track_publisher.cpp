@@ -726,6 +726,20 @@ void expectStallsOnlyAfter(
   EXPECT_THROW(publisher.captureEncoded(probe_frame, request_key_frame), std::runtime_error);
 }
 
+// Every delta frame in the new codec must not restart the stall clock.
+TEST(TrackPublisherTest, PassthroughStallsWhenTheNewCodecNeverSendsAKeyFrame)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:newcodec", "lkros.video.newcodec"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  expectStallsOnlyAfter(
+    *publisher, fake_clock, kBaseStallTimeout, makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265));
+}
+
 TEST(TrackPublisherTest, PassthroughStallThrowsAfterTheBaseTimeoutAndLogsTheStalledEvent)
 {
   test_support::ScopedLogCapture logs;

@@ -301,7 +301,7 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
 
   // A codec change waits for a keyframe in the new codec, which republishes.
   const bool codec_changed = encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec;
-  if (codec_changed && !frame.is_keyframe) {
+  if (codec_changed && !awaiting_key_frame_) {
     awaitKeyFrameLocked();
   }
   if (awaiting_key_frame_ && !frame.is_keyframe) {
@@ -315,9 +315,7 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
     return false;
   }
 
-  // A republish unpublishes the old track first, so the keyframe wait must be set before it.
   if (encoded_source_ == nullptr || codec_changed) {
-    awaitKeyFrameLocked();
     publishEncodedSourceLocked(encoded.codec, frame.width, frame.height);
   }
   if (encoded.lacks_parameter_sets && !parameter_sets_warning_logged_) {
