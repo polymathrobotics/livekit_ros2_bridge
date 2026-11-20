@@ -36,6 +36,16 @@
 
 namespace livekit_ros2_bridge::video
 {
+
+// Reaches the pipeline callback that is private to TrackPublisher.
+struct TrackPublisherTestAccess
+{
+  static void keyFrameWithoutParameterSets(TrackPublisher & publisher, livekit::VideoCodec codec)
+  {
+    publisher.onKeyFrameWithoutParameterSets(codec);
+  }
+};
+
 namespace
 {
 
@@ -428,6 +438,69 @@ TEST(TrackPublisherTest, PassthroughFailedRepublishWaitsForNextKeyFrame)
     }));
   EXPECT_EQ(connection.state->published_video_options.back().video_codec, VideoCodec::H265);
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_discontinuity"}), 0U);
+  // The retry that succeeds reports the change, as the raw-video path does.
+  EXPECT_EQ(
+    logs.countLines(
+      {"video_stream_track_republished", "stream_key=stream:refail", "previous_codec=h264", " codec=h265"}),
+    1U);
+}
+
+// The pipeline reports a keyframe without parameter sets before it hands over that keyframe.
+TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOncePerCodec)
+{
+  using livekit::VideoCodec;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  const std::function<void()> request_key_frame = []() {};
+  TrackPublisher publisher(connection, makePassthroughSpec("stream:params", "lkros.video.params"));
+
+  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H264);
+  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
+  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H264);
+  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H265);
+  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
+  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H265);
+
+  EXPECT_EQ(
+    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);
+  EXPECT_EQ(
+    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h265"}), 1U);
+}
+
+// The old track's window and rate target say nothing about the new one.
+TEST(TrackPublisherTest, PassthroughRepublishStartsANewBitrateWindowAndForgetsTheTarget)
+{
+  using livekit::VideoCodec;
+  constexpr std::size_t kLargeFrameBytes = 2'000'000U;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  const TrackPublisher::EncodedFeedbackReader read_feedback = [](const livekit::EncodedVideoSource & source) {
+    livekit::EncodedVideoSource::Feedback feedback;
+    if (source.codec() == VideoCodec::H264) {
+      feedback.rate_control = livekit::EncodedVideoSource::RateControl{1'000'000U, 30.0};
+    }
+    return feedback;
+  };
+  StreamSpec capped_spec = makePassthroughSpec("stream:rewindow", "lkros.video.rewindow");
+  capped_spec.publish_options.video_encoding = livekit::VideoEncodingOptions{2'000'000U, 0.0};
+  TrackPublisher publisher(connection, std::move(capped_spec), read_feedback, fake_clock.provider());
+
+  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
+  EXPECT_TRUE(publisher.captureEncoded(makeLargeDeltaFrame(kLargeFrameBytes), request_key_frame));
+  fake_clock.advance(kBitrateWindow + kOneMillisecond);
+  // The first frame of the new track would close the H.264 window.
+  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget"}), 0U);
+
+  // The H.265 track reports no target, so its own large window is not over budget either.
+  EncodedVideoFrame large_h265_frame = makeLargeDeltaFrame(kLargeFrameBytes);
+  large_h265_frame.codec = VideoCodec::H265;
+  EXPECT_TRUE(publisher.captureEncoded(std::move(large_h265_frame), request_key_frame));
+  fake_clock.advance(kBitrateWindow + kOneMillisecond);
+  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(false, 64, 48, VideoCodec::H265), request_key_frame));
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget"}), 0U);
 }
 
 TEST(TrackPublisherTest, PassthroughSizeChangeDoesNotRepublish)

@@ -104,9 +104,13 @@ const char * missingParameterSetsHint(livekit::VideoCodec codec)
     case livekit::VideoCodec::AV1:
       return "a keyframe arrived without a sequence header, so viewers who join late or reconnect may not be able to "
              "decode the video; set the encoder to send a sequence header with every keyframe";
-    default:
+    case livekit::VideoCodec::H264:
       return "a keyframe arrived without SPS and PPS, so viewers who join late or reconnect may not be able to decode "
              "the video; end the source with h264parse config-interval=-1";
+    default:
+      // The caps filter admits only the codecs above.
+      return "a keyframe arrived without parameter sets, so viewers who join late or reconnect may not be able to "
+             "decode the video";
   }
 }
 
@@ -535,9 +539,7 @@ void TrackPublisher::checkKeyFrameStallLocked()
 void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height)
 {
   // A track keeps the codec it was published with.
-  std::optional<livekit::VideoCodec> previous_codec;
   if (encoded_source_ != nullptr) {
-    previous_codec = encoded_source_->codec();
     tryUnpublish(connection_, track_);
     track_.reset();
     encoded_source_.reset();
@@ -552,6 +554,11 @@ void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::
   encoded_source_ = std::move(source);
   track_ = std::move(track);
   just_published_ = true;
+  // The new track starts a new bitrate window; LiveKit sets its rate target again.
+  bitrate_monitor_ = PassthroughBitrateMonitor();
+
+  const std::optional<livekit::VideoCodec> previous_codec = published_codec_;
+  published_codec_ = codec;
   if (!previous_codec.has_value()) {
     return;
   }
@@ -578,6 +585,7 @@ void TrackPublisher::close()
     }
 
     published_once_ = false;
+    published_codec_.reset();
     captured_frame_logged_ = false;
     closed_ = true;
     ros_stream = std::move(ros_stream_);
@@ -628,11 +636,11 @@ void TrackPublisher::onCaptureFailed(const std::string & error)
 void TrackPublisher::onKeyFrameWithoutParameterSets(livekit::VideoCodec codec)
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_ || parameter_sets_warning_logged_) {
+  if (closed_ || parameter_sets_warned_codec_ == codec) {
     return;
   }
 
-  parameter_sets_warning_logged_ = true;
+  parameter_sets_warned_codec_ = codec;
   LogEvent(kLogger, "video_stream_passthrough_missing_parameter_sets")
     .fieldOr("stream_key", spec_.stream_key)
     .field("codec", passthroughCodecName(codec))

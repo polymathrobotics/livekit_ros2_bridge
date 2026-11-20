@@ -120,6 +120,7 @@ public:
 private:
   friend class GStreamerStream;
   friend class RosStream;
+  friend struct TrackPublisherTestAccess;
 
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
@@ -180,6 +181,8 @@ private:
   std::shared_ptr<livekit::LocalVideoTrack> track_;
 
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
+  // The codec of the last track that published, kept when a failed republish drops encoded_source_.
+  std::optional<livekit::VideoCodec> published_codec_;
   bool awaiting_key_frame_ = true;
   // Only set while awaiting_key_frame_, by the first frame the wait discards or fails, so a slow
   // camera start doesn't count.
@@ -188,8 +191,9 @@ private:
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
   bool livekit_key_frame_request_pending_ = false;
-  // Warn once: the cause is the source's setup, and the publisher outlives restarts.
-  bool parameter_sets_warning_logged_ = false;
+  // Warn once per codec: the cause is the source's setup, and the publisher outlives restarts.
+  // Keyed by codec because the pipeline reports a keyframe before the publish that follows it.
+  std::optional<livekit::VideoCodec> parameter_sets_warned_codec_;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
   EventThrottle discontinuity_log_throttle_{kLogThrottle};
