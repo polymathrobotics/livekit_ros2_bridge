@@ -18,6 +18,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -40,9 +41,31 @@ namespace
 // LiveKit 1.6.0+ requires livekit::initialize() before constructing livekit::VideoSource; see ScopedLiveKitInit.
 const test_support::ScopedLiveKitInit kLiveKitInit;
 
-// Mirrors TrackPublisher's private keyframe request interval, plus slack to clearly outlast it.
+// Mirror TrackPublisher's private intervals; the margin makes real sleeps clearly outlast them.
 constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+constexpr auto kLogThrottle = std::chrono::seconds(5);
 constexpr auto kTimingMargin = std::chrono::milliseconds(100);
+// Same as TrackPublisher's private stall timeouts and the bitrate window in track_publisher.cpp.
+constexpr auto kBaseStallTimeout = std::chrono::seconds(5);
+constexpr auto kMaxStallTimeout = std::chrono::seconds(30);
+constexpr auto kBitrateWindow = std::chrono::seconds(3);
+constexpr auto kOneMillisecond = std::chrono::milliseconds(1);
+
+// Lets tests move time by hand instead of sleeping.
+struct FakeClock
+{
+  std::chrono::steady_clock::time_point now = std::chrono::steady_clock::time_point{};
+
+  void advance(std::chrono::milliseconds duration)
+  {
+    now += duration;
+  }
+
+  TrackPublisher::NowProvider provider()
+  {
+    return [this]() { return now; };
+  }
+};
 
 StreamSpec makeSpec(const std::string & stream_key, const std::string & track_name)
 {
@@ -87,11 +110,18 @@ livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe, std::uint3
   return frame;
 }
 
-// LiveKit rejects an empty frame, so sending this one fails.
-livekit::EncodedVideoSource::Frame makeEmptyDeltaFrame()
+// LiveKit rejects an empty frame, so sending one fails.
+livekit::EncodedVideoSource::Frame makeEmptyFrame(bool is_keyframe)
+{
+  livekit::EncodedVideoSource::Frame frame = makeEncodedFrame(is_keyframe, 64, 48);
+  frame.data.clear();
+  return frame;
+}
+
+livekit::EncodedVideoSource::Frame makeLargeDeltaFrame(std::size_t frame_bytes)
 {
   livekit::EncodedVideoSource::Frame frame = makeEncodedFrame(false, 64, 48);
-  frame.data.clear();
+  frame.data.resize(frame_bytes, 0x55U);
   return frame;
 }
 
@@ -450,7 +480,7 @@ TEST(TrackPublisherTest, PassthroughPublishFailureThrowsAndRetriesAtNextKeyFrame
   EXPECT_EQ(connection.state->unpublished_video_track_names, (std::vector<std::string>{"lkros.video.retry"}));
 }
 
-TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
+TEST(TrackPublisherTest, PassthroughSendFailureWaitsForNextKeyFrame)
 {
   test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
@@ -458,21 +488,202 @@ TEST(TrackPublisherTest, PassthroughSendFailureThrowsAndWaitsForNextKeyFrame)
   const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
   auto publisher = std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send", "lkros.video.send"));
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-  EXPECT_THROW(publisher->captureEncoded(makeEmptyDeltaFrame(), request_key_frame), std::invalid_argument);
-  // The picture is broken until the next keyframe, even before the restart lands.
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  EXPECT_FALSE(sent);
+  // The picture is broken until the next keyframe.
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   EXPECT_EQ(key_frame_requests, 1);
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
   publisher.reset();
 
   EXPECT_EQ(key_frame_requests, 1);
   EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send"}));
   EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_send_failed", "stream_key=stream:send"}, "count"),
+    std::vector<std::string>{"1"});
+  EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:send"}, "discarded_frames"),
     std::vector<std::string>{"1"});
+}
+
+// Expects a stall check right at `stall_timeout` to throw and one a millisecond earlier not to.
+void expectStallsOnlyAfter(
+  TrackPublisher & publisher,
+  FakeClock & fake_clock,
+  std::chrono::milliseconds stall_timeout,
+  const livekit::EncodedVideoSource::Frame & probe_frame = makeEncodedFrame(false, 64, 48))
+{
+  const std::function<void()> request_key_frame = []() {};
+  // The first discarded frame starts the clock if a send failure has not already.
+  EXPECT_FALSE(publisher.captureEncoded(probe_frame, request_key_frame));
+  fake_clock.advance(stall_timeout - kOneMillisecond);
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher.captureEncoded(probe_frame, request_key_frame));
+  EXPECT_FALSE(sent);
+  fake_clock.advance(2 * kOneMillisecond);
+  EXPECT_THROW(publisher.captureEncoded(probe_frame, request_key_frame), std::runtime_error);
+}
+
+TEST(TrackPublisherTest, PassthroughStallThrowsAfterTheBaseTimeoutAndLogsTheStalledEvent)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:stall", "lkros.video.stall"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
+
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_key_frame_stalled", "stream_key=stream:stall"}, "timeout_ms"),
+    std::vector<std::string>{"5000"});
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_key_frame_stalled", "stream_key=stream:stall"}, "waited_ms"),
+    std::vector<std::string>{"5001"});
+}
+
+// A slow reconnect must not count: the clock starts at the first discarded frame, not at the restart.
+TEST(TrackPublisherTest, PassthroughRestartStartsTheStallClockAtTheFirstFrame)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:reconnect", "lkros.video.reconnect"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
+
+  publisher->awaitKeyFrame();
+  fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_FALSE(sent);
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+}
+
+TEST(TrackPublisherTest, PassthroughStallTimeoutDoublesAfterEachRestartUpToTheMaximum)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:backoff", "lkros.video.backoff"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
+
+  for (const auto stall_timeout : {2 * kBaseStallTimeout, 4 * kBaseStallTimeout, kMaxStallTimeout, kMaxStallTimeout}) {
+    publisher->awaitKeyFrame();
+    expectStallsOnlyAfter(*publisher, fake_clock, stall_timeout);
+  }
+}
+
+TEST(TrackPublisherTest, PassthroughStallTimeoutResetsToTheBaseWhenAKeyFrameIsSent)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection,
+    makePassthroughSpec("stream:backoff_reset", "lkros.video.backoff_reset"),
+    nullptr,
+    fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
+
+  publisher->awaitKeyFrame();
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+
+  // Only a reset makes the next stall come at the base instead of the doubled timeout.
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
+}
+
+// A source that only sends keyframes never discards a frame, so the send failures start the clock.
+TEST(TrackPublisherTest, PassthroughAllKeyFrameSourceStallsWhenEveryKeyFrameIsRefused)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:all_intra", "lkros.video.all_intra"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout, makeEmptyFrame(true));
+}
+
+TEST(TrackPublisherTest, PassthroughNeverStallsBeforeTheFirstPublish)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:not_ready", "lkros.video.not_ready"), nullptr, fake_clock.provider());
+
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  fake_clock.advance(kMaxStallTimeout + kOneMillisecond);
+  bool sent = true;
+  EXPECT_NO_THROW(sent = publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  EXPECT_FALSE(sent);
+}
+
+TEST(TrackPublisherTest, PassthroughResumeRestartsTheStallClock)
+{
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  auto publisher = std::make_unique<TrackPublisher>(
+    connection, makePassthroughSpec("stream:recovers", "lkros.video.recovers"), nullptr, fake_clock.provider());
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+
+  // The next wait starts a new clock instead of continuing the one that ended.
+  fake_clock.advance(kBaseStallTimeout + kOneMillisecond);
+  EXPECT_FALSE(publisher->captureEncoded(makeEmptyFrame(false), request_key_frame));
+  expectStallsOnlyAfter(*publisher, fake_clock, kBaseStallTimeout);
+}
+
+TEST(TrackPublisherTest, PassthroughIntermittentSendFailuresStayThrottled)
+{
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:send_storm", "lkros.video.send_storm"));
+  constexpr int kFailedSends = 20;
+
+  const auto started_at = std::chrono::steady_clock::now();
+  for (int failed_send = 0; failed_send < kFailedSends; ++failed_send) {
+    publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame);
+    publisher->captureEncoded(makeEmptyFrame(false), request_key_frame);
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame);
+  }
+  const auto elapsed = std::chrono::steady_clock::now() - started_at;
+  publisher.reset();
+
+  EXPECT_GE(key_frame_requests, 1);
+  EXPECT_LE(key_frame_requests, 1 + elapsed / kKeyFrameRequestInterval);
+  const std::vector<std::string> counts =
+    logs.fieldValues({"video_stream_passthrough_send_failed", "stream_key=stream:send_storm"}, "count");
+  ASSERT_FALSE(counts.empty());
+  EXPECT_EQ(counts.front(), "1");
+  EXPECT_LE(counts.size(), 1U + static_cast<std::size_t>(elapsed / kLogThrottle));
+  EXPECT_EQ(connection.state->published_video_track_names, (std::vector<std::string>{"lkros.video.send_storm"}));
 }
 
 // LiveKit asks for a keyframe once per gap and drops delta frames until it gets one, so a request
@@ -552,6 +763,108 @@ TEST(TrackPublisherTest, PassthroughFailedFeedbackReadKeepsSendingAndKeepsTheKey
   EXPECT_EQ(
     logs.fieldValues({"video_stream_passthrough_feedback_failed", "stream_key=stream:feedback"}, "count"),
     std::vector<std::string>{"1"});
+}
+
+TEST(TrackPublisherTest, PassthroughWarnsOverBudgetOnlyWhenMaxBitrateIsSet)
+{
+  constexpr std::uint64_t kTargetBitrateBps = 1'000'000U;
+  constexpr std::size_t kLargeFrameBytes = 2'000'000U;
+  test_support::ScopedLogCapture logs;
+  FakeRoomConnection connection;
+  FakeClock fake_clock;
+  const std::function<void()> request_key_frame = []() {};
+  const TrackPublisher::EncodedFeedbackReader read_feedback = [](const livekit::EncodedVideoSource &) {
+    livekit::EncodedVideoSource::Feedback feedback;
+    feedback.rate_control = livekit::EncodedVideoSource::RateControl{kTargetBitrateBps, 30.0};
+    return feedback;
+  };
+  StreamSpec capped_spec = makePassthroughSpec("stream:capped", "lkros.video.capped");
+  capped_spec.publish_options.video_encoding = livekit::VideoEncodingOptions{2'000'000U, 0.0};
+  TrackPublisher capped_publisher(connection, std::move(capped_spec), read_feedback, fake_clock.provider());
+  TrackPublisher uncapped_publisher(
+    connection, makePassthroughSpec("stream:uncapped", "lkros.video.uncapped"), read_feedback, fake_clock.provider());
+
+  for (TrackPublisher * publisher : {&capped_publisher, &uncapped_publisher}) {
+    EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
+    EXPECT_TRUE(publisher->captureEncoded(makeLargeDeltaFrame(kLargeFrameBytes), request_key_frame));
+  }
+  fake_clock.advance(kBitrateWindow + kOneMillisecond);
+  // This frame closes the window: about 5 Mbit/s against a 1 Mbit/s target.
+  for (TrackPublisher * publisher : {&capped_publisher, &uncapped_publisher}) {
+    EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48), request_key_frame));
+  }
+
+  const std::vector<std::string> reported_bitrates =
+    logs.fieldValues({"video_stream_passthrough_over_budget", "stream_key=stream:capped"}, "bitrate_bps");
+  ASSERT_EQ(reported_bitrates.size(), 1U);
+  EXPECT_GT(std::stoull(reported_bitrates.front()), kTargetBitrateBps * 3U / 2U);
+  EXPECT_EQ(
+    logs.fieldValues({"video_stream_passthrough_over_budget", "stream_key=stream:capped"}, "target_bitrate_bps"),
+    std::vector<std::string>{"1000000"});
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget", "stream_key=stream:uncapped"}), 0U);
+}
+
+TEST(PassthroughBitrateMonitorTest, ReportsEveryWindowThatAveragesWellAboveTarget)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  monitor.setTarget(1'000'000U);
+  const auto start = std::chrono::steady_clock::time_point{};
+
+  // 25 kB every 100 ms is 2 Mbit/s, twice the target.
+  std::vector<int> report_frame_indexes;
+  std::vector<std::uint64_t> reported_bitrates;
+  for (int frame_index = 0; frame_index <= 60; ++frame_index) {
+    const auto reported = monitor.record(25'000U, start + milliseconds(100 * frame_index));
+    if (reported.has_value()) {
+      report_frame_indexes.push_back(frame_index);
+      reported_bitrates.push_back(*reported);
+    }
+  }
+
+  // A 3 s window closes at frames 30 and 60; the closing frame's bytes seed the next window.
+  EXPECT_EQ(report_frame_indexes, (std::vector<int>{30, 60}));
+  EXPECT_EQ(reported_bitrates, (std::vector<std::uint64_t>{2'000'000U, 2'000'000U}));
+}
+
+TEST(PassthroughBitrateMonitorTest, StaysQuietWithoutATarget)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  const auto start = std::chrono::steady_clock::time_point{};
+
+  for (int frame_index = 0; frame_index <= 100; ++frame_index) {
+    EXPECT_FALSE(monitor.record(25'000U, start + milliseconds(100 * frame_index)).has_value());
+  }
+}
+
+TEST(PassthroughBitrateMonitorTest, StaysQuietAtExactlyOnePointFiveTimesTheTarget)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  monitor.setTarget(1'000'000U);
+  const auto start = std::chrono::steady_clock::time_point{};
+
+  // 18.75 kB every 100 ms is 1.5 Mbit/s, exactly 1.5x the target, which is not over budget.
+  for (int frame_index = 0; frame_index <= 100; ++frame_index) {
+    EXPECT_FALSE(monitor.record(18'750U, start + milliseconds(100 * frame_index)).has_value());
+  }
+}
+
+TEST(PassthroughBitrateMonitorTest, StaysQuietWhenTheOverrunIsBrief)
+{
+  using std::chrono::milliseconds;
+  PassthroughBitrateMonitor monitor;
+  monitor.setTarget(1'000'000U);
+  const auto start = std::chrono::steady_clock::time_point{};
+
+  // One second over budget, then two seconds under, repeated.
+  for (int frame_index = 0; frame_index <= 100; ++frame_index) {
+    const bool under_budget_second = (frame_index / 10) % 3 != 0;
+    const auto reported =
+      monitor.record(under_budget_second ? 5'000U : 25'000U, start + milliseconds(100 * frame_index));
+    EXPECT_FALSE(reported.has_value());
+  }
 }
 
 }  // namespace

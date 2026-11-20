@@ -14,6 +14,8 @@
 
 #include "video/track_publisher.hpp"
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -40,6 +42,7 @@ namespace
 {
 
 const auto kLogger = rclcpp::get_logger("video_track_publisher");
+constexpr auto kBitrateWindow = std::chrono::seconds(3);
 
 void tryUnpublish(RoomConnection & connection, const std::shared_ptr<livekit::LocalVideoTrack> & track) noexcept
 {
@@ -82,6 +85,30 @@ livekit::VideoCaptureOptions captureOptions(std::int64_t timestamp_us)
 
 }  // namespace
 
+std::optional<std::uint64_t> PassthroughBitrateMonitor::record(std::size_t frame_bytes, Clock::time_point now)
+{
+  if (!window_started_at_.has_value()) {
+    window_started_at_ = now;
+  }
+  const auto elapsed = now - *window_started_at_;
+  if (elapsed < kBitrateWindow) {
+    window_bytes_ += frame_bytes;
+    return std::nullopt;
+  }
+
+  const auto elapsed_us =
+    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+  const std::uint64_t bitrate_bps = window_bytes_ * 8U * 1'000'000U / elapsed_us;
+  window_started_at_ = now;
+  window_bytes_ = frame_bytes;
+
+  // Over budget means above 3/2 of the target.
+  if (target_bitrate_bps_ == 0U || bitrate_bps * 2U <= target_bitrate_bps_ * 3U) {
+    return std::nullopt;
+  }
+  return bitrate_bps;
+}
+
 std::shared_ptr<TrackPublisher> TrackPublisher::create(
   rclcpp::node_interfaces::NodeInterfaces<
     rclcpp::node_interfaces::NodeParametersInterface,
@@ -106,13 +133,17 @@ std::shared_ptr<TrackPublisher> TrackPublisher::create(
 }
 
 TrackPublisher::TrackPublisher(
-  RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback)
+  RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback, NowProvider now_provider)
 : connection_(connection)
 , spec_(std::move(spec))
 , read_encoded_feedback_(std::move(read_encoded_feedback))
+, now_provider_(std::move(now_provider))
 {
   if (read_encoded_feedback_ == nullptr) {
     read_encoded_feedback_ = [](const livekit::EncodedVideoSource & source) { return source.takeFeedback(); };
+  }
+  if (now_provider_ == nullptr) {
+    now_provider_ = []() { return std::chrono::steady_clock::now(); };
   }
 }
 
@@ -238,16 +269,20 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
   if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
-    logWaitingForFirstKeyFrameLocked();
+    // Before the first publish the source may just not be ready.
+    if (encoded_source_ == nullptr) {
+      logWaitingForFirstKeyFrameLocked();
+    } else {
+      checkKeyFrameStallLocked();
+    }
     return false;
   }
 
-  // The failure restarts the pipeline; frames arriving before then must not follow a lost one.
-  try {
-    sendEncodedFrameLocked(frame);
-  } catch (...) {
-    awaitKeyFrameLocked();
-    throw;
+  if (encoded_source_ == nullptr) {
+    publishEncodedSourceLocked(frame.width, frame.height);
+  }
+  if (!sendEncodedFrameLocked(frame)) {
+    return false;
   }
 
   if (!captured_frame_logged_) {
@@ -262,6 +297,8 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
   }
   if (awaiting_key_frame_) {
     awaiting_key_frame_ = false;
+    awaiting_since_.reset();
+    current_key_frame_stall_timeout_ = kKeyFrameStallTimeout;
     logResumedLocked();
   }
   // Cleared before reading feedback so a request reported with this keyframe stays pending.
@@ -269,18 +306,44 @@ bool TrackPublisher::captureEncodedLocked(livekit::EncodedVideoSource::Frame fra
     livekit_key_frame_request_pending_ = false;
   }
   readEncodedFeedbackLocked();
+  checkEncodedBitrateLocked(frame.data.size());
   return true;
 }
 
 void TrackPublisher::readEncodedFeedbackLocked()
 {
+  livekit::EncodedVideoSource::Feedback feedback;
   try {
-    if (read_encoded_feedback_(*encoded_source_).keyframe_requested) {
-      livekit_key_frame_request_pending_ = true;
-    }
+    feedback = read_encoded_feedback_(*encoded_source_);
   } catch (const std::exception & exc) {
-    logFeedbackFailedLocked(exc.what());
+    logThrottledFailureLocked(feedback_failed_log_throttle_, "video_stream_passthrough_feedback_failed", exc.what());
   }
+  if (feedback.keyframe_requested) {
+    livekit_key_frame_request_pending_ = true;
+  }
+  if (feedback.rate_control.has_value()) {
+    bitrate_monitor_.setTarget(feedback.rate_control->target_bitrate_bps);
+  }
+}
+
+void TrackPublisher::checkEncodedBitrateLocked(std::size_t frame_bytes)
+{
+  // Without max_bitrate_bps, LiveKit's target is only a default, so exceeding it proves nothing.
+  const auto & encoding = spec_.publish_options.video_encoding;
+  if (!encoding.has_value() || encoding->max_bitrate == 0U) {
+    return;
+  }
+
+  const auto bitrate_bps = bitrate_monitor_.record(frame_bytes, now_provider_());
+  if (!bitrate_bps.has_value()) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_over_budget")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("bitrate_bps", *bitrate_bps)
+    .field("target_bitrate_bps", bitrate_monitor_.targetBitrateBps())
+    .warn();
 }
 
 void TrackPublisher::logViewerKeyFrameRequestLocked()
@@ -296,14 +359,14 @@ void TrackPublisher::logViewerKeyFrameRequestLocked()
     .info();
 }
 
-void TrackPublisher::logFeedbackFailedLocked(const std::string & error)
+void TrackPublisher::logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error)
 {
-  const std::size_t pending = feedback_failed_log_throttle_.record();
+  const std::size_t pending = throttle.record();
   if (pending == 0U) {
     return;
   }
 
-  LogEvent(kLogger, "video_stream_passthrough_feedback_failed")
+  LogEvent(kLogger, event)
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
     .field("count", pending)
@@ -312,10 +375,6 @@ void TrackPublisher::logFeedbackFailedLocked(const std::string & error)
 
 void TrackPublisher::logWaitingForFirstKeyFrameLocked()
 {
-  // Only before the first publish, when nothing else says why there is no track.
-  if (encoded_source_ != nullptr) {
-    return;
-  }
   const std::size_t pending = waiting_log_throttle_.record();
   if (pending == 0U) {
     return;
@@ -347,16 +406,27 @@ void TrackPublisher::logResumedLocked()
   discarded_frame_count_ = 0U;
 }
 
-void TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
+bool TrackPublisher::sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame)
 {
-  if (encoded_source_ == nullptr) {
-    publishEncodedSourceLocked(frame.width, frame.height);
+  frame.metadata = userTimestampMetadata(frame.timestamp_us);
+  std::string error = "LiveKit did not accept the encoded frame.";
+  bool accepted = false;
+  try {
+    accepted = encoded_source_->captureFrame(frame);
+  } catch (const std::invalid_argument & exc) {
+    // The SDK rejected this frame. Other exceptions restart the pipeline, which calls
+    // awaitKeyFrame(), so later frames can't follow a lost one.
+    error = exc.what();
+  }
+  if (accepted) {
+    return true;
   }
 
-  frame.metadata = userTimestampMetadata(frame.timestamp_us);
-  if (!encoded_source_->captureFrame(frame)) {
-    throw std::runtime_error("LiveKit did not accept the encoded frame.");
-  }
+  // Not awaitKeyFrameLocked(): resetting the throttle would request a keyframe after every failure.
+  awaiting_key_frame_ = true;
+  logThrottledFailureLocked(send_failed_log_throttle_, "video_stream_passthrough_send_failed", error);
+  checkKeyFrameStallLocked();
+  return false;
 }
 
 void TrackPublisher::awaitKeyFrame()
@@ -384,6 +454,8 @@ void TrackPublisher::logDiscontinuityLocked()
 
 void TrackPublisher::awaitKeyFrameLocked()
 {
+  // The stall clock begins with the first frame after a (re)start.
+  awaiting_since_.reset();
   if (awaiting_key_frame_) {
     return;
   }
@@ -396,6 +468,29 @@ void TrackPublisher::awaitKeyFrameLocked()
 bool TrackPublisher::keyFrameRequestDueLocked()
 {
   return key_frame_request_throttle_.record() > 0U;
+}
+
+// Throwing restarts the pipeline, the only way out when a source never sends a keyframe again.
+void TrackPublisher::checkKeyFrameStallLocked()
+{
+  const auto now = now_provider_();
+  if (!awaiting_since_.has_value()) {
+    awaiting_since_ = now;
+  }
+  const auto waited = now - *awaiting_since_;
+  if (waited < current_key_frame_stall_timeout_) {
+    return;
+  }
+
+  const auto waited_ms = std::chrono::duration_cast<std::chrono::milliseconds>(waited).count();
+  LogEvent(kLogger, "video_stream_passthrough_key_frame_stalled")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("waited_ms", waited_ms)
+    .field("timeout_ms", current_key_frame_stall_timeout_.count())
+    .warn();
+  current_key_frame_stall_timeout_ =
+    std::min(current_key_frame_stall_timeout_ * 2, std::chrono::milliseconds(kMaxKeyFrameStallTimeout));
+  throw std::runtime_error("no keyframe for " + std::to_string(waited_ms) + " ms");
 }
 
 void TrackPublisher::publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height)

@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include "core/room_connection.hpp"
@@ -41,6 +42,30 @@ class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
 
+class PassthroughBitrateMonitor final
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  void setTarget(std::uint64_t target_bitrate_bps)
+  {
+    target_bitrate_bps_ = target_bitrate_bps;
+  }
+
+  std::uint64_t targetBitrateBps() const
+  {
+    return target_bitrate_bps_;
+  }
+
+  // Returns the camera's bitrate when a window of a few seconds averaged well above the target.
+  std::optional<std::uint64_t> record(std::size_t frame_bytes, Clock::time_point now);
+
+private:
+  std::uint64_t target_bitrate_bps_ = 0U;
+  std::optional<Clock::time_point> window_started_at_;
+  std::uint64_t window_bytes_ = 0U;
+};
+
 class TrackPublisher final
 {
 public:
@@ -57,8 +82,15 @@ public:
   using EncodedFeedbackReader =
     std::function<livekit::EncodedVideoSource::Feedback(const livekit::EncodedVideoSource & source)>;
 
+  // The seam for tests: lets them advance time instead of sleeping.
+  using NowProvider = std::function<std::chrono::steady_clock::time_point()>;
+
   // Does not start a ROS or GStreamer input stream.
-  TrackPublisher(RoomConnection & connection, StreamSpec spec, EncodedFeedbackReader read_encoded_feedback = nullptr);
+  TrackPublisher(
+    RoomConnection & connection,
+    StreamSpec spec,
+    EncodedFeedbackReader read_encoded_feedback = nullptr,
+    NowProvider now_provider = nullptr);
 
   ~TrackPublisher();
 
@@ -76,7 +108,8 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
-  // Also requests a keyframe when LiveKit asks for one. Throws on a failed publish or send.
+  // Also passes on LiveKit's keyframe requests. A failed send is discarded; a failed publish, or a
+  // published track still without a keyframe after the stall timeout, throws.
   // Returns whether the frame was sent.
   bool captureEncoded(
     livekit::EncodedVideoSource::Frame frame,
@@ -107,23 +140,31 @@ private:
 
   bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
-  // Publishes the encoded source on first use; throws if the publish or send fails.
-  void sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
+  bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
+  void checkKeyFrameStallLocked();
   void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
   void readEncodedFeedbackLocked();
+  void checkEncodedBitrateLocked(std::size_t frame_bytes);
   void logResumedLocked();
   void logDiscontinuityLocked();
   void logViewerKeyFrameRequestLocked();
-  void logFeedbackFailedLocked(const std::string & error);
+  void logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);
+  // How long a published track may wait for a keyframe before the pipeline restarts.
+  static constexpr auto kKeyFrameStallTimeout = std::chrono::seconds(5);
+  // A restart of a source with a long keyframe interval can need longer than the base to get one.
+  static constexpr auto kMaxKeyFrameStallTimeout = std::chrono::seconds(30);
   static constexpr auto kLogThrottle = std::chrono::seconds(5);
 
   RoomConnection & connection_;
   StreamSpec spec_;
   EncodedFeedbackReader read_encoded_feedback_;
+  NowProvider now_provider_;
+  // Doubles after each stall restart and persists across them; a sent keyframe resets it.
+  std::chrono::milliseconds current_key_frame_stall_timeout_ = kKeyFrameStallTimeout;
 
   // Guards stream handles, publication state, and late callbacks racing with close().
   std::mutex mutex_;
@@ -139,6 +180,9 @@ private:
 
   std::shared_ptr<livekit::EncodedVideoSource> encoded_source_;
   bool awaiting_key_frame_ = true;
+  // Only set while awaiting_key_frame_, by the first frame the wait discards or fails, so a slow
+  // camera start doesn't count.
+  std::optional<std::chrono::steady_clock::time_point> awaiting_since_;
   // Set by a publish, which stalls the sample thread, so a gap right after it is expected.
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
@@ -152,6 +196,8 @@ private:
   EventThrottle waiting_log_throttle_{kLogThrottle};
   EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
+  EventThrottle send_failed_log_throttle_{kLogThrottle};
+  PassthroughBitrateMonitor bitrate_monitor_;
 };
 
 }  // namespace livekit_ros2_bridge::video
