@@ -116,8 +116,6 @@ public:
   bool captureEncoded(
     EncodedVideoFrame encoded, const std::function<void()> & request_key_frame, bool discontinuous = false);
   void awaitKeyFrame();
-  // Warns once per codec; the pipeline calls it before captureEncoded for the same keyframe.
-  void onKeyFrameWithoutParameterSets(livekit::VideoCodec codec);
 
 private:
   friend class GStreamerStream;
@@ -191,9 +189,8 @@ private:
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
   bool livekit_key_frame_request_pending_ = false;
-  // Warn again only when the codec changes: the cause is the source's setup, and the publisher outlives restarts.
-  // Keyed by codec because the pipeline reports a keyframe before the publish that follows it.
-  std::optional<livekit::VideoCodec> parameter_sets_warned_codec_;
+  // Reset by each publish: the cause is the source's setup, so warn once per track.
+  bool parameter_sets_warning_logged_ = false;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
   EventThrottle discontinuity_log_throttle_{kLogThrottle};

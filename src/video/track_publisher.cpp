@@ -212,9 +212,6 @@ PipelineCallbacks TrackPublisher::makeEncodedPipelineCallbacks(
     (void)captureEncoded(std::move(encoded), request_key_frame, discontinuous);
   };
   callbacks.on_caps_mismatch = std::move(on_caps_mismatch);
-  callbacks.on_key_frame_without_parameter_sets = [this](livekit::VideoCodec codec) {
-    onKeyFrameWithoutParameterSets(codec);
-  };
   return callbacks;
 }
 
@@ -322,6 +319,14 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
   if (encoded_source_ == nullptr || codec_changed) {
     awaitKeyFrameLocked();
     publishEncodedSourceLocked(encoded.codec, frame.width, frame.height);
+  }
+  if (encoded.lacks_parameter_sets && !parameter_sets_warning_logged_) {
+    parameter_sets_warning_logged_ = true;
+    LogEvent(kLogger, "video_stream_passthrough_missing_parameter_sets")
+      .fieldOr("stream_key", spec_.stream_key)
+      .field("codec", passthroughCodecName(encoded.codec))
+      .fieldQuoted("hint", missingParameterSetsHint(encoded.codec))
+      .warn();
   }
   if (!sendEncodedFrameLocked(frame)) {
     return false;
@@ -556,6 +561,7 @@ void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::
   just_published_ = true;
   // The new track starts a new bitrate window; LiveKit sets its rate target again.
   bitrate_monitor_ = PassthroughBitrateMonitor();
+  parameter_sets_warning_logged_ = false;
 
   const std::optional<livekit::VideoCodec> previous_codec = published_codec_;
   published_codec_ = codec;
@@ -630,21 +636,6 @@ void TrackPublisher::onCaptureFailed(const std::string & error)
   LogEvent(kLogger, "video_stream_capture_failed")
     .fieldOr("stream_key", spec_.stream_key)
     .fieldOr("error", error)
-    .warn();
-}
-
-void TrackPublisher::onKeyFrameWithoutParameterSets(livekit::VideoCodec codec)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (closed_ || parameter_sets_warned_codec_ == codec) {
-    return;
-  }
-
-  parameter_sets_warned_codec_ = codec;
-  LogEvent(kLogger, "video_stream_passthrough_missing_parameter_sets")
-    .fieldOr("stream_key", spec_.stream_key)
-    .field("codec", passthroughCodecName(codec))
-    .fieldQuoted("hint", missingParameterSetsHint(codec))
     .warn();
 }
 

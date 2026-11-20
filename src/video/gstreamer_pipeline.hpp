@@ -45,6 +45,8 @@ struct EncodedVideoFrame
 {
   livekit::VideoCodec codec = livekit::VideoCodec::H264;
   livekit::EncodedVideoSource::Frame frame;
+  // A keyframe without the parameter sets a decoder needs to start from it.
+  bool lacks_parameter_sets = false;
 };
 
 struct PipelineCallbacks
@@ -60,8 +62,6 @@ struct PipelineCallbacks
   std::function<void(EncodedVideoFrame encoded, bool discontinuous)> on_encoded_frame;
   // Reported instead of on_failed; offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
-  // Called before on_encoded_frame for a keyframe that lacks parameter sets.
-  std::function<void(livekit::VideoCodec codec)> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final

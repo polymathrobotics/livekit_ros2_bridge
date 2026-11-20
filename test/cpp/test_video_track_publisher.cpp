@@ -113,6 +113,13 @@ EncodedVideoFrame makeEncodedFrame(
   return encoded;
 }
 
+EncodedVideoFrame makeKeyFrameWithoutParameterSets(livekit::VideoCodec codec)
+{
+  EncodedVideoFrame encoded = makeEncodedFrame(true, 64, 48, codec);
+  encoded.lacks_parameter_sets = true;
+  return encoded;
+}
+
 // LiveKit rejects an empty frame, so sending one fails.
 EncodedVideoFrame makeEmptyFrame(bool is_keyframe)
 {
@@ -456,8 +463,7 @@ TEST(TrackPublisherTest, PassthroughFailedRepublishWaitsForNextKeyFrame)
     1U);
 }
 
-// The pipeline reports a keyframe without parameter sets before it hands over that keyframe.
-TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOnceUntilTheCodecChanges)
+TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOncePerPublishedTrack)
 {
   using livekit::VideoCodec;
   test_support::ScopedLogCapture logs;
@@ -465,13 +471,13 @@ TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOnceUntilTheCo
   const std::function<void()> request_key_frame = []() {};
   TrackPublisher publisher(connection, makePassthroughSpec("stream:params", "lkros.video.params"));
 
-  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H264);
-  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
-  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H264);
-  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H265);
-  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
-  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H265);
+  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H264), request_key_frame));
+  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H264), request_key_frame));
+  EXPECT_EQ(
+    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);
 
+  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H265), request_key_frame));
+  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H265), request_key_frame));
   EXPECT_EQ(
     logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);
   EXPECT_EQ(

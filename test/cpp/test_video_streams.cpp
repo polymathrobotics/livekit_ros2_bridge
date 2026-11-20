@@ -186,14 +186,10 @@ std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
 {
   std::mutex forwarded_mutex;
   std::vector<ForwardedFrame> forwarded;
-  // Both callbacks run on the streaming thread, the warning just before its frame.
-  bool lacked_parameter_sets = false;
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_key_frame_without_parameter_sets = [&](livekit::VideoCodec) { lacked_parameter_sets = true; };
   callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool) {
     const std::lock_guard<std::mutex> lock(forwarded_mutex);
-    forwarded.push_back(
-      ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, std::exchange(lacked_parameter_sets, false)});
+    forwarded.push_back(ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, encoded.lacks_parameter_sets});
   };
   GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
 

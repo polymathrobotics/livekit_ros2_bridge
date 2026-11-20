@@ -17,7 +17,6 @@
 #include <cstdint>
 #include <string>
 
-#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_pipeline.hpp"
 
@@ -34,7 +33,6 @@ inline video::PipelineCallbacks makeNoOpVideoPipelineCallbacks()
   callbacks.on_failed = [](const std::string &) {};
   callbacks.on_encoded_frame = [](video::EncodedVideoFrame, bool) {};
   callbacks.on_caps_mismatch = [](const std::string &, const std::string &) {};
-  callbacks.on_key_frame_without_parameter_sets = [](livekit::VideoCodec) {};
   return callbacks;
 }
 

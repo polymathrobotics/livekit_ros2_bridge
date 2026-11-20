@@ -173,12 +173,6 @@ std::string capsToString(const GstCaps * caps)
   return caps_text != nullptr ? caps_text.get() : "";
 }
 
-struct UnpackedEncodedFrame
-{
-  EncodedVideoFrame encoded;
-  bool lacks_parameter_sets = false;
-};
-
 livekit::VideoCodec findPassthroughCodec(const GstStructure * structure)
 {
   for (const PassthroughFormat & format : kPassthroughFormats) {
@@ -206,7 +200,7 @@ AccessUnitSummary summarizeEncodedBuffer(livekit::VideoCodec codec, const std::u
   throw std::runtime_error("Passthrough has no bitstream reader for this codec.");
 }
 
-UnpackedEncodedFrame unpackEncodedFrame(
+EncodedVideoFrame unpackEncodedFrame(
   GstBuffer * buffer, livekit::VideoCodec codec, PictureSize picture_size, std::int64_t timestamp_us)
 {
   if (buffer == nullptr) {
@@ -221,15 +215,15 @@ UnpackedEncodedFrame unpackEncodedFrame(
   const auto * data = static_cast<const std::uint8_t *>(mapping.get()->data);
   const std::size_t size = mapping.get()->size;
   const AccessUnitSummary summary = summarizeEncodedBuffer(codec, data, size);
-  UnpackedEncodedFrame unpacked;
-  unpacked.encoded.codec = codec;
-  unpacked.encoded.frame.is_keyframe = summary.is_key_frame;
-  unpacked.encoded.frame.width = static_cast<std::uint32_t>(picture_size.width);
-  unpacked.encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
-  unpacked.encoded.frame.timestamp_us = timestamp_us;
-  unpacked.encoded.frame.data.assign(data, data + size);
-  unpacked.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
-  return unpacked;
+  EncodedVideoFrame encoded;
+  encoded.codec = codec;
+  encoded.frame.is_keyframe = summary.is_key_frame;
+  encoded.frame.width = static_cast<std::uint32_t>(picture_size.width);
+  encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
+  encoded.frame.timestamp_us = timestamp_us;
+  encoded.frame.data.assign(data, data + size);
+  encoded.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
+  return encoded;
 }
 
 GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
@@ -244,10 +238,10 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 
   GstBuffer * buffer = gst_sample_get_buffer(sample);
-  UnpackedEncodedFrame unpacked;
+  EncodedVideoFrame encoded;
   try {
     const livekit::VideoCodec codec = findPassthroughCodec(gst_caps_get_structure(caps, 0U));
-    unpacked = unpackEncodedFrame(buffer, codec, *picture_size, timestamp_us);
+    encoded = unpackEncodedFrame(buffer, codec, *picture_size, timestamp_us);
   } catch (const std::exception & exc) {
     callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
@@ -261,10 +255,7 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 
   try {
-    if (unpacked.lacks_parameter_sets) {
-      callbacks.on_key_frame_without_parameter_sets(unpacked.encoded.codec);
-    }
-    callbacks.on_encoded_frame(std::move(unpacked.encoded), GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT));
+    callbacks.on_encoded_frame(std::move(encoded), GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT));
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks.on_capture_failed(exc.what());
