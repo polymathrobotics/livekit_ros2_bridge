@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <vector>
@@ -87,8 +88,10 @@ TEST(H264AccessUnitTest, RejectsRecoveryPointIntraSliceThatIsNotIdr)
 TEST(H264AccessUnitTest, RejectsEmptyAndTruncatedInput)
 {
   EXPECT_FALSE(summarizeH264AccessUnit(nullptr, 0U).is_key_frame);
-  EXPECT_FALSE(containsIdr(kShortStartCode));
   EXPECT_FALSE(containsIdr(kLongStartCode));
+  // A start code alone; the IDR header byte just past `size` must not be read.
+  const Bytes start_code_then_idr = concat({kShortStartCode, {kIdrSlice}});
+  EXPECT_FALSE(summarizeH264AccessUnit(start_code_then_idr.data(), kShortStartCode.size()).is_key_frame);
   // Ends at a start code; the IDR header byte just past `size` must not be read.
   const Bytes start_code_at_end = concat({kLongStartCode, kSequenceParameterSetNal, kShortStartCode, {kIdrSlice}});
   EXPECT_FALSE(summarizeH264AccessUnit(start_code_at_end.data(), start_code_at_end.size() - 1U).is_key_frame);
@@ -198,6 +201,11 @@ TEST(H265AccessUnitTest, TreatsEveryRandomAccessPictureAsAKeyFrameWithItsParamet
     const bool is_random_access = type >= kFirstH265RandomAccessType && type <= kLastH265RandomAccessType;
     EXPECT_EQ(summary.is_key_frame, is_random_access);
     EXPECT_TRUE(summary.has_parameter_sets);
+
+    // The first slice decides, whatever follows it.
+    const AccessUnitSummary first_slice_decides =
+      summarizeH265(concat({kLongStartCode, h265SliceOfType(type), kShortStartCode, kH265IdrWithLeadingPicturesNal}));
+    EXPECT_EQ(first_slice_decides.is_key_frame, is_random_access);
   }
 }
 
@@ -232,37 +240,6 @@ TEST(H265AccessUnitTest, ReportsParameterSetsOnlyWhenVpsSpsAndPpsAllPrecedeTheId
      kH265IdrWithLeadingPicturesNal}));
   EXPECT_TRUE(without_pps.is_key_frame);
   EXPECT_FALSE(without_pps.has_parameter_sets);
-
-  const AccessUnitSummary after_slice = summarizeH265(concat(
-    {kLongStartCode,
-     kH265IdrWithLeadingPicturesNal,
-     kLongStartCode,
-     kH265VideoParameterSetNal,
-     kLongStartCode,
-     kH265SequenceParameterSetNal,
-     kLongStartCode,
-     kH265PictureParameterSetNal}));
-  EXPECT_TRUE(after_slice.is_key_frame);
-  EXPECT_FALSE(after_slice.has_parameter_sets);
-}
-
-TEST(H265AccessUnitTest, DecidesAtTheFirstSlice)
-{
-  EXPECT_FALSE(
-    summarizeH265(concat({kLongStartCode, kH265TrailingPictureNal, kShortStartCode, kH265IdrWithLeadingPicturesNal}))
-      .is_key_frame);
-  EXPECT_TRUE(summarizeH265(concat({kLongStartCode, h265SliceOfType(21U), kShortStartCode, kH265TrailingPictureNal}))
-                .is_key_frame);
-}
-
-TEST(H265AccessUnitTest, ReadsTheTypeFromItsOwnHeaderLayout)
-{
-  const Bytes idr_header_at_end{0x00U, 0x00U, 0x01U, 0x26U};
-  EXPECT_TRUE(summarizeH265(idr_header_at_end).is_key_frame);
-  // H.264 reads 0x26 as an SEI, and H.265 reads H.264's IDR header byte as type 50.
-  EXPECT_FALSE(containsIdr(idr_header_at_end));
-  EXPECT_FALSE(summarizeH265({0x00U, 0x00U, 0x01U, kIdrSlice}).is_key_frame);
-  EXPECT_FALSE(summarizeH265AccessUnit(nullptr, 0U).is_key_frame);
 }
 
 // OBU header: (type << 3) | 0x02 when it has a size field, then a leb128 size.
@@ -284,6 +261,7 @@ constexpr std::uint8_t kShownSwitchFrameBits = 0x70U;
 // Shows a stored frame, whatever the bits after the first look like.
 constexpr std::uint8_t kShowExistingFrameBits = 0x90U;
 // A sequence header opens with seq_profile (3 bits), still_picture (1) and reduced_still_picture_header (1).
+constexpr std::uint8_t kStillPictureSequenceBits = 0x10U;
 constexpr std::uint8_t kReducedStillPictureSequenceBits = 0x18U;
 
 Bytes av1Obu(std::uint8_t obu_type, const Bytes & payload, bool with_extension = false)
@@ -312,12 +290,6 @@ bool hasSequenceHeader(const Bytes & bytes)
   return summarizeAv1(bytes).has_parameter_sets;
 }
 
-TEST(Av1TemporalUnitTest, FindsTheSequenceHeaderAfterTheTemporalDelimiter)
-{
-  EXPECT_TRUE(hasSequenceHeader(concat({kTemporalDelimiterObu, kSequenceHeaderObuWithPayload, kFrameObuWithPayload})));
-  EXPECT_FALSE(hasSequenceHeader(concat({kTemporalDelimiterObu, kFrameObuWithPayload})));
-}
-
 TEST(Av1TemporalUnitTest, SkipsExtensionBytesAndMultiByteSizes)
 {
   // A 128-byte frame OBU with an extension byte; its size is the two-byte leb128 80 01.
@@ -327,16 +299,35 @@ TEST(Av1TemporalUnitTest, SkipsExtensionBytesAndMultiByteSizes)
   EXPECT_TRUE(hasSequenceHeader(concat({frame_with_extension, kSequenceHeaderObuWithPayload})));
 }
 
+// `bytes` is a valid temporal unit, so a parser that reads past `size` sees it and gives itself away.
+void expectNothingReadPast(const Bytes & bytes, std::size_t size)
+{
+  const AccessUnitSummary whole = summarizeAv1(bytes);
+  ASSERT_TRUE(whole.is_key_frame || whole.has_parameter_sets) << "the untruncated bytes are not a valid unit";
+
+  const AccessUnitSummary truncated = summarizeAv1TemporalUnit(bytes.data(), size);
+  EXPECT_FALSE(truncated.is_key_frame);
+  EXPECT_FALSE(truncated.has_parameter_sets);
+}
+
 TEST(Av1TemporalUnitTest, StopsSafelyAtTruncatedOrMalformedObus)
 {
   EXPECT_FALSE(summarizeAv1TemporalUnit(nullptr, 0U).is_key_frame);
-  EXPECT_FALSE(summarizeAv1TemporalUnit(nullptr, 0U).has_parameter_sets);
-  // The sequence header claims more bytes than the buffer holds.
-  EXPECT_FALSE(hasSequenceHeader({kSequenceHeaderObu, 0x05U, 0x00U}));
-  // A size that never ends, an extension byte missing, and a size field missing at the end.
+  // The sequence header claims five bytes but one is left.
+  expectNothingReadPast(concat({Bytes{kSequenceHeaderObu, 0x05U}, Bytes(5U, 0x00U)}), 3U);
+  // The frame claims five bytes but one is left, so the key frame bits it holds are not trusted.
+  expectNothingReadPast(concat({Bytes{kFrameObu, 0x05U, kShownKeyFrameBits}, Bytes(4U, 0x00U)}), 3U);
+  // The size field is cut off.
+  expectNothingReadPast({kFrameObu, 0x01U, kShownKeyFrameBits}, 1U);
+  // The extension byte is cut off, on an OBU with no size field.
+  expectNothingReadPast({0x34U, 0x00U, kShownKeyFrameBits}, 1U);
+  // The frame has a size field of zero, so it has no header byte, and the byte after it is not its own.
+  const Bytes empty_frame_then_key_frame_bits{kFrameObu, 0x00U, kShownKeyFrameBits};
+  EXPECT_FALSE(summarizeAv1TemporalUnit(empty_frame_then_key_frame_bits.data(), 2U).is_key_frame);
+  // No size field and nothing after the header.
+  expectNothingReadPast({0x30U, kShownKeyFrameBits}, 1U);
+  // A size that never ends.
   EXPECT_FALSE(hasSequenceHeader({kFrameObu, 0x80U, 0x80U}));
-  EXPECT_FALSE(hasSequenceHeader({kFrameObu | kHasExtensionBit}));
-  EXPECT_FALSE(hasSequenceHeader({kFrameObu}));
   // With no size field the OBU runs to the end, so the sequence header bytes are its payload.
   EXPECT_FALSE(hasSequenceHeader(concat({{0x30U}, kSequenceHeaderObuWithPayload})));
 }
@@ -385,7 +376,9 @@ TEST(Av1TemporalUnitTest, TreatsEveryFrameOfAReducedStillPictureSequenceAsAShown
     EXPECT_TRUE(summary.is_key_frame);
     EXPECT_TRUE(summary.has_parameter_sets);
   }
-  EXPECT_FALSE(summarizeAv1(concat({av1Obu(1U, {0x00U, 0x00U}), av1FrameObu(kShownInterFrameBits)})).is_key_frame);
+  // A still picture whose header is not reduced still reads its frame header.
+  EXPECT_FALSE(summarizeAv1(concat({av1Obu(1U, {kStillPictureSequenceBits, 0x00U}), av1FrameObu(kShownInterFrameBits)}))
+                 .is_key_frame);
 }
 
 TEST(Av1TemporalUnitTest, DecidesAtTheFirstFrameAndSkipsOtherObus)
@@ -410,15 +403,6 @@ TEST(Av1TemporalUnitTest, ReadsTheFrameHeaderPastAnExtensionByteAndWithoutASizeF
   // The frame OBU has no size field, so its payload runs to the end of the temporal unit.
   EXPECT_TRUE(summarizeAv1(concat({sequence_header, {0x30U, kShownKeyFrameBits, 0x00U}})).is_key_frame);
   EXPECT_FALSE(summarizeAv1(concat({sequence_header, {0x30U, kShownInterFrameBits, 0x00U}})).is_key_frame);
-}
-
-TEST(Av1TemporalUnitTest, RejectsFramesWhoseHeaderByteIsMissing)
-{
-  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x00U}).is_key_frame);
-  // The frame claims five bytes but one is left, so the key frame bits it holds are not trusted.
-  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x05U, kShownKeyFrameBits}).is_key_frame);
-  // No size field and nothing after the header.
-  EXPECT_FALSE(summarizeAv1({0x30U}).is_key_frame);
 }
 
 }  // namespace

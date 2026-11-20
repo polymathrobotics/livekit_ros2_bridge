@@ -25,7 +25,6 @@
 #include "audio/pipeline_description.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
-#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "support/ros_test_support.hpp"
 #include "support/video_pipeline_callbacks.hpp"

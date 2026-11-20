@@ -17,7 +17,7 @@
 #include <cstdint>
 #include <string>
 
-#include "livekit/encoded_video_source.h"
+#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_pipeline.hpp"
 
