@@ -25,7 +25,6 @@
 #include "audio/pipeline_description.hpp"
 #include "gtest/gtest.h"
 #include "livekit/audio_frame.h"
-#include "livekit/encoded_video_source.h"
 #include "livekit/video_frame.h"
 #include "support/ros_test_support.hpp"
 #include "support/video_pipeline_callbacks.hpp"
@@ -96,7 +95,7 @@ bool runEncodedVideoPipeline()
   std::atomic<int> frame_count{0};
   video::GStreamerPipeline * pipeline_handle = nullptr;
   video::PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame, bool) {
+  callbacks.on_encoded_frame = [&](video::EncodedVideoFrame, bool) {
     if (++frame_count == 1) {
       pipeline_handle->requestKeyFrame();
     }

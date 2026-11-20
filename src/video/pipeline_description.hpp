@@ -17,6 +17,8 @@
 #include <chrono>
 #include <string>
 
+#include "livekit/video_codec.h"
+
 namespace livekit_ros2_bridge::video
 {
 
@@ -25,6 +27,22 @@ inline constexpr char kBridgeAppSrcName[] = "bridge_video_src";
 inline constexpr char kBridgeAppSinkName[] = "bridge_video_sink";
 
 inline constexpr auto kBridgeQueueDuration = std::chrono::milliseconds(500);
+
+// The layout is what the LiveKit SDK expects: one access unit (AV1: temporal unit) per buffer.
+struct PassthroughFormat
+{
+  livekit::VideoCodec codec;
+  // As publish.codec spells it.
+  const char * name;
+  const char * media_type;
+  const char * layout;
+};
+
+inline constexpr PassthroughFormat kPassthroughFormats[] = {
+  {livekit::VideoCodec::H264, "h264", "video/x-h264", "stream-format=byte-stream,alignment=au"},
+  {livekit::VideoCodec::H265, "h265", "video/x-h265", "stream-format=byte-stream,alignment=au"},
+  {livekit::VideoCodec::AV1, "av1", "video/x-av1", "stream-format=obu-stream,alignment=tu"},
+};
 
 inline std::string buildPipelineDescription(const std::string & source, const std::string & transform)
 {
@@ -47,8 +65,16 @@ inline std::string buildPipelineDescription(const std::string & source, const st
 inline std::string buildPassthroughPipelineDescription(const std::string & source)
 {
   std::string description = source;
-  // Sources end with h264parse config-interval=-1, or this fails to link or negotiate.
-  description += " ! video/x-h264,stream-format=byte-stream,alignment=au";
+  // Sources must end with their codec's parser, or this fails to link or negotiate.
+  std::string caps;
+  for (const PassthroughFormat & format : kPassthroughFormats) {
+    caps += caps.empty() ? "" : ";";
+    caps += format.media_type;
+    caps += ",";
+    caps += format.layout;
+  }
+  description += " ! ";
+  description += caps;
   // Drop the oldest frames rather than block the source (the next frame is marked DISCONT). The
   // 30-buffer cap bounds sources without timestamps; the 16 MiB cap only bounds memory.
   description += " ! queue leaky=downstream max-size-time=";

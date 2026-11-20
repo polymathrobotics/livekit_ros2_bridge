@@ -122,7 +122,6 @@ void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const l
 livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bitrate_bps = 0)
 {
   livekit::TrackPublishOptions options;
-  options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
   if (max_bitrate_bps > 0) {
@@ -654,9 +653,8 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoAcceptsPerEntrySettingsThatChange
     const char * node_name;
   };
 
-  // The source already sends one H.264 encoding at its own frame rate.
+  // The source already sends one encoding at its own frame rate.
   const std::vector<NoOpSetting> no_op_settings{
-    {"publish.codec", rclcpp::ParameterValue("h264"), "startup_config_passthrough_accepts_codec_h264"},
     {"publish.codec", rclcpp::ParameterValue("auto"), "startup_config_passthrough_accepts_codec_auto"},
     {"publish.max_framerate", rclcpp::ParameterValue(0.0), "startup_config_passthrough_accepts_max_framerate_zero"},
     {"publish.simulcast", rclcpp::ParameterValue("disabled"), "startup_config_passthrough_accepts_simulcast_disabled"},
@@ -690,10 +688,19 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
      rclcpp::ParameterValue("videoflip"),
      "leave it empty",
      "startup_config_passthrough_rejects_transform"},
+    // Every explicit codec is rejected: the track takes the source's codec.
+    {"publish.codec",
+     rclcpp::ParameterValue("h264"),
+     "use auto or leave it empty",
+     "startup_config_passthrough_rejects_codec_h264"},
     {"publish.codec",
      rclcpp::ParameterValue("vp8"),
-     "use h264 or auto, or leave it empty",
-     "startup_config_passthrough_rejects_codec"},
+     "use auto or leave it empty",
+     "startup_config_passthrough_rejects_codec_vp8"},
+    {"publish.codec",
+     rclcpp::ParameterValue("av1"),
+     "use auto or leave it empty",
+     "startup_config_passthrough_rejects_codec_av1"},
     {"publish.max_framerate",
      rclcpp::ParameterValue(15.0),
      "use 0 or leave it at -1",
@@ -712,7 +719,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
 
     const std::string expected_error = parameter +
                                        " is not supported with publish.encoder pre_encoded, which forwards the "
-                                       "source's H.264 unchanged; " +
+                                       "source's video unchanged; " +
                                        rejected_setting.allowed;
     expectConfigError(rejected_setting.node_name, options, expected_error.c_str());
   }
@@ -725,7 +732,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsSourceWithFixedUnsupported
   options.append_parameter_override("video.other.front.source", "videotestsrc is-live=true pattern=ball");
   options.append_parameter_override("video.other.front.publish.encoder", "pre_encoded");
 
-  // Fixed raw caps are known at pipeline parse, so linking to the bridge's H.264 caps filter fails at startup.
+  // Fixed raw caps are known at parse, so linking to the bridge's caps filter fails at startup.
   expectConfigErrorContains("startup_config_passthrough_rejects_fixed_unsupported_caps", options, "could not link");
 }
 

@@ -26,6 +26,7 @@
 #include "core/room_connection.hpp"
 #include "core/subscription_qos.hpp"
 #include "livekit/encoded_video_source.h"
+#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "livekit/video_source.h"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
@@ -38,6 +39,7 @@
 namespace livekit_ros2_bridge::video
 {
 
+struct EncodedVideoFrame;
 class GStreamerStream;
 struct PipelineCallbacks;
 class RosStream;
@@ -107,14 +109,12 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: publishes on the first keyframe, discarding frames until then or after a gap.
-  // Also passes on LiveKit's keyframe requests. A failed send is discarded; a failed publish, or a
-  // published track still without a keyframe after the stall timeout, throws.
-  // Returns whether the frame was sent.
+  // Passthrough: publishes on the first keyframe, and again at a keyframe in another codec;
+  // discards frames until then or after a gap. Also passes on LiveKit's keyframe requests.
+  // A failed send is discarded; a failed publish, or a published track still without a keyframe
+  // after the stall timeout, throws. Returns whether the frame was sent.
   bool captureEncoded(
-    livekit::EncodedVideoSource::Frame frame,
-    const std::function<void()> & request_key_frame,
-    bool discontinuous = false);
+    EncodedVideoFrame encoded, const std::function<void()> & request_key_frame, bool discontinuous = false);
   void awaitKeyFrame();
 
 private:
@@ -124,7 +124,6 @@ private:
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
-  void onKeyFrameWithoutParameterSets();
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 
@@ -138,13 +137,14 @@ private:
 
   void close();
 
-  bool captureEncodedLocked(livekit::EncodedVideoSource::Frame frame, bool discontinuous);
+  bool captureEncodedLocked(EncodedVideoFrame encoded, bool discontinuous);
   void logWaitingForFirstKeyFrameLocked();
   bool sendEncodedFrameLocked(livekit::EncodedVideoSource::Frame & frame);
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void checkKeyFrameStallLocked();
-  void publishEncodedSourceLocked(std::uint32_t width, std::uint32_t height);
+  // Replaces a track published in another codec.
+  void publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height);
   void readEncodedFeedbackLocked();
   void checkEncodedBitrateLocked(std::size_t frame_bytes);
   void logResumedLocked();
@@ -187,7 +187,7 @@ private:
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
   bool livekit_key_frame_request_pending_ = false;
-  // Warn once: the cause is the source's setup, and the publisher outlives restarts.
+  // Reset by each publish: the cause is the source's setup, so warn once per track.
   bool parameter_sets_warning_logged_ = false;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};
