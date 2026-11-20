@@ -105,6 +105,7 @@ struct Av1Obu
 };
 
 // Reads the OBU at `offset` and moves `offset` past it; null if it is malformed or out of bytes.
+// A live stream's OBUs all carry a size field, so one without it counts as malformed.
 std::optional<Av1Obu> readAv1Obu(const std::uint8_t * data, std::size_t size, std::size_t & offset)
 {
   constexpr std::uint8_t kHasExtensionBit = 0x04U;
@@ -114,40 +115,25 @@ std::optional<Av1Obu> readAv1Obu(const std::uint8_t * data, std::size_t size, st
   }
 
   const std::uint8_t header = data[offset];
-  Av1Obu obu{static_cast<std::uint8_t>((header >> 3U) & 0x0FU), 0U, 0U};
-  offset += (header & kHasExtensionBit) != 0U ? 2U : 1U;
-  if (offset > size) {
+  if ((header & kHasSizeFieldBit) == 0U) {
     return std::nullopt;
   }
-  obu.payload_offset = offset;
-  // Without a size field the OBU runs to the end of the temporal unit.
-  if ((header & kHasSizeFieldBit) == 0U) {
-    obu.payload_size = size - offset;
-    offset = size;
-    if (obu.payload_size == 0U) {
-      return std::nullopt;
-    }
-    return obu;
-  }
+  offset += (header & kHasExtensionBit) != 0U ? 2U : 1U;
 
+  // An extension byte past the end leaves `offset` beyond `size`, which readLeb128 rejects.
   const std::optional<std::uint64_t> obu_size = readLeb128(data, size, offset);
   if (!obu_size.has_value() || *obu_size > size - offset) {
     return std::nullopt;
   }
-  obu.payload_offset = offset;
-  obu.payload_size = static_cast<std::size_t>(*obu_size);
+  const Av1Obu obu{static_cast<std::uint8_t>((header >> 3U) & 0x0FU), offset, static_cast<std::size_t>(*obu_size)};
   offset += obu.payload_size;
   return obu;
 }
 
 // A frame shown later through show_existing_frame can't be resolved without the reference state, so
 // it counts as a delta frame; it is rare.
-bool isShownAv1KeyFrame(std::uint8_t first_frame_header_byte, bool reduced_still_picture_header)
+bool isShownAv1KeyFrame(std::uint8_t first_frame_header_byte)
 {
-  // A reduced still picture header omits the three fields and its only frame is a shown key frame.
-  if (reduced_still_picture_header) {
-    return true;
-  }
   constexpr std::uint8_t kShowExistingFrameBit = 0x80U;
   constexpr std::uint8_t kFrameTypeMask = 0x60U;
   constexpr std::uint8_t kShowFrameBit = 0x10U;
@@ -173,36 +159,24 @@ AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_
   constexpr std::uint8_t kSequenceHeaderObuType = 1U;
   constexpr std::uint8_t kFrameHeaderObuType = 3U;
   constexpr std::uint8_t kFrameObuType = 6U;
-  constexpr std::uint8_t kReducedStillPictureHeaderBit = 0x08U;
   if (data == nullptr) {
     return {};
   }
 
   bool has_sequence_header = false;
-  bool reduced_still_picture_header = false;
-  bool has_frame = false;
-  std::optional<std::uint8_t> first_frame_header_byte;
   std::size_t offset = 0U;
   for (std::optional<Av1Obu> obu = readAv1Obu(data, size, offset); obu.has_value();
        obu = readAv1Obu(data, size, offset))
   {
-    if (obu->type == kSequenceHeaderObuType && !has_sequence_header) {
+    if (obu->type == kSequenceHeaderObuType) {
       has_sequence_header = true;
-      reduced_still_picture_header =
-        obu->payload_size > 0U && (data[obu->payload_offset] & kReducedStillPictureHeaderBit) != 0U;
     }
-    const bool is_frame = obu->type == kFrameHeaderObuType || obu->type == kFrameObuType;
-    if (is_frame && !has_frame) {
-      has_frame = true;
-      if (obu->payload_size > 0U) {
-        first_frame_header_byte = data[obu->payload_offset];
-      }
+    if (obu->type == kFrameHeaderObuType || obu->type == kFrameObuType) {
+      const bool is_key_frame = obu->payload_size > 0U && isShownAv1KeyFrame(data[obu->payload_offset]);
+      return {is_key_frame, has_sequence_header};
     }
   }
-
-  const bool is_key_frame =
-    first_frame_header_byte.has_value() && isShownAv1KeyFrame(*first_frame_header_byte, reduced_still_picture_header);
-  return {is_key_frame, has_sequence_header};
+  return {false, has_sequence_header};
 }
 
 }  // namespace livekit_ros2_bridge::video
