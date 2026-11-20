@@ -191,7 +191,7 @@ private:
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
   bool livekit_key_frame_request_pending_ = false;
-  // Warn once per codec: the cause is the source's setup, and the publisher outlives restarts.
+  // Warn again only when the codec changes: the cause is the source's setup, and the publisher outlives restarts.
   // Keyed by codec because the pipeline reports a keyframe before the publish that follows it.
   std::optional<livekit::VideoCodec> parameter_sets_warned_codec_;
   std::size_t discarded_frame_count_ = 0U;
