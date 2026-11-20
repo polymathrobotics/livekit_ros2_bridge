@@ -429,14 +429,17 @@ TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
     (std::vector<ForwardedFrame>{
       {VideoCodec::H265, true, true}, {VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
 
-  // Temporal delimiter, sequence header, and frame OBUs.
+  // Temporal delimiter, then an OBU_FRAME whose header byte is show_existing_frame, frame_type and
+  // show_frame: a shown key frame (0x10) or a shown inter frame (0x30).
   const std::vector<std::uint8_t> key_frame_with_sequence_header{
     0x12U, 0x00U, 0x0AU, 0x01U, 0x00U, 0x32U, 0x01U, 0x10U};
-  const std::vector<std::uint8_t> frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
+  const std::vector<std::uint8_t> key_frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
+  const std::vector<std::uint8_t> inter_frame{0x12U, 0x00U, 0x32U, 0x01U, 0x30U};
+  // The buffer flags don't decide: av1parse on GStreamer 1.20 leaves the upstream's DELTA_UNIT as it was.
   EXPECT_EQ(
     forwardThroughPassthroughPipeline(
       "video/x-av1,stream-format=obu-stream,alignment=tu,width=64,height=48",
-      {{key_frame_with_sequence_header}, {frame_alone, true}, {frame_alone}}),
+      {{key_frame_with_sequence_header}, {inter_frame}, {key_frame_alone, true}}),
     (std::vector<ForwardedFrame>{
       {VideoCodec::AV1, true, false}, {VideoCodec::AV1, false, false}, {VideoCodec::AV1, true, true}}));
 }
@@ -634,7 +637,6 @@ struct PassthroughCodecCase
   const char * caps;
   AccessUnit key_frame_with_parameter_sets;
   AccessUnit key_frame_without_parameter_sets;
-  // Empty for AV1, whose delta frames are told apart only by a buffer flag that multifilesrc doesn't set.
   AccessUnit delta_frame;
   const char * hint;
 };
@@ -649,6 +651,7 @@ const AccessUnit kH264DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
 const AccessUnit kH265DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xAF};
 const AccessUnit kAv1TemporalUnitWithoutSequenceHeader = {0x12, 0x00, 0x32, 0x01, 0x10};
 const AccessUnit kAv1TemporalUnitWithSequenceHeader = {0x12, 0x00, 0x0A, 0x01, 0x00, 0x32, 0x01, 0x10};
+const AccessUnit kAv1DeltaTemporalUnit = {0x12, 0x00, 0x32, 0x01, 0x30};
 
 const std::vector<PassthroughCodecCase> & passthroughCodecCases()
 {
@@ -671,7 +674,7 @@ const std::vector<PassthroughCodecCase> & passthroughCodecCases()
      "video/x-av1,stream-format=obu-stream,alignment=tu",
      kAv1TemporalUnitWithSequenceHeader,
      kAv1TemporalUnitWithoutSequenceHeader,
-     {},
+     kAv1DeltaTemporalUnit,
      "a keyframe arrived without a sequence header, so viewers who join late or reconnect may not be able to "
      "decode the video; set the encoder to send a sequence header with every keyframe"},
   };
@@ -758,10 +761,8 @@ TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
     SCOPED_TRACE(codec_case.name);
     test_support::ScopedLogCapture logs;
 
-    const AccessUnit & following_frame =
-      codec_case.delta_frame.empty() ? codec_case.key_frame_with_parameter_sets : codec_case.delta_frame;
     runPassthroughStreamOverAccessUnits(
-      codec_case, {codec_case.key_frame_with_parameter_sets, following_frame, following_frame});
+      codec_case, {codec_case.key_frame_with_parameter_sets, codec_case.delta_frame, codec_case.delta_frame});
 
     EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
     EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);

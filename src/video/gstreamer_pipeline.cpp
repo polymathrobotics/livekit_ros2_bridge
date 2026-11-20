@@ -190,20 +190,20 @@ livekit::VideoCodec findPassthroughCodec(const GstStructure * structure)
     std::string("Passthrough sample caps name no supported codec: ") + gst_structure_get_name(structure));
 }
 
-AccessUnitSummary summarizeEncodedBuffer(
-  livekit::VideoCodec codec, GstBuffer * buffer, const std::uint8_t * data, std::size_t size)
+AccessUnitSummary summarizeEncodedBuffer(livekit::VideoCodec codec, const std::uint8_t * data, std::size_t size)
 {
   switch (codec) {
+    case livekit::VideoCodec::H264:
+      return summarizeH264AccessUnit(data, size);
     case livekit::VideoCodec::H265:
       return summarizeH265AccessUnit(data, size);
-    case livekit::VideoCodec::AV1: {
-      // Unlike h264parse and h265parse, av1parse clears DELTA_UNIT only on key frames.
-      const bool is_key_frame = !GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
-      return {is_key_frame, hasAv1SequenceHeader(data, size)};
-    }
+    case livekit::VideoCodec::AV1:
+      return summarizeAv1TemporalUnit(data, size);
     default:
-      return summarizeH264AccessUnit(data, size);
+      break;
   }
+  // findPassthroughCodec only returns the codecs above.
+  throw std::runtime_error("Passthrough has no bitstream reader for this codec.");
 }
 
 UnpackedEncodedFrame unpackEncodedFrame(
@@ -220,7 +220,7 @@ UnpackedEncodedFrame unpackEncodedFrame(
 
   const auto * data = static_cast<const std::uint8_t *>(mapping.get()->data);
   const std::size_t size = mapping.get()->size;
-  const AccessUnitSummary summary = summarizeEncodedBuffer(codec, buffer, data, size);
+  const AccessUnitSummary summary = summarizeEncodedBuffer(codec, data, size);
   UnpackedEncodedFrame unpacked;
   unpacked.encoded.codec = codec;
   unpacked.encoded.frame.is_keyframe = summary.is_key_frame;

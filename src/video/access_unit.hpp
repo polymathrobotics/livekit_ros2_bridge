@@ -31,7 +31,7 @@ struct AccessUnitSummary
 AccessUnitSummary summarizeH264AccessUnit(const std::uint8_t * data, std::size_t size);
 AccessUnitSummary summarizeH265AccessUnit(const std::uint8_t * data, std::size_t size);
 
-// A malformed OBU ends the walk.
-bool hasAv1SequenceHeader(const std::uint8_t * data, std::size_t size);
+// Reads the first frame header; a malformed OBU ends the walk.
+AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

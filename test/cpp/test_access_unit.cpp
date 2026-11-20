@@ -267,15 +267,49 @@ TEST(H265AccessUnitTest, ReadsTheTypeFromItsOwnHeaderLayout)
 
 // OBU header: (type << 3) | 0x02 when it has a size field, then a leb128 size.
 constexpr std::uint8_t kSequenceHeaderObu = 0x0AU;
+constexpr std::uint8_t kFrameHeaderObuType = 3U;
+constexpr std::uint8_t kFrameObuType = 6U;
 constexpr std::uint8_t kFrameObu = 0x32U;
 constexpr std::uint8_t kHasExtensionBit = 0x04U;
 const Bytes kTemporalDelimiterObu{0x12U, 0x00U};
 const Bytes kSequenceHeaderObuWithPayload{kSequenceHeaderObu, 0x03U, 0x00U, 0x00U, 0x00U};
 const Bytes kFrameObuWithPayload{kFrameObu, 0x02U, 0x10U, 0x00U};
 
+// The frame header opens with show_existing_frame (1 bit), frame_type (2) and show_frame (1).
+constexpr std::uint8_t kShownKeyFrameBits = 0x10U;
+constexpr std::uint8_t kHiddenKeyFrameBits = 0x00U;
+constexpr std::uint8_t kShownInterFrameBits = 0x30U;
+constexpr std::uint8_t kShownIntraOnlyFrameBits = 0x50U;
+constexpr std::uint8_t kShownSwitchFrameBits = 0x70U;
+// Shows a stored frame, whatever the bits after the first look like.
+constexpr std::uint8_t kShowExistingFrameBits = 0x90U;
+// A sequence header opens with seq_profile (3 bits), still_picture (1) and reduced_still_picture_header (1).
+constexpr std::uint8_t kReducedStillPictureSequenceBits = 0x18U;
+
+Bytes av1Obu(std::uint8_t obu_type, const Bytes & payload, bool with_extension = false)
+{
+  Bytes obu{static_cast<std::uint8_t>((obu_type << 3U) | 0x02U | (with_extension ? kHasExtensionBit : 0U))};
+  if (with_extension) {
+    obu.push_back(0x00U);
+  }
+  obu.push_back(static_cast<std::uint8_t>(payload.size()));
+  obu.insert(obu.end(), payload.begin(), payload.end());
+  return obu;
+}
+
+Bytes av1FrameObu(std::uint8_t first_payload_byte)
+{
+  return av1Obu(kFrameObuType, {first_payload_byte, 0x00U});
+}
+
+AccessUnitSummary summarizeAv1(const Bytes & bytes)
+{
+  return summarizeAv1TemporalUnit(bytes.data(), bytes.size());
+}
+
 bool hasSequenceHeader(const Bytes & bytes)
 {
-  return hasAv1SequenceHeader(bytes.data(), bytes.size());
+  return summarizeAv1(bytes).has_parameter_sets;
 }
 
 TEST(Av1TemporalUnitTest, FindsTheSequenceHeaderAfterTheTemporalDelimiter)
@@ -295,17 +329,98 @@ TEST(Av1TemporalUnitTest, SkipsExtensionBytesAndMultiByteSizes)
 
 TEST(Av1TemporalUnitTest, StopsSafelyAtTruncatedOrMalformedObus)
 {
-  EXPECT_FALSE(hasAv1SequenceHeader(nullptr, 0U));
+  EXPECT_FALSE(summarizeAv1TemporalUnit(nullptr, 0U).is_key_frame);
+  EXPECT_FALSE(summarizeAv1TemporalUnit(nullptr, 0U).has_parameter_sets);
   // The sequence header claims more bytes than the buffer holds.
   EXPECT_FALSE(hasSequenceHeader({kSequenceHeaderObu, 0x05U, 0x00U}));
-  // The frame's size runs past the sequence header that follows it.
-  EXPECT_FALSE(hasSequenceHeader(concat({{kFrameObu, 0x09U, 0x00U}, kSequenceHeaderObuWithPayload})));
   // A size that never ends, an extension byte missing, and a size field missing at the end.
   EXPECT_FALSE(hasSequenceHeader({kFrameObu, 0x80U, 0x80U}));
   EXPECT_FALSE(hasSequenceHeader({kFrameObu | kHasExtensionBit}));
   EXPECT_FALSE(hasSequenceHeader({kFrameObu}));
   // With no size field the OBU runs to the end, so the sequence header bytes are its payload.
   EXPECT_FALSE(hasSequenceHeader(concat({{0x30U}, kSequenceHeaderObuWithPayload})));
+}
+
+TEST(Av1TemporalUnitTest, ReadsKeyFramesFromBothFrameObuTypes)
+{
+  for (const std::uint8_t obu_type : {kFrameHeaderObuType, kFrameObuType}) {
+    SCOPED_TRACE(static_cast<int>(obu_type));
+    const Bytes frame = av1Obu(obu_type, {kShownKeyFrameBits, 0x00U});
+
+    const AccessUnitSummary with_sequence_header =
+      summarizeAv1(concat({kTemporalDelimiterObu, kSequenceHeaderObuWithPayload, frame}));
+    EXPECT_TRUE(with_sequence_header.is_key_frame);
+    EXPECT_TRUE(with_sequence_header.has_parameter_sets);
+
+    const AccessUnitSummary without_sequence_header = summarizeAv1(concat({kTemporalDelimiterObu, frame}));
+    EXPECT_TRUE(without_sequence_header.is_key_frame);
+    EXPECT_FALSE(without_sequence_header.has_parameter_sets);
+  }
+}
+
+TEST(Av1TemporalUnitTest, RejectsFramesADecoderCannotStartFrom)
+{
+  for (const std::uint8_t frame_bits :
+       {kShownInterFrameBits,
+        kShownIntraOnlyFrameBits,
+        kShownSwitchFrameBits,
+        kHiddenKeyFrameBits,
+        kShowExistingFrameBits})
+  {
+    SCOPED_TRACE(static_cast<int>(frame_bits));
+    const AccessUnitSummary summary =
+      summarizeAv1(concat({kTemporalDelimiterObu, kSequenceHeaderObuWithPayload, av1FrameObu(frame_bits)}));
+    EXPECT_FALSE(summary.is_key_frame);
+    EXPECT_TRUE(summary.has_parameter_sets);
+  }
+}
+
+TEST(Av1TemporalUnitTest, TreatsEveryFrameOfAReducedStillPictureSequenceAsAShownKeyFrame)
+{
+  const Bytes reduced_sequence_header = av1Obu(1U, {kReducedStillPictureSequenceBits, 0x00U});
+  // These first bytes would read as a hidden key frame and a shown inter frame otherwise.
+  for (const std::uint8_t first_frame_byte : {kHiddenKeyFrameBits, kShownInterFrameBits}) {
+    SCOPED_TRACE(static_cast<int>(first_frame_byte));
+    const AccessUnitSummary summary = summarizeAv1(concat({reduced_sequence_header, av1FrameObu(first_frame_byte)}));
+    EXPECT_TRUE(summary.is_key_frame);
+    EXPECT_TRUE(summary.has_parameter_sets);
+  }
+  EXPECT_FALSE(summarizeAv1(concat({av1Obu(1U, {0x00U, 0x00U}), av1FrameObu(kShownInterFrameBits)})).is_key_frame);
+}
+
+TEST(Av1TemporalUnitTest, DecidesAtTheFirstFrameAndSkipsOtherObus)
+{
+  const Bytes metadata_obu = av1Obu(5U, {kShownKeyFrameBits, 0x00U});
+  const Bytes tile_group_obu = av1Obu(4U, {kShownKeyFrameBits, 0x00U});
+  EXPECT_FALSE(summarizeAv1(concat({kTemporalDelimiterObu, metadata_obu, tile_group_obu})).is_key_frame);
+  EXPECT_TRUE(
+    summarizeAv1(concat({kTemporalDelimiterObu, metadata_obu, av1FrameObu(kShownKeyFrameBits), tile_group_obu}))
+      .is_key_frame);
+  EXPECT_TRUE(summarizeAv1(concat({av1FrameObu(kShownKeyFrameBits), av1FrameObu(kShownInterFrameBits)})).is_key_frame);
+  EXPECT_FALSE(summarizeAv1(concat({av1FrameObu(kShownInterFrameBits), av1FrameObu(kShownKeyFrameBits)})).is_key_frame);
+}
+
+TEST(Av1TemporalUnitTest, ReadsTheFrameHeaderPastAnExtensionByteAndWithoutASizeField)
+{
+  const Bytes & sequence_header = kSequenceHeaderObuWithPayload;
+  EXPECT_TRUE(
+    summarizeAv1(concat({sequence_header, av1Obu(kFrameObuType, {kShownKeyFrameBits, 0x00U}, true)})).is_key_frame);
+  EXPECT_FALSE(
+    summarizeAv1(concat({sequence_header, av1Obu(kFrameObuType, {kShownInterFrameBits, 0x00U}, true)})).is_key_frame);
+  // The frame OBU has no size field, so its payload runs to the end of the temporal unit.
+  EXPECT_TRUE(summarizeAv1(concat({sequence_header, {0x30U, kShownKeyFrameBits, 0x00U}})).is_key_frame);
+  EXPECT_FALSE(summarizeAv1(concat({sequence_header, {0x30U, kShownInterFrameBits, 0x00U}})).is_key_frame);
+}
+
+TEST(Av1TemporalUnitTest, RejectsFramesWhoseHeaderByteIsMissing)
+{
+  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x00U}).is_key_frame);
+  // The frame claims five bytes but one is left, so the key frame bits it holds are not trusted.
+  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x05U, kShownKeyFrameBits}).is_key_frame);
+  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x01U}).is_key_frame);
+  EXPECT_FALSE(summarizeAv1({kFrameObu | kHasExtensionBit, 0x00U, 0x01U}).is_key_frame);
+  // No size field and nothing after the header.
+  EXPECT_FALSE(summarizeAv1({0x30U}).is_key_frame);
 }
 
 }  // namespace
