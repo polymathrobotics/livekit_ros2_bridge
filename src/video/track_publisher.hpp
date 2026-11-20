@@ -116,16 +116,16 @@ public:
   bool captureEncoded(
     EncodedVideoFrame encoded, const std::function<void()> & request_key_frame, bool discontinuous = false);
   void awaitKeyFrame();
+  // Warns once per codec; the pipeline calls it before captureEncoded for the same keyframe.
+  void onKeyFrameWithoutParameterSets(livekit::VideoCodec codec);
 
 private:
   friend class GStreamerStream;
   friend class RosStream;
-  friend struct TrackPublisherTestAccess;
 
   // May be invoked from ROS, GStreamer, or LiveKit worker threads after close() starts.
   void onSampleUnpackFailed(const std::string & error);
   void onCaptureFailed(const std::string & error);
-  void onKeyFrameWithoutParameterSets(livekit::VideoCodec codec);
   void onRestartFailed(const std::string & error);
   void onAppsrcPushFailed(const std::string & error);
 

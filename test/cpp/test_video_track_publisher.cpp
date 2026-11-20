@@ -36,16 +36,6 @@
 
 namespace livekit_ros2_bridge::video
 {
-
-// Reaches the pipeline callback that is private to TrackPublisher.
-struct TrackPublisherTestAccess
-{
-  static void keyFrameWithoutParameterSets(TrackPublisher & publisher, livekit::VideoCodec codec)
-  {
-    publisher.onKeyFrameWithoutParameterSets(codec);
-  }
-};
-
 namespace
 {
 
@@ -454,12 +444,12 @@ TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOncePerCodec)
   const std::function<void()> request_key_frame = []() {};
   TrackPublisher publisher(connection, makePassthroughSpec("stream:params", "lkros.video.params"));
 
-  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H264);
+  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H264);
   EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
-  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H264);
-  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H265);
+  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H264);
+  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H265);
   EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
-  TrackPublisherTestAccess::keyFrameWithoutParameterSets(publisher, VideoCodec::H265);
+  publisher.onKeyFrameWithoutParameterSets(VideoCodec::H265);
 
   EXPECT_EQ(
     logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);

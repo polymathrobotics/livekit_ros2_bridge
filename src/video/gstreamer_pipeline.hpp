@@ -40,10 +40,10 @@ enum class PipelineOutput
   EncodedVideo,
 };
 
-// The codec comes from the sample's caps; it has no default so that a forgotten one is not read as H.264.
+// The codec comes from the sample's caps.
 struct EncodedVideoFrame
 {
-  livekit::VideoCodec codec;
+  livekit::VideoCodec codec = livekit::VideoCodec::H264;
   livekit::EncodedVideoSource::Frame frame;
 };
 
