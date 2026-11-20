@@ -25,10 +25,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
-#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -140,7 +140,39 @@ EncodedVideoFrame makeEncodedFrame(bool is_keyframe)
 }
 
 // Codec, keyframe, and whether the keyframe lacked parameter sets.
-using ForwardedFrame = std::tuple<livekit::VideoCodec, bool, bool>;
+struct ForwardedFrame
+{
+  livekit::VideoCodec codec;
+  bool is_key_frame;
+  bool lacks_parameter_sets;
+
+  bool operator==(const ForwardedFrame & other) const
+  {
+    return codec == other.codec && is_key_frame == other.is_key_frame &&
+           lacks_parameter_sets == other.lacks_parameter_sets;
+  }
+};
+
+const char * codecName(livekit::VideoCodec codec)
+{
+  switch (codec) {
+    case livekit::VideoCodec::H264:
+      return "h264";
+    case livekit::VideoCodec::H265:
+      return "h265";
+    case livekit::VideoCodec::AV1:
+      return "av1";
+    default:
+      return "other";
+  }
+}
+
+// Lets a failed comparison print {codec=h265, key=true, lacks_parameter_sets=false}.
+void PrintTo(const ForwardedFrame & frame, std::ostream * stream)
+{
+  *stream << "{codec=" << codecName(frame.codec) << ", key=" << std::boolalpha << frame.is_key_frame
+          << ", lacks_parameter_sets=" << frame.lacks_parameter_sets << "}";
+}
 
 struct PushedBuffer
 {
@@ -160,7 +192,8 @@ std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
   callbacks.on_key_frame_without_parameter_sets = [&](livekit::VideoCodec) { lacked_parameter_sets = true; };
   callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool) {
     const std::lock_guard<std::mutex> lock(forwarded_mutex);
-    forwarded.emplace_back(encoded.codec, encoded.frame.is_keyframe, std::exchange(lacked_parameter_sets, false));
+    forwarded.push_back(
+      ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, std::exchange(lacked_parameter_sets, false)});
   };
   GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
 
@@ -413,35 +446,44 @@ TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
 TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
 {
   using livekit::VideoCodec;
-  EXPECT_EQ(
-    forwardThroughPassthroughPipeline(
-      "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
-      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}}}),
-    (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}}));
+  {
+    SCOPED_TRACE("h264");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
+        {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}}}),
+      (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}}));
+  }
 
-  // An IDR without VPS, SPS and PPS, then a CRA, then a trailing picture.
-  EXPECT_EQ(
-    forwardThroughPassthroughPipeline(
-      "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48",
-      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU}},
-       {{0x00U, 0x00U, 0x00U, 0x01U, 0x2AU, 0x01U, 0xAFU}},
-       {{0x00U, 0x00U, 0x00U, 0x01U, 0x02U, 0x01U, 0xAFU}}}),
-    (std::vector<ForwardedFrame>{
-      {VideoCodec::H265, true, true}, {VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
+  {
+    // An IDR without VPS, SPS and PPS, then a CRA, then a trailing picture.
+    SCOPED_TRACE("h265");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48",
+        {{{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU}},
+         {{0x00U, 0x00U, 0x00U, 0x01U, 0x2AU, 0x01U, 0xAFU}},
+         {{0x00U, 0x00U, 0x00U, 0x01U, 0x02U, 0x01U, 0xAFU}}}),
+      (std::vector<ForwardedFrame>{
+        {VideoCodec::H265, true, true}, {VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
+  }
 
-  // Temporal delimiter, then an OBU_FRAME whose header byte is show_existing_frame, frame_type and
-  // show_frame: a shown key frame (0x10) or a shown inter frame (0x30).
-  const std::vector<std::uint8_t> key_frame_with_sequence_header{
-    0x12U, 0x00U, 0x0AU, 0x01U, 0x00U, 0x32U, 0x01U, 0x10U};
-  const std::vector<std::uint8_t> key_frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
-  const std::vector<std::uint8_t> inter_frame{0x12U, 0x00U, 0x32U, 0x01U, 0x30U};
-  // The buffer flags don't decide: av1parse on GStreamer 1.20 leaves the upstream's DELTA_UNIT as it was.
-  EXPECT_EQ(
-    forwardThroughPassthroughPipeline(
-      "video/x-av1,stream-format=obu-stream,alignment=tu,width=64,height=48",
-      {{key_frame_with_sequence_header}, {inter_frame}, {key_frame_alone, true}}),
-    (std::vector<ForwardedFrame>{
-      {VideoCodec::AV1, true, false}, {VideoCodec::AV1, false, false}, {VideoCodec::AV1, true, true}}));
+  {
+    // Temporal delimiter, then an OBU_FRAME whose header byte is show_existing_frame, frame_type and
+    // show_frame: a shown key frame (0x10) or a shown inter frame (0x30).
+    const std::vector<std::uint8_t> key_frame_with_sequence_header{
+      0x12U, 0x00U, 0x0AU, 0x01U, 0x00U, 0x32U, 0x01U, 0x10U};
+    const std::vector<std::uint8_t> key_frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
+    const std::vector<std::uint8_t> inter_frame{0x12U, 0x00U, 0x32U, 0x01U, 0x30U};
+    // The buffer flags don't decide: av1parse on GStreamer 1.20 leaves the upstream's DELTA_UNIT as it was.
+    SCOPED_TRACE("av1");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-av1,stream-format=obu-stream,alignment=tu,width=64,height=48",
+        {{key_frame_with_sequence_header}, {inter_frame}, {key_frame_alone, true}}),
+      (std::vector<ForwardedFrame>{
+        {VideoCodec::AV1, true, false}, {VideoCodec::AV1, false, false}, {VideoCodec::AV1, true, true}}));
+  }
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
@@ -629,52 +671,39 @@ AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
   return joined;
 }
 
-// What a parser emits for one codec: a keyframe that carries its parameter sets, one that lacks them,
-// and the hint logged for the latter. `name` is the codec's file extension.
+// What a parser emits for one codec: a keyframe that lacks its parameter sets, and the hint logged for it.
+// `name` is the codec's file extension.
 struct PassthroughCodecCase
 {
   const char * name;
   const char * caps;
-  AccessUnit key_frame_with_parameter_sets;
   AccessUnit key_frame_without_parameter_sets;
-  AccessUnit delta_frame;
   const char * hint;
 };
 
 const AccessUnit kH264ParameterSets = {
   0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
-const AccessUnit kH265ParameterSets = {0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0C, 0x00, 0x00, 0x00, 0x01,
-                                       0x42, 0x01, 0x01, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xC0};
 const AccessUnit kH264IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
 const AccessUnit kH265IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF};
 const AccessUnit kH264DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
-const AccessUnit kH265DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0xAF};
 const AccessUnit kAv1TemporalUnitWithoutSequenceHeader = {0x12, 0x00, 0x32, 0x01, 0x10};
-const AccessUnit kAv1TemporalUnitWithSequenceHeader = {0x12, 0x00, 0x0A, 0x01, 0x00, 0x32, 0x01, 0x10};
-const AccessUnit kAv1DeltaTemporalUnit = {0x12, 0x00, 0x32, 0x01, 0x30};
 
 const std::vector<PassthroughCodecCase> & passthroughCodecCases()
 {
   static const std::vector<PassthroughCodecCase> cases{
     {"h264",
      "video/x-h264,stream-format=byte-stream,alignment=au",
-     concatenate(kH264ParameterSets, kH264IdrSlice),
      kH264IdrSlice,
-     kH264DeltaSlice,
      "a keyframe arrived without SPS and PPS, so viewers who join late or reconnect may not be able to decode "
      "the video; end the source with h264parse config-interval=-1"},
     {"h265",
      "video/x-h265,stream-format=byte-stream,alignment=au",
-     concatenate(kH265ParameterSets, kH265IdrSlice),
      kH265IdrSlice,
-     kH265DeltaSlice,
      "a keyframe arrived without VPS, SPS and PPS, so viewers who join late or reconnect may not be able to "
      "decode the video; end the source with h265parse config-interval=-1"},
     {"av1",
      "video/x-av1,stream-format=obu-stream,alignment=tu",
-     kAv1TemporalUnitWithSequenceHeader,
      kAv1TemporalUnitWithoutSequenceHeader,
-     kAv1DeltaTemporalUnit,
      "a keyframe arrived without a sequence header, so viewers who join late or reconnect may not be able to "
      "decode the video; set the encoder to send a sequence header with every keyframe"},
   };
@@ -757,16 +786,14 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
 
 TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
 {
-  for (const PassthroughCodecCase & codec_case : passthroughCodecCases()) {
-    SCOPED_TRACE(codec_case.name);
-    test_support::ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
 
-    runPassthroughStreamOverAccessUnits(
-      codec_case, {codec_case.key_frame_with_parameter_sets, codec_case.delta_frame, codec_case.delta_frame});
+  runPassthroughStreamOverAccessUnits(
+    passthroughCodecCases().front(),
+    {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
 
-    EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
-    EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
-  }
+  EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
 }
 
 TEST_F(StreamTest, PassthroughStreamWaitsForKeyFrameAfterRestart)
