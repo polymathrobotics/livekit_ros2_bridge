@@ -109,10 +109,10 @@ public:
   // First frame publishes; size changes recreate the LiveKit VideoSource.
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
-  // Passthrough: publishes on the first keyframe, and again at a keyframe in another codec;
-  // discards frames until then or after a gap. Also passes on LiveKit's keyframe requests.
-  // A failed send is discarded; a failed publish, or a published track still without a keyframe
-  // after the stall timeout, throws. Returns whether the frame was sent.
+  // Passthrough: publishes on the first keyframe, in that frame's codec, discarding frames until
+  // then or after a gap. Also passes on LiveKit's keyframe requests. A failed send is discarded; a
+  // failed publish, a frame in another codec than the track's, or a published track still without
+  // a keyframe after the stall timeout, throws. Returns whether the frame was sent.
   bool captureEncoded(
     EncodedVideoFrame encoded, const std::function<void()> & request_key_frame, bool discontinuous = false);
   void awaitKeyFrame();
@@ -143,7 +143,6 @@ private:
   void awaitKeyFrameLocked();
   bool keyFrameRequestDueLocked();
   void checkKeyFrameStallLocked();
-  // Replaces a track published in another codec.
   void publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height);
   void readEncodedFeedbackLocked();
   void checkEncodedBitrateLocked(std::size_t frame_bytes);
@@ -187,7 +186,7 @@ private:
   bool just_published_ = false;
   // LiveKit asks once and then drops delta frames until a keyframe arrives, so keep asking the source.
   bool livekit_key_frame_request_pending_ = false;
-  // Reset by each publish: the cause is the source's setup, so warn once per track.
+  // Warn once: the cause is the source's setup, and the publisher outlives restarts.
   bool parameter_sets_warning_logged_ = false;
   std::size_t discarded_frame_count_ = 0U;
   EventThrottle key_frame_request_throttle_{kKeyFrameRequestInterval};

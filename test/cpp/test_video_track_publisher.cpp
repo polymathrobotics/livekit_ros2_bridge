@@ -351,168 +351,65 @@ TEST(TrackPublisherTest, PassthroughPublishesWithTheCodecOfTheFirstKeyFrame)
   }
 }
 
-// Frames in the new codec wait for their first keyframe.
-TEST(TrackPublisherTest, PassthroughRepublishesWhenTheCodecChanges)
+// A published track keeps its codec, so a frame in another one stops the pipeline.
+TEST(TrackPublisherTest, PassthroughRejectsAFrameInAnotherCodecThanThePublishedTrack)
 {
-  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
-  int key_frame_requests = 0;
-  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
+  const std::function<void()> request_key_frame = []() {};
   auto publisher =
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:recodec", "lkros.video.recodec"));
 
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame);
-  EXPECT_EQ(key_frame_requests, 1);
-  EXPECT_EQ(connection.state->publishedVideoTrackCount(), 1U);
-
-  publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H265), request_key_frame);
-  publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame);
-  publisher.reset();
-
-  EXPECT_EQ(key_frame_requests, 1);
-  EXPECT_EQ(
-    connection.state->event_log,
-    (std::vector<std::string>{
-      "publish_video_track:lkros.video.recodec",
-      "unpublish_video_track:lkros.video.recodec",
-      "publish_video_track:lkros.video.recodec",
-      "unpublish_video_track:lkros.video.recodec",
-    }));
-  ASSERT_EQ(connection.state->published_video_options.size(), 2U);
-  EXPECT_EQ(connection.state->published_video_options.back().video_codec, livekit::VideoCodec::H265);
-  const auto republished_source = publishedEncodedSource(connection, 1U);
-  ASSERT_NE(republished_source, nullptr);
-  EXPECT_EQ(republished_source->codec(), livekit::VideoCodec::H265);
-  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "stream_key=stream:recodec", " codec=h265"}), 1U);
-  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "previous_codec"}), 0U);
-  EXPECT_EQ(
-    logs.fieldValues({"video_stream_passthrough_resumed", "stream_key=stream:recodec"}, "discarded_frames"),
-    std::vector<std::string>{"1"});
-  // Each track logs its first frame once, in its own codec.
-  EXPECT_EQ(logs.countLines({"video_stream_frame_captured", "stream_key=stream:recodec", "codec=h264"}), 1U);
-  EXPECT_EQ(logs.countLines({"video_stream_frame_captured", "stream_key=stream:recodec", "codec=h265"}), 1U);
-}
-
-// A keyframe in the new codec needs no keyframe request and discards nothing.
-TEST(TrackPublisherTest, PassthroughRepublishesAtOnceOnAKeyFrameInTheNewCodec)
-{
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  int key_frame_requests = 0;
-  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
-  auto publisher =
-    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:keyswitch", "lkros.video.keyswitch"));
-
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame));
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame));
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H265), request_key_frame));
-  publisher.reset();
-
-  EXPECT_EQ(key_frame_requests, 0);
-  ASSERT_EQ(connection.state->published_video_options.size(), 2U);
-  EXPECT_EQ(connection.state->published_video_options.back().video_codec, livekit::VideoCodec::H265);
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_resumed"}), 0U);
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_waiting_for_key_frame"}), 0U);
-}
-
-// The old track is already unpublished, so a delta frame must not start a new one.
-TEST(TrackPublisherTest, PassthroughFailedRepublishWaitsForNextKeyFrame)
-{
-  using livekit::VideoCodec;
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  int publish_attempts = 0;
-  connection.state->publish_video_track_hook = [&](const std::string &) {
-    ++publish_attempts;
-    if (publish_attempts == 2) {
-      throw std::runtime_error("simulated video republish failure");
+  for (const bool is_keyframe : {false, true}) {
+    SCOPED_TRACE(is_keyframe);
+    try {
+      publisher->captureEncoded(makeEncodedFrame(is_keyframe, 64, 48, livekit::VideoCodec::H265), request_key_frame);
+      ADD_FAILURE() << "A frame in another codec than the track's should throw.";
+    } catch (const std::runtime_error & error) {
+      EXPECT_STREQ(error.what(), "source codec changed from h264 to h265; restart the bridge to publish it");
     }
-  };
-  int key_frame_requests = 0;
-  const std::function<void()> request_key_frame = [&]() { ++key_frame_requests; };
-  auto publisher =
-    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:refail", "lkros.video.refail"));
-
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
-  EXPECT_THROW(
-    publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame), std::runtime_error);
-  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, VideoCodec::H265), request_key_frame));
-  EXPECT_EQ(publish_attempts, 2);
-  EXPECT_EQ(key_frame_requests, 1);
-
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
+  }
+  // The published track still takes frames in its own codec.
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame));
   publisher.reset();
 
   EXPECT_EQ(
     connection.state->event_log,
     (std::vector<std::string>{
-      "publish_video_track:lkros.video.refail",
-      "unpublish_video_track:lkros.video.refail",
-      "publish_video_track:lkros.video.refail",
-      "publish_video_track:lkros.video.refail",
-      "unpublish_video_track:lkros.video.refail",
+      "publish_video_track:lkros.video.recodec",
+      "unpublish_video_track:lkros.video.recodec",
     }));
-  // The retry that succeeds reports the change, as the raw-video path does.
-  EXPECT_EQ(logs.countLines({"video_stream_track_republished", "stream_key=stream:refail", " codec=h265"}), 1U);
+  EXPECT_EQ(connection.state->published_video_options.size(), 1U);
 }
 
-TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOncePerPublishedTrack)
+TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOnceAndNamesTheCodec)
 {
-  using livekit::VideoCodec;
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  const std::function<void()> request_key_frame = []() {};
-  TrackPublisher publisher(connection, makePassthroughSpec("stream:params", "lkros.video.params"));
-
-  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H264), request_key_frame));
-  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H264), request_key_frame));
-  EXPECT_EQ(
-    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);
-
-  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H265), request_key_frame));
-  EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(VideoCodec::H265), request_key_frame));
-  EXPECT_EQ(
-    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h264"}), 1U);
-  EXPECT_EQ(
-    logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", "codec=h265"}), 1U);
-}
-
-// The old track's window and rate target say nothing about the new one.
-TEST(TrackPublisherTest, PassthroughRepublishStartsANewBitrateWindowAndForgetsTheTarget)
-{
-  using livekit::VideoCodec;
-  constexpr std::size_t kLargeFrameBytes = 2'000'000U;
-  test_support::ScopedLogCapture logs;
-  FakeRoomConnection connection;
-  FakeClock fake_clock;
-  const std::function<void()> request_key_frame = []() {};
-  const TrackPublisher::EncodedFeedbackReader read_feedback = [](const livekit::EncodedVideoSource & source) {
-    livekit::EncodedVideoSource::Feedback feedback;
-    if (source.codec() == VideoCodec::H264) {
-      feedback.rate_control = livekit::EncodedVideoSource::RateControl{1'000'000U, 30.0};
-    }
-    return feedback;
+  struct CodecCase
+  {
+    livekit::VideoCodec codec;
+    const char * logged_codec;
   };
-  StreamSpec capped_spec = makePassthroughSpec("stream:rewindow", "lkros.video.rewindow");
-  capped_spec.publish_options.video_encoding = livekit::VideoEncodingOptions{2'000'000U, 0.0};
-  TrackPublisher publisher(connection, std::move(capped_spec), read_feedback, fake_clock.provider());
 
-  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H264), request_key_frame));
-  EXPECT_TRUE(publisher.captureEncoded(makeLargeDeltaFrame(kLargeFrameBytes), request_key_frame));
-  fake_clock.advance(kBitrateWindow + kOneMillisecond);
-  // The first frame of the new track would close the H.264 window.
-  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(true, 64, 48, VideoCodec::H265), request_key_frame));
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget"}), 0U);
+  test_support::ScopedLogCapture logs;
+  const std::function<void()> request_key_frame = []() {};
 
-  // The H.265 track reports no target, so its own large window is not over budget either.
-  EncodedVideoFrame large_h265_frame = makeLargeDeltaFrame(kLargeFrameBytes);
-  large_h265_frame.codec = VideoCodec::H265;
-  EXPECT_TRUE(publisher.captureEncoded(std::move(large_h265_frame), request_key_frame));
-  fake_clock.advance(kBitrateWindow + kOneMillisecond);
-  EXPECT_TRUE(publisher.captureEncoded(makeEncodedFrame(false, 64, 48, VideoCodec::H265), request_key_frame));
-  EXPECT_EQ(logs.countLines({"video_stream_passthrough_over_budget"}), 0U);
+  for (const CodecCase & codec_case : {
+         CodecCase{livekit::VideoCodec::H264, "codec=h264"},
+         CodecCase{livekit::VideoCodec::H265, "codec=h265"},
+         CodecCase{livekit::VideoCodec::AV1, "codec=av1"},
+       })
+  {
+    SCOPED_TRACE(codec_case.logged_codec);
+    FakeRoomConnection connection;
+    TrackPublisher publisher(connection, makePassthroughSpec("stream:params", "lkros.video.params"));
+
+    EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(codec_case.codec), request_key_frame));
+    EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(codec_case.codec), request_key_frame));
+    EXPECT_EQ(
+      logs.countLines(
+        {"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", codec_case.logged_codec}),
+      1U);
+  }
 }
 
 TEST(TrackPublisherTest, PassthroughSizeChangeDoesNotRepublish)
@@ -724,20 +621,6 @@ void expectStallsOnlyAfter(
   EXPECT_FALSE(sent);
   fake_clock.advance(2 * kOneMillisecond);
   EXPECT_THROW(publisher.captureEncoded(probe_frame, request_key_frame), std::runtime_error);
-}
-
-// Every delta frame in the new codec must not restart the stall clock.
-TEST(TrackPublisherTest, PassthroughStallsWhenTheNewCodecNeverSendsAKeyFrame)
-{
-  FakeRoomConnection connection;
-  FakeClock fake_clock;
-  const std::function<void()> request_key_frame = []() {};
-  auto publisher = std::make_unique<TrackPublisher>(
-    connection, makePassthroughSpec("stream:newcodec", "lkros.video.newcodec"), nullptr, fake_clock.provider());
-
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48), request_key_frame));
-  expectStallsOnlyAfter(
-    *publisher, fake_clock, kBaseStallTimeout, makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265));
 }
 
 TEST(TrackPublisherTest, PassthroughStallThrowsAfterTheBaseTimeoutAndLogsTheStalledEvent)

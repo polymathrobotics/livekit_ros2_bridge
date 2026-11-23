@@ -288,6 +288,13 @@ bool TrackPublisher::captureEncoded(
 bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discontinuous)
 {
   livekit::EncodedVideoSource::Frame & frame = encoded.frame;
+  // A track keeps the codec it was published with, and LiveKit rejects every frame in another one.
+  if (encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec) {
+    throw std::runtime_error(
+      std::string("source codec changed from ") + passthroughCodecName(encoded_source_->codec()) + " to " +
+      passthroughCodecName(encoded.codec) + "; restart the bridge to publish it");
+  }
+
   // After a gap delta frames can't be decoded; no change while already awaiting a keyframe.
   const bool follows_publish = std::exchange(just_published_, false);
   if (discontinuous && !awaiting_key_frame_) {
@@ -297,12 +304,6 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
     if (!frame.is_keyframe) {
       awaitKeyFrameLocked();
     }
-  }
-
-  // A codec change waits for a keyframe in the new codec, which republishes.
-  const bool codec_changed = encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec;
-  if (codec_changed && !awaiting_key_frame_) {
-    awaitKeyFrameLocked();
   }
   if (awaiting_key_frame_ && !frame.is_keyframe) {
     ++discarded_frame_count_;
@@ -315,7 +316,7 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
     return false;
   }
 
-  if (encoded_source_ == nullptr || codec_changed) {
+  if (encoded_source_ == nullptr) {
     publishEncodedSourceLocked(encoded.codec, frame.width, frame.height);
   }
   if (encoded.lacks_parameter_sets && !parameter_sets_warning_logged_) {
@@ -541,15 +542,6 @@ void TrackPublisher::checkKeyFrameStallLocked()
 
 void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::uint32_t width, std::uint32_t height)
 {
-  const bool republish = published_once_;
-  // A track keeps the codec it was published with.
-  if (encoded_source_ != nullptr) {
-    tryUnpublish(connection_, track_);
-    track_.reset();
-    encoded_source_.reset();
-    captured_frame_logged_ = false;
-  }
-
   auto source = std::make_shared<livekit::EncodedVideoSource>(codec, static_cast<int>(width), static_cast<int>(height));
   // LiveKit rejects every frame when the source's codec and the track's differ.
   livekit::TrackPublishOptions options = publishOptionsWithFrameMetadata(spec_.publish_options);
@@ -558,19 +550,6 @@ void TrackPublisher::publishEncodedSourceLocked(livekit::VideoCodec codec, std::
   encoded_source_ = std::move(source);
   track_ = std::move(track);
   just_published_ = true;
-  // The new track starts a new bitrate window; LiveKit sets its rate target again.
-  bitrate_monitor_ = PassthroughBitrateMonitor();
-  parameter_sets_warning_logged_ = false;
-
-  published_once_ = true;
-  if (!republish) {
-    return;
-  }
-
-  LogEvent(kLogger, "video_stream_track_republished")
-    .fieldOr("stream_key", spec_.stream_key)
-    .field("codec", passthroughCodecName(codec))
-    .info();
 }
 
 void TrackPublisher::close()
