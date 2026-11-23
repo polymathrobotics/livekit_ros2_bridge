@@ -289,10 +289,15 @@ bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discon
 {
   livekit::EncodedVideoSource::Frame & frame = encoded.frame;
   // A track keeps the codec it was published with, and LiveKit rejects every frame in another one.
+  // Restarting the pipeline can't help, so drop the frames; if the source goes back to the original
+  // codec, it resumes at a keyframe.
   if (encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec) {
-    throw std::runtime_error(
-      std::string("source codec changed from ") + passthroughCodecName(encoded_source_->codec()) + " to " +
-      passthroughCodecName(encoded.codec) + "; restart the bridge to publish it");
+    awaitKeyFrameLocked();
+    logThrottledFailureLocked(
+      codec_changed_log_throttle_,
+      "video_stream_passthrough_codec_changed",
+      "the source codec has changed; restart the bridge to publish it");
+    return false;
   }
 
   // After a gap delta frames can't be decoded; no change while already awaiting a keyframe.

@@ -351,26 +351,28 @@ TEST(TrackPublisherTest, PassthroughPublishesWithTheCodecOfTheFirstKeyFrame)
   }
 }
 
-// A published track keeps its codec, so a frame in another one stops the pipeline.
-TEST(TrackPublisherTest, PassthroughRejectsAFrameInAnotherCodecThanThePublishedTrack)
+// A published track keeps its codec, so frames in another one are dropped, with one warning.
+TEST(TrackPublisherTest, PassthroughDropsFramesInAnotherCodecThanThePublishedTrack)
 {
+  test_support::ScopedLogCapture logs;
   FakeRoomConnection connection;
   const std::function<void()> request_key_frame = []() {};
   auto publisher =
     std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:recodec", "lkros.video.recodec"));
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame));
-  for (const bool is_keyframe : {false, true}) {
-    SCOPED_TRACE(is_keyframe);
-    try {
-      publisher->captureEncoded(makeEncodedFrame(is_keyframe, 64, 48, livekit::VideoCodec::H265), request_key_frame);
-      ADD_FAILURE() << "A frame in another codec than the track's should throw.";
-    } catch (const std::runtime_error & error) {
-      EXPECT_STREQ(error.what(), "source codec changed from h264 to h265; restart the bridge to publish it");
-    }
-  }
-  // The published track still takes frames in its own codec.
-  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame));
+  EXPECT_FALSE(
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame));
+  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H265), request_key_frame));
+  EXPECT_EQ(
+    logs.countLines(
+      {"video_stream_passthrough_codec_changed", "stream_key=stream:recodec", "the source codec has changed"}),
+    1U);
+
+  // Back in the original codec, the track resumes at a keyframe.
+  EXPECT_FALSE(
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame));
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame));
   publisher.reset();
 
   EXPECT_EQ(

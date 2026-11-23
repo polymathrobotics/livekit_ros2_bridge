@@ -110,9 +110,9 @@ public:
   void capture(const livekit::VideoFrame & frame, std::int64_t timestamp_us);
 
   // Passthrough: publishes on the first keyframe, in that frame's codec, discarding frames until
-  // then or after a gap. Also passes on LiveKit's keyframe requests. A failed send is discarded; a
-  // failed publish, a frame in another codec than the track's, or a published track still without
-  // a keyframe after the stall timeout, throws. Returns whether the frame was sent.
+  // then or after a gap. Also passes on LiveKit's keyframe requests. A failed send, or a frame in
+  // another codec than the track's, is discarded; a failed publish, or a published track still
+  // without a keyframe after the stall timeout, throws. Returns whether the frame was sent.
   bool captureEncoded(
     EncodedVideoFrame encoded, const std::function<void()> & request_key_frame, bool discontinuous = false);
   void awaitKeyFrame();
@@ -196,6 +196,7 @@ private:
   EventThrottle viewer_key_frame_request_log_throttle_{kLogThrottle};
   EventThrottle feedback_failed_log_throttle_{kLogThrottle};
   EventThrottle send_failed_log_throttle_{kLogThrottle};
+  EventThrottle codec_changed_log_throttle_{kLogThrottle};
   PassthroughBitrateMonitor bitrate_monitor_;
 };
 
