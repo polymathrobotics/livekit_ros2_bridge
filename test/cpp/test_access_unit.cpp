@@ -15,7 +15,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
-#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -61,7 +60,8 @@ AccessUnitSummary summarize(const Bytes & bytes)
 
 Bytes withoutDelimiter(const Bytes & bytes)
 {
-  return removeH264AccessUnitDelimiter(bytes.data(), bytes.size());
+  const std::size_t skip = h264AccessUnitDelimiterSize(bytes.data(), bytes.size());
+  return Bytes(bytes.begin() + skip, bytes.end());
 }
 
 bool containsIdr(const Bytes & bytes)
@@ -162,21 +162,25 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 
-TEST(H264DelimiterRemovalTest, DropsTheLeadingDelimiterAndKeepsTheNextStartCodeAtItsOwnLength)
+TEST(H264DelimiterSizeTest, DropsTheLeadingDelimiterAndKeepsTheNextStartCodeAtItsOwnLength)
 {
   for (const Bytes & delimiter_start_code : {kShortStartCode, kLongStartCode}) {
     for (const Bytes & next_start_code : {kShortStartCode, kLongStartCode}) {
       SCOPED_TRACE(
         "delimiter start code length " + std::to_string(delimiter_start_code.size()) + ", next start code length " +
         std::to_string(next_start_code.size()));
+      const Bytes access_unit =
+        concat({delimiter_start_code, kAccessUnitDelimiterNal, next_start_code, kNonIdrSliceNal});
+
       EXPECT_EQ(
-        withoutDelimiter(concat({delimiter_start_code, kAccessUnitDelimiterNal, next_start_code, kNonIdrSliceNal})),
-        concat({next_start_code, kNonIdrSliceNal}));
+        h264AccessUnitDelimiterSize(access_unit.data(), access_unit.size()),
+        delimiter_start_code.size() + kAccessUnitDelimiterNal.size());
+      EXPECT_EQ(withoutDelimiter(access_unit), concat({next_start_code, kNonIdrSliceNal}));
     }
   }
 }
 
-TEST(H264DelimiterRemovalTest, KeepsEveryOtherNalUnitByteForByte)
+TEST(H264DelimiterSizeTest, KeepsEveryOtherNalUnitByteForByte)
 {
   const Bytes expected = concat(
     {kLongStartCode, kSequenceParameterSetNal, kShortStartCode, kPictureParameterSetNal, kLongStartCode, kIdrSliceNal});
@@ -185,7 +189,7 @@ TEST(H264DelimiterRemovalTest, KeepsEveryOtherNalUnitByteForByte)
 }
 
 // A conforming parser puts the delimiter first, so only the first NAL unit is examined.
-TEST(H264DelimiterRemovalTest, KeepsADelimiterThatIsNotFirst)
+TEST(H264DelimiterSizeTest, KeepsADelimiterThatIsNotFirst)
 {
   const Bytes delimiter_after_parameter_set = concat(
     {kLongStartCode,
@@ -195,44 +199,40 @@ TEST(H264DelimiterRemovalTest, KeepsADelimiterThatIsNotFirst)
      kLongStartCode,
      kNonIdrSliceNal});
 
-  EXPECT_EQ(withoutDelimiter(delimiter_after_parameter_set), delimiter_after_parameter_set);
+  EXPECT_EQ(
+    h264AccessUnitDelimiterSize(delimiter_after_parameter_set.data(), delimiter_after_parameter_set.size()), 0U);
 }
 
-TEST(H264DelimiterRemovalTest, KeepsABufferThatIsOnlyADelimiter)
+TEST(H264DelimiterSizeTest, KeepsABufferThatIsOnlyADelimiter)
 {
   // Dropping the delimiter would leave an empty frame.
   for (const Bytes & start_code : {kLongStartCode, kShortStartCode}) {
     SCOPED_TRACE(start_code.size());
     const Bytes only_delimiter = concat({start_code, kAccessUnitDelimiterNal});
-    EXPECT_EQ(withoutDelimiter(only_delimiter), only_delimiter);
+    EXPECT_EQ(h264AccessUnitDelimiterSize(only_delimiter.data(), only_delimiter.size()), 0U);
   }
 }
 
-TEST(H264DelimiterRemovalTest, ReturnsAnEmptyBufferForNullAndEmptyInput)
+TEST(H264DelimiterSizeTest, DropsNothingForNullAndEmptyInput)
 {
-  EXPECT_TRUE(removeH264AccessUnitDelimiter(nullptr, 0U).empty());
-  EXPECT_TRUE(withoutDelimiter(Bytes{}).empty());
+  EXPECT_EQ(h264AccessUnitDelimiterSize(nullptr, 0U), 0U);
+  const Bytes empty;
+  EXPECT_EQ(h264AccessUnitDelimiterSize(empty.data(), empty.size()), 0U);
 }
 
-TEST(H264DelimiterRemovalTest, KeepsInputWithNoLeadingDelimiter)
+TEST(H264DelimiterSizeTest, KeepsInputWithoutAStartCode)
 {
-  const std::map<std::string, Bytes> inputs_by_description{
-    {"no start code at all", {0x09U, 0x10U, 0x00U}},
-    {"first NAL unit is a slice that holds 0x09 bytes", concat({kLongStartCode, Bytes{kNonIdrSlice, 0x09U, 0x09U}})},
-  };
-  for (const auto & [description, input] : inputs_by_description) {
-    SCOPED_TRACE(description);
-    EXPECT_EQ(withoutDelimiter(input), input);
-  }
+  const Bytes no_start_code{0x09U, 0x10U, 0x00U};
+  EXPECT_EQ(h264AccessUnitDelimiterSize(no_start_code.data(), no_start_code.size()), 0U);
 }
 
-TEST(H264DelimiterRemovalTest, KeepsABufferWhoseNextStartCodeIsCutOff)
+TEST(H264DelimiterSizeTest, KeepsABufferWhoseNextStartCodeIsCutOff)
 {
   // The `01` of the next start code lies just past `size`, so it is not a start code yet;
-  // the buffer comes back whole instead of as the bare `00 00`.
+  // nothing is dropped instead of leaving the bare `00 00`.
   const Bytes bytes = concat({kLongStartCode, kAccessUnitDelimiterNal, {0x00U, 0x00U, 0x01U}});
   const std::size_t size = bytes.size() - 1U;
-  EXPECT_EQ(removeH264AccessUnitDelimiter(bytes.data(), size), Bytes(bytes.begin(), bytes.begin() + size));
+  EXPECT_EQ(h264AccessUnitDelimiterSize(bytes.data(), size), 0U);
 }
 
 // H.265 NAL header: two bytes, (type << 1) then 0x01.

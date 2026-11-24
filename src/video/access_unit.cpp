@@ -17,7 +17,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <vector>
 
 namespace livekit_ros2_bridge::video
 {
@@ -48,16 +47,17 @@ constexpr NalUnitSyntax kH264Syntax{0U, 0x1FU, 1U, 5U, 5U, 5U, typeBit(7U) | typ
 // and the docs require no B-frames, so there are none.
 constexpr NalUnitSyntax kH265Syntax{1U, 0x3FU, 0U, 31U, 16U, 21U, typeBit(32U) | typeBit(33U) | typeBit(34U)};
 
+constexpr std::size_t kStartCodeSize = 3U;
+
 bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
 {
   return data[offset] == 0x00U && data[offset + 1U] == 0x00U && data[offset + 2U] == 0x01U;
 }
 
-// The offset of the first start code at or after `from`; a start code needs all three bytes inside `size`.
+// The offset of the first start code at or after `from`; it needs its NAL header byte inside `size` too.
 std::optional<std::size_t> findStartCode(const std::uint8_t * data, std::size_t size, std::size_t from)
 {
-  constexpr std::size_t kStartCodeSize = 3U;
-  for (std::size_t offset = from; offset + kStartCodeSize <= size; ++offset) {
+  for (std::size_t offset = from; offset + kStartCodeSize < size; ++offset) {
     if (isStartCodeAt(data, offset)) {
       return offset;
     }
@@ -67,7 +67,6 @@ std::optional<std::size_t> findStartCode(const std::uint8_t * data, std::size_t 
 
 AccessUnitSummary summarizeAnnexBAccessUnit(const NalUnitSyntax & syntax, const std::uint8_t * data, std::size_t size)
 {
-  constexpr std::size_t kStartCodeSize = 3U;
   if (data == nullptr || size <= kStartCodeSize) {
     return {};
   }
@@ -77,14 +76,11 @@ AccessUnitSummary summarizeAnnexBAccessUnit(const NalUnitSyntax & syntax, const 
     return (found_types & syntax.parameter_set_types) == syntax.parameter_set_types;
   };
 
-  // Each candidate needs a full start code plus the first NAL header byte after it.
-  const std::size_t last_start_code_offset = size - kStartCodeSize - 1U;
-  for (std::size_t offset = 0U; offset <= last_start_code_offset; ++offset) {
-    if (!isStartCodeAt(data, offset)) {
-      continue;
-    }
+  for (std::optional<std::size_t> offset = findStartCode(data, size, 0U); offset.has_value();
+       offset = findStartCode(data, size, *offset + 1U))
+  {
     const auto nal_unit_type =
-      static_cast<std::uint8_t>((data[offset + kStartCodeSize] >> syntax.type_shift) & syntax.type_mask);
+      static_cast<std::uint8_t>((data[*offset + kStartCodeSize] >> syntax.type_shift) & syntax.type_mask);
     if (nal_unit_type >= syntax.first_slice_type && nal_unit_type <= syntax.last_slice_type) {
       const bool is_key_frame =
         nal_unit_type >= syntax.first_key_frame_type && nal_unit_type <= syntax.last_key_frame_type;
@@ -193,31 +189,28 @@ AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_
   return {false, has_sequence_header};
 }
 
-std::vector<std::uint8_t> removeH264AccessUnitDelimiter(const std::uint8_t * data, std::size_t size)
+std::size_t h264AccessUnitDelimiterSize(const std::uint8_t * data, std::size_t size)
 {
-  constexpr std::size_t kStartCodeSize = 3U;
   constexpr std::uint8_t kAccessUnitDelimiterType = 9U;
   if (data == nullptr) {
-    return {};
+    return 0U;
   }
 
-  const std::vector<std::uint8_t> unchanged(data, data + size);
   const std::optional<std::size_t> first_start_code = findStartCode(data, size, 0U);
-  if (!first_start_code.has_value() || *first_start_code + kStartCodeSize >= size) {
-    return unchanged;
+  if (!first_start_code.has_value()) {
+    return 0U;
   }
   const std::size_t header_offset = *first_start_code + kStartCodeSize;
   if ((data[header_offset] & kH264Syntax.type_mask) != kAccessUnitDelimiterType) {
-    return unchanged;
+    return 0U;
   }
 
   // The next unit keeps its own start code, including the zero byte of a four-byte one.
   const std::optional<std::size_t> next_start_code = findStartCode(data, size, header_offset + 1U);
   if (!next_start_code.has_value()) {
-    return unchanged;
+    return 0U;
   }
-  const std::size_t next_begin = data[*next_start_code - 1U] == 0x00U ? *next_start_code - 1U : *next_start_code;
-  return std::vector<std::uint8_t>(data + next_begin, data + size);
+  return data[*next_start_code - 1U] == 0x00U ? *next_start_code - 1U : *next_start_code;
 }
 
 }  // namespace livekit_ros2_bridge::video

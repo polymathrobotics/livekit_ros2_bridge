@@ -16,7 +16,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 
 namespace livekit_ros2_bridge::video
 {
@@ -36,8 +35,9 @@ AccessUnitSummary summarizeH265AccessUnit(const std::uint8_t * data, std::size_t
 // Every OBU must carry a size field, and a malformed one ends the walk.
 AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_t size);
 
-// Copies an Annex-B access unit without its leading delimiter NAL unit, which h264parse adds to every
-// access unit; a browser (Chromium) drops small delta frames that carry one, so it decodes only the keyframes.
-std::vector<std::uint8_t> removeH264AccessUnitDelimiter(const std::uint8_t * data, std::size_t size);
+// How many leading bytes to drop to remove the access unit delimiter NAL unit that h264parse adds to every
+// access unit, 0 if there is none; a browser (Chromium) drops small delta frames that carry one, so it
+// decodes only the keyframes.
+std::size_t h264AccessUnitDelimiterSize(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

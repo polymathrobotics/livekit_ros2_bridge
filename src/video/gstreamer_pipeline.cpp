@@ -221,11 +221,8 @@ EncodedVideoFrame unpackEncodedFrame(
   encoded.frame.width = static_cast<std::uint32_t>(picture_size.width);
   encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
   encoded.frame.timestamp_us = timestamp_us;
-  if (codec == livekit::VideoCodec::H264) {
-    encoded.frame.data = removeH264AccessUnitDelimiter(data, size);
-  } else {
-    encoded.frame.data.assign(data, data + size);
-  }
+  const std::size_t delimiter_size = codec == livekit::VideoCodec::H264 ? h264AccessUnitDelimiterSize(data, size) : 0U;
+  encoded.frame.data.assign(data + delimiter_size, data + size);
   encoded.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
   return encoded;
 }
