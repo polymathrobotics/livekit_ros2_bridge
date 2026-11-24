@@ -691,44 +691,13 @@ AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
   return joined;
 }
 
-// What a parser emits for one codec: a keyframe that lacks its parameter sets, and the hint logged for it.
-// `name` is the codec's file extension.
-struct PassthroughCodecCase
-{
-  const char * name;
-  const char * caps;
-  AccessUnit key_frame_without_parameter_sets;
-  const char * hint;
-};
+constexpr char kH264Extension[] = "h264";
+constexpr char kH264Caps[] = "video/x-h264,stream-format=byte-stream,alignment=au";
 
 const AccessUnit kH264ParameterSets = {
   0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
 const AccessUnit kH264IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
-const AccessUnit kH265IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF};
 const AccessUnit kH264DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
-const AccessUnit kAv1TemporalUnitWithoutSequenceHeader = {0x12, 0x00, 0x32, 0x01, 0x10};
-
-const std::vector<PassthroughCodecCase> & passthroughCodecCases()
-{
-  static const std::vector<PassthroughCodecCase> cases{
-    {"h264",
-     "video/x-h264,stream-format=byte-stream,alignment=au",
-     kH264IdrSlice,
-     "a keyframe arrived without SPS and PPS, so viewers who join late or reconnect may not be able to decode "
-     "the video; end the source with h264parse config-interval=-1"},
-    {"h265",
-     "video/x-h265,stream-format=byte-stream,alignment=au",
-     kH265IdrSlice,
-     "a keyframe arrived without VPS, SPS and PPS, so viewers who join late or reconnect may not be able to "
-     "decode the video; end the source with h265parse config-interval=-1"},
-    {"av1",
-     "video/x-av1,stream-format=obu-stream,alignment=tu",
-     kAv1TemporalUnitWithoutSequenceHeader,
-     "a keyframe arrived without a sequence header, so viewers who join late or reconnect may not be able to "
-     "decode the video; set the encoder to send a sequence header with every keyframe"},
-  };
-  return cases;
-}
 
 // multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
 // Returns how many video tracks the stream published.
@@ -818,43 +787,27 @@ TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
 {
   const auto requests_before = test_support::ControlledStartElement::forceKeyUnitEvents();
 
-  const PassthroughCodecCase & h264_case = passthroughCodecCases().front();
-  runPassthroughStreamOverAccessUnits(
-    h264_case.name, h264_case.caps, {kH264DeltaSlice, kH264DeltaSlice, kH264DeltaSlice});
+  runPassthroughStreamOverAccessUnits(kH264Extension, kH264Caps, {kH264DeltaSlice, kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GT(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before);
 }
 
-// The warning must not repeat across the restart.
+// The warning must not repeat across the restart. What it names per codec is pinned by the track publisher tests.
 TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
 {
-  for (const PassthroughCodecCase & codec_case : passthroughCodecCases()) {
-    SCOPED_TRACE(codec_case.name);
-    test_support::ScopedLogCapture logs;
+  test_support::ScopedLogCapture logs;
 
-    runPassthroughStreamOverAccessUnits(
-      codec_case.name,
-      codec_case.caps,
-      {codec_case.key_frame_without_parameter_sets,
-       codec_case.key_frame_without_parameter_sets,
-       codec_case.key_frame_without_parameter_sets});
+  runPassthroughStreamOverAccessUnits(kH264Extension, kH264Caps, {kH264IdrSlice, kH264IdrSlice, kH264IdrSlice});
 
-    EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
-    const std::string codec_field = std::string("codec=") + codec_case.name;
-    const std::string hint_field = std::string("hint=\"") + codec_case.hint + "\"";
-    EXPECT_EQ(
-      logs.countLines({"video_stream_passthrough_missing_parameter_sets", codec_field.c_str(), hint_field.c_str()}),
-      1U);
-  }
+  EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
 }
 
 TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
 {
   test_support::ScopedLogCapture logs;
 
-  const PassthroughCodecCase & h264_case = passthroughCodecCases().front();
   runPassthroughStreamOverAccessUnits(
-    h264_case.name, h264_case.caps, {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
+    kH264Extension, kH264Caps, {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
