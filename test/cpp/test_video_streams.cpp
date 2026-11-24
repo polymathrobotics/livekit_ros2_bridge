@@ -182,15 +182,14 @@ struct PushedBuffer
 };
 
 // The appsrc offers `caps`, as a parser would, until a buffer carries its own.
-std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
-  const std::string & caps, const std::vector<PushedBuffer> & buffers)
+std::vector<EncodedVideoFrame> forwardEncodedFrames(const std::string & caps, const std::vector<PushedBuffer> & buffers)
 {
   std::mutex forwarded_mutex;
-  std::vector<ForwardedFrame> forwarded;
+  std::vector<EncodedVideoFrame> forwarded;
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
   callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool) {
     const std::lock_guard<std::mutex> lock(forwarded_mutex);
-    forwarded.push_back(ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, encoded.lacks_parameter_sets});
+    forwarded.push_back(std::move(encoded));
   };
   GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
 
@@ -216,6 +215,16 @@ std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
     },
     std::chrono::seconds(10));
   pipeline.stop();
+  return forwarded;
+}
+
+std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
+  const std::string & caps, const std::vector<PushedBuffer> & buffers)
+{
+  std::vector<ForwardedFrame> forwarded;
+  for (const EncodedVideoFrame & encoded : forwardEncodedFrames(caps, buffers)) {
+    forwarded.push_back(ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, encoded.lacks_parameter_sets});
+  }
   return forwarded;
 }
 
@@ -508,29 +517,25 @@ TEST_F(StreamTest, PassthroughPipelineReadsTheCodecFromEachSamplesCaps)
 // h264parse puts a delimiter in front of every access unit, and a browser can't decode a small frame sent with one.
 TEST_F(StreamTest, PassthroughForwardsH264WithoutAccessUnitDelimiters)
 {
-  const std::vector<std::uint8_t> with_delimiter{
+  const std::vector<EncodedVideoFrame> frames = forwardEncodedFrames(
+    "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
+    {{{0x00U, 0x00U, 0x00U, 0x01U, 0x09U, 0x10U, 0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU}}});
+
+  ASSERT_EQ(frames.size(), 1U);
+  EXPECT_EQ(frames[0].frame.data, (std::vector<std::uint8_t>{0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU}));
+}
+
+// Only H.264 frames lose their delimiter; the same bytes under another codec's caps are forwarded as they are.
+TEST_F(StreamTest, PassthroughLeavesTheBytesOfOtherCodecsAlone)
+{
+  const std::vector<std::uint8_t> delimiter_shaped_bytes{
     0x00U, 0x00U, 0x00U, 0x01U, 0x09U, 0x10U, 0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU};
-  std::mutex forwarded_mutex;
-  std::vector<std::uint8_t> forwarded;
-  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool) {
-    const std::lock_guard<std::mutex> lock(forwarded_mutex);
-    forwarded = std::move(encoded.frame.data);
-  };
-  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
 
-  pipeline.start(buildPassthroughPipelineDescription(kH264AppSrc), true);
-  (void)gst_app_src_push_buffer(pipeline.appsrc(), gst_buffer_new_memdup(with_delimiter.data(), with_delimiter.size()));
-  (void)test_support::waitUntil(
-    [&]() {
-      const std::lock_guard<std::mutex> lock(forwarded_mutex);
-      return !forwarded.empty();
-    },
-    std::chrono::seconds(10));
-  pipeline.stop();
+  const std::vector<EncodedVideoFrame> frames = forwardEncodedFrames(
+    "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48", {{delimiter_shaped_bytes}});
 
-  const std::lock_guard<std::mutex> lock(forwarded_mutex);
-  EXPECT_EQ(forwarded, (std::vector<std::uint8_t>{0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU}));
+  ASSERT_EQ(frames.size(), 1U);
+  EXPECT_EQ(frames[0].frame.data, delimiter_shaped_bytes);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
