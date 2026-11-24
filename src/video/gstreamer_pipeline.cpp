@@ -173,13 +173,35 @@ std::string capsToString(const GstCaps * caps)
   return caps_text != nullptr ? caps_text.get() : "";
 }
 
-struct UnpackedEncodedFrame
+livekit::VideoCodec findPassthroughCodec(const GstStructure * structure)
 {
-  livekit::EncodedVideoSource::Frame frame;
-  bool lacks_parameter_sets = false;
-};
+  for (const PassthroughFormat & format : kPassthroughFormats) {
+    if (gst_structure_has_name(structure, format.media_type)) {
+      return format.codec;
+    }
+  }
+  throw std::runtime_error(
+    std::string("Passthrough sample caps name no supported codec: ") + gst_structure_get_name(structure));
+}
 
-UnpackedEncodedFrame unpackEncodedFrame(GstBuffer * buffer, PictureSize picture_size, std::int64_t timestamp_us)
+AccessUnitSummary summarizeEncodedBuffer(livekit::VideoCodec codec, const std::uint8_t * data, std::size_t size)
+{
+  switch (codec) {
+    case livekit::VideoCodec::H264:
+      return summarizeH264AccessUnit(data, size);
+    case livekit::VideoCodec::H265:
+      return summarizeH265AccessUnit(data, size);
+    case livekit::VideoCodec::AV1:
+      return summarizeAv1TemporalUnit(data, size);
+    default:
+      break;
+  }
+  // findPassthroughCodec only returns the codecs above.
+  throw std::runtime_error("Passthrough has no bitstream reader for this codec.");
+}
+
+EncodedVideoFrame unpackEncodedFrame(
+  GstBuffer * buffer, livekit::VideoCodec codec, PictureSize picture_size, std::int64_t timestamp_us)
 {
   if (buffer == nullptr) {
     throw std::runtime_error("GStreamer sample is missing its buffer.");
@@ -187,37 +209,39 @@ UnpackedEncodedFrame unpackEncodedFrame(GstBuffer * buffer, PictureSize picture_
 
   GstBufferMap mapping(*buffer, GST_MAP_READ);
   if (!mapping.is_valid()) {
-    throw std::runtime_error("Failed to map GStreamer H.264 buffer.");
+    throw std::runtime_error("Failed to map GStreamer encoded buffer.");
   }
 
   const auto * data = static_cast<const std::uint8_t *>(mapping.get()->data);
   const std::size_t size = mapping.get()->size;
-  const AccessUnitSummary summary = summarizeH264AccessUnit(data, size);
-  UnpackedEncodedFrame unpacked;
-  unpacked.frame.is_keyframe = summary.is_key_frame;
-  unpacked.frame.width = static_cast<std::uint32_t>(picture_size.width);
-  unpacked.frame.height = static_cast<std::uint32_t>(picture_size.height);
-  unpacked.frame.timestamp_us = timestamp_us;
-  unpacked.frame.data.assign(data, data + size);
-  unpacked.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
-  return unpacked;
+  const AccessUnitSummary summary = summarizeEncodedBuffer(codec, data, size);
+  EncodedVideoFrame encoded;
+  encoded.codec = codec;
+  encoded.frame.is_keyframe = summary.is_key_frame;
+  encoded.frame.width = static_cast<std::uint32_t>(picture_size.width);
+  encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
+  encoded.frame.timestamp_us = timestamp_us;
+  encoded.frame.data.assign(data, data + size);
+  encoded.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
+  return encoded;
 }
 
 GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us, const PipelineCallbacks & callbacks)
 {
-  // Reported as a mismatch so the log carries the h264parse hint; not-negotiated stops the flow,
-  // so this fires once per run.
+  // Reported as a mismatch so the log carries the parser hint; not-negotiated stops the flow, so
+  // this fires once per run.
   GstCaps * caps = gst_sample_get_caps(sample);
   const std::optional<PictureSize> picture_size = readPictureSize(caps);
   if (!picture_size.has_value()) {
-    callbacks.on_caps_mismatch("H.264 caps have no width and height", capsToString(caps));
+    callbacks.on_caps_mismatch("Passthrough caps have no width and height", capsToString(caps));
     return GST_FLOW_NOT_NEGOTIATED;
   }
 
   GstBuffer * buffer = gst_sample_get_buffer(sample);
-  UnpackedEncodedFrame unpacked;
+  EncodedVideoFrame encoded;
   try {
-    unpacked = unpackEncodedFrame(buffer, *picture_size, timestamp_us);
+    const livekit::VideoCodec codec = findPassthroughCodec(gst_caps_get_structure(caps, 0U));
+    encoded = unpackEncodedFrame(buffer, codec, *picture_size, timestamp_us);
   } catch (const std::exception & exc) {
     callbacks.on_unpack_failed(exc.what());
     return GST_FLOW_ERROR;
@@ -231,10 +255,7 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 
   try {
-    if (unpacked.lacks_parameter_sets) {
-      callbacks.on_key_frame_without_parameter_sets();
-    }
-    callbacks.on_encoded_frame(std::move(unpacked.frame), GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT));
+    callbacks.on_encoded_frame(std::move(encoded), GST_BUFFER_FLAG_IS_SET(buffer, GST_BUFFER_FLAG_DISCONT));
     return GST_FLOW_OK;
   } catch (const std::exception & exc) {
     callbacks.on_capture_failed(exc.what());
@@ -245,7 +266,7 @@ GstFlowReturn deliverEncodedSample(GstSample * sample, std::int64_t timestamp_us
   }
 }
 
-// Not-linked and not-negotiated usually mean the source isn't byte-stream, AU-aligned H.264.
+// Not-linked and not-negotiated usually mean an unsupported codec or layout.
 bool isCapsMismatch(GstMessage * message, const GError * error)
 {
   if (

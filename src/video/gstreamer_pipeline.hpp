@@ -24,6 +24,7 @@
 #include <string>
 
 #include "livekit/encoded_video_source.h"
+#include "livekit/video_codec.h"
 #include "livekit/video_frame.h"
 #include "video/gstreamer_resources.hpp"
 
@@ -39,6 +40,15 @@ enum class PipelineOutput
   EncodedVideo,
 };
 
+// The codec comes from the sample's caps.
+struct EncodedVideoFrame
+{
+  livekit::VideoCodec codec = livekit::VideoCodec::H264;
+  livekit::EncodedVideoSource::Frame frame;
+  // A keyframe without the parameter sets a decoder needs to start from it.
+  bool lacks_parameter_sets = false;
+};
+
 struct PipelineCallbacks
 {
   std::function<bool()> is_shutdown;
@@ -49,11 +59,9 @@ struct PipelineCallbacks
 
   // The rest are used only with PipelineOutput::EncodedVideo.
   // discontinuous: frames before this one were dropped or lost.
-  std::function<void(livekit::EncodedVideoSource::Frame frame, bool discontinuous)> on_encoded_frame;
+  std::function<void(EncodedVideoFrame encoded, bool discontinuous)> on_encoded_frame;
   // Reported instead of on_failed; offered_caps may be empty.
   std::function<void(const std::string & reason, const std::string & offered_caps)> on_caps_mismatch;
-  // Called before on_encoded_frame for a keyframe that lacks SPS or PPS.
-  std::function<void()> on_key_frame_without_parameter_sets;
 };
 
 class GStreamerPipeline final

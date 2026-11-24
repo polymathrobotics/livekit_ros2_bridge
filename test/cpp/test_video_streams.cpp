@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -68,9 +69,9 @@ constexpr auto kHangTimeout = std::chrono::seconds(10);
 // The interval the stream throttles its restart warnings to.
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 
-constexpr char kPassthroughFormatHint[] =
-  "hint=\"the source must output H.264 as an Annex-B byte stream, one access unit per buffer; end it with h264parse "
-  "config-interval=-1\"";
+// Fragments of the format hint, enough to tell it from the other recovery lines.
+constexpr char kPassthroughFormatHintStart[] = "hint=\"the source must output";
+constexpr char kPassthroughFormatHintEnd[] = "av1parse\"";
 
 // Expects `event` logged at least once, first with count=1, and at most once per throttle
 // interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
@@ -118,23 +119,104 @@ StreamSpec makePassthroughSpec(const std::string & source_fragment)
 {
   StreamSpec spec = makeOtherSpec();
   spec.input = OtherInput{"test", source_fragment, "", true};
-  spec.publish_options.video_codec = livekit::VideoCodec::H264;
   spec.publish_options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   spec.publish_options.simulcast = false;
   return spec;
 }
 
-livekit::EncodedVideoSource::Frame makeEncodedFrame(bool is_keyframe)
+EncodedVideoFrame makeEncodedFrame(bool is_keyframe)
 {
-  livekit::EncodedVideoSource::Frame frame;
-  frame.is_keyframe = is_keyframe;
-  frame.width = 64U;
-  frame.height = 48U;
-  frame.timestamp_us = 1000;
+  EncodedVideoFrame encoded;
+  encoded.codec = livekit::VideoCodec::H264;
+  encoded.frame.is_keyframe = is_keyframe;
+  encoded.frame.width = 64U;
+  encoded.frame.height = 48U;
+  encoded.frame.timestamp_us = 1000;
   // Annex-B start code and an IDR (type 5) or non-IDR (type 1) slice header.
   const std::uint8_t nal_header = is_keyframe ? 0x65U : 0x41U;
-  frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
-  return frame;
+  encoded.frame.data = {0x00U, 0x00U, 0x00U, 0x01U, nal_header, 0x88U};
+  return encoded;
+}
+
+// Codec, keyframe, and whether the keyframe lacked parameter sets.
+struct ForwardedFrame
+{
+  livekit::VideoCodec codec;
+  bool is_key_frame;
+  bool lacks_parameter_sets;
+
+  bool operator==(const ForwardedFrame & other) const
+  {
+    return codec == other.codec && is_key_frame == other.is_key_frame &&
+           lacks_parameter_sets == other.lacks_parameter_sets;
+  }
+};
+
+const char * codecName(livekit::VideoCodec codec)
+{
+  switch (codec) {
+    case livekit::VideoCodec::H264:
+      return "h264";
+    case livekit::VideoCodec::H265:
+      return "h265";
+    case livekit::VideoCodec::AV1:
+      return "av1";
+    default:
+      return "other";
+  }
+}
+
+// Lets a failed comparison print {codec=h265, key=true, lacks_parameter_sets=false}.
+void PrintTo(const ForwardedFrame & frame, std::ostream * stream)
+{
+  *stream << "{codec=" << codecName(frame.codec) << ", key=" << std::boolalpha << frame.is_key_frame
+          << ", lacks_parameter_sets=" << frame.lacks_parameter_sets << "}";
+}
+
+struct PushedBuffer
+{
+  std::vector<std::uint8_t> bytes;
+  bool delta_unit = false;
+  // Set on the appsrc before this buffer, as a parser does when the stream's codec changes.
+  std::optional<std::string> caps;
+};
+
+// The appsrc offers `caps`, as a parser would, until a buffer carries its own.
+std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
+  const std::string & caps, const std::vector<PushedBuffer> & buffers)
+{
+  std::mutex forwarded_mutex;
+  std::vector<ForwardedFrame> forwarded;
+  PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
+  callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool) {
+    const std::lock_guard<std::mutex> lock(forwarded_mutex);
+    forwarded.push_back(ForwardedFrame{encoded.codec, encoded.frame.is_keyframe, encoded.lacks_parameter_sets});
+  };
+  GStreamerPipeline pipeline(callbacks, PipelineOutput::EncodedVideo);
+
+  pipeline.start(
+    buildPassthroughPipelineDescription("appsrc name=" + std::string(kBridgeAppSrcName) + " caps=\"" + caps + "\""),
+    true);
+  for (const PushedBuffer & pushed : buffers) {
+    if (pushed.caps.has_value()) {
+      GstCaps * pushed_caps = gst_caps_from_string(pushed.caps->c_str());
+      gst_app_src_set_caps(pipeline.appsrc(), pushed_caps);
+      gst_caps_unref(pushed_caps);
+    }
+    GstBuffer * buffer = gst_buffer_new_memdup(pushed.bytes.data(), pushed.bytes.size());
+    if (pushed.delta_unit) {
+      GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
+    }
+    (void)gst_app_src_push_buffer(pipeline.appsrc(), buffer);
+  }
+  (void)test_support::waitUntil(
+    [&]() {
+      const std::lock_guard<std::mutex> lock(forwarded_mutex);
+      return forwarded.size() >= buffers.size();
+    },
+    std::chrono::seconds(10));
+  pipeline.stop();
+  return forwarded;
 }
 
 constexpr char kH264AppSrc[] =
@@ -302,11 +384,11 @@ SlowSendRun runPassthroughWithSlowSends(std::uint32_t key_frame_interval)
   const std::function<void()> request_key_frame = [&pipeline_handle]() { pipeline_handle->requestKeyFrame(); };
   std::atomic<std::uint32_t> pushed_frames{0U};
   PipelineCallbacks callbacks = test_support::makeNoOpVideoPipelineCallbacks();
-  callbacks.on_encoded_frame = [&](livekit::EncodedVideoSource::Frame frame, bool discontinuous) {
-    const std::uint32_t frame_index = readFrameIndex(frame);
+  callbacks.on_encoded_frame = [&](EncodedVideoFrame encoded, bool discontinuous) {
+    const std::uint32_t frame_index = readFrameIndex(encoded.frame);
     const std::uint32_t frames_behind = pushed_frames.load() - 1U - frame_index;
-    const bool is_keyframe = frame.is_keyframe;
-    if (!publisher.captureEncoded(std::move(frame), request_key_frame, discontinuous)) {
+    const bool is_keyframe = encoded.frame.is_keyframe;
+    if (!publisher.captureEncoded(std::move(encoded), request_key_frame, discontinuous)) {
       return;
     }
     const bool follows_gap = last_sent_index.has_value() && *last_sent_index + 1U != frame_index;
@@ -360,6 +442,67 @@ TEST_F(StreamTest, PassthroughWithSlowSendsResumesOnlyAtKeyFrames)
   EXPECT_GE(run.key_frame_requests, 1);
   EXPECT_EQ(run.key_frame_requests_without_all_headers, 0);
   EXPECT_LE(run.most_frames_behind, kFramesPerBridgeQueue * 3U / 2U);
+}
+
+// The bytes stand in for what each codec's parser emits.
+TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
+{
+  using livekit::VideoCodec;
+  {
+    SCOPED_TRACE("h264");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
+        {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}}}),
+      (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}}));
+  }
+
+  {
+    // An IDR without VPS, SPS and PPS, then a CRA, then a trailing picture.
+    SCOPED_TRACE("h265");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48",
+        {{{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU}},
+         {{0x00U, 0x00U, 0x00U, 0x01U, 0x2AU, 0x01U, 0xAFU}},
+         {{0x00U, 0x00U, 0x00U, 0x01U, 0x02U, 0x01U, 0xAFU}}}),
+      (std::vector<ForwardedFrame>{
+        {VideoCodec::H265, true, true}, {VideoCodec::H265, true, true}, {VideoCodec::H265, false, false}}));
+  }
+
+  {
+    // Temporal delimiter, then an OBU_FRAME whose header byte is show_existing_frame, frame_type and
+    // show_frame: a shown key frame (0x10) or a shown inter frame (0x30).
+    const std::vector<std::uint8_t> key_frame_with_sequence_header{
+      0x12U, 0x00U, 0x0AU, 0x01U, 0x00U, 0x32U, 0x01U, 0x10U};
+    const std::vector<std::uint8_t> key_frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
+    const std::vector<std::uint8_t> inter_frame{0x12U, 0x00U, 0x32U, 0x01U, 0x30U};
+    // A parser can leave DELTA_UNIT on a key frame (av1parse on 1.20 keeps the upstream's flag), so the third buffer
+    // is a key frame flagged as a delta unit; the reader must trust the bitstream, not the flag.
+    SCOPED_TRACE("av1");
+    EXPECT_EQ(
+      forwardThroughPassthroughPipeline(
+        "video/x-av1,stream-format=obu-stream,alignment=tu,width=64,height=48",
+        {{key_frame_with_sequence_header}, {inter_frame}, {key_frame_alone, true}}),
+      (std::vector<ForwardedFrame>{
+        {VideoCodec::AV1, true, false}, {VideoCodec::AV1, false, false}, {VideoCodec::AV1, true, true}}));
+  }
+}
+
+// A parser that switches codec mid-stream changes the caps, not the pipeline. The H.265 bytes would read as an
+// H.264 SEI NAL, not a key frame, if the codec were kept from the first sample.
+TEST_F(StreamTest, PassthroughPipelineReadsTheCodecFromEachSamplesCaps)
+{
+  using livekit::VideoCodec;
+
+  EXPECT_EQ(
+    forwardThroughPassthroughPipeline(
+      "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
+      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}},
+       {{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU},
+        false,
+        "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48"}}),
+    (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}, {VideoCodec::H265, true, true}}));
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
@@ -491,7 +634,10 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
   const auto close_stream = [harness]() { harness->stream.close(); };
   const auto explained = [&]() {
     return logs.countLines(
-             {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-vp8"}) > 0U;
+             {"video_stream_pipeline_recovery_scheduled",
+              kPassthroughFormatHintStart,
+              kPassthroughFormatHintEnd,
+              "offered_caps=\"video/x-vp8"}) > 0U;
   };
 
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
@@ -500,7 +646,8 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
 
   ASSERT_TRUE(hint_logged);
   EXPECT_EQ(
-    logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint}),
+    logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHintStart, kPassthroughFormatHintEnd}),
     logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
@@ -532,18 +679,16 @@ TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
   expectThrottledEvent(logs, "video_stream_pipeline_recovery_scheduled", started_at);
   EXPECT_EQ(
     logs.countLines(
-      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-h264"}),
+      {"video_stream_pipeline_recovery_scheduled",
+       kPassthroughFormatHintStart,
+       kPassthroughFormatHintEnd,
+       "offered_caps=\"video/x-h264"}),
     logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   EXPECT_EQ(logs.countLines({"video_stream_sample_unpack_failed"}), 0U);
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
 
 using AccessUnit = std::vector<std::uint8_t>;
-
-const AccessUnit kSequenceAndPictureParameterSets = {
-  0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
-const AccessUnit kIdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
-const AccessUnit kDeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
 
 AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
 {
@@ -552,17 +697,27 @@ AccessUnit concatenate(const AccessUnit & first, const AccessUnit & second)
   return joined;
 }
 
+constexpr char kH264Extension[] = "h264";
+constexpr char kH264Caps[] = "video/x-h264,stream-format=byte-stream,alignment=au";
+
+const AccessUnit kH264ParameterSets = {
+  0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x38, 0x80};
+const AccessUnit kH264IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
+const AccessUnit kH264DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
+
 // multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
-void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_units)
+void runPassthroughStreamOverAccessUnits(
+  const char * file_extension, const char * caps, const std::vector<AccessUnit> & access_units)
 {
   using test_support::ControlledStartElement;
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
   const std::string path_prefix =
     (std::filesystem::temp_directory_path() / ("lkros_access_unit_" + std::to_string(::getpid()))).string();
+  const std::string path_suffix = std::string(".") + file_extension;
   std::vector<std::filesystem::path> access_unit_paths;
   for (std::size_t index = 0U; index < access_units.size(); ++index) {
-    access_unit_paths.push_back(path_prefix + "_" + std::to_string(index) + ".h264");
+    access_unit_paths.push_back(path_prefix + "_" + std::to_string(index) + path_suffix);
     std::ofstream file(access_unit_paths.back(), std::ios::binary);
     file.write(
       reinterpret_cast<const char *>(access_units[index].data()),
@@ -574,8 +729,7 @@ void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_
     }
   });
   const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
-    "multifilesrc location=" + path_prefix +
-    "_%d.h264 caps=\"video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48\" ! " +
+    "multifilesrc location=" + path_prefix + "_%d" + path_suffix + " caps=\"" + caps + ",width=64,height=48\" ! " +
     ControlledStartElement::kFactoryName));
   const auto attempts_before = ControlledStartElement::startAttempts();
   // The third start follows the second run's end, so its frames have arrived.
@@ -589,7 +743,48 @@ void runPassthroughStreamOverAccessUnits(const std::vector<AccessUnit> & access_
   const bool restarted = test_support::waitUntil(second_run_ended, std::chrono::seconds(10));
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
-  ASSERT_TRUE(restarted);
+  EXPECT_TRUE(restarted);
+}
+
+// Layouts of the supported codecs that the filter must not accept, as a parser's other output modes would offer.
+struct UnsupportedLayoutCase
+{
+  const char * name;
+  const char * caps;
+  // How the log spells the offered caps: GStreamer prints each field with its type.
+  const char * offered_caps;
+};
+
+TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedLayouts)
+{
+  const std::vector<UnsupportedLayoutCase> cases{
+    {"h265_hvc1",
+     "video/x-h265,stream-format=hvc1,alignment=au",
+     "offered_caps=\"video/x-h265, stream-format=(string)hvc1, alignment=(string)au"},
+    {"h265_hev1",
+     "video/x-h265,stream-format=hev1,alignment=au",
+     "offered_caps=\"video/x-h265, stream-format=(string)hev1, alignment=(string)au"},
+    {"av1_annexb",
+     "video/x-av1,stream-format=annexb,alignment=tu",
+     "offered_caps=\"video/x-av1, stream-format=(string)annexb, alignment=(string)tu"},
+    {"av1_obu_alignment",
+     "video/x-av1,stream-format=obu-stream,alignment=obu",
+     "offered_caps=\"video/x-av1, stream-format=(string)obu-stream, alignment=(string)obu"},
+  };
+  for (const UnsupportedLayoutCase & layout_case : cases) {
+    SCOPED_TRACE(layout_case.name);
+    test_support::ScopedLogCapture logs;
+
+    runPassthroughStreamOverAccessUnits(layout_case.name, layout_case.caps, {{0x00U}, {0x00U}, {0x00U}});
+
+    const std::size_t explained_lines = logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled",
+       kPassthroughFormatHintStart,
+       kPassthroughFormatHintEnd,
+       layout_case.offered_caps});
+    EXPECT_GT(explained_lines, 0U);
+    EXPECT_EQ(explained_lines, logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
+  }
 }
 
 // Every frame is a delta frame, which the publisher discards while waiting for a keyframe.
@@ -597,17 +792,17 @@ TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
 {
   const auto requests_before = test_support::ControlledStartElement::forceKeyUnitEvents();
 
-  runPassthroughStreamOverAccessUnits({kDeltaSlice, kDeltaSlice, kDeltaSlice});
+  runPassthroughStreamOverAccessUnits(kH264Extension, kH264Caps, {kH264DeltaSlice, kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GT(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before);
 }
 
-// The warning must not repeat across the restart.
+// The warning must not repeat across the restart. What it names per codec is pinned by the track publisher tests.
 TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
 {
   test_support::ScopedLogCapture logs;
 
-  runPassthroughStreamOverAccessUnits({kIdrSlice, kIdrSlice, kIdrSlice});
+  runPassthroughStreamOverAccessUnits(kH264Extension, kH264Caps, {kH264IdrSlice, kH264IdrSlice, kH264IdrSlice});
 
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets", "stream_key=other_video:test"}), 1U);
 }
@@ -617,7 +812,7 @@ TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
   test_support::ScopedLogCapture logs;
 
   runPassthroughStreamOverAccessUnits(
-    {concatenate(kSequenceAndPictureParameterSets, kIdrSlice), kDeltaSlice, kDeltaSlice});
+    kH264Extension, kH264Caps, {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);

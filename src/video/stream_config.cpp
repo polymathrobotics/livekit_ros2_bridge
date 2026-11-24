@@ -148,14 +148,14 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
   const auto reject = [&id](const char * setting, const char * allowed) {
     throw std::runtime_error(
       "video.other." + id + "." + setting +
-      " is not supported with publish.encoder pre_encoded, which forwards the source's H.264 unchanged; " + allowed);
+      " is not supported with publish.encoder pre_encoded, which forwards the source's video unchanged; " + allowed);
   };
   if (!trim(entry.transform).empty()) {
     reject("transform", "leave it empty");
   }
   const std::string codec = trim(entry.publish.codec);
-  if (!codec.empty() && codec != "h264" && codec != "auto") {
-    reject("publish.codec", "use h264 or auto, or leave it empty");
+  if (!codec.empty() && codec != "auto") {
+    reject("publish.codec", "the codec comes from the stream, so use auto or leave it empty");
   }
   if (entry.publish.max_framerate > 0.0) {
     reject("publish.max_framerate", "use 0 or leave it at -1");
@@ -167,11 +167,11 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
 }
 
 // max_bitrate_bps bounds LiveKit's rate target; -1 and 0 keep its resolution-based default.
+// video_codec stays unset: the publisher sets it to the first keyframe's codec when it publishes.
 template <typename EntryT>
 livekit::TrackPublishOptions makePassthroughPublishOptions(const EntryT & entry)
 {
   livekit::TrackPublishOptions options;
-  options.video_codec = livekit::VideoCodec::H264;
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
   if (entry.publish.max_bitrate_bps > 0) {
