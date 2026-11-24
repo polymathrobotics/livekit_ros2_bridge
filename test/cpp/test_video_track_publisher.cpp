@@ -416,15 +416,16 @@ TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOnceAndNamesTh
   {
     livekit::VideoCodec codec;
     const char * logged_codec;
+    const char * hint_fragment;
   };
 
   test_support::ScopedLogCapture logs;
   const std::function<void()> request_key_frame = []() {};
 
   for (const CodecCase & codec_case : {
-         CodecCase{livekit::VideoCodec::H264, "codec=h264"},
-         CodecCase{livekit::VideoCodec::H265, "codec=h265"},
-         CodecCase{livekit::VideoCodec::AV1, "codec=av1"},
+         CodecCase{livekit::VideoCodec::H264, "codec=h264", "h264parse"},
+         CodecCase{livekit::VideoCodec::H265, "codec=h265", "h265parse"},
+         CodecCase{livekit::VideoCodec::AV1, "codec=av1", "sequence header"},
        })
   {
     SCOPED_TRACE(codec_case.logged_codec);
@@ -435,7 +436,10 @@ TEST(TrackPublisherTest, PassthroughWarnsAboutMissingParameterSetsOnceAndNamesTh
     EXPECT_TRUE(publisher.captureEncoded(makeKeyFrameWithoutParameterSets(codec_case.codec), request_key_frame));
     EXPECT_EQ(
       logs.countLines(
-        {"video_stream_passthrough_missing_parameter_sets", "stream_key=stream:params", codec_case.logged_codec}),
+        {"video_stream_passthrough_missing_parameter_sets",
+         "stream_key=stream:params",
+         codec_case.logged_codec,
+         codec_case.hint_fragment}),
       1U);
   }
 }
