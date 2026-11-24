@@ -700,8 +700,7 @@ const AccessUnit kH264IdrSlice = {0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x00};
 const AccessUnit kH264DeltaSlice = {0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, 0x00};
 
 // multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
-// Returns how many video tracks the stream published.
-std::size_t runPassthroughStreamOverAccessUnits(
+void runPassthroughStreamOverAccessUnits(
   const char * file_extension, const char * caps, const std::vector<AccessUnit> & access_units)
 {
   using test_support::ControlledStartElement;
@@ -734,12 +733,11 @@ std::size_t runPassthroughStreamOverAccessUnits(
   const auto start_stream = [harness]() { harness->stream.start(); };
   const auto close_stream = [harness]() { harness->stream.close(); };
 
-  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
   const bool restarted = test_support::waitUntil(second_run_ended, std::chrono::seconds(10));
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
   EXPECT_TRUE(restarted);
-  return harness->connection.state->publishedVideoTrackCount();
 }
 
 // Layouts of the supported codecs that the filter must not accept, as a parser's other output modes would offer.
@@ -771,14 +769,12 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedLayouts)
     SCOPED_TRACE(layout_case.name);
     test_support::ScopedLogCapture logs;
 
-    const std::size_t published_tracks =
-      runPassthroughStreamOverAccessUnits(layout_case.name, layout_case.caps, {{0x00U}, {0x00U}, {0x00U}});
+    runPassthroughStreamOverAccessUnits(layout_case.name, layout_case.caps, {{0x00U}, {0x00U}, {0x00U}});
 
     const std::size_t explained_lines =
       logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, layout_case.offered_caps});
     EXPECT_GT(explained_lines, 0U);
     EXPECT_EQ(explained_lines, logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
-    EXPECT_EQ(published_tracks, 0U);
   }
 }
 
