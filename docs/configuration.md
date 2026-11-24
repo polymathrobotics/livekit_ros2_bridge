@@ -341,7 +341,7 @@ Use `video.other.*` when the bridge should ingest video directly from GStreamer 
 
 ### Cameras that already encode video
 
-By default the bridge decodes a camera's video and LiveKit encodes it again. Set `publish.encoder: pre_encoded` on the source and the bridge forwards the camera's H.264, H.265, or AV1 to LiveKit unchanged, which saves CPU and delay. Viewers get no fallback codec, so use H.264 unless every viewer can decode the camera's codec; H.265 and AV1 are experimental, and H.265 needs LiveKit server 1.13.11 or later.
+By default the bridge decodes a camera's video and LiveKit encodes it again. Set `publish.encoder: pre_encoded` on the source and the bridge forwards the camera's H.264, H.265, or AV1 to LiveKit without decoding or re-encoding it, which saves CPU and delay. Viewers get no fallback codec, so use H.264 unless every viewer can decode the camera's codec; H.265 and AV1 are experimental, and H.265 needs LiveKit server 1.13.11 or later.
 
 ```yaml
 livekit_ros2_bridge:
