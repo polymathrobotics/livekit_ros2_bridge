@@ -158,9 +158,8 @@ livekit_ros2_bridge:
             type: string
             default_value: ''
             description: >-
-              Optional LiveKit codec override for this other video source.
-              Empty inherits from video.publish.codec. With publish.encoder
-              pre_encoded, only empty or auto.
+              Optional LiveKit codec override for this other video source. Empty
+              inherits from video.publish.codec; with pre_encoded, only empty or auto.
             validation:
               one_of<>: [['', auto, vp8, h264, av1, vp9, h265]]
           max_bitrate_bps:

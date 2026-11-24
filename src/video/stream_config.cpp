@@ -154,7 +154,6 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
     reject("transform", "leave it empty");
   }
   const std::string codec = trim(entry.publish.codec);
-  // The track takes the source's codec, so publish.codec can only be empty or auto.
   if (!codec.empty() && codec != "auto") {
     reject("publish.codec", "the codec comes from the stream, so use auto or leave it empty");
   }
