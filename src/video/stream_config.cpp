@@ -148,7 +148,9 @@ void requirePassthroughCompatible(const std::string & id, const EntryT & entry)
   const auto reject = [&id](const char * setting, const char * allowed) {
     throw std::runtime_error(
       "video.other." + id + "." + setting +
-      " is not supported with publish.encoder pre_encoded, which forwards the source's video unchanged; " + allowed);
+      " is not supported with publish.encoder pre_encoded, which forwards the source's video unchanged in its own "
+      "codec; " +
+      allowed);
   };
   if (!trim(entry.transform).empty()) {
     reject("transform", "leave it empty");

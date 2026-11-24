@@ -719,7 +719,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
 
     const std::string expected_error = parameter +
                                        " is not supported with publish.encoder pre_encoded, which forwards the "
-                                       "source's video unchanged; " +
+                                       "source's video unchanged in its own codec; " +
                                        rejected_setting.allowed;
     expectConfigError(rejected_setting.node_name, options, expected_error.c_str());
   }
