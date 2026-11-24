@@ -688,18 +688,18 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
      rclcpp::ParameterValue("videoflip"),
      "leave it empty",
      "startup_config_passthrough_rejects_transform"},
-    // Every explicit codec is rejected: the track takes the source's codec.
+    // Any explicit codec is rejected, whichever it is: the track takes the source's codec.
     {"publish.codec",
      rclcpp::ParameterValue("h264"),
-     "use auto or leave it empty",
+     "the codec comes from the stream, so use auto or leave it empty",
      "startup_config_passthrough_rejects_codec_h264"},
     {"publish.codec",
      rclcpp::ParameterValue("vp8"),
-     "use auto or leave it empty",
+     "the codec comes from the stream, so use auto or leave it empty",
      "startup_config_passthrough_rejects_codec_vp8"},
     {"publish.codec",
      rclcpp::ParameterValue("av1"),
-     "use auto or leave it empty",
+     "the codec comes from the stream, so use auto or leave it empty",
      "startup_config_passthrough_rejects_codec_av1"},
     {"publish.max_framerate",
      rclcpp::ParameterValue(15.0),
@@ -719,7 +719,7 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
 
     const std::string expected_error = parameter +
                                        " is not supported with publish.encoder pre_encoded, which forwards the "
-                                       "source's video unchanged in its own codec; " +
+                                       "source's video unchanged; " +
                                        rejected_setting.allowed;
     expectConfigError(rejected_setting.node_name, options, expected_error.c_str());
   }
