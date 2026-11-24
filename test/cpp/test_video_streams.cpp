@@ -514,12 +514,15 @@ TEST_F(StreamTest, PassthroughPipelineReadsTheCodecFromEachSamplesCaps)
     (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}, {VideoCodec::H265, true, true}}));
 }
 
+// An access unit delimiter followed by a non-IDR slice, as h264parse emits it.
+const std::vector<std::uint8_t> kDelimiterThenSliceBytes{
+  0x00U, 0x00U, 0x00U, 0x01U, 0x09U, 0x10U, 0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU};
+
 // h264parse puts a delimiter in front of every access unit, and a browser can't decode a small frame sent with one.
 TEST_F(StreamTest, PassthroughForwardsH264WithoutAccessUnitDelimiters)
 {
   const std::vector<EncodedVideoFrame> frames = forwardEncodedFrames(
-    "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
-    {{{0x00U, 0x00U, 0x00U, 0x01U, 0x09U, 0x10U, 0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU}}});
+    "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48", {{kDelimiterThenSliceBytes}});
 
   ASSERT_EQ(frames.size(), 1U);
   EXPECT_EQ(frames[0].frame.data, (std::vector<std::uint8_t>{0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU}));
@@ -528,14 +531,11 @@ TEST_F(StreamTest, PassthroughForwardsH264WithoutAccessUnitDelimiters)
 // Only H.264 frames lose their delimiter; the same bytes under another codec's caps are forwarded as they are.
 TEST_F(StreamTest, PassthroughLeavesTheBytesOfOtherCodecsAlone)
 {
-  const std::vector<std::uint8_t> delimiter_shaped_bytes{
-    0x00U, 0x00U, 0x00U, 0x01U, 0x09U, 0x10U, 0x00U, 0x00U, 0x00U, 0x01U, 0x41U, 0x9AU};
-
   const std::vector<EncodedVideoFrame> frames = forwardEncodedFrames(
-    "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48", {{delimiter_shaped_bytes}});
+    "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48", {{kDelimiterThenSliceBytes}});
 
   ASSERT_EQ(frames.size(), 1U);
-  EXPECT_EQ(frames[0].frame.data, delimiter_shaped_bytes);
+  EXPECT_EQ(frames[0].frame.data, kDelimiterThenSliceBytes);
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
