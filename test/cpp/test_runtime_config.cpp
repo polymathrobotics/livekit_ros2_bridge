@@ -35,6 +35,7 @@ namespace
 constexpr char kLivekitTokenEnvVar[] = "LIVEKIT_TOKEN";
 constexpr auto kLivekitVideoCodecH264 = static_cast<livekit::VideoCodec>(1);
 constexpr auto kLivekitVideoCodecH265 = static_cast<livekit::VideoCodec>(4);
+constexpr char kPassthroughCodecAllowed[] = "the codec comes from the stream, so use auto or leave it empty";
 
 rclcpp::NodeOptions makeBaseOptions()
 {
@@ -122,6 +123,7 @@ void expectPublishOptionsEq(const livekit::TrackPublishOptions & actual, const l
 livekit::TrackPublishOptions makePassthroughPublishOptions(std::uint64_t max_bitrate_bps = 0)
 {
   livekit::TrackPublishOptions options;
+  // video_codec is deliberately left unset: the publisher sets it from the first keyframe.
   options.video_encoder = livekit::VideoEncoderBackend::PreEncoded;
   options.simulcast = false;
   if (max_bitrate_bps > 0) {
@@ -688,18 +690,14 @@ TEST_F(RuntimeConfigTest, PassthroughOtherVideoRejectsPerEntrySettingsThatWouldC
      rclcpp::ParameterValue("videoflip"),
      "leave it empty",
      "startup_config_passthrough_rejects_transform"},
-    // Any explicit codec is rejected, whichever it is: the track takes the source's codec.
+    // Explicit codecs are rejected, including the one the track would pick.
     {"publish.codec",
      rclcpp::ParameterValue("h264"),
-     "the codec comes from the stream, so use auto or leave it empty",
+     kPassthroughCodecAllowed,
      "startup_config_passthrough_rejects_codec_h264"},
     {"publish.codec",
-     rclcpp::ParameterValue("vp8"),
-     "the codec comes from the stream, so use auto or leave it empty",
-     "startup_config_passthrough_rejects_codec_vp8"},
-    {"publish.codec",
      rclcpp::ParameterValue("av1"),
-     "the codec comes from the stream, so use auto or leave it empty",
+     kPassthroughCodecAllowed,
      "startup_config_passthrough_rejects_codec_av1"},
     {"publish.max_framerate",
      rclcpp::ParameterValue(15.0),
