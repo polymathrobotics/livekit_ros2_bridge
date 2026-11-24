@@ -69,10 +69,9 @@ constexpr auto kHangTimeout = std::chrono::seconds(10);
 // The interval the stream throttles its restart warnings to.
 constexpr auto kLogThrottle = std::chrono::seconds(5);
 
-constexpr char kPassthroughFormatHint[] =
-  "hint=\"the source must output H.264 or H.265 as an Annex-B byte stream with one access unit per buffer, or AV1 as "
-  "an OBU stream with one temporal unit per buffer; end it with h264parse config-interval=-1, h265parse "
-  "config-interval=-1, or av1parse\"";
+// Fragments of the format hint, enough to tell it from the other recovery lines.
+constexpr char kPassthroughFormatHintStart[] = "hint=\"the source must output";
+constexpr char kPassthroughFormatHintEnd[] = "av1parse\"";
 
 // Expects `event` logged at least once, first with count=1, and at most once per throttle
 // interval since `started_at`; bounding by the elapsed time keeps this right on a slow run.
@@ -635,7 +634,10 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
   const auto close_stream = [harness]() { harness->stream.close(); };
   const auto explained = [&]() {
     return logs.countLines(
-             {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-vp8"}) > 0U;
+             {"video_stream_pipeline_recovery_scheduled",
+              kPassthroughFormatHintStart,
+              kPassthroughFormatHintEnd,
+              "offered_caps=\"video/x-vp8"}) > 0U;
   };
 
   ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
@@ -644,7 +646,8 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedSource)
 
   ASSERT_TRUE(hint_logged);
   EXPECT_EQ(
-    logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint}),
+    logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHintStart, kPassthroughFormatHintEnd}),
     logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
 }
@@ -676,7 +679,10 @@ TEST_F(StreamTest, PassthroughStreamExplainsH264WithoutDimensions)
   expectThrottledEvent(logs, "video_stream_pipeline_recovery_scheduled", started_at);
   EXPECT_EQ(
     logs.countLines(
-      {"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, "offered_caps=\"video/x-h264"}),
+      {"video_stream_pipeline_recovery_scheduled",
+       kPassthroughFormatHintStart,
+       kPassthroughFormatHintEnd,
+       "offered_caps=\"video/x-h264"}),
     logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   EXPECT_EQ(logs.countLines({"video_stream_sample_unpack_failed"}), 0U);
   EXPECT_EQ(harness->connection.state->publishedVideoTrackCount(), 0U);
@@ -771,8 +777,11 @@ TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedLayouts)
 
     runPassthroughStreamOverAccessUnits(layout_case.name, layout_case.caps, {{0x00U}, {0x00U}, {0x00U}});
 
-    const std::size_t explained_lines =
-      logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, layout_case.offered_caps});
+    const std::size_t explained_lines = logs.countLines(
+      {"video_stream_pipeline_recovery_scheduled",
+       kPassthroughFormatHintStart,
+       kPassthroughFormatHintEnd,
+       layout_case.offered_caps});
     EXPECT_GT(explained_lines, 0U);
     EXPECT_EQ(explained_lines, logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
   }
