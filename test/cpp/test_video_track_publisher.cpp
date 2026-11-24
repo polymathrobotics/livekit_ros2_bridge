@@ -364,12 +364,10 @@ TEST(TrackPublisherTest, PassthroughDropsFramesInAnotherCodecThanThePublishedTra
     connection, makePassthroughSpec("stream:recodec", "lkros.video.recodec"), nullptr, fake_clock.provider());
 
   EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame));
-  EXPECT_EQ(key_frame_requests, 0);
 
   EXPECT_FALSE(
     publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame));
   EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H265), request_key_frame));
-  EXPECT_EQ(key_frame_requests, 0);
 
   // A sustained mismatch must never count as a keyframe stall, which would restart the pipeline for nothing.
   fake_clock.advance(kMaxStallTimeout + kOneMillisecond);
@@ -377,10 +375,7 @@ TEST(TrackPublisherTest, PassthroughDropsFramesInAnotherCodecThanThePublishedTra
   EXPECT_NO_THROW(
     sent = publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame));
   EXPECT_FALSE(sent);
-
-  EXPECT_FALSE(
-    publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame));
-  EXPECT_FALSE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H265), request_key_frame));
+  // Cumulative, so this also covers the frames before the clock moved.
   EXPECT_EQ(key_frame_requests, 0);
 
   EXPECT_EQ(
@@ -390,11 +385,31 @@ TEST(TrackPublisherTest, PassthroughDropsFramesInAnotherCodecThanThePublishedTra
        "published_codec=h264",
        "source_codec=h265"}),
     1U);
-  EXPECT_EQ(
-    logs.fieldValues({"video_stream_passthrough_codec_changed", "stream_key=stream:recodec"}, "count"),
-    std::vector<std::string>{"1"});
+  publisher.reset();
 
-  // Back in the original codec, the first discarded delta frame asks for a keyframe at once, and the track resumes.
+  EXPECT_EQ(
+    connection.state->event_log,
+    (std::vector<std::string>{
+      "publish_video_track:lkros.video.recodec",
+      "unpublish_video_track:lkros.video.recodec",
+    }));
+}
+
+// The mismatch leaves the publisher waiting for a keyframe, so the original codec has to resume at one.
+TEST(TrackPublisherTest, PassthroughResumesAtAKeyFrameWhenTheSourceReturnsToThePublishedCodec)
+{
+  FakeRoomConnection connection;
+  int key_frame_requests = 0;
+  const std::function<void()> request_key_frame = [&key_frame_requests]() { ++key_frame_requests; };
+  auto publisher =
+    std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:resume", "lkros.video.resume"));
+
+  EXPECT_TRUE(publisher->captureEncoded(makeEncodedFrame(true, 64, 48, livekit::VideoCodec::H264), request_key_frame));
+  EXPECT_FALSE(
+    publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H265), request_key_frame));
+  EXPECT_EQ(key_frame_requests, 0);
+
+  // The first discarded delta frame asks for a keyframe at once, and the next keyframe resumes the track.
   EXPECT_FALSE(
     publisher->captureEncoded(makeEncodedFrame(false, 64, 48, livekit::VideoCodec::H264), request_key_frame));
   EXPECT_EQ(key_frame_requests, 1);
@@ -405,8 +420,8 @@ TEST(TrackPublisherTest, PassthroughDropsFramesInAnotherCodecThanThePublishedTra
   EXPECT_EQ(
     connection.state->event_log,
     (std::vector<std::string>{
-      "publish_video_track:lkros.video.recodec",
-      "unpublish_video_track:lkros.video.recodec",
+      "publish_video_track:lkros.video.resume",
+      "unpublish_video_track:lkros.video.resume",
     }));
 }
 
