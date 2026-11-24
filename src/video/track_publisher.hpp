@@ -149,6 +149,7 @@ private:
   void logResumedLocked();
   void logDiscontinuityLocked();
   void logViewerKeyFrameRequestLocked();
+  void logCodecChangedLocked(livekit::VideoCodec published_codec, livekit::VideoCodec source_codec);
   void logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error);
 
   static constexpr auto kKeyFrameRequestInterval = std::chrono::milliseconds(500);

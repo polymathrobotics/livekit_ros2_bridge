@@ -270,6 +270,14 @@ bool TrackPublisher::captureEncoded(
     if (closed_) {
       return false;
     }
+    // A track keeps the codec it was published with, and LiveKit rejects every frame in another one.
+    // Restarting the pipeline or asking the source for a keyframe can't help, so drop the frames
+    // without either; if the source goes back to the original codec, it resumes at a keyframe.
+    if (encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec) {
+      awaitKeyFrameLocked();
+      logCodecChangedLocked(encoded_source_->codec(), encoded.codec);
+      return false;
+    }
     sent = captureEncodedLocked(std::move(encoded), discontinuous);
     // A viewer's request shares the throttle with discarded frames.
     key_frame_needed = (!sent || livekit_key_frame_request_pending_) && keyFrameRequestDueLocked();
@@ -288,17 +296,6 @@ bool TrackPublisher::captureEncoded(
 bool TrackPublisher::captureEncodedLocked(EncodedVideoFrame encoded, bool discontinuous)
 {
   livekit::EncodedVideoSource::Frame & frame = encoded.frame;
-  // A track keeps the codec it was published with, and LiveKit rejects every frame in another one.
-  // Restarting the pipeline can't help, so drop the frames; if the source goes back to the original
-  // codec, it resumes at a keyframe.
-  if (encoded_source_ != nullptr && encoded_source_->codec() != encoded.codec) {
-    awaitKeyFrameLocked();
-    logThrottledFailureLocked(
-      codec_changed_log_throttle_,
-      "video_stream_passthrough_codec_changed",
-      "the source codec has changed; restart the bridge to publish it");
-    return false;
-  }
 
   // After a gap delta frames can't be decoded; no change while already awaiting a keyframe.
   const bool follows_publish = std::exchange(just_published_, false);
@@ -409,6 +406,22 @@ void TrackPublisher::logViewerKeyFrameRequestLocked()
     .fieldOr("stream_key", spec_.stream_key)
     .field("count", pending)
     .info();
+}
+
+void TrackPublisher::logCodecChangedLocked(livekit::VideoCodec published_codec, livekit::VideoCodec source_codec)
+{
+  const std::size_t pending = codec_changed_log_throttle_.record();
+  if (pending == 0U) {
+    return;
+  }
+
+  LogEvent(kLogger, "video_stream_passthrough_codec_changed")
+    .fieldOr("stream_key", spec_.stream_key)
+    .field("published_codec", passthroughCodecName(published_codec))
+    .field("source_codec", passthroughCodecName(source_codec))
+    .fieldQuoted("hint", "the source codec has changed; restart the bridge to publish it")
+    .field("count", pending)
+    .warn();
 }
 
 void TrackPublisher::logThrottledFailureLocked(EventThrottle & throttle, const char * event, const std::string & error)
