@@ -332,22 +332,29 @@ TEST(TrackPublisherTest, PassthroughPublishesEncodedSourceOnFirstKeyFrame)
 
 TEST(TrackPublisherTest, PassthroughPublishesWithTheCodecOfTheFirstKeyFrame)
 {
-  for (const livekit::VideoCodec codec :
-       {livekit::VideoCodec::H264, livekit::VideoCodec::H265, livekit::VideoCodec::AV1})
+  struct CodecCase
   {
-    SCOPED_TRACE(static_cast<int>(codec));
-    FakeRoomConnection connection;
-    auto publisher =
-      std::make_unique<TrackPublisher>(connection, makePassthroughSpec("stream:codec", "lkros.video.codec"));
+    livekit::VideoCodec codec;
+    const char * codec_name;
+  };
 
-    publisher->captureEncoded(makeEncodedFrame(true, 64, 48, codec), []() {});
-    publisher.reset();
+  for (const CodecCase & codec_case : {
+         CodecCase{livekit::VideoCodec::H264, "h264"},
+         CodecCase{livekit::VideoCodec::H265, "h265"},
+         CodecCase{livekit::VideoCodec::AV1, "av1"},
+       })
+  {
+    SCOPED_TRACE(codec_case.codec_name);
+    FakeRoomConnection connection;
+    TrackPublisher publisher(connection, makePassthroughSpec("stream:codec", "lkros.video.codec"));
+
+    publisher.captureEncoded(makeEncodedFrame(true, 64, 48, codec_case.codec), []() {});
 
     ASSERT_EQ(connection.state->published_video_options.size(), 1U);
-    EXPECT_EQ(connection.state->published_video_options.front().video_codec, codec);
+    EXPECT_EQ(connection.state->published_video_options.front().video_codec, codec_case.codec);
     const auto source = publishedEncodedSource(connection, 0U);
     ASSERT_NE(source, nullptr);
-    EXPECT_EQ(source->codec(), codec);
+    EXPECT_EQ(source->codec(), codec_case.codec);
   }
 }
 
