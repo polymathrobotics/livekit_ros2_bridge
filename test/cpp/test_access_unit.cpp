@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <set>
+#include <stdexcept>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -160,7 +161,6 @@ const Bytes kH265VideoParameterSetNal{0x40U, 0x01U, 0x0CU, 0x01U};
 const Bytes kH265SequenceParameterSetNal{0x42U, 0x01U, 0x01U, 0x01U};
 const Bytes kH265PictureParameterSetNal{0x44U, 0x01U, 0xC1U, 0x72U};
 const Bytes kH265IdrWithLeadingPicturesNal{0x26U, 0x01U, 0xAFU, 0x08U};
-const Bytes kH265TrailingPictureNal{0x02U, 0x01U, 0xD0U, 0x08U};
 
 constexpr std::uint8_t kFirstH265SliceType = 0U;
 constexpr std::uint8_t kLastH265SliceType = 31U;
@@ -266,7 +266,6 @@ constexpr std::uint8_t kMetadataObu = 0x2AU;
 constexpr std::uint8_t kHasExtensionBit = 0x04U;
 const Bytes kTemporalDelimiterObu{0x12U, 0x00U};
 const Bytes kSequenceHeaderObuWithPayload{kSequenceHeaderObu, 0x03U, 0x00U, 0x00U, 0x00U};
-const Bytes kFrameObuWithPayload{kFrameObu, 0x02U, 0x10U, 0x00U};
 
 // The frame header opens with show_existing_frame (1 bit), frame_type (2) and show_frame (1).
 constexpr std::uint8_t kShownKeyFrameBits = 0x10U;
@@ -279,6 +278,10 @@ constexpr std::uint8_t kShowExistingFrameBits = 0x90U;
 
 Bytes av1Obu(std::uint8_t obu_type, const Bytes & payload, bool with_extension = false)
 {
+  // The size below is written as one leb128 byte, which holds at most 127.
+  if (payload.size() > 127U) {
+    throw std::length_error("av1Obu writes a one-byte size, so the payload must be at most 127 bytes");
+  }
   Bytes obu{static_cast<std::uint8_t>((obu_type << 3U) | 0x02U | (with_extension ? kHasExtensionBit : 0U))};
   if (with_extension) {
     obu.push_back(0x00U);
