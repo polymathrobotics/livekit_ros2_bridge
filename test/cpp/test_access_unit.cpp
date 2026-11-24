@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <set>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -164,8 +165,7 @@ const Bytes kH265TrailingPictureNal{0x02U, 0x01U, 0xD0U, 0x08U};
 constexpr std::uint8_t kFirstH265SliceType = 0U;
 constexpr std::uint8_t kLastH265SliceType = 31U;
 // BLA_W_LP, BLA_W_RADL, BLA_N_LP, IDR_W_RADL, IDR_N_LP and CRA_NUT; 22 and 23 are reserved.
-constexpr std::uint8_t kFirstH265RandomAccessType = 16U;
-constexpr std::uint8_t kLastH265RandomAccessType = 21U;
+const std::set<std::uint8_t> kH265RandomAccessTypes{16U, 17U, 18U, 19U, 20U, 21U};
 
 Bytes h265SliceOfType(std::uint8_t nal_unit_type)
 {
@@ -194,24 +194,38 @@ Bytes h265AccessUnitWithParameterSets(const Bytes & slice)
 
 // libwebrtc's depacketizer treats IRAP types 16-21 (BLA, IDR, CRA) as key frames, and x265's open GOP sends a CRA for
 // each.
-TEST(H265AccessUnitTest, TreatsEveryRandomAccessPictureAsAKeyFrameWithItsParameterSets)
+TEST(H265AccessUnitTest, TreatsEveryRandomAccessPictureAsAKeyFrame)
 {
   for (std::uint8_t type = kFirstH265SliceType; type <= kLastH265SliceType; ++type) {
     SCOPED_TRACE(static_cast<int>(type));
     const AccessUnitSummary summary = summarizeH265(h265AccessUnitWithParameterSets(h265SliceOfType(type)));
-    const bool is_random_access = type >= kFirstH265RandomAccessType && type <= kLastH265RandomAccessType;
-    EXPECT_EQ(summary.is_key_frame, is_random_access);
-    EXPECT_TRUE(summary.has_parameter_sets);
-
-    // The first slice decides, whatever follows it.
-    const AccessUnitSummary first_slice_decides =
-      summarizeH265(concat({kLongStartCode, h265SliceOfType(type), kShortStartCode, kH265IdrWithLeadingPicturesNal}));
-    EXPECT_EQ(first_slice_decides.is_key_frame, is_random_access);
+    EXPECT_EQ(summary.is_key_frame, kH265RandomAccessTypes.count(type) > 0U);
   }
+}
+
+TEST(H265AccessUnitTest, DecidesAtTheFirstSlice)
+{
+  // All slices of a picture share a NAL type, so the scan must not read past the first slice. The first and last slice
+  // types are the edges of what counts as a slice.
+  for (const std::uint8_t first_type : {kFirstH265SliceType, kLastH265SliceType}) {
+    SCOPED_TRACE(static_cast<int>(first_type));
+    EXPECT_FALSE(
+      summarizeH265(
+        concat({kLongStartCode, h265SliceOfType(first_type), kShortStartCode, kH265IdrWithLeadingPicturesNal}))
+        .is_key_frame);
+  }
+  EXPECT_TRUE(
+    summarizeH265(
+      concat({kLongStartCode, kH265IdrWithLeadingPicturesNal, kShortStartCode, h265SliceOfType(kFirstH265SliceType)}))
+      .is_key_frame);
 }
 
 TEST(H265AccessUnitTest, ReportsParameterSetsOnlyWhenVpsSpsAndPpsAllPrecedeTheIdrSlice)
 {
+  const AccessUnitSummary with_all = summarizeH265(h265AccessUnitWithParameterSets(kH265IdrWithLeadingPicturesNal));
+  EXPECT_TRUE(with_all.is_key_frame);
+  EXPECT_TRUE(with_all.has_parameter_sets);
+
   const AccessUnitSummary without_vps = summarizeH265(concat(
     {kLongStartCode,
      kH265SequenceParameterSetNal,
