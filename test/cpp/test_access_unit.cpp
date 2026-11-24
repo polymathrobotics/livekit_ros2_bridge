@@ -309,22 +309,48 @@ void expectNothingReadPast(const Bytes & bytes, std::size_t size)
   EXPECT_FALSE(truncated.has_parameter_sets);
 }
 
-TEST(Av1TemporalUnitTest, StopsSafelyAtTruncatedOrMalformedObus)
+TEST(Av1TemporalUnitTest, ReportsNothingForNullInput)
 {
-  EXPECT_FALSE(summarizeAv1TemporalUnit(nullptr, 0U).is_key_frame);
-  // The sequence header claims five bytes but one is left.
-  expectNothingReadPast(concat({Bytes{kSequenceHeaderObu, 0x05U}, Bytes(5U, 0x00U)}), 3U);
-  // The frame claims five bytes but one is left, so the key frame bits it holds are not trusted.
-  expectNothingReadPast(concat({Bytes{kFrameObu, 0x05U, kShownKeyFrameBits}, Bytes(4U, 0x00U)}), 3U);
-  // The size field is cut off.
-  expectNothingReadPast({kFrameObu, 0x01U, kShownKeyFrameBits}, 1U);
-  // The extension byte is cut off.
-  expectNothingReadPast({kFrameObu | kHasExtensionBit, 0x00U, 0x01U, kShownKeyFrameBits}, 1U);
-  // The frame has a size field of zero, so it has no header byte, and the byte after it is not its own.
-  const Bytes empty_frame_then_key_frame_bits{kFrameObu, 0x00U, kShownKeyFrameBits};
-  EXPECT_FALSE(summarizeAv1TemporalUnit(empty_frame_then_key_frame_bits.data(), 2U).is_key_frame);
-  // An OBU without a size field is malformed, not read to the end.
-  EXPECT_FALSE(summarizeAv1({0x30U, kShownKeyFrameBits, 0x00U}).is_key_frame);
+  const AccessUnitSummary summary = summarizeAv1TemporalUnit(nullptr, 0U);
+  EXPECT_FALSE(summary.is_key_frame);
+  EXPECT_FALSE(summary.has_parameter_sets);
+}
+
+TEST(Av1TemporalUnitTest, RejectsAnObuClaimingMoreThanRemains)
+{
+  {
+    SCOPED_TRACE("sequence header claims five bytes but one is left");
+    expectNothingReadPast(concat({Bytes{kSequenceHeaderObu, 0x05U}, Bytes(5U, 0x00U)}), 3U);
+  }
+  {
+    SCOPED_TRACE("frame claims five bytes but one is left, so its key frame bits are not trusted");
+    expectNothingReadPast(concat({Bytes{kFrameObu, 0x05U, kShownKeyFrameBits}, Bytes(4U, 0x00U)}), 3U);
+  }
+}
+
+TEST(Av1TemporalUnitTest, RejectsACutOffSizeOrExtensionByte)
+{
+  {
+    SCOPED_TRACE("size field is cut off");
+    expectNothingReadPast({kFrameObu, 0x01U, kShownKeyFrameBits}, 1U);
+  }
+  {
+    SCOPED_TRACE("extension byte is cut off");
+    expectNothingReadPast({kFrameObu | kHasExtensionBit, 0x00U, 0x01U, kShownKeyFrameBits}, 1U);
+  }
+}
+
+TEST(Av1TemporalUnitTest, RejectsAnObuWithoutASizeField)
+{
+  // Header 0x30 is a frame OBU with no size flag. Were it read anyway, 0x01 would be a size of one and the next byte a
+  // shown key frame.
+  EXPECT_FALSE(summarizeAv1({0x30U, 0x01U, kShownKeyFrameBits}).is_key_frame);
+}
+
+TEST(Av1TemporalUnitTest, ZeroSizeFrameHasNoHeaderByte)
+{
+  // The byte after the empty frame is not its own, though it reads as shown key frame bits.
+  EXPECT_FALSE(summarizeAv1({kFrameObu, 0x00U, kShownKeyFrameBits}).is_key_frame);
 }
 
 // A shown key frame whose size field is `size_bytes`, a leb128 that means a payload of one byte.
