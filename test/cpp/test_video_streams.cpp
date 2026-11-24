@@ -730,15 +730,16 @@ const std::vector<PassthroughCodecCase> & passthroughCodecCases()
 }
 
 // multifilesrc sends one buffer per file and ends at the first missing one; the stream then restarts it.
-void runPassthroughStreamOverAccessUnits(
-  const PassthroughCodecCase & codec_case, const std::vector<AccessUnit> & access_units)
+// Returns how many video tracks the stream published.
+std::size_t runPassthroughStreamOverAccessUnits(
+  const char * file_extension, const char * caps, const std::vector<AccessUnit> & access_units)
 {
   using test_support::ControlledStartElement;
   ControlledStartElement::registerFactory();
   ControlledStartElement::setMode(ControlledStartElement::Mode::Normal);
   const std::string path_prefix =
     (std::filesystem::temp_directory_path() / ("lkros_access_unit_" + std::to_string(::getpid()))).string();
-  const std::string path_suffix = std::string(".") + codec_case.name;
+  const std::string path_suffix = std::string(".") + file_extension;
   std::vector<std::filesystem::path> access_unit_paths;
   for (std::size_t index = 0U; index < access_units.size(); ++index) {
     access_unit_paths.push_back(path_prefix + "_" + std::to_string(index) + path_suffix);
@@ -753,8 +754,8 @@ void runPassthroughStreamOverAccessUnits(
     }
   });
   const auto harness = std::make_shared<OtherStreamHarness>(makePassthroughSpec(
-    "multifilesrc location=" + path_prefix + "_%d" + path_suffix + " caps=\"" + codec_case.caps +
-    ",width=64,height=48\" ! " + ControlledStartElement::kFactoryName));
+    "multifilesrc location=" + path_prefix + "_%d" + path_suffix + " caps=\"" + caps + ",width=64,height=48\" ! " +
+    ControlledStartElement::kFactoryName));
   const auto attempts_before = ControlledStartElement::startAttempts();
   // The third start follows the second run's end, so its frames have arrived.
   const auto second_run_ended = [attempts_before]() {
@@ -763,11 +764,52 @@ void runPassthroughStreamOverAccessUnits(
   const auto start_stream = [harness]() { harness->stream.start(); };
   const auto close_stream = [harness]() { harness->stream.close(); };
 
-  ASSERT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
+  EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, start_stream)) << "start() did not return.";
   const bool restarted = test_support::waitUntil(second_run_ended, std::chrono::seconds(10));
   EXPECT_TRUE(test_support::finishesWithin(kHangTimeout, close_stream)) << "close() did not return.";
 
-  ASSERT_TRUE(restarted);
+  EXPECT_TRUE(restarted);
+  return harness->connection.state->publishedVideoTrackCount();
+}
+
+// Layouts of the supported codecs that the filter must not accept, as a parser's other output modes would offer.
+struct UnsupportedLayoutCase
+{
+  const char * name;
+  const char * caps;
+  // How the log spells the offered caps: GStreamer prints each field with its type.
+  const char * offered_caps;
+};
+
+TEST_F(StreamTest, PassthroughStreamExplainsUnsupportedLayouts)
+{
+  const std::vector<UnsupportedLayoutCase> cases{
+    {"h265_hvc1",
+     "video/x-h265,stream-format=hvc1,alignment=au",
+     "offered_caps=\"video/x-h265, stream-format=(string)hvc1, alignment=(string)au"},
+    {"h265_hev1",
+     "video/x-h265,stream-format=hev1,alignment=au",
+     "offered_caps=\"video/x-h265, stream-format=(string)hev1, alignment=(string)au"},
+    {"av1_annexb",
+     "video/x-av1,stream-format=annexb,alignment=tu",
+     "offered_caps=\"video/x-av1, stream-format=(string)annexb, alignment=(string)tu"},
+    {"av1_obu_alignment",
+     "video/x-av1,stream-format=obu-stream,alignment=obu",
+     "offered_caps=\"video/x-av1, stream-format=(string)obu-stream, alignment=(string)obu"},
+  };
+  for (const UnsupportedLayoutCase & layout_case : cases) {
+    SCOPED_TRACE(layout_case.name);
+    test_support::ScopedLogCapture logs;
+
+    const std::size_t published_tracks =
+      runPassthroughStreamOverAccessUnits(layout_case.name, layout_case.caps, {{0x00U}, {0x00U}, {0x00U}});
+
+    const std::size_t explained_lines =
+      logs.countLines({"video_stream_pipeline_recovery_scheduled", kPassthroughFormatHint, layout_case.offered_caps});
+    EXPECT_GT(explained_lines, 0U);
+    EXPECT_EQ(explained_lines, logs.countLines({"video_stream_pipeline_recovery_scheduled"}));
+    EXPECT_EQ(published_tracks, 0U);
+  }
 }
 
 // Every frame is a delta frame, which the publisher discards while waiting for a keyframe.
@@ -775,8 +817,9 @@ TEST_F(StreamTest, PassthroughStreamForwardsKeyFrameRequestsToTheSource)
 {
   const auto requests_before = test_support::ControlledStartElement::forceKeyUnitEvents();
 
+  const PassthroughCodecCase & h264_case = passthroughCodecCases().front();
   runPassthroughStreamOverAccessUnits(
-    passthroughCodecCases().front(), {kH264DeltaSlice, kH264DeltaSlice, kH264DeltaSlice});
+    h264_case.name, h264_case.caps, {kH264DeltaSlice, kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GT(test_support::ControlledStartElement::forceKeyUnitEvents(), requests_before);
 }
@@ -789,7 +832,8 @@ TEST_F(StreamTest, PassthroughStreamWarnsOnceAboutKeyFramesWithoutParameterSets)
     test_support::ScopedLogCapture logs;
 
     runPassthroughStreamOverAccessUnits(
-      codec_case,
+      codec_case.name,
+      codec_case.caps,
       {codec_case.key_frame_without_parameter_sets,
        codec_case.key_frame_without_parameter_sets,
        codec_case.key_frame_without_parameter_sets});
@@ -807,9 +851,9 @@ TEST_F(StreamTest, PassthroughStreamDoesNotWarnWhenKeyFramesCarryParameterSets)
 {
   test_support::ScopedLogCapture logs;
 
+  const PassthroughCodecCase & h264_case = passthroughCodecCases().front();
   runPassthroughStreamOverAccessUnits(
-    passthroughCodecCases().front(),
-    {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
+    h264_case.name, h264_case.caps, {concatenate(kH264ParameterSets, kH264IdrSlice), kH264DeltaSlice, kH264DeltaSlice});
 
   EXPECT_GE(logs.countLines({"video_stream_frame_captured"}), 1U);
   EXPECT_EQ(logs.countLines({"video_stream_passthrough_missing_parameter_sets"}), 0U);
