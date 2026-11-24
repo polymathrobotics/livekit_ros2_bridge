@@ -53,6 +53,18 @@ bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
   return data[offset] == 0x00U && data[offset + 1U] == 0x00U && data[offset + 2U] == 0x01U;
 }
 
+// The offset of the first start code at or after `from`; a start code needs all three bytes inside `size`.
+std::optional<std::size_t> findStartCode(const std::uint8_t * data, std::size_t size, std::size_t from)
+{
+  constexpr std::size_t kStartCodeSize = 3U;
+  for (std::size_t offset = from; offset + kStartCodeSize <= size; ++offset) {
+    if (isStartCodeAt(data, offset)) {
+      return offset;
+    }
+  }
+  return std::nullopt;
+}
+
 AccessUnitSummary summarizeAnnexBAccessUnit(const NalUnitSyntax & syntax, const std::uint8_t * data, std::size_t size)
 {
   constexpr std::size_t kStartCodeSize = 3U;
@@ -181,7 +193,7 @@ AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_
   return {false, has_sequence_header};
 }
 
-std::vector<std::uint8_t> removeH264AccessUnitDelimiters(const std::uint8_t * data, std::size_t size)
+std::vector<std::uint8_t> removeH264AccessUnitDelimiter(const std::uint8_t * data, std::size_t size)
 {
   constexpr std::size_t kStartCodeSize = 3U;
   constexpr std::uint8_t kAccessUnitDelimiterType = 9U;
@@ -189,37 +201,23 @@ std::vector<std::uint8_t> removeH264AccessUnitDelimiters(const std::uint8_t * da
     return {};
   }
 
-  // A unit runs from its start code, plus the zero byte of a four-byte one, to the next unit.
-  struct NalUnit
-  {
-    std::size_t begin;
-    bool is_delimiter;
-  };
-
-  std::vector<NalUnit> units;
-  for (std::size_t offset = 0U; offset + kStartCodeSize <= size; ++offset) {
-    if (!isStartCodeAt(data, offset)) {
-      continue;
-    }
-    const bool has_zero_byte = offset > 0U && data[offset - 1U] == 0x00U;
-    const bool has_header = offset + kStartCodeSize < size;
-    const bool is_delimiter =
-      has_header && (data[offset + kStartCodeSize] & kH264Syntax.type_mask) == kAccessUnitDelimiterType;
-    units.push_back({has_zero_byte ? offset - 1U : offset, is_delimiter});
+  const std::vector<std::uint8_t> unchanged(data, data + size);
+  const std::optional<std::size_t> first_start_code = findStartCode(data, size, 0U);
+  if (!first_start_code.has_value() || *first_start_code + kStartCodeSize >= size) {
+    return unchanged;
+  }
+  const std::size_t header_offset = *first_start_code + kStartCodeSize;
+  if ((data[header_offset] & kH264Syntax.type_mask) != kAccessUnitDelimiterType) {
+    return unchanged;
   }
 
-  std::vector<std::uint8_t> kept;
-  kept.reserve(size);
-  const std::size_t first_unit_begin = units.empty() ? size : units.front().begin;
-  kept.insert(kept.end(), data, data + first_unit_begin);
-  for (std::size_t index = 0U; index < units.size(); ++index) {
-    if (units[index].is_delimiter) {
-      continue;
-    }
-    const std::size_t unit_end = index + 1U < units.size() ? units[index + 1U].begin : size;
-    kept.insert(kept.end(), data + units[index].begin, data + unit_end);
+  // The next unit keeps its own start code, including the zero byte of a four-byte one.
+  const std::optional<std::size_t> next_start_code = findStartCode(data, size, header_offset + 1U);
+  if (!next_start_code.has_value()) {
+    return unchanged;
   }
-  return kept;
+  const std::size_t next_begin = data[*next_start_code - 1U] == 0x00U ? *next_start_code - 1U : *next_start_code;
+  return std::vector<std::uint8_t>(data + next_begin, data + size);
 }
 
 }  // namespace livekit_ros2_bridge::video

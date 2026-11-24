@@ -57,6 +57,11 @@ AccessUnitSummary summarize(const Bytes & bytes)
   return summarizeH264AccessUnit(bytes.data(), bytes.size());
 }
 
+Bytes withoutDelimiter(const Bytes & bytes)
+{
+  return removeH264AccessUnitDelimiter(bytes.data(), bytes.size());
+}
+
 bool containsIdr(const Bytes & bytes)
 {
   return summarize(bytes).is_key_frame;
@@ -155,16 +160,24 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 
-Bytes withoutDelimiters(const Bytes & bytes)
-{
-  return removeH264AccessUnitDelimiters(bytes.data(), bytes.size());
-}
-
-TEST(H264DelimiterRemovalTest, DropsTheDelimiterInFrontOfASlice)
+TEST(H264DelimiterRemovalTest, DropsTheLeadingDelimiter)
 {
   EXPECT_EQ(
-    withoutDelimiters(concat({kLongStartCode, kAccessUnitDelimiterNal, kLongStartCode, kNonIdrSliceNal})),
+    withoutDelimiter(concat({kLongStartCode, kAccessUnitDelimiterNal, kLongStartCode, kNonIdrSliceNal})),
     concat({kLongStartCode, kNonIdrSliceNal}));
+  EXPECT_EQ(
+    withoutDelimiter(concat({kShortStartCode, kAccessUnitDelimiterNal, kShortStartCode, kNonIdrSliceNal})),
+    concat({kShortStartCode, kNonIdrSliceNal}));
+}
+
+TEST(H264DelimiterRemovalTest, KeepsTheNextStartCodeAtItsOwnLength)
+{
+  EXPECT_EQ(
+    withoutDelimiter(concat({kShortStartCode, kAccessUnitDelimiterNal, kLongStartCode, kNonIdrSliceNal})),
+    concat({kLongStartCode, kNonIdrSliceNal}));
+  EXPECT_EQ(
+    withoutDelimiter(concat({kLongStartCode, kAccessUnitDelimiterNal, kShortStartCode, kNonIdrSliceNal})),
+    concat({kShortStartCode, kNonIdrSliceNal}));
 }
 
 TEST(H264DelimiterRemovalTest, KeepsEveryOtherNalUnitByteForByte)
@@ -172,46 +185,47 @@ TEST(H264DelimiterRemovalTest, KeepsEveryOtherNalUnitByteForByte)
   const Bytes expected = concat(
     {kLongStartCode, kSequenceParameterSetNal, kShortStartCode, kPictureParameterSetNal, kLongStartCode, kIdrSliceNal});
 
-  EXPECT_EQ(
-    withoutDelimiters(concat(
-      {kLongStartCode,
-       kAccessUnitDelimiterNal,
-       kLongStartCode,
-       kSequenceParameterSetNal,
-       kShortStartCode,
-       kPictureParameterSetNal,
-       kLongStartCode,
-       kIdrSliceNal})),
-    expected);
-  EXPECT_EQ(withoutDelimiters(expected), expected);
+  EXPECT_EQ(withoutDelimiter(concat({kLongStartCode, kAccessUnitDelimiterNal, expected})), expected);
+  EXPECT_EQ(withoutDelimiter(expected), expected);
 }
 
-TEST(H264DelimiterRemovalTest, DropsADelimiterWithAShortStartCodeOrAtTheEnd)
+// A conforming parser puts the delimiter first, so only the first NAL unit is examined.
+TEST(H264DelimiterRemovalTest, KeepsADelimiterThatIsNotFirst)
 {
-  EXPECT_EQ(
-    withoutDelimiters(concat(
-      {kShortStartCode,
-       kAccessUnitDelimiterNal,
-       kShortStartCode,
-       kNonIdrSliceNal,
-       kLongStartCode,
-       kAccessUnitDelimiterNal})),
-    concat({kShortStartCode, kNonIdrSliceNal}));
+  const Bytes delimiter_after_parameter_set = concat(
+    {kLongStartCode,
+     kSequenceParameterSetNal,
+     kLongStartCode,
+     kAccessUnitDelimiterNal,
+     kLongStartCode,
+     kNonIdrSliceNal});
+
+  EXPECT_EQ(withoutDelimiter(delimiter_after_parameter_set), delimiter_after_parameter_set);
 }
 
-TEST(H264DelimiterRemovalTest, KeepsInputThatHoldsNoDelimiter)
+TEST(H264DelimiterRemovalTest, KeepsABufferThatIsOnlyADelimiter)
 {
-  EXPECT_TRUE(removeH264AccessUnitDelimiters(nullptr, 0U).empty());
-  EXPECT_TRUE(withoutDelimiters({}).empty());
-
-  // No start code, a delimiter-typed byte inside a slice, and a start code with no NAL header after it.
-  for (const Bytes & unchanged :
-       {Bytes{0x09U, 0x10U, 0x00U},
-        concat({kLongStartCode, Bytes{kNonIdrSlice, 0x09U, 0x09U}}),
-        concat({kLongStartCode, kNonIdrSliceNal, kShortStartCode})})
-  {
-    EXPECT_EQ(withoutDelimiters(unchanged), unchanged);
+  // Dropping the delimiter would leave an empty frame.
+  for (const Bytes & start_code : {kLongStartCode, kShortStartCode}) {
+    SCOPED_TRACE(start_code.size());
+    const Bytes only_delimiter = concat({start_code, kAccessUnitDelimiterNal});
+    EXPECT_EQ(withoutDelimiter(only_delimiter), only_delimiter);
   }
+}
+
+TEST(H264DelimiterRemovalTest, KeepsInputWithNoLeadingDelimiter)
+{
+  EXPECT_TRUE(removeH264AccessUnitDelimiter(nullptr, 0U).empty());
+
+  const Bytes no_start_code{0x09U, 0x10U, 0x00U};
+  EXPECT_EQ(withoutDelimiter(no_start_code), no_start_code);
+
+  const Bytes delimiter_typed_byte_inside_slice = concat({kLongStartCode, Bytes{kNonIdrSlice, 0x09U, 0x09U}});
+  EXPECT_EQ(withoutDelimiter(delimiter_typed_byte_inside_slice), delimiter_typed_byte_inside_slice);
+
+  // A start code with no header byte; the delimiter byte just past `size` must not be read.
+  const Bytes start_code_then_delimiter = concat({kLongStartCode, kAccessUnitDelimiterNal});
+  EXPECT_EQ(removeH264AccessUnitDelimiter(start_code_then_delimiter.data(), kLongStartCode.size()), kLongStartCode);
 }
 
 // H.265 NAL header: two bytes, (type << 1) then 0x01.

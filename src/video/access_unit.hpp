@@ -36,9 +36,8 @@ AccessUnitSummary summarizeH265AccessUnit(const std::uint8_t * data, std::size_t
 // Every OBU must carry a size field, and a malformed one ends the walk.
 AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_t size);
 
-// Copies an Annex-B access unit without its delimiter NAL units, leaving every other byte as is.
-// h264parse adds one to each access unit, and a small frame sent next to it becomes a STAP-A
-// packet that Chromium rejects, so a browser decodes only the keyframes.
-std::vector<std::uint8_t> removeH264AccessUnitDelimiters(const std::uint8_t * data, std::size_t size);
+// Copies an Annex-B access unit without its leading delimiter NAL unit, which h264parse adds to every
+// access unit; a browser (Chromium) drops small delta frames that carry one, so it decodes only the keyframes.
+std::vector<std::uint8_t> removeH264AccessUnitDelimiter(const std::uint8_t * data, std::size_t size);
 
 }  // namespace livekit_ros2_bridge::video

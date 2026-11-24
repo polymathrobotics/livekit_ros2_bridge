@@ -222,7 +222,7 @@ EncodedVideoFrame unpackEncodedFrame(
   encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
   encoded.frame.timestamp_us = timestamp_us;
   if (codec == livekit::VideoCodec::H264) {
-    encoded.frame.data = removeH264AccessUnitDelimiters(data, size);
+    encoded.frame.data = removeH264AccessUnitDelimiter(data, size);
   } else {
     encoded.frame.data.assign(data, data + size);
   }
