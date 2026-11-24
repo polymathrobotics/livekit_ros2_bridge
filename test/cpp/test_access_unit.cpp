@@ -192,7 +192,8 @@ Bytes h265AccessUnitWithParameterSets(const Bytes & slice)
      slice});
 }
 
-// libwebrtc's depacketizer marks the same types as key frames, and x265's open GOP sends a CRA for each.
+// libwebrtc's depacketizer treats IRAP types 16-21 (BLA, IDR, CRA) as key frames, and x265's open GOP sends a CRA for
+// each.
 TEST(H265AccessUnitTest, TreatsEveryRandomAccessPictureAsAKeyFrameWithItsParameterSets)
 {
   for (std::uint8_t type = kFirstH265SliceType; type <= kLastH265SliceType; ++type) {

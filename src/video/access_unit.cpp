@@ -43,7 +43,8 @@ constexpr std::uint64_t typeBit(unsigned nal_unit_type)
 // Slices 1-5, key frames are IDR (5), SPS 7, PPS 8.
 constexpr NalUnitSyntax kH264Syntax{0U, 0x1FU, 1U, 5U, 5U, 5U, typeBit(7U) | typeBit(8U)};
 // Slices 0-31, key frames are the IRAP types 16-21 (BLA, IDR, CRA), VPS 32, SPS 33, PPS 34.
-// An open GOP sends a CRA for every keyframe after the first; with no B-frames it has no RASL pictures.
+// An open GOP sends a CRA for every keyframe after the first. A decoder that starts at a CRA drops its RASL pictures,
+// and the docs require no B-frames, so there are none.
 constexpr NalUnitSyntax kH265Syntax{1U, 0x3FU, 0U, 31U, 16U, 21U, typeBit(32U) | typeBit(33U) | typeBit(34U)};
 
 bool isStartCodeAt(const std::uint8_t * data, std::size_t offset)
