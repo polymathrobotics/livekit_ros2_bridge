@@ -322,10 +322,34 @@ TEST(Av1TemporalUnitTest, StopsSafelyAtTruncatedOrMalformedObus)
   // The frame has a size field of zero, so it has no header byte, and the byte after it is not its own.
   const Bytes empty_frame_then_key_frame_bits{kFrameObu, 0x00U, kShownKeyFrameBits};
   EXPECT_FALSE(summarizeAv1TemporalUnit(empty_frame_then_key_frame_bits.data(), 2U).is_key_frame);
-  // A size that never ends.
-  EXPECT_FALSE(hasSequenceHeader({kFrameObu, 0x80U, 0x80U}));
   // An OBU without a size field is malformed, not read to the end.
   EXPECT_FALSE(summarizeAv1({0x30U, kShownKeyFrameBits, 0x00U}).is_key_frame);
+}
+
+// A shown key frame whose size field is `size_bytes`, a leb128 that means a payload of one byte.
+AccessUnitSummary summarizeKeyFrameAfterSequenceHeader(const Bytes & size_bytes)
+{
+  return summarizeAv1(concat({kSequenceHeaderObuWithPayload, Bytes{kFrameObu}, size_bytes, Bytes{kShownKeyFrameBits}}));
+}
+
+TEST(Av1TemporalUnitTest, ReadsAnObuSizeOfAtMostEightBytes)
+{
+  // A leb128 may carry padding, so 1 can be written as 81 00.
+  const AccessUnitSummary padded = summarizeKeyFrameAfterSequenceHeader({0x81U, 0x00U});
+  EXPECT_TRUE(padded.is_key_frame);
+  EXPECT_TRUE(padded.has_parameter_sets);
+
+  // Eight bytes is the longest size that is read: 81, six 80s and a 00.
+  const AccessUnitSummary eight_bytes =
+    summarizeKeyFrameAfterSequenceHeader({0x81U, 0x80U, 0x80U, 0x80U, 0x80U, 0x80U, 0x80U, 0x00U});
+  EXPECT_TRUE(eight_bytes.is_key_frame);
+  EXPECT_TRUE(eight_bytes.has_parameter_sets);
+
+  // A ninth byte is one too many, so the walk stops before the frame, but the sequence header still counts.
+  const AccessUnitSummary nine_bytes =
+    summarizeKeyFrameAfterSequenceHeader({0x81U, 0x80U, 0x80U, 0x80U, 0x80U, 0x80U, 0x80U, 0x80U, 0x00U});
+  EXPECT_FALSE(nine_bytes.is_key_frame);
+  EXPECT_TRUE(nine_bytes.has_parameter_sets);
 }
 
 TEST(Av1TemporalUnitTest, ReadsKeyFramesFromBothFrameObuTypes)
