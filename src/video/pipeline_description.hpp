@@ -32,7 +32,7 @@ inline constexpr auto kBridgeQueueDuration = std::chrono::milliseconds(500);
 struct PassthroughFormat
 {
   livekit::VideoCodec codec;
-  // As publish.codec spells it.
+  // Short codec name used in log fields.
   const char * name;
   const char * media_type;
   const char * layout;

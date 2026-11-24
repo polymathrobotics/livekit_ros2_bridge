@@ -478,7 +478,8 @@ TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
       0x12U, 0x00U, 0x0AU, 0x01U, 0x00U, 0x32U, 0x01U, 0x10U};
     const std::vector<std::uint8_t> key_frame_alone{0x12U, 0x00U, 0x32U, 0x01U, 0x10U};
     const std::vector<std::uint8_t> inter_frame{0x12U, 0x00U, 0x32U, 0x01U, 0x30U};
-    // The buffer flags don't decide: av1parse on GStreamer 1.20 leaves the upstream's DELTA_UNIT as it was.
+    // A parser can leave DELTA_UNIT on a key frame (av1parse on 1.20 keeps the upstream's flag), so the third buffer
+    // is a key frame flagged as a delta unit; the reader must trust the bitstream, not the flag.
     SCOPED_TRACE("av1");
     EXPECT_EQ(
       forwardThroughPassthroughPipeline(
