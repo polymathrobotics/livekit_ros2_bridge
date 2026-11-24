@@ -178,9 +178,11 @@ struct PushedBuffer
 {
   std::vector<std::uint8_t> bytes;
   bool delta_unit = false;
+  // Set on the appsrc before this buffer, as a parser does when the stream's codec changes.
+  std::optional<std::string> caps;
 };
 
-// The appsrc offers `caps`, as a parser would.
+// The appsrc offers `caps`, as a parser would, until a buffer carries its own.
 std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
   const std::string & caps, const std::vector<PushedBuffer> & buffers)
 {
@@ -197,6 +199,11 @@ std::vector<ForwardedFrame> forwardThroughPassthroughPipeline(
     buildPassthroughPipelineDescription("appsrc name=" + std::string(kBridgeAppSrcName) + " caps=\"" + caps + "\""),
     true);
   for (const PushedBuffer & pushed : buffers) {
+    if (pushed.caps.has_value()) {
+      GstCaps * pushed_caps = gst_caps_from_string(pushed.caps->c_str());
+      gst_app_src_set_caps(pipeline.appsrc(), pushed_caps);
+      gst_caps_unref(pushed_caps);
+    }
     GstBuffer * buffer = gst_buffer_new_memdup(pushed.bytes.data(), pushed.bytes.size());
     if (pushed.delta_unit) {
       GST_BUFFER_FLAG_SET(buffer, GST_BUFFER_FLAG_DELTA_UNIT);
@@ -480,6 +487,22 @@ TEST_F(StreamTest, PassthroughPipelineTagsFramesWithTheCodecOfTheirCaps)
       (std::vector<ForwardedFrame>{
         {VideoCodec::AV1, true, false}, {VideoCodec::AV1, false, false}, {VideoCodec::AV1, true, true}}));
   }
+}
+
+// A parser that switches codec mid-stream changes the caps, not the pipeline. The H.265 bytes would read as an
+// H.264 SEI NAL, not a key frame, if the codec were kept from the first sample.
+TEST_F(StreamTest, PassthroughPipelineReadsTheCodecFromEachSamplesCaps)
+{
+  using livekit::VideoCodec;
+
+  EXPECT_EQ(
+    forwardThroughPassthroughPipeline(
+      "video/x-h264,stream-format=byte-stream,alignment=au,width=64,height=48",
+      {{{0x00U, 0x00U, 0x00U, 0x01U, 0x65U, 0x88U}},
+       {{0x00U, 0x00U, 0x00U, 0x01U, 0x26U, 0x01U, 0xAFU},
+        false,
+        "video/x-h265,stream-format=byte-stream,alignment=au,width=64,height=48"}}),
+    (std::vector<ForwardedFrame>{{VideoCodec::H264, true, true}, {VideoCodec::H265, true, true}}));
 }
 
 TEST_F(StreamTest, OtherVideoLifecycleIsIdempotent)
