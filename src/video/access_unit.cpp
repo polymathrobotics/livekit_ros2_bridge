@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace livekit_ros2_bridge::video
 {
@@ -178,6 +179,47 @@ AccessUnitSummary summarizeAv1TemporalUnit(const std::uint8_t * data, std::size_
     }
   }
   return {false, has_sequence_header};
+}
+
+std::vector<std::uint8_t> removeH264AccessUnitDelimiters(const std::uint8_t * data, std::size_t size)
+{
+  constexpr std::size_t kStartCodeSize = 3U;
+  constexpr std::uint8_t kAccessUnitDelimiterType = 9U;
+  if (data == nullptr) {
+    return {};
+  }
+
+  // A unit runs from its start code, plus the zero byte of a four-byte one, to the next unit.
+  struct NalUnit
+  {
+    std::size_t begin;
+    bool is_delimiter;
+  };
+
+  std::vector<NalUnit> units;
+  for (std::size_t offset = 0U; offset + kStartCodeSize <= size; ++offset) {
+    if (!isStartCodeAt(data, offset)) {
+      continue;
+    }
+    const bool has_zero_byte = offset > 0U && data[offset - 1U] == 0x00U;
+    const bool has_header = offset + kStartCodeSize < size;
+    const bool is_delimiter =
+      has_header && (data[offset + kStartCodeSize] & kH264Syntax.type_mask) == kAccessUnitDelimiterType;
+    units.push_back({has_zero_byte ? offset - 1U : offset, is_delimiter});
+  }
+
+  std::vector<std::uint8_t> kept;
+  kept.reserve(size);
+  const std::size_t first_unit_begin = units.empty() ? size : units.front().begin;
+  kept.insert(kept.end(), data, data + first_unit_begin);
+  for (std::size_t index = 0U; index < units.size(); ++index) {
+    if (units[index].is_delimiter) {
+      continue;
+    }
+    const std::size_t unit_end = index + 1U < units.size() ? units[index + 1U].begin : size;
+    kept.insert(kept.end(), data + units[index].begin, data + unit_end);
+  }
+  return kept;
 }
 
 }  // namespace livekit_ros2_bridge::video

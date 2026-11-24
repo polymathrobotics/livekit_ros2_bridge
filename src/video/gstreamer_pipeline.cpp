@@ -221,7 +221,11 @@ EncodedVideoFrame unpackEncodedFrame(
   encoded.frame.width = static_cast<std::uint32_t>(picture_size.width);
   encoded.frame.height = static_cast<std::uint32_t>(picture_size.height);
   encoded.frame.timestamp_us = timestamp_us;
-  encoded.frame.data.assign(data, data + size);
+  if (codec == livekit::VideoCodec::H264) {
+    encoded.frame.data = removeH264AccessUnitDelimiters(data, size);
+  } else {
+    encoded.frame.data.assign(data, data + size);
+  }
   encoded.lacks_parameter_sets = summary.is_key_frame && !summary.has_parameter_sets;
   return encoded;
 }

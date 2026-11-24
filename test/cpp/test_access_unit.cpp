@@ -155,6 +155,65 @@ TEST(H264AccessUnitTest, ReportsParameterSetsOnlyWhenSpsAndPpsBothPrecedeTheIdrS
   EXPECT_FALSE(after_slice.has_parameter_sets);
 }
 
+Bytes withoutDelimiters(const Bytes & bytes)
+{
+  return removeH264AccessUnitDelimiters(bytes.data(), bytes.size());
+}
+
+TEST(H264DelimiterRemovalTest, DropsTheDelimiterInFrontOfASlice)
+{
+  EXPECT_EQ(
+    withoutDelimiters(concat({kLongStartCode, kAccessUnitDelimiterNal, kLongStartCode, kNonIdrSliceNal})),
+    concat({kLongStartCode, kNonIdrSliceNal}));
+}
+
+TEST(H264DelimiterRemovalTest, KeepsEveryOtherNalUnitByteForByte)
+{
+  const Bytes expected = concat(
+    {kLongStartCode, kSequenceParameterSetNal, kShortStartCode, kPictureParameterSetNal, kLongStartCode, kIdrSliceNal});
+
+  EXPECT_EQ(
+    withoutDelimiters(concat(
+      {kLongStartCode,
+       kAccessUnitDelimiterNal,
+       kLongStartCode,
+       kSequenceParameterSetNal,
+       kShortStartCode,
+       kPictureParameterSetNal,
+       kLongStartCode,
+       kIdrSliceNal})),
+    expected);
+  EXPECT_EQ(withoutDelimiters(expected), expected);
+}
+
+TEST(H264DelimiterRemovalTest, DropsADelimiterWithAShortStartCodeOrAtTheEnd)
+{
+  EXPECT_EQ(
+    withoutDelimiters(concat(
+      {kShortStartCode,
+       kAccessUnitDelimiterNal,
+       kShortStartCode,
+       kNonIdrSliceNal,
+       kLongStartCode,
+       kAccessUnitDelimiterNal})),
+    concat({kShortStartCode, kNonIdrSliceNal}));
+}
+
+TEST(H264DelimiterRemovalTest, KeepsInputThatHoldsNoDelimiter)
+{
+  EXPECT_TRUE(removeH264AccessUnitDelimiters(nullptr, 0U).empty());
+  EXPECT_TRUE(withoutDelimiters({}).empty());
+
+  // No start code, a delimiter-typed byte inside a slice, and a start code with no NAL header after it.
+  for (const Bytes & unchanged :
+       {Bytes{0x09U, 0x10U, 0x00U},
+        concat({kLongStartCode, Bytes{kNonIdrSlice, 0x09U, 0x09U}}),
+        concat({kLongStartCode, kNonIdrSliceNal, kShortStartCode})})
+  {
+    EXPECT_EQ(withoutDelimiters(unchanged), unchanged);
+  }
+}
+
 // H.265 NAL header: two bytes, (type << 1) then 0x01.
 const Bytes kH265AccessUnitDelimiterNal{0x46U, 0x01U, 0x50U};
 const Bytes kH265VideoParameterSetNal{0x40U, 0x01U, 0x0CU, 0x01U};
