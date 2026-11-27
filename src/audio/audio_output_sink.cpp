@@ -388,6 +388,12 @@ void AudioOutputSink::stopPipelineLocked()
   utils::GstBusPtr bus(gst_element_get_bus(pipeline_.get()));
   gst_bus_set_sync_handler(bus.get(), nullptr, nullptr, nullptr);
 
+  // GStreamer can lose the flush request when an empty appsrc is still starting.
+  // End the source first so its streaming thread cannot wait forever for data.
+  if (appsrc_element_ != nullptr) {
+    (void)gst_app_src_end_of_stream(GST_APP_SRC(appsrc_element_.get()));
+  }
+
   const GstStateChangeReturn result = gst_element_set_state(pipeline_.get(), GST_STATE_NULL);
   if (result == GST_STATE_CHANGE_ASYNC) {
     (void)gst_element_get_state(pipeline_.get(), nullptr, nullptr, GST_CLOCK_TIME_NONE);
